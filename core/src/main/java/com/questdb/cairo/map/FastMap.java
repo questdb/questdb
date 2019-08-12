@@ -108,6 +108,7 @@ public class FastMap implements Map {
                         offset++;
                         break;
                     case ColumnType.SHORT:
+                    case ColumnType.CHAR:
                         offset += 2;
                         break;
                     case ColumnType.INT:
@@ -450,6 +451,14 @@ public class FastMap implements Map {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += 2;
+            writeOffset();
+        }
+
+        @Override
+        public void putChar(char value) {
+            checkSize(Character.BYTES);
+            Unsafe.getUnsafe().putChar(appendAddress, value);
+            appendAddress += Character.BYTES;
             writeOffset();
         }
 

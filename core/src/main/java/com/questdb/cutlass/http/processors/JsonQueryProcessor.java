@@ -432,6 +432,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.SHORT:
                 socket.put(rec.getShort(col));
                 break;
+            case ColumnType.CHAR:
+                socket.put('"').put(rec.getChar(col)).put('"');
+                break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
                 break;

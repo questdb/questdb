@@ -44,6 +44,8 @@ public interface RecordSinkSPI {
 
     void putShort(short value);
 
+    void putChar(char value);
+
     void putStr(CharSequence value);
 
     void putStr(CharSequence value, int lo, int hi);

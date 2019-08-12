@@ -39,6 +39,12 @@ import com.questdb.std.ObjList;
 public class LongSequenceFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
 
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+        METADATA = metadata;
+    }
+
     @Override
     public String getSignature() {
         return "long_sequence(l)";
@@ -51,7 +57,12 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         return new CursorFunction(
                 position,
-                new GenericRecordCursorFactory(METADATA, new LongSequenceRecordCursor(Math.max(0L, recordCount)), true)
+                new GenericRecordCursorFactory(
+                        METADATA,
+                        new LongSequenceRecordCursor(Math.max(0L, recordCount)
+                        ),
+                        true
+                )
         );
     }
 
@@ -128,11 +139,5 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         void of(long value) {
             this.value = value;
         }
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
-        METADATA = metadata;
     }
 }

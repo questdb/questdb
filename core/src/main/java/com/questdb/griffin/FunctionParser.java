@@ -50,6 +50,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
+
+    static {
+        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
+            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        }
+
+        invalidFunctionNameChars.add('.');
+        invalidFunctionNameChars.add(' ');
+        invalidFunctionNameChars.add('\"');
+        invalidFunctionNameChars.add('\'');
+    }
+
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -78,6 +90,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 break;
             case 'E':
                 sigArgType = ColumnType.SHORT;
+                break;
+            case 'Q':
+                sigArgType = ColumnType.CHAR;
                 break;
             case 'F':
                 sigArgType = ColumnType.FLOAT;
@@ -161,6 +176,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return openBraceIndex;
+    }
+
+    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put(message);
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        return ex;
     }
 
     @Override
@@ -295,24 +328,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put(message);
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        return ex;
-    }
-
     private Function checkAndCreateFunction(FunctionFactory factory, ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         Function function;
         try {
@@ -348,6 +363,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return new ByteColumn(node.position, index);
             case ColumnType.SHORT:
                 return new ShortColumn(node.position, index);
+            case ColumnType.CHAR:
+                return new CharColumn(node.position, index);
             case ColumnType.INT:
                 return new IntColumn(node.position, index);
             case ColumnType.LONG:
@@ -619,6 +636,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     return new ShortConstant(position, function.getShort(null));
                 }
+            case ColumnType.CHAR:
+                if (function instanceof CharConstant) {
+                    return function;
+                } else {
+                    return new CharConstant(position, function.getChar(null));
+                }
             case ColumnType.FLOAT:
                 if (function instanceof FloatConstant) {
                     return function;
@@ -701,16 +724,5 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 groupByFunctionNames.add(name);
             }
         }
-    }
-
-    static {
-        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
-            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
-        }
-
-        invalidFunctionNameChars.add('.');
-        invalidFunctionNameChars.add(' ');
-        invalidFunctionNameChars.add('\"');
-        invalidFunctionNameChars.add('\'');
     }
 }

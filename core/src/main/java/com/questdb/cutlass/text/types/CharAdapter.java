@@ -21,55 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cutlass.text.types;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.TableWriter;
+import com.questdb.std.str.DirectByteCharSequence;
 
-public interface MapValue extends Record {
+public final class CharAdapter extends AbstractTypeAdapter {
 
-    long getAddress();
+    public static final CharAdapter INSTANCE = new CharAdapter();
 
-    boolean getBool(int columnIndex);
+    private CharAdapter() {
+    }
 
-    byte getByte(int index);
+    @Override
+    public int getType() {
+        return ColumnType.CHAR;
+    }
 
-    long getDate(int columnIndex);
+    // todo: test char probe
 
-    double getDouble(int index);
+    @Override
+    public boolean probe(CharSequence text) {
+        throw new UnsupportedOperationException();
+    }
 
-    float getFloat(int index);
-
-    char getChar(int index);
-
-    int getInt(int index);
-
-    long getLong(int index);
-
-    short getShort(int index);
-
-    long getTimestamp(int columnIndex);
-
-    boolean isNew();
-
-    void putBool(int columnIndex, boolean value);
-
-    void putByte(int index, byte value);
-
-    void putDate(int index, long value);
-
-    void putDouble(int index, double value);
-
-    void putFloat(int index, float value);
-
-    void putInt(int index, int value);
-
-    void putLong(int index, long value);
-
-    void putShort(int index, short value);
-
-    void putChar(int index, char value);
-
-    void putTimestamp(int columnIndex, long value);
-
-    void setMapRecordHere();
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+        row.putChar(column, value.charAt(0));
+    }
 }

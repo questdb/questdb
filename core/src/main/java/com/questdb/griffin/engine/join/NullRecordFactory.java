@@ -40,6 +40,7 @@ import com.questdb.std.ObjList;
 public class NullRecordFactory {
     private static final ByteConstant BYTE_NULL = new ByteConstant(0, (byte) 0);
     private static final ShortConstant SHORT_NULL = new ShortConstant(0, (short) 0);
+    private static final CharConstant CHAR_NULL = new CharConstant(0, (char) 0);
     private static final IntConstant INT_NULL = new IntConstant(0, Numbers.INT_NaN);
     private static final LongConstant LONG_NULL = new LongConstant(0, Numbers.LONG_NaN);
     private static final DateConstant DATE_NULL = new DateConstant(0, Numbers.LONG_NaN);
@@ -96,6 +97,9 @@ public class NullRecordFactory {
                     break;
                 case ColumnType.SHORT:
                     functions.add(SHORT_NULL);
+                    break;
+                case ColumnType.CHAR:
+                    functions.add(CHAR_NULL);
                     break;
                 case ColumnType.BOOLEAN:
                     functions.add(BOOLEAN_NULL);

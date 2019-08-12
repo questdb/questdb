@@ -31,17 +31,11 @@ import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public abstract class ByteFunction implements Function {
-
+public abstract class CharFunction implements Function {
     private final int position;
 
-    public ByteFunction(int position) {
+    public CharFunction(int position) {
         this.position = position;
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -60,28 +54,38 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
+    public final byte getByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getByte(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getByte(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return getByte(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return getByte(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -97,11 +101,6 @@ public abstract class ByteFunction implements Function {
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return getByte(rec);
     }
 
     @Override
@@ -130,12 +129,12 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
-    public final long getTimestamp(Record rec) {
+    public long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getType() {
-        return ColumnType.BYTE;
+        return ColumnType.CHAR;
     }
 }

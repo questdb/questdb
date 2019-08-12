@@ -1420,6 +1420,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOidMap.put(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
         typeOidMap.put(ColumnType.INT, PG_INT4); // INT4
         typeOidMap.put(ColumnType.SHORT, PG_INT2); // INT2
+        typeOidMap.put(ColumnType.CHAR, PG_CHAR);
         typeOidMap.put(ColumnType.SYMBOL, PG_VARCHAR); // NAME
         typeOidMap.put(ColumnType.LONG, PG_INT8); // INT8
         typeOidMap.put(ColumnType.BYTE, PG_INT2); // INT2

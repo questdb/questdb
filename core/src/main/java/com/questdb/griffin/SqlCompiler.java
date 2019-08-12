@@ -49,6 +49,7 @@ public class SqlCompiler implements Closeable {
         castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
         castGroups.extendAndSet(ColumnType.BYTE, 1);
         castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.CHAR, 1);
         castGroups.extendAndSet(ColumnType.INT, 1);
         castGroups.extendAndSet(ColumnType.LONG, 1);
         castGroups.extendAndSet(ColumnType.FLOAT, 1);

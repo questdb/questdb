@@ -63,6 +63,13 @@ public class VirtualMemory implements Closeable {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+        }
+    }
+
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -378,12 +385,29 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    public void putChar(long offset, char value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+        } else {
+            putCharBytes(offset, value);
+        }
+    }
+
     public final void putShort(short value) {
         if (pageHi - appendPointer > 1) {
             Unsafe.getUnsafe().putShort(appendPointer, value);
             appendPointer += 2;
         } else {
             putShortBytes(value);
+        }
+    }
+
+    public final void putChar(char value) {
+        if (pageHi - appendPointer > 1) {
+            Unsafe.getUnsafe().putChar(appendPointer, value);
+            appendPointer += 2;
+        } else {
+            putCharBytes(value);
         }
     }
 
@@ -438,13 +462,6 @@ public class VirtualMemory implements Closeable {
                 pages.setQuick(i, address);
             }
             Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
-        }
-    }
-
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
         }
     }
 
@@ -854,7 +871,17 @@ public class VirtualMemory implements Closeable {
         putByte((byte) ((value >> 8) & 0xff));
     }
 
+    void putCharBytes(char value) {
+        putByte((byte) (value & 0xff));
+        putByte((byte) ((value >> 8) & 0xff));
+    }
+
     void putShortBytes(long offset, short value) {
+        putByte(offset, (byte) (value & 0xff));
+        putByte(offset + 1, (byte) ((value >> 8) & 0xff));
+    }
+
+    void putCharBytes(long offset, char value) {
         putByte(offset, (byte) (value & 0xff));
         putByte(offset + 1, (byte) ((value >> 8) & 0xff));
     }

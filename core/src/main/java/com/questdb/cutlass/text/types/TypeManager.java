@@ -106,6 +106,8 @@ public class TypeManager implements Mutable {
                 return ByteAdapter.INSTANCE;
             case ColumnType.SHORT:
                 return ShortAdapter.INSTANCE;
+            case ColumnType.CHAR:
+                return CharAdapter.INSTANCE;
             case ColumnType.INT:
                 return IntAdapter.INSTANCE;
             case ColumnType.LONG:

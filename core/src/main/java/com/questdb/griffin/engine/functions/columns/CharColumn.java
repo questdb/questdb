@@ -21,55 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.CharFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public interface MapValue extends Record {
+public class CharColumn extends CharFunction implements StatelessFunction {
+    private final int columnIndex;
 
-    long getAddress();
+    public CharColumn(int position, int columnIndex) {
+        super(position);
+        this.columnIndex = columnIndex;
+    }
 
-    boolean getBool(int columnIndex);
-
-    byte getByte(int index);
-
-    long getDate(int columnIndex);
-
-    double getDouble(int index);
-
-    float getFloat(int index);
-
-    char getChar(int index);
-
-    int getInt(int index);
-
-    long getLong(int index);
-
-    short getShort(int index);
-
-    long getTimestamp(int columnIndex);
-
-    boolean isNew();
-
-    void putBool(int columnIndex, boolean value);
-
-    void putByte(int index, byte value);
-
-    void putDate(int index, long value);
-
-    void putDouble(int index, double value);
-
-    void putFloat(int index, float value);
-
-    void putInt(int index, int value);
-
-    void putLong(int index, long value);
-
-    void putShort(int index, short value);
-
-    void putChar(int index, char value);
-
-    void putTimestamp(int columnIndex, long value);
-
-    void setMapRecordHere();
+    @Override
+    public char getChar(Record rec) {
+        return rec.getChar(columnIndex);
+    }
 }

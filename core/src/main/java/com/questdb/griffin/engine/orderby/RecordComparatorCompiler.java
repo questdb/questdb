@@ -269,6 +269,11 @@ public class RecordComparatorCompiler {
                     getterNameA = "getShort";
                     comparatorClass = Short.class;
                     break;
+                case ColumnType.CHAR:
+                    fieldType = "C";
+                    getterNameA = "getChar";
+                    comparatorClass = Character.class;
+                    break;
                 case ColumnType.STRING:
                     getterNameA = "getStr";
                     getterNameB = "getStrB";

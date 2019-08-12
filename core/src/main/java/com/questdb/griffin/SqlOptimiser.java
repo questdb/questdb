@@ -1293,7 +1293,7 @@ class SqlOptimiser {
         int status = engine.getStatus(cairoSecurityContext, path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(tableNamePosition, "table does not exist");
+            throw SqlException.$(tableNamePosition, "table does not exist [name=").put(tableName).put(']');
         }
 
         if (status == TableUtils.TABLE_RESERVED) {

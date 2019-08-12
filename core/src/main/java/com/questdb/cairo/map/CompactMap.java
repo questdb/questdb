@@ -248,6 +248,7 @@ public class CompactMap implements Map {
                     sz = 4;
                     break;
                 case ColumnType.SHORT:
+                case ColumnType.CHAR:
                     sz = 2;
                     break;
                 default:
@@ -417,6 +418,11 @@ public class CompactMap implements Map {
 
         public void putShort(short value) {
             entries.putShort(value);
+        }
+
+        @Override
+        public void putChar(char value) {
+            entries.putChar(value);
         }
 
         public void putStr(CharSequence value) {

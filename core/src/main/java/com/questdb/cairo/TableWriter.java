@@ -1082,6 +1082,9 @@ public class TableWriter implements Closeable {
             case ColumnType.SHORT:
                 nullers.add(() -> mem1.putShort((short) 0));
                 break;
+            case ColumnType.CHAR:
+                nullers.add(() -> mem1.putChar((char) 0));
+                break;
             case ColumnType.STRING:
                 nullers.add(() -> mem2.putLong(mem1.putNullStr()));
                 break;
@@ -2221,6 +2224,11 @@ public class TableWriter implements Closeable {
 
         public void putShort(int index, short value) {
             getPrimaryColumn(index).putShort(value);
+            notNull(index);
+        }
+
+        public void putChar(int index, char value) {
+            getPrimaryColumn(index).putChar(value);
             notNull(index);
         }
 

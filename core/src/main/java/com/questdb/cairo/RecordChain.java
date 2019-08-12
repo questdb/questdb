@@ -72,6 +72,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         this.fixOffset = fixOffset;
     }
 
+    private static long rowToDataOffset(long row) {
+        return row + 8;
+    }
+
     public long beginRecord(long prevOffset) {
         // no next record
         mem.putLong(varAppendOffset, -1);
@@ -199,6 +203,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putShort(value);
     }
 
+    @Override
+    public void putChar(char value) {
+        mem.putChar(value);
+    }
+
     public void putStr(CharSequence value) {
         if (value == null) {
             putNull();
@@ -225,10 +234,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     public void setSymbolTableResolver(RecordCursor resolver) {
         this.symbolTableResolver = resolver;
-    }
-
-    private static long rowToDataOffset(long row) {
-        return row + 8;
     }
 
     private void putNull() {
