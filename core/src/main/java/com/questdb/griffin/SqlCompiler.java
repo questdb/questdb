@@ -123,6 +123,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("REPAIR", this::repairTables);
         keywordBasedExecutors.put("set", this::compileSet);
         keywordBasedExecutors.put("SET", this::compileSet);
+        keywordBasedExecutors.put("drop", this::dropTable);
+        keywordBasedExecutors.put("DROP", this::dropTable);
 
         configureLexer(lexer);
 
@@ -657,6 +659,22 @@ public class SqlCompiler implements Closeable {
             LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
             throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is busy");
         }
+
+        return null;
+    }
+
+    private RecordCursorFactory dropTable(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        expectKeyword(lexer, "table");
+
+        final int tableNamePosition = lexer.getPosition();
+
+        tok = expectToken(lexer, "table name");
+
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
+
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
 
         return null;
     }
