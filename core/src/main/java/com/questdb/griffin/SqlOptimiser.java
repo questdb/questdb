@@ -860,7 +860,7 @@ class SqlOptimiser {
             if (tableName.type == ExpressionNode.FUNCTION) {
                 parseFunctionAndEnumerateColumns(model, executionContext);
             } else {
-                openReaderAndEnumerateColumns(executionContext.getCairoSecurityContext(), model);
+                openReaderAndEnumerateColumns(executionContext, model);
             }
         } else {
             if (model.getNestedModel() != null) {
@@ -1273,7 +1273,7 @@ class SqlOptimiser {
         return nextLiteral(token, 0);
     }
 
-    private void openReaderAndEnumerateColumns(CairoSecurityContext cairoSecurityContext, QueryModel model) throws SqlException {
+    private void openReaderAndEnumerateColumns(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
         final ExpressionNode tableNameNode = model.getTableName();
 
         // table name must not contain quotes by now
@@ -1290,10 +1290,16 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(cairoSecurityContext, path, tableName, lo, hi);
+        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(tableNamePosition, "table does not exist [name=").put(tableName).put(']');
+            try {
+                model.getTableName().type = ExpressionNode.FUNCTION;
+                parseFunctionAndEnumerateColumns(model, executionContext);
+                return;
+            } catch (SqlException e) {
+                throw SqlException.$(tableNamePosition, "table does not exist [name=").put(tableName).put(']');
+            }
         }
 
         if (status == TableUtils.TABLE_RESERVED) {
@@ -1301,7 +1307,7 @@ class SqlOptimiser {
         }
 
         try (TableReader r = engine.getReader(
-                cairoSecurityContext,
+                executionContext.getCairoSecurityContext(),
                 tableLookupSequence.of(tableName, lo, hi - lo),
                 TableUtils.ANY_TABLE_VERSION
         )) {
@@ -1546,11 +1552,8 @@ class SqlOptimiser {
     }
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        Function function = model.getTableNameFunction();
-
-        assert function == null;
-
-        function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
+        assert model.getTableNameFunction() == null;
+        Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }

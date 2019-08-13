@@ -100,6 +100,9 @@ public class RecordCursorPrinter {
             case ColumnType.SHORT:
                 Numbers.append(sink, r.getShort(i));
                 break;
+            case ColumnType.CHAR:
+                sink.put(r.getChar(i));
+                break;
             case ColumnType.LONG:
                 Numbers.append(sink, r.getLong(i));
                 break;

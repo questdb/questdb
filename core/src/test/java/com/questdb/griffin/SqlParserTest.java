@@ -32,6 +32,7 @@ import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
@@ -392,6 +393,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
                 "",

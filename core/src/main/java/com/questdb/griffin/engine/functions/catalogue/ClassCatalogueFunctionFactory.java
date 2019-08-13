@@ -90,6 +90,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
+            path.close();
         }
 
         @Override
@@ -158,12 +159,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public int getInt(int col) {
-                switch (col) {
-                    case 1:
-                        return 1;
-                    default:
-                        return 0;
-                }
+                return col == 1 ? 1 : 0;
             }
         }
     }
