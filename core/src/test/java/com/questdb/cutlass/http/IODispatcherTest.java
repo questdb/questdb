@@ -255,6 +255,11 @@ public class IODispatcherTest {
                 public int getWorkerCount() {
                     return 2;
                 }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
             });
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
@@ -429,6 +434,11 @@ public class IODispatcherTest {
                 public int getWorkerCount() {
                     return 2;
                 }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
             });
 
             try (
@@ -578,6 +588,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 3;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
             try (
@@ -736,6 +751,11 @@ public class IODispatcherTest {
                 public int getWorkerCount() {
                     return 2;
                 }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
             });
 
             try (
@@ -828,6 +848,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
             try (
@@ -983,6 +1008,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
 
@@ -1169,6 +1199,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
             try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)) {
@@ -1358,6 +1393,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
             try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)) {
@@ -2198,6 +2238,11 @@ public class IODispatcherTest {
                 @Override
                 public int getWorkerCount() {
                     return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
                 }
             });
 

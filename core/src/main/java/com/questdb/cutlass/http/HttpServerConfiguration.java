@@ -58,6 +58,8 @@ public interface HttpServerConfiguration {
 
     int getWorkerCount();
 
+    boolean workerHaltOnError();
+
     int[] getWorkerAffinity();
 
     int getSendBufferSize();

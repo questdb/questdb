@@ -364,6 +364,28 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCaseNoWhen() throws SqlException {
+        assertQuery(
+                "select-virtual 'table' kind from (tab)",
+                "    select case a \n" +
+                        "    else 'table'\n" +
+                        "    end kind from tab\n",
+                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseNoWhenBinary() throws SqlException {
+        assertQuery(
+                "select-virtual 2 + 5 kind from (tab)",
+                "    select case a \n" +
+                        "    else 2 + 5\n" +
+                        "    end kind from tab\n",
+                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCaseImpossibleRewrite2() throws SqlException {
         // 'when' is non-constant
         assertQuery(

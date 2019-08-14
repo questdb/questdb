@@ -120,6 +120,7 @@ com.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory
 
 # case conditional statement
 com.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
+com.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
 
 # PostgeSQL catalogue functions
 com.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory

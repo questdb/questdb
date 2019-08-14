@@ -179,4 +179,9 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public boolean isEnabled() {
         return true;
     }
+
+    @Override
+    public boolean workerHaltOnError() {
+        return false;
+    }
 }

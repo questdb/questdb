@@ -100,6 +100,11 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        return getFunction(col).getChar(base);
+    }
+
+    @Override
     public CharSequence getStr(int col) {
         return getFunction(col).getStr(base);
     }

@@ -393,6 +393,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (Chars.isQuoted(node.token)) {
+            if (node.token.length() == 3) {
+                // this is 'x' - char
+                return new CharConstant(node.position, node.token.charAt(1));
+            }
             return new StrConstant(node.position, node.token);
         }
 

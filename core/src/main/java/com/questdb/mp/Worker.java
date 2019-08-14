@@ -44,12 +44,13 @@ public class Worker extends Thread {
     private volatile int running = 0;
     private volatile int fence;
     private final WorkerCleaner cleaner;
+    private final boolean haltOnError;
 
     public Worker(
             ObjHashSet<? extends Job> jobs,
             SOCountDownLatch haltLatch
     ) {
-        this(jobs, haltLatch, -1, null, null);
+        this(jobs, haltLatch, -1, null, null, true);
     }
 
     public Worker(
@@ -57,7 +58,8 @@ public class Worker extends Thread {
             final SOCountDownLatch haltLatch,
             final int affinity,
             final Log log,
-            final WorkerCleaner cleaner
+            final WorkerCleaner cleaner,
+            final boolean haltOnError
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -65,6 +67,7 @@ public class Worker extends Thread {
         this.setName("questdb-worker-" + COUNTER.incrementAndGet());
         this.affinity = affinity;
         this.cleaner = cleaner;
+        this.haltOnError = haltOnError;
     }
 
     public void halt() {
@@ -100,7 +103,18 @@ public class Worker extends Thread {
                     for (int i = 0; i < n; i++) {
                         loadFence();
                         try {
-                            useful |= jobs.get(i).run();
+                            try {
+                                useful |= jobs.get(i).run();
+                            } catch (Throwable e) {
+                                if (haltOnError) {
+                                    throw e;
+                                }
+                                if (log != null) {
+                                    log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
+                                } else {
+                                    e.printStackTrace();
+                                }
+                            }
                         } finally {
                             storeFence();
                         }

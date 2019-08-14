@@ -298,6 +298,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public char getChar(int col) {
+            return mem.getChar(fixedWithColumnOffset(col));
+        }
+
+        @Override
         public CharSequence getStr(int col) {
             long offset = varWidthColumnOffset(col);
             return offset == -1 ? null : mem.getStr(offset);

@@ -24,18 +24,12 @@
 package com.questdb.griffin.engine.functions.catalogue;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cairo.sql.*;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.CursorFunction;
-import com.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import com.questdb.std.Chars;
-import com.questdb.std.Files;
-import com.questdb.std.FilesFacade;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 
@@ -62,24 +56,51 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         return new CursorFunction(
                 position,
-                new GenericRecordCursorFactory(
-                        METADATA,
-                        new ClassCatalogueCursor(configuration),
-                        false
+                new ClassCatalogueCursorFactory(
+                        configuration,
+                        METADATA
                 )
         );
     }
 
-    private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
+    private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {
+
         private final Path path = new Path();
+        private final ClassCatalogueCursor cursor;
+
+        public ClassCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+            super(metadata);
+            this.cursor = new ClassCatalogueCursor(configuration, path);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(path);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean isRandomAccessCursor() {
+            return false;
+        }
+    }
+
+    private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
+        private final Path path;
         private final FilesFacade ff;
         private final ClassCatalogueRecord record = new ClassCatalogueRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private long findFileStruct = 0;
 
-        public ClassCatalogueCursor(CairoConfiguration configuration) {
+        public ClassCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
+            this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
         }
@@ -90,7 +111,6 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
-            path.close();
         }
 
         @Override

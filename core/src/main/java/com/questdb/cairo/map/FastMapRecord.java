@@ -172,6 +172,11 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public char getChar(int columnIndex) {
+        return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+    }
+
+    @Override
     public CharSequence getStr(int columnIndex) {
         assert columnIndex < csA.length;
         return getStr0(columnIndex, Unsafe.arrayGet(csA, columnIndex));

@@ -122,6 +122,14 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        if (col < split) {
+            return master.getChar(col);
+        }
+        return slave.getChar(col - split);
+    }
+
+    @Override
     public CharSequence getStr(int col) {
         if (col < split) {
             return master.getStr(col);

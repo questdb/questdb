@@ -104,6 +104,14 @@ public class OuterJoinRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        if (col < split) {
+            return master.getChar(col);
+        }
+        return activeSlave.getChar(col - split);
+    }
+
+    @Override
     public long getLong(int col) {
         if (col < split) {
             return master.getLong(col);
