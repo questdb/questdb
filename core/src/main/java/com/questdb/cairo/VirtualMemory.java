@@ -415,6 +415,21 @@ public class VirtualMemory implements Closeable {
         return value == null ? putNullStr() : putStr0(value, 0, value.length());
     }
 
+    public final long putStr(char value) {
+        if (value == 0) return putNullStr();
+        else {
+            final long offset = getAppendOffset();
+            putInt(1);
+            if (pageHi - appendPointer < Character.BYTES) {
+                putSplitChar(value);
+            } else {
+                Unsafe.getUnsafe().putChar(appendPointer, value);
+                appendPointer += Character.BYTES;
+            }
+            return offset;
+        }
+    }
+
     public final long putStr(CharSequence value, int pos, int len) {
         if (value == null) {
             return putNullStr();

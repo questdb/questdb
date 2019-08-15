@@ -2198,6 +2198,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putChar(int index, char value) {
+            getPrimaryColumn(index).putChar(value);
+            notNull(index);
+        }
+
         public void putDate(int index, long value) {
             putLong(index, value);
         }
@@ -2227,12 +2232,12 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
-        public void putChar(int index, char value) {
-            getPrimaryColumn(index).putChar(value);
+        public void putStr(int index, CharSequence value) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
             notNull(index);
         }
 
-        public void putStr(int index, CharSequence value) {
+        public void putStr(int index, char value) {
             getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
             notNull(index);
         }

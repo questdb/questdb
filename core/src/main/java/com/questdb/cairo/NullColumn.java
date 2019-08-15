@@ -60,6 +60,11 @@ public class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
+    public long getFd() {
+        return -1;
+    }
+
+    @Override
     public float getFloat(long offset) {
         return Float.NaN;
     }
@@ -90,17 +95,17 @@ public class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
+    public char getChar(long offset) {
+        return 0;
+    }
+
+    @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
     }
 
     @Override
     public void grow(long size) {
-    }
-
-    @Override
-    public long getFd() {
-        return -1;
     }
 
     @Override

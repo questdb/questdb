@@ -50,11 +50,18 @@ public class RndStringListFunctionFactory implements FunctionFactory {
 
     static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
-            Function f = args.getQuick(i);
-            if (f.getType() != ColumnType.STRING || !f.isConstant()) {
-                throw SqlException.$(f.getPosition(), "STRING constant expected");
+            final Function f = args.getQuick(i);
+            if (f.isConstant()) {
+                if (f.getType() == ColumnType.STRING) {
+                    symbols.add(Chars.toString(f.getStr(null)));
+                    continue;
+                }
+                if (f.getType() == ColumnType.CHAR) {
+                    symbols.add(new java.lang.String(new char[]{f.getChar(null)}));
+                    continue;
+                }
             }
-            symbols.add(Chars.toString(f.getStr(null)));
+            throw SqlException.$(f.getPosition(), "STRING constant expected");
         }
     }
 

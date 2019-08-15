@@ -52,17 +52,21 @@ public class InFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 1; i < n; i++) {
-
             Function func = args.getQuick(i);
-            if (func.getType() != ColumnType.STRING) {
-                throw SqlException.$(func.getPosition(), "STRING constant expected");
+            switch (func.getType()) {
+                case ColumnType.STRING:
+                    CharSequence value = func.getStr(null);
+                    if (value == null) {
+                        throw SqlException.$(func.getPosition(), "NULL is not allowed");
+                    }
+                    set.add(value.toString());
+                    break;
+                case ColumnType.CHAR:
+                    set.add(new String(new char[]{func.getChar(null)}));
+                    break;
+                default:
+                    throw SqlException.$(func.getPosition(), "STRING constant expected");
             }
-            CharSequence value = func.getStr(null);
-            if (value == null) {
-                throw SqlException.$(func.getPosition(), "NULL is not allowed");
-            }
-
-            set.add(value.toString());
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {

@@ -35,6 +35,43 @@ import org.junit.Test;
 public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testLeakAfterIncompleteFetch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            sink.clear();
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_class")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n", sink);
+
+                    compiler.compile("create table xyz (a int)");
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+
+                    try (Path path = new Path()) {
+                        path.of(configuration.getRoot());
+                        path.concat("test").$();
+                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
+                    }
+
+                    compiler.compile("create table abc (b double)");
+
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+
+                    compiler.compile("drop table abc;");
+
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
@@ -58,7 +95,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table ABC (b double)");
+                    compiler.compile("create table abc (b double)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -67,7 +104,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true);
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n" +
-                            "ABC\t1\tt\t0\t0\n" +
+                            "abc\t1\tt\t0\t0\n" +
                             "xyz\t1\tt\t0\t0\n", sink);
 
                     compiler.compile("drop table abc;");
@@ -81,44 +118,6 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
                 } finally {
                     cursor.close();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLeakAfterIncompleteFetch() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_class")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n", sink);
-
-                    compiler.compile("create table xyz (a int)");
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
-
-                    cursor.toTop();
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertFalse(cursor.hasNext());
-
-                    try (Path path = new Path()) {
-                        path.of(configuration.getRoot());
-                        path.concat("test").$();
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
-                    }
-
-                    compiler.compile("create table ABC (b double)");
-
-                    cursor.toTop();
-                    Assert.assertTrue(cursor.hasNext());
-
-                    compiler.compile("drop table abc;");
-
-                    cursor.toTop();
-                    Assert.assertTrue(cursor.hasNext());
-
                 }
             }
         });

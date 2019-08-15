@@ -58,9 +58,13 @@ public class Rnd {
         return bytes;
     }
 
+    public char nextChar() {
+        return (char) (nextPositiveInt() % 25 + 66);
+    }
+
     public void nextChars(final long address, int len) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + i * 2, (char) (nextPositiveInt() % 25 + 66));
+            Unsafe.getUnsafe().putChar(address + i * 2, nextChar());
         }
     }
 

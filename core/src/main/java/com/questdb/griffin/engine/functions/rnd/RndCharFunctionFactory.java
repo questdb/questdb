@@ -21,46 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.rnd;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import com.questdb.griffin.engine.functions.CharFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
+import com.questdb.std.ObjList;
+import com.questdb.std.Rnd;
 
-public class InFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testBadConstant() {
-        assertFailure(12, "STRING constant expected", "xv", "an", 10);
-    }
+public class RndCharFunctionFactory implements FunctionFactory {
 
-    @Test
-    public void testNoMatch() throws SqlException {
-        call("xc", "ae", "bn").andAssert(false);
-    }
-
-    @Test
-    public void testNullConstant() {
-        assertFailure(12, "NULL is not allowed", "xp", "aq", null);
-    }
-
-    @Test
-    public void testTwoArgs() throws SqlException {
-        call("xy", "xy", "yz").andAssert(true);
-    }
-
-    @Test
-    public void testTwoArgsOneChar() throws SqlException {
-        call("xy", "xy", "yz", "l").andAssert(true);
-    }
-
-    @Test
-    public void testZeroArgs() throws SqlException {
-        call("xx").andAssert(false);
+    @Override
+    public String getSignature() {
+        return "rnd_char()";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new InFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new RndFunction(position, configuration);
+    }
+
+    private static class RndFunction extends CharFunction implements StatelessFunction {
+
+        private final Rnd rnd;
+
+        public RndFunction(int position, CairoConfiguration configuration) {
+            super(position);
+            this.rnd = SharedRandom.getRandom(configuration);
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return rnd.nextChar();
+        }
     }
 }

@@ -127,6 +127,15 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        long index = getIndex(col);
+        if (index < 0) {
+            return 0;
+        }
+        return colA(col).getChar(index * 2);
+    }
+
+    @Override
     public CharSequence getStrB(int col) {
         long index = getIndex(col);
         if (index < 0) {
