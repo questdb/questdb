@@ -32,24 +32,15 @@ import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.std.*;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.std.str.StringSink;
 
 public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
 
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("relonwer", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
-        METADATA = metadata;
-    }
-
     @Override
     public String getSignature() {
-        return "pg_class()";
+        return "pg_catalog.pg_class()";
     }
 
     @Override
@@ -136,6 +127,14 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public void toTop() {
+            if (findFileStruct != 0) {
+                ff.findClose(findFileStruct);
+                findFileStruct = 0;
+            }
+        }
+
         private boolean next0() {
             do {
                 final long pname = ff.findName(findFileStruct);
@@ -158,18 +157,12 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        @Override
-        public void toTop() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
-        }
-
         private class ClassCatalogueRecord implements Record {
+            private final StringSink utf8Sink = new StringSink();
+
             @Override
-            public CharSequence getStr(int col) {
-                return nativeLPSZ.of(ff.findName(findFileStruct));
+            public int getInt(int col) {
+                return col == 1 ? 1 : 0;
             }
 
             @Override
@@ -178,9 +171,24 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public int getInt(int col) {
-                return col == 1 ? 1 : 0;
+            public CharSequence getStr(int col) {
+                utf8Sink.clear();
+                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8Sink)) {
+                    return utf8Sink;
+                } else {
+                    return null;
+                }
             }
         }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        METADATA = metadata;
     }
 }

@@ -594,26 +594,99 @@ public final class Chars {
         return utf8Decode4Bytes(lo, b, hi, sink);
     }
 
+    public static int utf8DecodeMultiByteZ(long lo, int b, CharSink sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8Decode2BytesZ(lo, b, sink);
+        }
+
+        if (b >> 4 == -2) {
+            return utf8Decode3BytesZ(lo, b, sink);
+        }
+
+        return utf8Decode4BytesZ(lo, b, sink);
+    }
+
+    public static boolean utf8DecodeZ(long lo, CharSink sink) {
+        long p = lo;
+
+        while (true) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+
+            if (b == 0) {
+                break;
+            }
+
+            if (b < 0) {
+                int n = utf8DecodeMultiByteZ(p, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return false;
+                }
+                p += n;
+            } else {
+                sink.put((char) b);
+                ++p;
+            }
+        }
+        return true;
+    }
+
     private static int utf8error() {
         return -1;
     }
 
     private static int utf8Decode4Bytes(long lo, int b, long hi, CharSink sink) {
+        if (b >> 3 != -2 || hi - lo < 4) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+
+        if (isMalformed4(b2, b3, b4)) {
+            return utf8error();
+        }
+
+        final int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
+        if (Character.isSupplementaryCodePoint(codePoint)) {
+            sink.put(Character.highSurrogate(codePoint));
+            sink.put(Character.lowSurrogate(codePoint));
+            return 4;
+        }
+
+        return utf8error();
+    }
+
+    private static int utf8Decode4BytesZ(long lo, int b, CharSink sink) {
         if (b >> 3 != -2) {
             return utf8error();
         }
 
-        if (hi - lo > 3) {
-            byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-            byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-            byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (b2 == 0) {
+            return utf8error();
+        }
 
-            int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
-            if (!isMalformed4(b2, b3, b4) && Character.isSupplementaryCodePoint(codePoint)) {
-                sink.put(Character.highSurrogate(codePoint));
-                sink.put(Character.lowSurrogate(codePoint));
-                return 4;
-            }
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        if (b3 == 0) {
+            return utf8error();
+        }
+
+        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        if (b4 == 0) {
+            return utf8error();
+        }
+
+        if (isMalformed4(b2, b3, b4)) {
+            return utf8error();
+        }
+
+        final int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
+        if (Character.isSupplementaryCodePoint(codePoint)) {
+            sink.put(Character.highSurrogate(codePoint));
+            sink.put(Character.lowSurrogate(codePoint));
+            return 4;
         }
         return utf8error();
     }
@@ -639,12 +712,49 @@ public final class Chars {
         return 3;
     }
 
+    private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (b2 == 0) {
+            return utf8error();
+        }
+
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        if (b3 == 0) {
+            return utf8error();
+        }
+
+        if (isMalformed3(b1, b2, b3)) {
+            return utf8error();
+        }
+
+        char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+        if (Character.isSurrogate(c)) {
+            return utf8error();
+        }
+
+        sink.put(c);
+        return 3;
+    }
+
     private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSink sink) {
         if (hi - lo < 2) {
             return utf8error();
         }
 
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (isNotContinuation(b2)) {
+            return utf8error();
+        }
+
+        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
+        return 2;
+    }
+
+    private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (b2 == 0) {
+            return utf8error();
+        }
         if (isNotContinuation(b2)) {
             return utf8error();
         }

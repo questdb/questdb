@@ -32,7 +32,6 @@ import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
@@ -415,10 +414,34 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "",
+                "select-virtual" +
+                        " Schema," +
+                        " Name," +
+                        " switch(c.relkind," +
+                        "'r','table'," +
+                        "'v','view'," +
+                        "'m','materialized view'," +
+                        "'i','index'," +
+                        "'S','sequence'," +
+                        "'s','special'," +
+                        "'f','foreign table'," +
+                        "'p','table'," +
+                        "'I','index'" +
+                        ") Type," +
+                        " pg_catalog.pg_get_userbyid(relowner) Owner" +
+                        " from (" +
+                        "select-choose" +
+                        " n.nspname Schema," +
+                        " c.relname Name," +
+                        " c.relowner relowner" +
+                        " from (" +
+                        "pg_catalog.pg_class() c" +
+                        " join (pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace" +
+                        " where relkind in ('r','p','v','m','S','f','')" +
+                        " and pg_catalog.pg_table_is_visible(oid))" +
+                        ") order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +

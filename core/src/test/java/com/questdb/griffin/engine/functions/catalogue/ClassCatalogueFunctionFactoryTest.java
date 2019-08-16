@@ -38,10 +38,10 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testLeakAfterIncompleteFetch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_class")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
 
                     compiler.compile("create table xyz (a int)");
                     engine.releaseAllReaders();
@@ -75,18 +75,18 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_class()")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class()")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
 
                     compiler.compile("create table xyz (a int)");
 
                     cursor.toTop();
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n" +
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
                             "xyz\t1\tt\t0\t0\n", sink);
 
                     try (Path path = new Path()) {
@@ -95,7 +95,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table abc (b double)");
+                    compiler.compile("create table автомобилей (b double)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -103,17 +103,17 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
 
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n" +
-                            "abc\t1\tt\t0\t0\n" +
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                            "автомобилей\t1\tt\t0\t0\n" +
                             "xyz\t1\tt\t0\t0\n", sink);
 
-                    compiler.compile("drop table abc;");
+                    compiler.compile("drop table автомобилей;");
 
                     cursor.toTop();
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
 
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelonwer\toid\n" +
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
                             "xyz\t1\tt\t0\t0\n", sink);
 
                 } finally {
