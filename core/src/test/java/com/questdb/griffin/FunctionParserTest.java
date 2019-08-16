@@ -27,7 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.*;
-import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
+import com.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import com.questdb.griffin.engine.functions.constants.*;
@@ -209,7 +209,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testConstVarArgFunction() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
         FunctionParser functionParser = createFunctionParser();
@@ -968,7 +968,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testPassColumnToConstVarArgFunction() {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
@@ -1128,7 +1128,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testVarArgFunction() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
@@ -1148,7 +1148,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testVarArgFunctionNoArg() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));

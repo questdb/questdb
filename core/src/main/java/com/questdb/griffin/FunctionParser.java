@@ -50,18 +50,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
-
-    static {
-        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
-            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
-        }
-
-//        invalidFunctionNameChars.add('.');
-        invalidFunctionNameChars.add(' ');
-        invalidFunctionNameChars.add('\"');
-        invalidFunctionNameChars.add('\'');
-    }
-
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -73,7 +61,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private SqlCodeGenerator sqlCodeGenerator;
     private int bindVariableIndex = 0;
     private SqlExecutionContext sqlExecutionContext;
-
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
@@ -91,7 +78,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case 'E':
                 sigArgType = ColumnType.SHORT;
                 break;
-            case 'Q':
+            case 'A':
                 sigArgType = ColumnType.CHAR;
                 break;
             case 'F':
@@ -176,24 +163,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return openBraceIndex;
-    }
-
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put(message);
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        return ex;
     }
 
     @Override
@@ -328,6 +297,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
+    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put(message);
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
     private Function checkAndCreateFunction(FunctionFactory factory, ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         Function function;
         try {
@@ -396,6 +383,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             if (node.token.length() == 3) {
                 // this is 'x' - char
                 return new CharConstant(node.position, node.token.charAt(1));
+            }
+
+            if (node.token.length() == 2) {
+                // empty
+                return new CharConstant(node.position, (char) 0);
             }
             return new StrConstant(node.position, node.token);
         }
@@ -728,5 +720,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 groupByFunctionNames.add(name);
             }
         }
+    }
+
+    static {
+        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
+            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        }
+
+//        invalidFunctionNameChars.add('.');
+        invalidFunctionNameChars.add(' ');
+        invalidFunctionNameChars.add('\"');
+        invalidFunctionNameChars.add('\'');
     }
 }

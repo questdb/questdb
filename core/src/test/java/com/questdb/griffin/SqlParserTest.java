@@ -3992,7 +3992,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectFromNonCursorFunction() {
-        assertSyntaxError("select * from length('')", 14, "function must return CURSOR");
+        assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
 
     @Test
