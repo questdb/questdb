@@ -21,25 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.functions.catalogue;
 
-import com.questdb.griffin.DefaultSqlExecutionContext;
-import com.questdb.griffin.SqlExecutionContext;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.functions.constants.StrConstant;
+import com.questdb.std.ObjList;
 
-import java.io.Closeable;
-
-public interface RecordCursorFactory extends Closeable {
+public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
     @Override
-    default void close() {
+    public String getSignature() {
+        return "pg_catalog.pg_get_userbyid(I)";
     }
 
-    default RecordCursor getCursor() {
-        return getCursor(DefaultSqlExecutionContext.INSTANCE);
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new StrConstant(position, "public");
     }
-
-    RecordCursor getCursor(SqlExecutionContext executionContext);
-
-    RecordMetadata getMetadata();
-
-    boolean isRandomAccessCursor();
 }

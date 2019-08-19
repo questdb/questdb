@@ -43,7 +43,7 @@ public final class OperatorExpression {
         add(new OperatorExpression(">", 6, true, BINARY));
         add(new OperatorExpression(">=", 6, true, BINARY));
         add(new OperatorExpression("=", 7, true, BINARY));
-        add(new OperatorExpression("~", 7, true, BINARY));
+        add(new OperatorExpression("~=", 7, true, BINARY));
         add(new OperatorExpression("!=", 7, true, BINARY));
         add(new OperatorExpression("<>", 7, true, BINARY));
         add(new OperatorExpression("!~", 7, true, BINARY));

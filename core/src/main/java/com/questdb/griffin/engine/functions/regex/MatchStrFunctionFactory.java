@@ -21,68 +21,62 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.regex;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.StatelessFunction;
-import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.griffin.engine.functions.regex.impl.Matcher;
+import com.questdb.griffin.engine.functions.regex.impl.Pattern;
+import com.questdb.griffin.engine.functions.regex.impl.PatternSyntaxException;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndStrFunctionFactory implements FunctionFactory {
-
+public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_str(iii)";
+        return "~=(Ss)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        Function value = args.getQuick(0);
+        CharSequence regex = args.getQuick(1).getStr(null);
 
-        int lo = args.getQuick(0).getInt(null);
-        int hi = args.getQuick(1).getInt(null);
-        int nullRate = args.getQuick(2).getInt(null);
-
-        if (nullRate < 0) {
-            throw SqlException.position(args.getQuick(2).getPosition()).put("rate must be positive");
+        if (regex == null) {
+            throw SqlException.$(args.getQuick(1).getPosition(), "NULL regex");
         }
 
-        if (lo < hi && lo > 0) {
-            return new RndStrFunction(position, lo, hi, nullRate + 1, configuration);
-        } else if (lo == hi) {
-            return new FixedFunction(position, lo, nullRate + 1, configuration);
+        try {
+            Matcher matcher = Pattern.compile(regex.toString()).matcher("");
+            return new MatchFunction(position, value, matcher);
+        } catch (PatternSyntaxException e) {
+            throw SqlException.$(args.getQuick(1).getPosition() + e.getIndex() + 1, e.getMessage());
         }
-
-        throw SqlException.position(position).put("invalid range");
     }
 
-    private static class FixedFunction extends StrFunction implements StatelessFunction {
-        private final int len;
-        private final int nullRate;
-        private final Rnd rnd;
+    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
+        private final Function value;
+        private final Matcher matcher;
 
-        public FixedFunction(int position, int len, int nullRate, CairoConfiguration configuration) {
+        public MatchFunction(int position, Function value, Matcher matcher) {
             super(position);
-            this.len = len;
-            this.rnd = SharedRandom.getRandom(configuration);
-            this.nullRate = nullRate;
+            this.value = value;
+            this.matcher = matcher;
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            if ((rnd.nextInt() % nullRate) == 1) {
-                return null;
-            }
-            return rnd.nextChars(len);
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).find();
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+        public Function getArg() {
+            return value;
         }
     }
 }

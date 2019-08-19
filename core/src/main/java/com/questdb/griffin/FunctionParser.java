@@ -322,6 +322,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {
+            e.printStackTrace();
             throw SqlException.position(position).put("exception in function factory");
         }
 

@@ -827,22 +827,42 @@ class SqlOptimiser {
 
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-
-                if (node.rhs != null) {
-                    ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
-                    if (node.rhs == n) {
-                        this.sqlNodeStack.push(node.rhs);
-                    } else {
-                        node.rhs = n;
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
+                        if (node.rhs == n) {
+                            this.sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
                     }
-                }
 
-                ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
-                if (n == node.lhs) {
-                    node = node.lhs;
+                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
                 } else {
-                    node.lhs = n;
-                    node = null;
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel);
+                        if (e == n) {
+                            this.sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel);
+                    if (e == n) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, n);
+                        node = null;
+                    }
                 }
             } else {
                 node = this.sqlNodeStack.poll();

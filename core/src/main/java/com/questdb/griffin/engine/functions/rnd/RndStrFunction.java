@@ -21,25 +21,38 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.griffin.DefaultSqlExecutionContext;
-import com.questdb.griffin.SqlExecutionContext;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.StatelessFunction;
+import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.std.Rnd;
 
-import java.io.Closeable;
+class RndStrFunction extends StrFunction implements StatelessFunction {
+    private final int lo;
+    private final int range;
+    private final int nullRate;
+    private final Rnd rnd;
 
-public interface RecordCursorFactory extends Closeable {
+    public RndStrFunction(int position, int lo, int hi, int nullRate, CairoConfiguration configuration) {
+        super(position);
+        this.lo = lo;
+        this.range = hi - lo + 1;
+        this.rnd = SharedRandom.getRandom(configuration);
+        this.nullRate = nullRate;
+    }
+
     @Override
-    default void close() {
+    public CharSequence getStr(Record rec) {
+        if ((rnd.nextInt() % nullRate) == 1) {
+            return null;
+        }
+        return rnd.nextChars(lo + rnd.nextPositiveInt() % range);
     }
 
-    default RecordCursor getCursor() {
-        return getCursor(DefaultSqlExecutionContext.INSTANCE);
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return getStr(rec);
     }
-
-    RecordCursor getCursor(SqlExecutionContext executionContext);
-
-    RecordMetadata getMetadata();
-
-    boolean isRandomAccessCursor();
 }

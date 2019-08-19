@@ -85,7 +85,7 @@ public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(int col) {
-            return 0;
+            return 1;
         }
 
         @Override

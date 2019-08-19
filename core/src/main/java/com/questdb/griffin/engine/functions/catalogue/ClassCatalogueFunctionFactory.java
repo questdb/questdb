@@ -158,7 +158,8 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
         }
 
         private class ClassCatalogueRecord implements Record {
-            private final StringSink utf8Sink = new StringSink();
+            private final StringSink utf8SinkA = new StringSink();
+            private final StringSink utf8SinkB = new StringSink();
 
             @Override
             public int getInt(int col) {
@@ -167,14 +168,24 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public char getChar(int col) {
-                return 't';
+                return 'r';
             }
 
             @Override
             public CharSequence getStr(int col) {
-                utf8Sink.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8Sink)) {
-                    return utf8Sink;
+                utf8SinkA.clear();
+                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkA)) {
+                    return utf8SinkA;
+                } else {
+                    return null;
+                }
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                utf8SinkB.clear();
+                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkB)) {
+                    return utf8SinkB;
                 } else {
                     return null;
                 }

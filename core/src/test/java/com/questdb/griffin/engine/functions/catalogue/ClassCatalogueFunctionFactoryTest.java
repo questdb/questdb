@@ -75,7 +75,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class()")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true);
@@ -83,11 +83,13 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
                     compiler.compile("create table xyz (a int)");
 
-                    cursor.toTop();
+                    cursor.close();
+                    cursor = factory.getCursor(sqlExecutionContext);
+
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "xyz\t1\tt\t0\t0\n", sink);
+                            "xyz\t1\tr\t0\t0\n", sink);
 
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot());
@@ -104,17 +106,20 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true);
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "автомобилей\t1\tt\t0\t0\n" +
-                            "xyz\t1\tt\t0\t0\n", sink);
+                                    "xyz\t1\tr\t0\t0\n" +
+                                    "автомобилей\t1\tr\t0\t0\n"
+                            , sink);
 
                     compiler.compile("drop table автомобилей;");
 
-                    cursor.toTop();
+                    cursor.close();
+                    cursor = factory.getCursor(sqlExecutionContext);
+
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "xyz\t1\tt\t0\t0\n", sink);
+                            "xyz\t1\tr\t0\t0\n", sink);
 
                 } finally {
                     cursor.close();
