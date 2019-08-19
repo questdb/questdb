@@ -32,6 +32,7 @@ import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
@@ -465,6 +466,21 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
                         "ORDER BY 1, 2"
         );
+    }
+
+    @Test
+    @Ignore
+    public void testPGColumnListQuery() throws SqlException {
+        assertQuery(
+                "",
+                "SELECT c.oid,\n" +
+                        "  n.nspname,\n" +
+                        "  c.relname\n" +
+                        "FROM pg_catalog.pg_class c\n" +
+                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
+                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
+                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
+                        "ORDER BY 2, 3;");
     }
 
     @Test
