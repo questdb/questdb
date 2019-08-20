@@ -37,20 +37,6 @@ import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
 
-    @Test
-    public void testAliasWithSpace() throws Exception {
-        assertQuery("select-choose x from (x 'b a' where x > 1)",
-                "x 'b a' where x > 1",
-                modelOf("x").col("x", ColumnType.INT));
-    }
-
-    @Test
-    public void testAliasWithSpaceDoubleQuote() throws Exception {
-        assertQuery("select-choose x from (x 'b a' where x > 1)",
-                "x \"b a\" where x > 1",
-                modelOf("x").col("x", ColumnType.INT));
-    }
-
     private static void assertSyntaxError(
             SqlCompiler compiler,
             CairoEngine engine,
@@ -76,6 +62,24 @@ public class SqlParserTest extends AbstractGriffinTest {
                 tableModel.close();
             }
         }
+    }
+
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
+    }
+
+    @Test
+    public void testAliasWithSpace() throws Exception {
+        assertQuery("select-choose x from (x 'b a' where x > 1)",
+                "x 'b a' where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testAliasWithSpaceDoubleQuote() throws Exception {
+        assertQuery("select-choose x from (x 'b a' where x > 1)",
+                "x \"b a\" where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
@@ -492,6 +496,38 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
+    public void testPGColumnListQuery() throws SqlException {
+        assertQuery(
+                "",
+                "SELECT c.oid,\n" +
+                        "  n.nspname,\n" +
+                        "  c.relname\n" +
+                        "FROM pg_catalog.pg_class c\n" +
+                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
+                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
+                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
+                        "ORDER BY 2, 3;");
+    }
+
+    @Test
+    public void testOrderByIssue1() throws SqlException {
+        assertQuery(
+                "select-choose to_date from (select-virtual to_date(timestamp) to_date, timestamp from (select-choose timestamp from (blocks.csv)) order by timestamp)",
+                "select to_date(timestamp) from 'blocks.csv' order by timestamp",
+                modelOf("blocks.csv").col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testRegexOnFunction() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-virtual rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~= '^W')",
+                "(select rnd_str() a from long_sequence(100)) where a ~= '^W'"
+        );
+    }
+
+    @Test
     public void testCaseToSwitchExpression2() throws SqlException {
         // this test has inverted '=' arguments but should still be rewritten to 'switch'
         assertQuery(
@@ -523,7 +559,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " rnd_bin" +
                         " from " +
                         "(" +
-                        "(" +
                         "select-virtual" +
                         " rnd_int() rnd_int," +
                         " rnd_int(0,30,2) rnd_int1," +
@@ -542,7 +577,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " rnd_byte(2,50) rnd_byte," +
                         " rnd_bin(10,20,2) rnd_bin" +
                         " from (long_sequence(20))" +
-                        ") _xQdbA1" +
                         ")",
                 "select * from (select" +
                         " rnd_int()," +
@@ -2264,24 +2298,9 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoin2() throws Exception {
-        assertQuery(
-                "select-choose x from (((" +
-                        "select-choose" +
-                        " tab2.x x" +
-                        " from (tab join tab2 on tab2.x = tab.x)) t" +
-                        " join tab3 on tab3.x = t.x) _xQdbA1)",
-                "select x from ((select tab2.x from tab join tab2 on tab.x=tab2.x) t join tab3 on tab3.x = t.x)",
-                modelOf("tab").col("x", ColumnType.INT),
-                modelOf("tab2").col("x", ColumnType.INT),
-                modelOf("tab3").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testJoin3() throws Exception {
         assertQuery(
-                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where f(tab3.x,tab2.x) = tab.x)) _xQdbA1)",
+                "select-choose x from (select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where f(tab3.x,tab2.x) = tab.x))",
                 "select x from (select tab2.x from tab join tab2 on tab.x=tab2.x join tab3 on f(tab3.x,tab2.x) = tab.x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
@@ -3642,7 +3661,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnNonSelectedColumn2() throws SqlException {
         assertQuery(
-                "select-choose column from (select-virtual 2 * y + x column, x from (select-choose 2 * y + x column, x from (tab)) order by x)",
+                "select-choose column from (select-virtual 2 * y + x column, x from (select-choose x, y from (tab)) order by x)",
                 "select 2*y+x from tab order by x",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
@@ -3656,19 +3675,25 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-choose" +
                         " column," +
                         " column1" +
-                        " from (" +
-                        "select-virtual" +
-                        " 2 * y + x column," +
-                        " 3 / x column1, x" +
-                        " from (" +
-                        "select-choose" +
-                        " 2 * y + x column," +
-                        " 3 / x column1," +
-                        " x from (tab)) order by x)",
+                        " from (select-virtual 2 * y + x column, 3 / x column1, x from (select-choose x, y from (tab)) order by x)",
                 "select 2*y+x, 3/x from tab order by x",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
                         .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectColumnsFromJoinSubQueries() throws SqlException {
+        assertQuery("select-virtual addr, sum_out - sum_in total from ((select-group-by addr, count() count, sum(value) sum_out from (select-choose fromAddress addr, value from (transactions.csv))) a join (select-group-by toAddress, count() count, sum(value) sum_in from (transactions.csv)) b on b.toAddress = a.addr)",
+                "select addr, sum_out - sum_in total from (\n" +
+                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
+                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
+                        ")",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.LONG)
+                        .col("toAddress", ColumnType.LONG)
+                        .col("value", ColumnType.LONG)
         );
     }
 
@@ -4710,10 +4735,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab").col("a", ColumnType.INT)
 
         );
-    }
-
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
     }
 
     @Test

@@ -569,7 +569,20 @@ public final class SqlParser {
         }
         QueryModel nestedModel = queryModelPool.next();
         parseFromClause(lexer, nestedModel, model);
-        model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        if (
+                nestedModel.getColumns().size() == 0
+                        && nestedModel.getNestedModel() != null
+                        && nestedModel.getWhereClause() == null
+                        && nestedModel.getSampleBy() == null
+                        && nestedModel.getJoinModels().size() == 1
+                        && nestedModel.getTimestamp() == null
+                        && nestedModel.getOrderBy().size() == 0
+                        && nestedModel.getAlias() == null
+        ) {
+            nestedModel = nestedModel.getNestedModel();
+        } else {
+            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        }
         model.setNestedModel(nestedModel);
 
         return model;

@@ -100,6 +100,7 @@ com.questdb.griffin.engine.functions.rnd.RndCharFunctionFactory
 com.questdb.griffin.engine.functions.date.SysdateFunctionFactory
 com.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
 com.questdb.griffin.engine.functions.str.ToCharTimestampFunctionFactory
+com.questdb.griffin.engine.functions.cast.SecondsToTimestampFunctionFactory
 
 com.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 com.questdb.griffin.engine.functions.str.ToCharDateFunctionFactory

@@ -166,7 +166,12 @@ public class TextLexer implements Closeable, Mutable {
     private boolean growRollBuf(int requiredLength) {
         if (requiredLength > lineRollBufLimit) {
             // todo: log content of roll buffer
-            LOG.info().$("too long [table=").$(tableName).$(", line=").$(lineCount).$(']').$();
+            LOG.info()
+                    .$("too long [table=").$(tableName)
+                    .$(", line=").$(lineCount)
+                    .$(", requiredLen=").$(requiredLength)
+                    .$(", rollLimit=").$(lineRollBufLimit)
+                    .$(']').$();
             errorCount++;
             rollBufferUnusable = true;
             return false;

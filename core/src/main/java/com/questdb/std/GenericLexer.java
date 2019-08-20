@@ -31,6 +31,14 @@ import java.util.Comparator;
 public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
+
+    static {
+        WHITESPACE.add(" ");
+        WHITESPACE.add("\t");
+        WHITESPACE.add("\n");
+        WHITESPACE.add("\r");
+    }
+
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool;
@@ -71,6 +79,34 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
+    }
+
+    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
+        final int index = symbols.keyIndex(c);
+        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
+    }
+
+    @Nullable
+    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
+        final ObjList<CharSequence> l = symbols.valueAt(index);
+        for (int i = 0, sz = l.size(); i < sz; i++) {
+            CharSequence txt = l.getQuick(i);
+            int n = txt.length();
+            boolean match = (n - 2) < (_len - _pos);
+            if (match) {
+                for (int k = 1; k < n; k++) {
+                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
+                        match = false;
+                        break;
+                    }
+                }
+            }
+
+            if (match) {
+                return txt;
+            }
+        }
+        return null;
     }
 
     public final void defineSymbol(String token) {
@@ -140,13 +176,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             char c = content.charAt(_pos++);
             CharSequence token;
             switch (term) {
-                case 1:
-                    if ((token = token(c)) != null) {
-                        return last = token;
-                    } else {
-                        _hi++;
-                    }
-                    break;
                 case 0:
                     switch (c) {
                         case '\'':
@@ -164,7 +193,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                             } else {
                                 _hi++;
                             }
-                            term = 1;
                             break;
                     }
                     break;
@@ -229,34 +257,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void unparse() {
         unparsed = last;
-    }
-
-    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
-        final int index = symbols.keyIndex(c);
-        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
-    }
-
-    @Nullable
-    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
-        final ObjList<CharSequence> l = symbols.valueAt(index);
-        for (int i = 0, sz = l.size(); i < sz; i++) {
-            CharSequence txt = l.getQuick(i);
-            int n = txt.length();
-            boolean match = (n - 2) < (_len - _pos);
-            if (match) {
-                for (int k = 1; k < n; k++) {
-                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
-                        match = false;
-                        break;
-                    }
-                }
-            }
-
-            if (match) {
-                return txt;
-            }
-        }
-        return null;
     }
 
     private CharSequence token(char c) {
@@ -332,12 +332,5 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             assert that.lo < that.hi;
             return that;
         }
-    }
-
-    static {
-        WHITESPACE.add(" ");
-        WHITESPACE.add("\t");
-        WHITESPACE.add("\n");
-        WHITESPACE.add("\r");
     }
 }

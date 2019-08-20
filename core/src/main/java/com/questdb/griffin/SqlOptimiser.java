@@ -57,6 +57,32 @@ class SqlOptimiser {
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+
+    static {
+        notOps.put("not", NOT_OP_NOT);
+        notOps.put("and", NOT_OP_AND);
+        notOps.put("or", NOT_OP_OR);
+        notOps.put(">", NOT_OP_GREATER);
+        notOps.put(">=", NOT_OP_GREATER_EQ);
+        notOps.put("<", NOT_OP_LESS);
+        notOps.put("<=", NOT_OP_LESS_EQ);
+        notOps.put("=", NOT_OP_EQUAL);
+        notOps.put("!=", NOT_OP_NOT_EQ);
+
+        joinBarriers = new IntHashSet();
+        joinBarriers.add(QueryModel.JOIN_OUTER);
+        joinBarriers.add(QueryModel.JOIN_ASOF);
+        joinBarriers.add(QueryModel.JOIN_SPLICE);
+
+        nullConstants.add("null");
+        nullConstants.add("NaN");
+
+        joinOps.put("=", JOIN_OP_EQUAL);
+        joinOps.put("and", JOIN_OP_AND);
+        joinOps.put("or", JOIN_OP_OR);
+        joinOps.put("~", JOIN_OP_REGEX);
+    }
+
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -160,7 +186,11 @@ class SqlOptimiser {
     /*
      * Uses validating model to determine if column name exists and non-ambiguous in case of using joins.
      */
-    private void addColumnToTranslatingModel(QueryColumn column, QueryModel translatingModel, QueryModel validatingModel) throws SqlException {
+    private void addColumnToTranslatingModel(
+            QueryColumn column,
+            QueryModel translatingModel,
+            QueryModel validatingModel
+    ) throws SqlException {
         if (validatingModel != null) {
             CharSequence refColumn = column.getAst().token;
             final int dot = Chars.indexOf(refColumn, '.');
@@ -624,7 +654,10 @@ class SqlOptimiser {
                     queryColumnPool.next().of(
                             alias,
                             columnAst
-                    ), translatingModel, validatingModel);
+                    ),
+                    translatingModel,
+                    validatingModel
+            );
 
             final QueryColumn translatedColumn = nextColumn(alias);
 
@@ -1729,8 +1762,12 @@ class SqlOptimiser {
         return node;
     }
 
-    private ExpressionNode replaceLiteral(@Transient ExpressionNode node, QueryModel translatingModel, QueryModel
-            innerModel, QueryModel validatingModel) throws SqlException {
+    private ExpressionNode replaceLiteral(
+            @Transient ExpressionNode node,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel validatingModel
+    ) throws SqlException {
         if (node != null && node.type == ExpressionNode.LITERAL) {
             final CharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnToAliasMap();
             int index = map.keyIndex(node.token);
@@ -1890,6 +1927,7 @@ class SqlOptimiser {
                         // check if column is aliased as either
                         // "x y" or "tab.x y" or "t.x y", where "t" is alias of table "tab"
                         final CharSequenceObjHashMap<CharSequence> map = baseParent.getColumnToAliasMap();
+                        CharSequence alias = null;
                         int index = map.keyIndex(column);
                         if (index > -1 && dot > -1) {
                             // we have the following that are true:
@@ -1915,16 +1953,32 @@ class SqlOptimiser {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0, z = baseParent.getColumns().size(); j < z; j++) {
-                                        synthetic.addColumn(baseParent.getColumns().getQuick(j));
+                                        QueryColumn qc = baseParent.getColumns().getQuick(j);
+                                        if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
+                                            emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel());
+                                        } else {
+                                            synthetic.addColumn(qc);
+                                        }
                                     }
                                     synthetic.setNestedModel(base);
                                     baseParent.setNestedModel(synthetic);
                                     baseParent = synthetic;
+
+                                    // the column may appear in the list after literals from expressions have been emitted
+                                    index = synthetic.getColumnToAliasMap().keyIndex(column);
+                                    if (index > -1 && dot > -1) {
+                                        index = synthetic.getColumnToAliasMap().keyIndex(column, dot + 1, column.length());
+                                    }
+
+                                    if (index < 0) {
+                                        alias = synthetic.getColumnToAliasMap().valueAt(index);
+                                    }
                                 }
 
-                                // if base parent model is already "choose" type, use that and ascend alias all the way up
-                                CharSequence alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getColumnNameTypeMap());
-                                baseParent.addColumn(nextColumn(alias, column));
+                                if (alias == null) {
+                                    alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getColumnNameTypeMap());
+                                    baseParent.addColumn(nextColumn(alias, column));
+                                }
 
                                 // do we have more than one parent model?
                                 if (model != baseParent) {
@@ -2401,31 +2455,6 @@ class SqlOptimiser {
         private void withModel(QueryModel model) {
             this.model = model;
         }
-    }
-
-    static {
-        notOps.put("not", NOT_OP_NOT);
-        notOps.put("and", NOT_OP_AND);
-        notOps.put("or", NOT_OP_OR);
-        notOps.put(">", NOT_OP_GREATER);
-        notOps.put(">=", NOT_OP_GREATER_EQ);
-        notOps.put("<", NOT_OP_LESS);
-        notOps.put("<=", NOT_OP_LESS_EQ);
-        notOps.put("=", NOT_OP_EQUAL);
-        notOps.put("!=", NOT_OP_NOT_EQ);
-
-        joinBarriers = new IntHashSet();
-        joinBarriers.add(QueryModel.JOIN_OUTER);
-        joinBarriers.add(QueryModel.JOIN_ASOF);
-        joinBarriers.add(QueryModel.JOIN_SPLICE);
-
-        nullConstants.add("null");
-        nullConstants.add("NaN");
-
-        joinOps.put("=", JOIN_OP_EQUAL);
-        joinOps.put("and", JOIN_OP_AND);
-        joinOps.put("or", JOIN_OP_OR);
-        joinOps.put("~", JOIN_OP_REGEX);
     }
 
 

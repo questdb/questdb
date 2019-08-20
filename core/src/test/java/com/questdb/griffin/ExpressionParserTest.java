@@ -28,6 +28,7 @@ import com.questdb.cairo.CairoEngine;
 import com.questdb.std.Chars;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
@@ -65,6 +66,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 12,
                 "'then' expected"
         );
+    }
+
+    @Test
+    @Ignore
+    //todo: fix sql parser for PG OPERATOR
+    public void testPGOperator() throws SqlException {
+        x("", "c.relname ~= E'^(movies\\\\.csv)$'");
     }
 
     @Test

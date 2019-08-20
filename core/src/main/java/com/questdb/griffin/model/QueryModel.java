@@ -212,9 +212,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void copyColumnsFrom(QueryModel other) {
-        this.columnNameTypeMap.clear();
-        this.aliasToColumnMap.clear();
-        this.columnNames.clear();
+        clearColumnMapStructs();
         this.columnNameTypeMap.putAll(other.columnNameTypeMap);
         ObjList<CharSequence> columnNames = other.columnNames;
         this.columnNames.addAll(columnNames);
@@ -225,6 +223,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (this.timestamp == null && other.timestamp != null) {
             this.timestamp = other.timestamp;
         }
+    }
+
+    public void clearColumnMapStructs() {
+        this.columnNameTypeMap.clear();
+        this.aliasToColumnMap.clear();
+        this.columnNames.clear();
     }
 
     public ExpressionNode getAlias() {
