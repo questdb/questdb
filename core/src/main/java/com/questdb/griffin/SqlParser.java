@@ -1085,6 +1085,24 @@ public final class SqlParser {
                 ExpressionNode elseExpr;
                 boolean convertToSwitch = true;
                 final int paramCount = node.paramCount;
+
+                if (node.paramCount == 2) {
+                    // special case, typically something like
+                    // case value else expression end
+                    // this can be simplified to "expression" only
+
+                    ExpressionNode that = node.rhs;
+                    node.of(that.type, that.token, that.precedence, that.position);
+                    node.paramCount = that.paramCount;
+                    if (that.paramCount == 2) {
+                        node.lhs = that.lhs;
+                        node.rhs = that.rhs;
+                    } else {
+                        node.args.clear();
+                        node.args.addAll(that.args);
+                    }
+                    return;
+                }
                 final int lim;
                 if ((paramCount & 1) == 0) {
                     elseExpr = node.args.getQuick(0);

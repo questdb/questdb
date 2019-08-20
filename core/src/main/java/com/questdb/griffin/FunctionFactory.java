@@ -44,6 +44,7 @@ public interface FunctionFactory {
      * <li>F = float</li>
      * <li>D = double</li>
      * <li>S = string</li>
+     * <li>A = char</li>
      * <li>K = symbol</li>
      * <li>T = boolean</li>
      * <li>M = date</li>

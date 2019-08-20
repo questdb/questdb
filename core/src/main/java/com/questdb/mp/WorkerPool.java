@@ -41,11 +41,13 @@ public class WorkerPool {
     private final SOCountDownLatch haltLatch;
     private final ObjList<Worker> workers = new ObjList<>();
     private final ObjList<ObjList<Closeable>> cleaners;
+    private final boolean haltOnError;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
         this.workerAffinity = configuration.getWorkerAffinity();
         this.haltLatch = new SOCountDownLatch(workerCount);
+        this.haltOnError = configuration.haltOnError();
 
         assert workerAffinity.length == workerCount;
 
@@ -117,7 +119,8 @@ public class WorkerPool {
                             if (log != null) {
                                 log.info().$("cleaned [worker=").$(index).$(']').$();
                             }
-                        }
+                        },
+                        haltOnError
                 );
                 workers.add(worker);
                 worker.start();

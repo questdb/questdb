@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -21,41 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.catalogue;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import com.questdb.griffin.engine.functions.constants.BooleanConstant;
+import com.questdb.std.ObjList;
 
-public class InFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testBadConstant() {
-        assertFailure(11, "STRING constant expected", "x", "a", 10);
-    }
-
-    @Test
-    public void testNoMatch() throws SqlException {
-        call("x", "a", "b").andAssert(false);
-    }
-
-    @Test
-    public void testNullConstant() {
-        assertFailure(11, "NULL is not allowed", "x", "a", null);
-    }
-
-    @Test
-    public void testTwoArgs() throws SqlException {
-        call("x", "x", "y").andAssert(true);
-    }
-
-    @Test
-    public void testZeroArgs() throws SqlException {
-        call("x").andAssert(false);
+public class IsTableVisibleCatalogueFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "pg_catalog.pg_table_is_visible(I)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new InFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new BooleanConstant(position, true);
     }
 }

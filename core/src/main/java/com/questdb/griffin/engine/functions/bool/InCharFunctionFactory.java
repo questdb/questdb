@@ -32,19 +32,19 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
 
-public class InFunctionFactory implements FunctionFactory {
+public class InCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "in(Sv)";
+        return "in(Av)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
 
-        CharSequenceHashSet set = new CharSequenceHashSet();
+        IntHashSet set = new IntHashSet();
         int n = args.size();
 
         if (n == 1) {
@@ -52,30 +52,25 @@ public class InFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 1; i < n; i++) {
-
             Function func = args.getQuick(i);
-            if (func.getType() != ColumnType.STRING) {
-                throw SqlException.$(func.getPosition(), "STRING constant expected");
+            if (func.getType() == ColumnType.CHAR) {
+                set.add(func.getChar(null));
+            } else {
+                throw SqlException.$(func.getPosition(), "CHAR constant expected");
             }
-            CharSequence value = func.getStr(null);
-            if (value == null) {
-                throw SqlException.$(func.getPosition(), "NULL is not allowed");
-            }
-
-            set.add(value.toString());
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            return new BooleanConstant(position, set.contains(var.getStr(null)));
+            return new BooleanConstant(position, set.contains(var.getChar(null)));
         }
         return new Func(position, var, set);
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final CharSequenceHashSet set;
+        private final IntHashSet set;
 
-        public Func(int position, Function arg, CharSequenceHashSet set) {
+        public Func(int position, Function arg, IntHashSet set) {
             super(position);
             this.arg = arg;
             this.set = set;
@@ -88,7 +83,7 @@ public class InFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return set.contains(arg.getStr(rec));
+            return set.contains(arg.getChar(rec));
         }
     }
 }

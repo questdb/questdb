@@ -48,6 +48,11 @@ public class NamedParameterLinkFunction implements Function {
     }
 
     @Override
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
+    }
+
+    @Override
     public BinarySequence getBin(Record rec) {
         return getBase().getBin(rec);
     }

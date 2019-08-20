@@ -41,6 +41,7 @@ public class RecordSinkFactory {
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
@@ -52,6 +53,7 @@ public class RecordSinkFactory {
         int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
+        int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
         int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
         int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
         int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
@@ -114,6 +116,10 @@ public class RecordSinkFactory {
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
                     asm.invokeInterface(wPutShort, 1);
+                    break;
+                case ColumnType.CHAR:
+                    asm.invokeInterface(rGetChar, 1);
+                    asm.invokeInterface(wPutChar, 1);
                     break;
                 case ColumnType.BOOLEAN:
                     asm.invokeInterface(rGetBool, 1);

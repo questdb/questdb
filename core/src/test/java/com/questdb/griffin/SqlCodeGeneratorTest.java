@@ -2484,6 +2484,73 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderChar() throws Exception {
+        assertQuery("a\n" +
+                        "C\n" +
+                        "E\n" +
+                        "G\n" +
+                        "H\n" +
+                        "H\n" +
+                        "J\n" +
+                        "N\n" +
+                        "P\n" +
+                        "P\n" +
+                        "R\n" +
+                        "R\n" +
+                        "S\n" +
+                        "T\n" +
+                        "V\n" +
+                        "W\n" +
+                        "W\n" +
+                        "X\n" +
+                        "X\n" +
+                        "Y\n" +
+                        "Z\n",
+                "select * from x order by a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_char() a" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_char()" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "a\n" +
+                        "C\n" +
+                        "E\n" +
+                        "G\n" +
+                        "H\n" +
+                        "H\n" +
+                        "I\n" +
+                        "J\n" +
+                        "N\n" +
+                        "P\n" +
+                        "P\n" +
+                        "R\n" +
+                        "R\n" +
+                        "S\n" +
+                        "S\n" +
+                        "T\n" +
+                        "U\n" +
+                        "V\n" +
+                        "W\n" +
+                        "W\n" +
+                        "X\n" +
+                        "X\n" +
+                        "X\n" +
+                        "X\n" +
+                        "Y\n" +
+                        "Z\n",
+                true);
+    }
+
+    @Test
     public void testOrderByNonUnique() throws Exception {
         final String expected = "a\tc\tk\tn\n" +
                 "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +

@@ -255,6 +255,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
                 if (e.lockFd != -1) {
                     ff.close(e.lockFd);
+                    TableUtils.lockName(path.of(root).concat(name));
+                    if (!ff.remove(path)) {
+                        LOG.error().$("could not remove [file=").$(path).$(']').$();
+                    }
                 }
             } else {
                 e.writer = writer;

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -27,7 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.*;
-import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
+import com.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import com.questdb.griffin.engine.functions.constants.*;
@@ -209,16 +209,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testConstVarArgFunction() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
         FunctionParser functionParser = createFunctionParser();
-        Function function = parseFunction("a in ('x', 'y')", metadata, functionParser);
+        Function function = parseFunction("a in ('xu', 'yk')", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
         Assert.assertTrue(function.getBool(new Record() {
             @Override
             public CharSequence getStr(int col) {
-                return "y";
+                return "yk";
             }
         }));
     }
@@ -968,7 +968,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testPassColumnToConstVarArgFunction() {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
@@ -1128,7 +1128,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testVarArgFunction() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
@@ -1137,18 +1137,18 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Record record = new Record() {
             @Override
             public CharSequence getStr(int col) {
-                return "Y";
+                return "YZ";
             }
         };
 
-        Function function = parseFunction("a in ('X', 'Y')", metadata, functionParser);
+        Function function = parseFunction("a in ('XY', 'YZ')", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
         Assert.assertTrue(function.getBool(record));
     }
 
     @Test
     public void testVarArgFunctionNoArg() throws SqlException {
-        functions.add(new InFunctionFactory());
+        functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));

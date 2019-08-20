@@ -26,10 +26,7 @@ package com.questdb.cairo;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntObjHashMap;
-import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.StringSink;
-
-import java.nio.ByteBuffer;
 
 public final class ColumnType {
     public static final int BOOLEAN = 0;
@@ -45,7 +42,7 @@ public final class ColumnType {
     public static final int DATE = 10;
     public static final int PARAMETER = 11;
     public static final int TIMESTAMP = 12;
-    private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
+    public static final int CHAR = 13;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
     private static final ThreadLocal<StringSink> caseConverterBuffer = ThreadLocal.withInitial(StringSink::new);
@@ -70,6 +67,40 @@ public final class ColumnType {
         return typeNameMap.valueAt(index);
     }
 
+    static {
+        typeNameMap.put(BOOLEAN, "BOOLEAN");
+        typeNameMap.put(BYTE, "BYTE");
+        typeNameMap.put(DOUBLE, "DOUBLE");
+        typeNameMap.put(FLOAT, "FLOAT");
+        typeNameMap.put(INT, "INT");
+        typeNameMap.put(LONG, "LONG");
+        typeNameMap.put(SHORT, "SHORT");
+        typeNameMap.put(CHAR, "CHAR");
+        typeNameMap.put(STRING, "STRING");
+        typeNameMap.put(SYMBOL, "SYMBOL");
+        typeNameMap.put(BINARY, "BINARY");
+        typeNameMap.put(DATE, "DATE");
+        typeNameMap.put(PARAMETER, "PARAMETER");
+        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
+
+        nameTypeMap.put("BOOLEAN", BOOLEAN);
+        nameTypeMap.put("BYTE", BYTE);
+        nameTypeMap.put("DOUBLE", DOUBLE);
+        nameTypeMap.put("FLOAT", FLOAT);
+        nameTypeMap.put("INT", INT);
+        nameTypeMap.put("LONG", LONG);
+        nameTypeMap.put("SHORT", SHORT);
+        nameTypeMap.put("CHAR", CHAR);
+        nameTypeMap.put("STRING", STRING);
+        nameTypeMap.put("SYMBOL", SYMBOL);
+        nameTypeMap.put("BINARY", BINARY);
+        nameTypeMap.put("DATE", DATE);
+        nameTypeMap.put("PARAMETER", PARAMETER);
+        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
+        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
+    }
+
     public static int pow2SizeOf(int columnType) {
         switch (columnType) {
             case ColumnType.BOOLEAN:
@@ -85,6 +116,7 @@ public final class ColumnType {
             case ColumnType.SYMBOL:
                 return 2;
             case ColumnType.SHORT:
+            case ColumnType.CHAR:
                 return 1;
             default:
                 assert false : "Cannot request power of 2 for " + nameOf(columnType);
@@ -107,6 +139,7 @@ public final class ColumnType {
             case ColumnType.SYMBOL:
                 return 4;
             case ColumnType.SHORT:
+            case ColumnType.CHAR:
                 return 2;
             case ColumnType.PARAMETER:
             case ColumnType.STRING:
@@ -115,47 +148,5 @@ public final class ColumnType {
             default:
                 return -1;
         }
-    }
-
-    static {
-        classMap.put(boolean.class, BOOLEAN);
-        classMap.put(byte.class, BYTE);
-        classMap.put(double.class, DOUBLE);
-        classMap.put(float.class, FLOAT);
-        classMap.put(int.class, INT);
-        classMap.put(long.class, LONG);
-        classMap.put(short.class, SHORT);
-        classMap.put(String.class, STRING);
-        classMap.put(ByteBuffer.class, BINARY);
-
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
-        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
-
-        nameTypeMap.put("BOOLEAN", BOOLEAN);
-        nameTypeMap.put("BYTE", BYTE);
-        nameTypeMap.put("DOUBLE", DOUBLE);
-        nameTypeMap.put("FLOAT", FLOAT);
-        nameTypeMap.put("INT", INT);
-        nameTypeMap.put("LONG", LONG);
-        nameTypeMap.put("SHORT", SHORT);
-        nameTypeMap.put("STRING", STRING);
-        nameTypeMap.put("SYMBOL", SYMBOL);
-        nameTypeMap.put("BINARY", BINARY);
-        nameTypeMap.put("DATE", DATE);
-        nameTypeMap.put("PARAMETER", PARAMETER);
-        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
-        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
     }
 }

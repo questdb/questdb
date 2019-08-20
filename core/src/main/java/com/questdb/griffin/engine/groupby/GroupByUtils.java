@@ -131,6 +131,9 @@ class GroupByUtils {
                         case ColumnType.SHORT:
                             fun = new ShortColumn(node.position, keyColumnIndex - 1);
                             break;
+                        case ColumnType.CHAR:
+                            fun = new CharColumn(node.position, keyColumnIndex - 1);
+                            break;
                         case ColumnType.INT:
                             fun = new IntColumn(node.position, keyColumnIndex - 1);
                             break;

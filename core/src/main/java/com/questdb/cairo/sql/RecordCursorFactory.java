@@ -23,6 +23,7 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.griffin.DefaultSqlExecutionContext;
 import com.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
@@ -30,6 +31,10 @@ import java.io.Closeable;
 public interface RecordCursorFactory extends Closeable {
     @Override
     default void close() {
+    }
+
+    default RecordCursor getCursor() {
+        return getCursor(DefaultSqlExecutionContext.INSTANCE);
     }
 
     RecordCursor getCursor(SqlExecutionContext executionContext);

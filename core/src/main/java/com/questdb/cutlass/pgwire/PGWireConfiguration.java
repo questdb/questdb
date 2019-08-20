@@ -66,4 +66,6 @@ public interface PGWireConfiguration {
     int getWorkerCount();
 
     boolean isEnabled();
+
+    boolean workerHaltOnError();
 }

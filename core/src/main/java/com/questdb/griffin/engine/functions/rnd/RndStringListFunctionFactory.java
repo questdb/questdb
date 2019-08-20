@@ -36,6 +36,23 @@ import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
+    static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function f = args.getQuick(i);
+            if (f.isConstant()) {
+                if (f.getType() == ColumnType.STRING) {
+                    symbols.add(Chars.toString(f.getStr(null)));
+                    continue;
+                }
+                if (f.getType() == ColumnType.CHAR) {
+                    symbols.add(new java.lang.String(new char[]{f.getChar(null)}));
+                    continue;
+                }
+            }
+            throw SqlException.$(f.getPosition(), "STRING constant expected");
+        }
+    }
+
     @Override
     public String getSignature() {
         return "rnd_str(V)";
@@ -43,19 +60,13 @@ public class RndStringListFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        if (args == null) {
+            return new RndStrFunction(position, 3, 10, 1, configuration);
+        }
+
         final ObjList<String> symbols = new ObjList<>(args.size());
         copyConstants(args, symbols);
         return new Func(position, symbols, configuration);
-    }
-
-    static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            Function f = args.getQuick(i);
-            if (f.getType() != ColumnType.STRING || !f.isConstant()) {
-                throw SqlException.$(f.getPosition(), "STRING constant expected");
-            }
-            symbols.add(Chars.toString(f.getStr(null)));
-        }
     }
 
     private static final class Func extends StrFunction implements StatelessFunction {

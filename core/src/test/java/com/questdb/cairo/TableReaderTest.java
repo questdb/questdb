@@ -1427,6 +1427,43 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testCharAsString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            try (TableModel model = new TableModel(
+                    configuration,
+                    "char_test",
+                    PartitionBy.NONE
+            ).col("cc", ColumnType.STRING)) {
+                CairoTestUtils.create(model);
+            }
+            char[] data = {'a', 'b', 'f', 'g'};
+            try (TableWriter writer = new TableWriter(configuration, "char_test")) {
+
+                for (int i = 0, n = data.length; i < n; i++) {
+                    TableWriter.Row r = writer.newRow();
+                    r.putStr(0, data[i]);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "char_test")) {
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                int index = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertTrue(index < data.length);
+                    CharSequence value = record.getStr(0);
+                    Assert.assertEquals(1, value.length());
+                    Assert.assertEquals(data[index], value.charAt(0));
+                    index++;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCloseColumnNonPartitioned1() throws Exception {
         testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin", BATCH1_ASSERTER_NULL_BIN);
     }

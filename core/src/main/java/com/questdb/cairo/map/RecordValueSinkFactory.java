@@ -45,6 +45,7 @@ public class RecordValueSinkFactory {
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
@@ -53,6 +54,7 @@ public class RecordValueSinkFactory {
         int wPutLong = asm.poolInterfaceMethod(MapValue.class, "putLong", "(IJ)V");
         int wPutByte = asm.poolInterfaceMethod(MapValue.class, "putByte", "(IB)V");
         int wPutShort = asm.poolInterfaceMethod(MapValue.class, "putShort", "(IS)V");
+        int wPutChar = asm.poolInterfaceMethod(MapValue.class, "putChar", "(IC)V");
         int wPutBool = asm.poolInterfaceMethod(MapValue.class, "putBool", "(IZ)V");
         int wPutFloat = asm.poolInterfaceMethod(MapValue.class, "putFloat", "(IF)V");
         int wPutDouble = asm.poolInterfaceMethod(MapValue.class, "putDouble", "(ID)V");
@@ -106,6 +108,10 @@ public class RecordValueSinkFactory {
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
                     asm.invokeInterface(wPutShort, 2);
+                    break;
+                case ColumnType.CHAR:
+                    asm.invokeInterface(rGetChar, 1);
+                    asm.invokeInterface(wPutChar, 2);
                     break;
                 case ColumnType.BOOLEAN:
                     asm.invokeInterface(rGetBool, 1);

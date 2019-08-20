@@ -82,6 +82,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        return base.getChar(getColumnIndex(col));
+    }
+
+    @Override
     public long getRowId() {
         return base.getRowId();
     }

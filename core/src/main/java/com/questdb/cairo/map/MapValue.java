@@ -39,6 +39,8 @@ public interface MapValue extends Record {
 
     float getFloat(int index);
 
+    char getChar(int index);
+
     int getInt(int index);
 
     long getLong(int index);
@@ -64,6 +66,8 @@ public interface MapValue extends Record {
     void putLong(int index, long value);
 
     void putShort(int index, short value);
+
+    void putChar(int index, char value);
 
     void putTimestamp(int columnIndex, long value);
 

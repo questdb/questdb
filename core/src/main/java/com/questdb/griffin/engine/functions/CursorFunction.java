@@ -41,6 +41,11 @@ public class CursorFunction implements Function {
     }
 
     @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void close() {
         factory.close();
     }

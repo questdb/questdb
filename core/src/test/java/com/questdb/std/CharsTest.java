@@ -134,6 +134,30 @@ public class CharsTest {
         }
     }
 
+    @Test
+    public void testUtf8SupportZ() {
+
+        StringBuilder expected = new StringBuilder();
+        for (int i = 1; i < 0xD800; i++) {
+            expected.append((char) i);
+        }
+
+        String in = expected.toString();
+        long p = Unsafe.malloc(8 * 0xffff);
+        try {
+            byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
+            for (int i = 0, n = bytes.length; i < n; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            Unsafe.getUnsafe().putByte(p + bytes.length, (byte) 0);
+            CharSink b = new StringSink();
+            Chars.utf8DecodeZ(p, b);
+            TestUtils.assertEquals(in, b.toString());
+        } finally {
+            Unsafe.free(p, 8 * 0xffff);
+        }
+    }
+
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {

@@ -44,30 +44,6 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(";");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
-    }
-
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -91,7 +67,6 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
     private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
     }
@@ -122,6 +97,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("REPAIR", this::repairTables);
         keywordBasedExecutors.put("set", this::compileSet);
         keywordBasedExecutors.put("SET", this::compileSet);
+        keywordBasedExecutors.put("drop", this::dropTable);
+        keywordBasedExecutors.put("DROP", this::dropTable);
 
         configureLexer(lexer);
 
@@ -161,6 +138,30 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    @Override
+    public void close() {
+        Misc.free(path);
+    }
+
+    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+        return compile(query, DefaultSqlExecutionContext.INSTANCE);
+    }
+
+    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        //
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        if (executor == null) {
+            return compileUsingModel(executionContext);
+        }
+        return executor.execute(executionContext);
+    }
+
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to, ColumnFilter toColumnFilter) {
@@ -177,6 +178,7 @@ public class SqlCompiler implements Closeable {
         //
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
@@ -196,6 +198,8 @@ public class SqlCompiler implements Closeable {
         int wPutDouble = asm.poolMethod(TableWriter.Row.class, "putDouble", "(ID)V");
         int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
+        int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILcom/questdb/std/BinarySequence;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
@@ -522,6 +526,14 @@ public class SqlCompiler implements Closeable {
                             break;
                     }
                     break;
+                case ColumnType.CHAR:
+                    asm.invokeInterface(rGetChar, 1);
+                    if (to.getColumnType(toColumnIndex) == ColumnType.STRING) {
+                        asm.invokeVirtual(wPutStrChar);
+                    } else {
+                        asm.invokeVirtual(wPutChar);
+                    }
+                    break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
                     if (to.getColumnType(toColumnIndex) == ColumnType.STRING) {
@@ -579,7 +591,8 @@ public class SqlCompiler implements Closeable {
                         && to <= ColumnType.DOUBLE
                         && from < to)
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
-                || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
+                || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
+                || (from == ColumnType.CHAR && to == ColumnType.STRING);
     }
 
     private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
@@ -602,34 +615,6 @@ public class SqlCompiler implements Closeable {
         }
 
         return tok;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(path);
-    }
-
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        //
-        // these are quick executions that do not require building of a model
-        //
-        lexer.of(query);
-
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
-        }
-        return executor.execute(executionContext);
-    }
-
-    private RecordCursorFactory compileSet(SqlExecutionContext executionContext) {
-        return null;
     }
 
     private RecordCursorFactory alterTable(SqlExecutionContext executionContext) throws SqlException {
@@ -834,10 +819,8 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        lexer.of(query);
-        return compileExecutionModel(executionContext);
+    private RecordCursorFactory compileSet(SqlExecutionContext executionContext) {
+        return null;
     }
 
     @Nullable
@@ -1000,6 +983,22 @@ public class SqlCompiler implements Closeable {
         executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
+    private RecordCursorFactory dropTable(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        expectKeyword(lexer, "table");
+
+        final int tableNamePosition = lexer.getPosition();
+
+        tok = expectToken(lexer, "table name");
+
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
+
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+
+        return null;
+    }
+
     private void executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
@@ -1127,20 +1126,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    // this exposed for testing only
-    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
-        clear();
-        lexer.of(expression);
-        return parser.expr(lexer, model);
-    }
-
-    // test only
-    void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
-        clear();
-        lexer.of(expression);
-        parser.expr(lexer, listener);
-    }
-
     private boolean removeTableDirectory(CreateTableModel model) {
         if (engine.removeDirectory(path, model.getName().token)) {
             return true;
@@ -1150,16 +1135,6 @@ public class SqlCompiler implements Closeable {
                 .$(", errno=").$(configuration.getFilesFacade().errno())
                 .$(']').$();
         return false;
-    }
-
-    void setFullSatJoins(boolean value) {
-        codeGenerator.setFullFatJoins(value);
-    }
-
-    private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
-        }
     }
 
     private RecordCursorFactory repairTables(SqlExecutionContext executionContext) throws SqlException {
@@ -1191,6 +1166,36 @@ public class SqlCompiler implements Closeable {
 
         } while (tok != null && Chars.equals(tok, ','));
         return null;
+    }
+
+    void setFullSatJoins(boolean value) {
+        codeGenerator.setFullFatJoins(value);
+    }
+
+    private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+        }
+    }
+
+    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        lexer.of(query);
+        return compileExecutionModel(executionContext);
+    }
+
+    // this exposed for testing only
+    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+        clear();
+        lexer.of(expression);
+        return parser.expr(lexer, model);
+    }
+
+    // test only
+    void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+        clear();
+        lexer.of(expression);
+        parser.expr(lexer, listener);
     }
 
     private RecordCursorFactory truncateTables(SqlExecutionContext executionContext) throws SqlException {
@@ -1397,5 +1402,29 @@ public class SqlCompiler implements Closeable {
             this.typeCast = typeCast;
             return this;
         }
+    }
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.CHAR, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
     }
 }

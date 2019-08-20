@@ -48,6 +48,8 @@ public interface CharSink {
 
     CharSink put(char c);
 
+    CharSink putUtf8(char c);
+
     CharSink put(int value);
 
     CharSink put(long value);

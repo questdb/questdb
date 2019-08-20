@@ -66,6 +66,11 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int index) {
+        return Unsafe.getUnsafe().getChar(address0(index));
+    }
+
+    @Override
     public int getInt(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
@@ -128,6 +133,11 @@ final class FastMapValue implements MapValue {
     @Override
     public void putShort(int index, short value) {
         Unsafe.getUnsafe().putShort(address0(index), value);
+    }
+
+    @Override
+    public void putChar(int index, char value) {
+        Unsafe.getUnsafe().putChar(address0(index), value);
     }
 
     @Override

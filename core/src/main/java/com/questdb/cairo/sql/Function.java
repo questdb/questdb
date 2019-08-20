@@ -61,6 +61,8 @@ public interface Function extends Closeable {
 
     short getShort(Record rec);
 
+    char getChar(Record rec);
+
     CharSequence getStr(Record rec);
 
     void getStr(Record rec, CharSink sink);

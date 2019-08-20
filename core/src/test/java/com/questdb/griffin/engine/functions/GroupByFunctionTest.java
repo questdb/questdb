@@ -106,6 +106,11 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public char getChar(Record rec) {
+            return 0;
+        }
+
+        @Override
         public RecordCursorFactory getRecordCursorFactory() {
             return null;
         }

@@ -40,6 +40,11 @@ public abstract class BinFunction implements Function {
     }
 
     @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }

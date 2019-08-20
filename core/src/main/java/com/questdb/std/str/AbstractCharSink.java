@@ -53,6 +53,20 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
+    public CharSink putUtf8(char c) {
+        if (c < 128) {
+            putUtf8Special(c);
+        } else if (c < 2048) {
+            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
+        } else if (Character.isSurrogate(c)) {
+            put('?');
+        } else {
+            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
+        }
+        return this;
+    }
+
+    @Override
     public CharSink encodeUtf8AndQuote(CharSequence cs) {
         put('\"').encodeUtf8(cs).put('\"');
         return this;

@@ -100,7 +100,14 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final int lineUdpReceiveBufferSize;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
+    private final boolean shareWorkerHaltOnError;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
+    private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+    };
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
     private int connectionStringPoolCapacity;
@@ -110,6 +117,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private int requestHeaderBufferSize;
     private int responseHeaderBufferSize;
     private int httpWorkerCount;
+    private boolean httpWorkerHaltOnError;
     private int sendBufferSize;
     private CharSequence indexFileName;
     private String publicDirectory;
@@ -144,16 +152,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
-    private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
-    };
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
+        this.shareWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
         this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
         if (httpServerEnabled) {
             this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
@@ -165,6 +168,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 32 * 1024);
             this.httpWorkerCount = getInt(properties, "http.worker.count", 0);
             this.httpWorkerAffinity = getAffinity(properties, "http.worker.affinity", httpWorkerCount);
+            this.httpWorkerHaltOnError = getBoolean(properties, "http.worker.haltOnError", false);
             this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
             this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
 
@@ -612,6 +616,12 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
+
+        @Override
+        public boolean workerHaltOnError() {
+            return httpWorkerHaltOnError;
+        }
+
         @Override
         public int getConnectionPoolInitialCapacity() {
             return connectionPoolInitialCapacity;
@@ -968,6 +978,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public int getWorkerCount() {
             return sharedWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return shareWorkerHaltOnError;
         }
     }
 }

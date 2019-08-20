@@ -102,6 +102,11 @@ public class PGWireServer implements Closeable {
                     public int getWorkerCount() {
                         return configuration.getWorkerCount();
                     }
+
+                    @Override
+                    public boolean haltOnError() {
+                        return configuration.workerHaltOnError();
+                    }
                 });
             } else {
                 localPool = workerPool;

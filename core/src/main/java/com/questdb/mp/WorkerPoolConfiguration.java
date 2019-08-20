@@ -27,4 +27,6 @@ public interface WorkerPoolConfiguration {
     int[] getWorkerAffinity();
 
     int getWorkerCount();
+
+    boolean haltOnError();
 }

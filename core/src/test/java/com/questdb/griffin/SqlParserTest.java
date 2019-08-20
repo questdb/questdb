@@ -364,6 +364,28 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCaseNoWhen() throws SqlException {
+        assertQuery(
+                "select-virtual 'table' kind from (tab)",
+                "    select case a \n" +
+                        "    else 'table'\n" +
+                        "    end kind from tab\n",
+                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseNoWhenBinary() throws SqlException {
+        assertQuery(
+                "select-virtual 2 + 5 kind from (tab)",
+                "    select case a \n" +
+                        "    else 2 + 5\n" +
+                        "    end kind from tab\n",
+                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCaseImpossibleRewrite2() throws SqlException {
         // 'when' is non-constant
         assertQuery(
@@ -393,10 +415,35 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "",
+                "select-virtual" +
+                        " Schema," +
+                        " Name," +
+                        " switch(relkind" +
+                        ",'r','table'" +
+                        ",'v','view'" +
+                        ",'m','materialized view'" +
+                        ",'i','index'" +
+                        ",'S','sequence'" +
+                        ",'s','special'" +
+                        ",'f','foreign table'" +
+                        ",'p','table'" +
+                        ",'I','index') Type," +
+                        " pg_catalog.pg_get_userbyid(relowner) Owner" +
+                        " from (" +
+                        "select-choose" +
+                        " n.nspname Schema," +
+                        " c.relname Name," +
+                        " c.relkind relkind," +
+                        " c.relowner relowner" +
+                        " from (" +
+                        "pg_catalog.pg_class() c" +
+                        " join (pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace" +
+                        " where relkind in ('r','p','v','m','S','f','')" +
+                        " and pg_catalog.pg_table_is_visible(oid))" +
+                        ")" +
+                        " order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -418,6 +465,29 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "  AND n.nspname !~ '^pg_toast'\n" +
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
                         "ORDER BY 1, 2"
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testPGColumnListQuery() throws SqlException {
+        assertQuery(
+                "",
+                "SELECT c.oid,\n" +
+                        "  n.nspname,\n" +
+                        "  c.relname\n" +
+                        "FROM pg_catalog.pg_class c\n" +
+                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
+                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
+                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
+                        "ORDER BY 2, 3;");
+    }
+
+    @Test
+    public void testRegexOnFunction() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-virtual rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~= '^W')",
+                "(select rnd_str() a from long_sequence(100)) where a ~= '^W'"
         );
     }
 
@@ -1610,12 +1680,12 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " c1.name name1," +
                         " c1.age age1" +
                         " from (" +
-                        "(customers where name ~ 'X') c" +
-                        " cross join (customers where name ~ 'X' and age = 30) c1" +
+                        "(customers where name ~= 'X') c" +
+                        " cross join (customers where name ~= 'X' and age = 30) c1" +
                         " limit 10" +
                         ")",
                 "with" +
-                        " cust as (customers where name ~ 'X')" +
+                        " cust as (customers where name ~= 'X')" +
                         " cust c cross join cust c1 where c1.age = 30 " +
                         " limit 10",
                 modelOf("customers")
@@ -1748,8 +1818,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testEraseColumnPrefix() throws SqlException {
         assertQuery(
-                "select-choose name from (cust where name ~ 'x')",
-                "cust where cust.name ~ 'x'",
+                "select-choose name from (cust where name ~= 'x')",
+                "cust where cust.name ~= 'x'",
                 modelOf("cust").col("name", ColumnType.STRING)
         );
     }
@@ -1866,9 +1936,9 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-choose customerName, orderId, productId" +
                         " from (" +
                         "customers" +
-                        " join (orders where product = 'X') orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ')",
+                        " join (orders where product = 'X') orders on orders.customerId = customers.customerId where customerName ~= 'WTBHZVPVZZ')",
                 "select customerName, orderId, productId " +
-                        "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ' and product = 'X'",
+                        "from customers join orders on customers.customerId = orders.customerId where customerName ~= 'WTBHZVPVZZ' and product = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING).col("orderId", ColumnType.INT).col("productId", ColumnType.INT)
         );
@@ -1892,9 +1962,9 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " customers.customerName customerName," +
                         " orders.customerId customerId1" +
                         " from (" +
-                        "customers join orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ'" +
+                        "customers join orders on orders.customerId = customers.customerId where customerName ~= 'WTBHZVPVZZ'" +
                         ")",
-                "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'",
+                "customers join orders on customers.customerId = orders.customerId where customerName ~= 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT)
         );
@@ -1980,12 +2050,12 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " from (" +
                         "(select-choose customerName, orderId, productId, productName from (" +
                         "customers" +
-                        " join (orders where productName ~ 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)" +
+                        " join (orders where productName ~= 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)" +
                         ") x" +
                         " join products p on p.productId = x.productId)",
                 "select customerName, productName, orderId from (" +
                         "select customerName, orderId, productId, productName " +
-                        "from customers join orders on customers.customerId = orders.customerId where productName ~ 'WTBHZVPVZZ'" +
+                        "from customers join orders on customers.customerId = orders.customerId where productName ~= 'WTBHZVPVZZ'" +
                         ") x" +
                         " join products p on p.productId = x.productId",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
@@ -1994,11 +2064,11 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
 
         assertQuery(
-                "select-choose customerName, productName, orderId from (customers join (orders o where productName ~ 'WTBHZVPVZZ') o on o.customerId = customers.customerId join products p on p.productId = o.productId)",
+                "select-choose customerName, productName, orderId from (customers join (orders o where productName ~= 'WTBHZVPVZZ') o on o.customerId = customers.customerId join products p on p.productId = o.productId)",
                 "select customerName, productName, orderId " +
                         " from customers join orders o on customers.customerId = o.customerId " +
                         " join products p on p.productId = o.productId" +
-                        " where productName ~ 'WTBHZVPVZZ'",
+                        " where productName ~= 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT).col("orderId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT)
@@ -2134,7 +2204,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~= 'PJFSREKEUNMKWOF'`)" +
                         ") o on c.customerId = o.customerId", 21, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -2143,7 +2213,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("select c.customerId, orderId, o.productId2 from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~= 'PJFSREKEUNMKWOF'`)" +
                         ") o on c.customerId = o.customerId", 30, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -2152,7 +2222,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("select c.customerId, orderId, o2.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~= 'PJFSREKEUNMKWOF'`)" +
                         ") o on c.customerId = o.customerId", 30, "Invalid table name",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -2351,11 +2421,11 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery("select-group-by" +
                         " country," +
                         " sum(quantity) sum " +
-                        "from (orders o join (customers c where country ~ '^Z') c on c.customerId = o.customerId join orderDetails d on d.orderId = o.orderId)",
+                        "from (orders o join (customers c where country ~= '^Z') c on c.customerId = o.customerId join orderDetails d on d.orderId = o.orderId)",
                 "select country, sum(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z'",
+                        " where country ~= '^Z'",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE)
@@ -2372,14 +2442,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " ((select-group-by country," +
                         " sum(quantity) sum" +
                         " from (orders o" +
-                        " join (customers c where country ~ '^Z') c on c.customerId = o.customerId" +
+                        " join (customers c where country ~= '^Z') c on c.customerId = o.customerId" +
                         " join orderDetails d on d.orderId = o.orderId)" +
                         ") _xQdbA1 where sum > 2" +
                         ")",
                 "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where sum > 2",
+                        " where country ~= '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT)
@@ -2791,9 +2861,9 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " _xQdbA1.customerName customerName" +
                         " from (" +
                         "orders" +
-                        " join (select-choose customerId, customerName from (customers where customerName ~ 'X')) _xQdbA1 on customerName = orderId)",
+                        " join (select-choose customerId, customerName from (customers where customerName ~= 'X')) _xQdbA1 on customerName = orderId)",
                 "orders" +
-                        " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
+                        " cross join (select customerId, customerName from customers where customerName ~= 'X')" +
                         " where orderId = customerName",
                 modelOf("orders").col("orderId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING)
@@ -2914,11 +2984,11 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " cust.name name," +
                         " ord.customerId customerId1" +
                         " from (" +
-                        "(customers where name ~ 'X') cust" +
+                        "(customers where name ~= 'X') cust" +
                         " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
                         " post-join-where ord.customerId != null limit 10)",
                 "with" +
-                        " cust as (customers where name ~ 'X')," +
+                        " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
                         " cust outer join ord on (customerId) " +
                         " where ord.customerId != null" +
@@ -2935,12 +3005,12 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " c.customerId customerId," +
                         " c.name name," +
                         " o.customerId customerId1" +
-                        " from ((customers where name ~ 'X') c" +
+                        " from ((customers where name ~= 'X') c" +
                         " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
                         " post-join-where o.customerId != null" +
                         " limit 10)",
                 "with" +
-                        " cust as (customers where name ~ 'X')," +
+                        " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
                         " cust c outer join ord o on (customerId) " +
                         " where o.customerId != null" +
@@ -3485,8 +3555,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery() throws SqlException {
         assertQuery(
-                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x, z from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
-                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
+                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x, z from (tab1 where x = 'Z')) a join (tab2 where s ~= 'K') b on b.z = a.z) order by s)",
+                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~= 'K') b on a.z=b.z order by b.s",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.INT),
@@ -3501,8 +3571,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery2() throws SqlException {
         assertQuery(
-                "select-choose a.x x, b.y y from ((select-choose x, z from (select-choose x, z, p from (tab1 where x = 'Z') order by p)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
-                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~ 'K') b on a.z=b.z",
+                "select-choose a.x x, b.y y from ((select-choose x, z from (select-choose x, z, p from (tab1 where x = 'Z') order by p)) a join (tab2 where s ~= 'K') b on b.z = a.z)",
+                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~= 'K') b on a.z=b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.INT)
@@ -3518,8 +3588,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery3() throws SqlException {
         assertQuery(
-                "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a asof join (select-choose y, z from (select-choose y, z, s from (tab2 where s ~ 'K') order by s)) b on b.z = a.x)",
-                "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~ 'K' order by s) b where a.x = b.z",
+                "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a asof join (select-choose y, z from (select-choose y, z, s from (tab2 where s ~= 'K') order by s)) b on b.z = a.x)",
+                "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~= 'K' order by s) b where a.x = b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.INT),
@@ -3947,7 +4017,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectFromNonCursorFunction() {
-        assertSyntaxError("select * from length('')", 14, "function must return CURSOR");
+        assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
 
     @Test
@@ -4514,7 +4584,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMissingWhere() {
         try {
-            compiler.compile("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            compiler.compile("select id, x + 10, x from tab id ~= 'HBRO'", sqlExecutionContext);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());

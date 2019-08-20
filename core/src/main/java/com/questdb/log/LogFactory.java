@@ -382,6 +382,11 @@ public class LogFactory implements Closeable {
             public int getWorkerCount() {
                 return 1;
             }
+
+            @Override
+            public boolean haltOnError() {
+                return false;
+            }
         });
         assign(workerPool);
         workerPool.start(null);

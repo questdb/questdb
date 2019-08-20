@@ -56,6 +56,8 @@ public interface ReadOnlyColumn extends Closeable {
 
     CharSequence getStr2(long offset);
 
+    char getChar(long offset);
+
     int getStrLen(long offset);
 
     void grow(long size);

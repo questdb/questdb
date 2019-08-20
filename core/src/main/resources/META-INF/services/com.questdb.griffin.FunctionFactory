@@ -1,3 +1,4 @@
+
 # logical operations
 com.questdb.griffin.engine.functions.bool.OrFunctionFactory
 com.questdb.griffin.engine.functions.bool.AndFunctionFactory
@@ -7,6 +8,9 @@ com.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
 com.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
 com.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
 com.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
+
+# '<>'
+com.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory
 
 # '>'
 com.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
@@ -47,6 +51,13 @@ com.questdb.griffin.engine.functions.math.AbsIntFunctionFactory
 com.questdb.griffin.engine.functions.math.AbsShortFunctionFactory
 com.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
 
+# '~='
+com.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory
+com.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory
+
+# '!~'
+com.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
+
 # 'to_char'
 com.questdb.griffin.engine.functions.str.ToCharDateFunctionFactory
 com.questdb.griffin.engine.functions.str.ToCharTimestampFunctionFactory
@@ -82,6 +93,7 @@ com.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RndStringListFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndCharFunctionFactory
 
 # date conversion functions
 
@@ -100,6 +112,8 @@ com.questdb.griffin.engine.functions.cast.ToIntLongFunctionFactory
 
 # 'in'
 com.questdb.griffin.engine.functions.str.SymbolInCursorFunctionFactory
+com.questdb.griffin.engine.functions.bool.InStrFunctionFactory
+com.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 
 # 'sum' group by function
 com.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory
@@ -120,3 +134,10 @@ com.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory
 
 # case conditional statement
 com.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
+com.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
+
+# PostgeSQL catalogue functions
+com.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
+com.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
+com.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
+com.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory

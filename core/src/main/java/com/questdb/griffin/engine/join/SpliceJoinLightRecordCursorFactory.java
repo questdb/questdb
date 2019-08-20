@@ -349,7 +349,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public long getDate(int col) {
             if (col < split) {
-                return master.getDate(col - split);
+                return master.getDate(col);
             }
             return slave.getDate(col - split);
         }
@@ -386,7 +386,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             return slave.getLong(col - split);
         }
 
-
         @Override
         public long getRowId() {
             throw new UnsupportedOperationException();
@@ -398,6 +397,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 return master.getShort(col);
             }
             return slave.getShort(col - split);
+        }
+
+        @Override
+        public char getChar(int col) {
+            if (col < split) {
+                return master.getChar(col);
+            }
+            return slave.getChar(col - split);
         }
 
         @Override

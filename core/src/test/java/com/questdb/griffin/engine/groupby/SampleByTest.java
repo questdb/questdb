@@ -305,7 +305,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleBadFunction() throws Exception {
         assertFailure(
-                "select b, sumx(a, 'a') k from x sample by 3h fill(none)",
+                "select b, sumx(a, 'ab') k from x sample by 3h fill(none)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -323,7 +323,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleBadFunctionInterpolated() throws Exception {
         assertFailure(
-                "select b, sumx(a, 'a') k from x sample by 3h fill(linear)",
+                "select b, sumx(a, 'ac') k from x sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
                         "select" +

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -249,6 +249,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return ColumnType.FLOAT;
         }
 
+        if (arg instanceof Character) {
+            return ColumnType.CHAR;
+        }
+
         Assert.fail("Unsupported type: " + arg.getClass());
         return -1;
     }
@@ -377,6 +381,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 sink.put("to_short(").put((Integer) value).put(")");
                 toShortRefs++;
                 break;
+            case ColumnType.CHAR:
+                sink.put('\'').put((char) value).put('\'');
+                break;
             default:
                 // byte
                 sink.put("to_byte(").put((Integer) value).put(")");
@@ -398,10 +405,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         public void andAssert(boolean expected) {
             Assert.assertEquals(expected, function1.getBool(record));
-            Assert.assertEquals(expected, function2.getBool(record));
-        }
-
-        public void andAssertOnlyColumnValues(boolean expected) {
             Assert.assertEquals(expected, function2.getBool(record));
         }
 
@@ -447,6 +450,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
             closeFunctions();
+        }
+
+        public void andAssertOnlyColumnValues(boolean expected) {
+            Assert.assertEquals(expected, function2.getBool(record));
         }
 
         public void andAssertTimestamp(long expected) {
@@ -548,11 +555,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getStr(int col) {
-            return (CharSequence) args[col];
-        }
-
-        @Override
         public int getInt(int col) {
             return (int) args[col];
         }
@@ -565,6 +567,16 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public short getShort(int col) {
             return (short) (int) args[col];
+        }
+
+        @Override
+        public char getChar(int col) {
+            return (char) args[col];
+        }
+
+        @Override
+        public CharSequence getStr(int col) {
+            return (CharSequence) args[col];
         }
 
         @Override

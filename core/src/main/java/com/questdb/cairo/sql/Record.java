@@ -72,6 +72,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default char getChar(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     default CharSequence getStr(int col) {
         throw new UnsupportedOperationException();
     }

@@ -128,7 +128,7 @@ public class LimitTest extends AbstractGriffinTest {
     @Test
     public void testInvalidHiType() throws Exception {
         assertFailure(
-                "select * from y limit 5,'a'",
+                "select * from y limit 5,'ab'",
                 "create table y as (" +
                         "select" +
                         " to_int(x) i," +

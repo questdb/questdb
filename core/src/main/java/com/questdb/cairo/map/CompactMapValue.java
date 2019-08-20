@@ -85,6 +85,11 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int columnIndex) {
+        return entries.getChar(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
     public long getTimestamp(int columnIndex) {
         return getLong(columnIndex);
     }
@@ -132,6 +137,11 @@ class CompactMapValue implements MapValue {
     @Override
     public void putShort(int columnIndex, short value) {
         entries.putShort(getValueColumnOffset(columnIndex), value);
+    }
+
+    @Override
+    public void putChar(int columnIndex, char value) {
+        entries.putChar(getValueColumnOffset(columnIndex), value);
     }
 
     @Override

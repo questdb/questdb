@@ -40,6 +40,11 @@ public abstract class DateFunction implements Function {
     }
 
     @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }

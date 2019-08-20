@@ -61,7 +61,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private SqlCodeGenerator sqlCodeGenerator;
     private int bindVariableIndex = 0;
     private SqlExecutionContext sqlExecutionContext;
-
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
@@ -78,6 +77,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 break;
             case 'E':
                 sigArgType = ColumnType.SHORT;
+                break;
+            case 'A':
+                sigArgType = ColumnType.CHAR;
                 break;
             case 'F':
                 sigArgType = ColumnType.FLOAT;
@@ -320,6 +322,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {
+            e.printStackTrace();
             throw SqlException.position(position).put("exception in function factory");
         }
 
@@ -348,6 +351,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return new ByteColumn(node.position, index);
             case ColumnType.SHORT:
                 return new ShortColumn(node.position, index);
+            case ColumnType.CHAR:
+                return new CharColumn(node.position, index);
             case ColumnType.INT:
                 return new IntColumn(node.position, index);
             case ColumnType.LONG:
@@ -376,6 +381,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (Chars.isQuoted(node.token)) {
+            if (node.token.length() == 3) {
+                // this is 'x' - char
+                return new CharConstant(node.position, node.token.charAt(1));
+            }
+
+            if (node.token.length() == 2) {
+                // empty
+                return new CharConstant(node.position, (char) 0);
+            }
             return new StrConstant(node.position, node.token);
         }
 
@@ -619,6 +633,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     return new ShortConstant(position, function.getShort(null));
                 }
+            case ColumnType.CHAR:
+                if (function instanceof CharConstant) {
+                    return function;
+                } else {
+                    return new CharConstant(position, function.getChar(null));
+                }
             case ColumnType.FLOAT:
                 if (function instanceof FloatConstant) {
                     return function;
@@ -708,7 +728,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
         }
 
-        invalidFunctionNameChars.add('.');
+//        invalidFunctionNameChars.add('.');
         invalidFunctionNameChars.add(' ');
         invalidFunctionNameChars.add('\"');
         invalidFunctionNameChars.add('\'');

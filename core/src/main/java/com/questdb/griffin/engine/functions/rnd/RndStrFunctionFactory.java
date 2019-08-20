@@ -52,40 +52,12 @@ public class RndStrFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi && lo > 0) {
-            return new RndFunction(position, lo, hi, nullRate + 1, configuration);
+            return new RndStrFunction(position, lo, hi, nullRate + 1, configuration);
         } else if (lo == hi) {
             return new FixedFunction(position, lo, nullRate + 1, configuration);
         }
 
         throw SqlException.position(position).put("invalid range");
-    }
-
-    private static class RndFunction extends StrFunction implements StatelessFunction {
-        private final int lo;
-        private final int range;
-        private final int nullRate;
-        private final Rnd rnd;
-
-        public RndFunction(int position, int lo, int hi, int nullRate, CairoConfiguration configuration) {
-            super(position);
-            this.lo = lo;
-            this.range = hi - lo + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
-            this.nullRate = nullRate;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            if ((rnd.nextInt() % nullRate) == 1) {
-                return null;
-            }
-            return rnd.nextChars(lo + rnd.nextPositiveInt() % range);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec);
-        }
     }
 
     private static class FixedFunction extends StrFunction implements StatelessFunction {
