@@ -2085,6 +2085,7 @@ class SqlOptimiser {
 
         final ObjList<QueryColumn> columns = model.getColumns();
         final QueryModel baseModel = model.getNestedModel();
+//        baseModel.moveLimitFrom(model);
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
         // sample by clause should be promoted to all of the models as well as validated
@@ -2199,33 +2200,46 @@ class SqlOptimiser {
         }
 
         QueryModel root;
+        QueryModel limitSource;
 
         if (translationIsRedundant) {
             root = baseModel;
+            limitSource = model;
         } else {
             root = translatingModel;
+            limitSource = translatingModel;
             translatingModel.setNestedModel(baseModel);
+            translatingModel.moveLimitFrom(model);
         }
 
         if (useInnerModel) {
             innerModel.setNestedModel(root);
+            innerModel.moveLimitFrom(limitSource);
             root = innerModel;
+            limitSource = innerModel;
         }
 
         if (useAnalyticModel) {
             analyticModel.setNestedModel(root);
+            analyticModel.moveLimitFrom(limitSource);
             root = analyticModel;
+            limitSource = analyticModel;
         } else if (useGroupByModel) {
             groupByModel.setNestedModel(root);
+            groupByModel.moveLimitFrom(limitSource);
             root = groupByModel;
+            limitSource = groupByModel;
             if (useOuterModel) {
                 outerModel.setNestedModel(root);
+                outerModel.moveLimitFrom(limitSource);
                 root = outerModel;
+                limitSource = outerModel;
             }
         }
 
         if (root != outerModel && root.getColumns().size() < outerModel.getColumns().size()) {
             outerModel.setNestedModel(root);
+            outerModel.moveLimitFrom(limitSource);
             // in this case outer model should be of "choose" type
             outerModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
             root = outerModel;

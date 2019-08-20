@@ -750,6 +750,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void moveLimitFrom(QueryModel baseModel) {
+        this.limitLo = baseModel.getLimitLo();
+        this.limitHi = baseModel.getLimitHi();
+        baseModel.setLimit(null, null);
+    }
+
     public static final class QueryModelFactory implements ObjectFactory<QueryModel> {
         @Override
         public QueryModel newInstance() {

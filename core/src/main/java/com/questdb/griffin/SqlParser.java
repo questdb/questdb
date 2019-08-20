@@ -569,6 +569,10 @@ public final class SqlParser {
         }
         QueryModel nestedModel = queryModelPool.next();
         parseFromClause(lexer, nestedModel, model);
+        if (nestedModel.getLimitHi() != null || nestedModel.getLimitLo() != null) {
+            model.setLimit(nestedModel.getLimitLo(), nestedModel.getLimitHi());
+            nestedModel.setLimit(null, null);
+        }
         if (
                 nestedModel.getColumns().size() == 0
                         && nestedModel.getNestedModel() != null

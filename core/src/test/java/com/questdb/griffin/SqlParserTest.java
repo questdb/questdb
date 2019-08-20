@@ -180,8 +180,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " post-join-where o.customerId = null" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " asof join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -379,6 +379,17 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCaseAndLimit() throws SqlException {
+        assertQuery(
+                "select-virtual 'table' kind from (tab) limit 10",
+                "    select case a \n" +
+                        "    else 'table'\n" +
+                        "    end kind from tab limit 10\n",
+                modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCaseNoWhenBinary() throws SqlException {
         assertQuery(
                 "select-virtual 2 + 5 kind from (tab)",
@@ -501,6 +512,30 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-choose a from ((select-virtual rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~= '^W')",
                 "(select rnd_str() a from long_sequence(100)) where a ~= '^W'"
+        );
+    }
+
+    // 0x1fb7bd310d95f2a6d9baaf8a8a430a9a04453a8b
+
+    @Test
+    public void testGroupByWithLimit() throws SqlException {
+        assertQuery(
+                "select-group-by fromAddress, toAddress, count() count from (transactions.csv) limit 10000",
+                "select fromAddress, toAddress, count() from 'transactions.csv' limit 10000",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.STRING)
+                        .col("toAddress", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testGroupByWithSubQueryLimit() throws SqlException {
+        assertQuery(
+                "select-group-by fromAddress, toAddress, count() count from (transactions.csv limit 10000)",
+                "select fromAddress, toAddress, count() from ('transactions.csv' limit 10000)",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.STRING)
+                        .col("toAddress", ColumnType.STRING)
         );
     }
 
@@ -1693,8 +1728,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " from (" +
                         "(customers where name ~= 'X') c" +
                         " cross join (customers where name ~= 'X' and age = 30) c1" +
-                        " limit 10" +
-                        ")",
+                        ") limit 10",
                 "with" +
                         " cust as (customers where name ~= 'X')" +
                         " cust c cross join cust c1 where c1.age = 30 " +
@@ -1998,8 +2032,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " on o.customerId = c.customerId" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -2982,7 +3016,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " from (" +
                         "(customers where name ~= 'X') cust" +
                         " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
-                        " post-join-where ord.customerId != null limit 10)",
+                        " post-join-where ord.customerId != null) limit 10",
                 "with" +
                         " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -3004,7 +3038,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " from ((customers where name ~= 'X') c" +
                         " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
                         " post-join-where o.customerId != null" +
-                        " limit 10)",
+                        ") limit 10",
                 "with" +
                         " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -3261,6 +3295,18 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz)",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOneAnalyticColumnAndLimit() throws Exception {
+        assertQuery(
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz) limit 200",
+                "select a,b, f(c) over (partition by b order by ts) from xyz limit 200",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -3748,8 +3794,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " post-join-where o.customerId = NaN" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
@@ -3775,8 +3821,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " on o.customerId = c.customerId" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = 10 limit 10",
@@ -3803,8 +3849,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " post-join-where o.customerId = null" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -4054,6 +4100,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectGroupByArithmeticAndLimit() throws SqlException {
+        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by sum(x) sum, sum(y) sum1 from (tab)) limit 200",
+                "select sum(x)+10, sum(y) from tab limit 200",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSelectMissingExpression() {
         assertSyntaxError(
                 "select ,a from tab",
@@ -4225,7 +4281,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSingleTableLimit() throws Exception {
         assertQuery(
-                "select-choose x, y from (tab where x > z limit 100)",
+                "select-choose x, y from (tab where x > z) limit 100",
                 "select x x, y y from tab where x > z limit 100",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -4237,7 +4293,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSingleTableLimitLoHi() throws Exception {
         assertQuery(
-                "select-choose x, y from (tab where x > z limit 100,200)",
+                "select-choose x, y from (tab where x > z) limit 100,200",
                 "select x x, y y from tab where x > z limit 100,200",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -4251,7 +4307,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSingleTableNoWhereLimit() throws Exception {
         assertQuery(
-                "select-choose x, y from (tab limit 100)",
+                "select-choose x, y from (tab) limit 100",
                 "select x x, y y from tab limit 100",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
@@ -4289,8 +4345,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " post-join-where o.customerId = null" +
                         ")" +
                         ")" +
-                        ") _xQdbA1 limit 10" +
-                        ")",
+                        ") _xQdbA1" +
+                        ") limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " splice join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -4466,7 +4522,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " x," +
                         " y" +
                         " from (" +
-                        "(select-choose x, y from (tab where x > z and x = y limit 100,200)) _xQdbA1 limit 150)",
+                        "(select-choose x, y from (tab where x > z and x = y) limit 100,200) _xQdbA1) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
