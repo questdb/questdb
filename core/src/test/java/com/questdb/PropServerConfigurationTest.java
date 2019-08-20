@@ -105,7 +105,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheSize());
         Assert.assertEquals(0.1222d, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
-        Assert.assertEquals(4096, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferLimit());
+        Assert.assertEquals(1024 * 4096, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferLimit());
         Assert.assertEquals(1024, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferSize());
         Assert.assertEquals(1000, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextAnalysisMaxLines());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());

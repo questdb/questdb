@@ -213,7 +213,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             this.maxRequiredDelimiterStdDev = getDouble(properties, "http.text.max.required.delimiter.stddev", 0.1222d);
             this.metadataStringPoolCapacity = getInt(properties, "http.text.metadata.string.pool.capacity", 128);
 
-            this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 4096);
+            this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 1024 * 4096);
             this.rollBufferSize = getIntSize(properties, "http.text.roll.buffer.size", 1024);
             this.textAnalysisMaxLines = getInt(properties, "http.text.analysis.max.lines", 1000);
             this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);

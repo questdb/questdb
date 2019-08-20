@@ -163,7 +163,7 @@ public class TextLexer implements Closeable, Mutable {
         return metadataDetector.getColumnTypes();
     }
 
-    private boolean growRollBuf(int requiredLength) {
+    private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             // todo: log content of roll buffer
             LOG.info()
@@ -185,7 +185,9 @@ public class TextLexer implements Closeable, Mutable {
             Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
         }
         Unsafe.free(lineRollBufPtr, lineRollBufLen);
-        shift(lineRollBufPtr - p);
+        if (updateFields) {
+            shift(lineRollBufPtr - p);
+        }
         lineRollBufCur = p + l;
         lineRollBufPtr = p;
         lineRollBufLen = len;
@@ -295,7 +297,7 @@ public class TextLexer implements Closeable, Mutable {
 
     private void putToRollBuf(byte c) {
         if (lineRollBufCur - lineRollBufPtr == lineRollBufLen) {
-            if (growRollBuf(lineRollBufLen + 1)) {
+            if (growRollBuf(lineRollBufLen + 1, true)) {
                 Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
             }
         } else {
@@ -332,7 +334,7 @@ public class TextLexer implements Closeable, Mutable {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
         int l = (int) (hi - lo - lastLineStart);
-        if (l < lineRollBufLen || growRollBuf(l)) {
+        if (l < lineRollBufLen || growRollBuf(l, false)) {
             assert lo + lastLineStart + l <= hi;
             Unsafe.getUnsafe().copyMemory(lo + lastLineStart, lineRollBufPtr, l);
             lineRollBufCur = lineRollBufPtr + l;
