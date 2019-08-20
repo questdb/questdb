@@ -488,29 +488,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRegexOnFunction() throws SqlException {
-        assertQuery(
-                "select-choose a from ((select-virtual rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~= '^W')",
-                "(select rnd_str() a from long_sequence(100)) where a ~= '^W'"
-        );
-    }
-
-    @Test
-    @Ignore
-    public void testPGColumnListQuery() throws SqlException {
-        assertQuery(
-                "",
-                "SELECT c.oid,\n" +
-                        "  n.nspname,\n" +
-                        "  c.relname\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 2, 3;");
-    }
-
-    @Test
     public void testOrderByIssue1() throws SqlException {
         assertQuery(
                 "select-choose to_date from (select-virtual to_date(timestamp) to_date, timestamp from (select-choose timestamp from (blocks.csv)) order by timestamp)",
