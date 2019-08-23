@@ -25,6 +25,8 @@ package com.questdb.std;
 
 import com.questdb.std.str.CharSink;
 
+import java.util.Arrays;
+
 public final class Numbers {
 
     public static final int INT_NaN = Integer.MIN_VALUE;
@@ -32,6 +34,7 @@ public final class Numbers {
     public static final double TOLERANCE = 1E-10d;
     public static final int SIZE_1MB = 1024 * 1024;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    public final static int[] hexNumbers;
     private static final long[] pow10;
     private static final long LONG_OVERFLOW_MAX = Long.MAX_VALUE / 10;
     private static final long INT_OVERFLOW_MAX = Integer.MAX_VALUE / 10;
@@ -511,6 +514,14 @@ public final class Numbers {
         return ((Integer.toUnsignedLong(high)) << 32L) | Integer.toUnsignedLong(low);
     }
 
+    public static int hexToDecimal(int c) throws NumericException {
+        int r = Unsafe.arrayGet(hexNumbers, c);
+        if (r == -1) {
+            throw NumericException.INSTANCE;
+        }
+        return r;
+    }
+
     public static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
@@ -713,52 +724,6 @@ public final class Numbers {
         return val;
     }
 
-    public static int hexToDecimal(int c) throws NumericException {
-        int r;
-        switch (c) {
-            case '0':
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-            case '8':
-            case '9':
-                r = (c - '0');
-                break;
-            case 'A':
-            case 'a':
-                r = 0xA;
-                break;
-            case 'B':
-            case 'b':
-                r = 0xB;
-                break;
-            case 'C':
-            case 'c':
-                r = 0xC;
-                break;
-            case 'D':
-            case 'd':
-                r = 0xD;
-                break;
-            case 'E':
-            case 'e':
-                r = 0xE;
-                break;
-            case 'F':
-            case 'f':
-                r = 0xF;
-                break;
-            default:
-                // malformed
-                throw NumericException.INSTANCE;
-        }
-        return r;
-    }
-
     public static int parseInt(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -886,6 +851,31 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static long parseLong(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence, 0, sequence.length());
+    }
+
+    public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence, p, lim);
+    }
+
+    public static long parseLongQuiet(CharSequence sequence) {
+        if (sequence == null) {
+            return Long.MIN_VALUE;
+        }
+        try {
+            return parseLong0(sequence, 0, sequence.length());
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
     public static long parseLongSize(CharSequence sequence) throws NumericException {
         int lim = sequence.length();
 
@@ -953,31 +943,6 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
-    }
-
-    public static long parseLong(CharSequence sequence) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseLong0(sequence, 0, sequence.length());
-    }
-
-    public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseLong0(sequence, p, lim);
-    }
-
-    public static long parseLongQuiet(CharSequence sequence) {
-        if (sequence == null) {
-            return Long.MIN_VALUE;
-        }
-        try {
-            return parseLong0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
@@ -1221,13 +1186,13 @@ public final class Numbers {
         return ((double) (long) (value * powten + 1 - TOLERANCE)) / powten;
     }
 
+
+    //////////////////////
+
     private static double roundDown00(double value, int scale) {
         long powten = Unsafe.arrayGet(pow10, scale);
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
     }
-
-
-    //////////////////////
 
     private static void appendLong10(CharSink sink, long i) {
         long c;
@@ -1527,5 +1492,30 @@ public final class Numbers {
         for (int i = 1; i < pow10.length; i++) {
             pow10[i] = pow10[i - 1] * 10;
         }
+
+        hexNumbers = new int[128];
+        Arrays.fill(hexNumbers, -1);
+        hexNumbers['0'] = 0;
+        hexNumbers['1'] = 1;
+        hexNumbers['2'] = 2;
+        hexNumbers['3'] = 3;
+        hexNumbers['4'] = 4;
+        hexNumbers['5'] = 5;
+        hexNumbers['6'] = 6;
+        hexNumbers['7'] = 7;
+        hexNumbers['8'] = 8;
+        hexNumbers['9'] = 9;
+        hexNumbers['A'] = 10;
+        hexNumbers['a'] = 10;
+        hexNumbers['B'] = 11;
+        hexNumbers['b'] = 11;
+        hexNumbers['C'] = 12;
+        hexNumbers['c'] = 12;
+        hexNumbers['D'] = 13;
+        hexNumbers['d'] = 13;
+        hexNumbers['E'] = 14;
+        hexNumbers['e'] = 14;
+        hexNumbers['F'] = 15;
+        hexNumbers['f'] = 15;
     }
 }

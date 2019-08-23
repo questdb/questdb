@@ -63,13 +63,6 @@ public class VirtualMemory implements Closeable {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
-        }
-    }
-
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -293,6 +286,23 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().putByte(appendPointer++, b);
     }
 
+    public void putChar(long offset, char value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+        } else {
+            putCharBytes(offset, value);
+        }
+    }
+
+    public final void putChar(char value) {
+        if (pageHi - appendPointer > 1) {
+            Unsafe.getUnsafe().putChar(appendPointer, value);
+            appendPointer += 2;
+        } else {
+            putCharBytes(value);
+        }
+    }
+
     public void putDouble(long offset, double value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
@@ -361,6 +371,36 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    public final void putLong256(CharSequence hexString) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            putLong256Bytes(hexString);
+        } else {
+            final int len;
+            if (hexString == null || (len = hexString.length()) == 0) {
+                putLong256Null();
+            } else {
+                long value = 0L;
+                for (int i = 2; i < len; i++) {
+                    final int x = (i - 2) % (Long.BYTES * 2);
+                    if (x == 0 && i > 2) {
+                        Unsafe.getUnsafe().putLong(appendPointer + (x - 1) * Long.BYTES, value);
+                        value = 0L;
+                    }
+                    final int d = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i));
+                    if (d == -1) {
+                        throw CairoException.instance(0).put("malformed LONG256");
+                    }
+                    value = (value << 4) + d;
+                }
+
+                for (int last = len / (Long.BYTES * 2); last < 4; last++) {
+                    Unsafe.getUnsafe().putLong(appendPointer + last * Long.BYTES, value);
+                    value = 0;
+                }
+            }
+        }
+    }
+
     public final long putNullBin() {
         final long offset = getAppendOffset();
         putLong(TableUtils.NULL_LEN);
@@ -385,29 +425,12 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    public void putChar(long offset, char value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
-        } else {
-            putCharBytes(offset, value);
-        }
-    }
-
     public final void putShort(short value) {
         if (pageHi - appendPointer > 1) {
             Unsafe.getUnsafe().putShort(appendPointer, value);
             appendPointer += 2;
         } else {
             putShortBytes(value);
-        }
-    }
-
-    public final void putChar(char value) {
-        if (pageHi - appendPointer > 1) {
-            Unsafe.getUnsafe().putChar(appendPointer, value);
-            appendPointer += 2;
-        } else {
-            putCharBytes(value);
         }
     }
 
@@ -477,6 +500,13 @@ public class VirtualMemory implements Closeable {
                 pages.setQuick(i, address);
             }
             Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
+        }
+    }
+
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
         }
     }
 
@@ -829,6 +859,16 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().putByte(mapRandomWritePage(offset) + offsetInPage(offset), value);
     }
 
+    void putCharBytes(char value) {
+        putByte((byte) (value & 0xff));
+        putByte((byte) ((value >> 8) & 0xff));
+    }
+
+    void putCharBytes(long offset, char value) {
+        putByte(offset, (byte) (value & 0xff));
+        putByte(offset + 1, (byte) ((value >> 8) & 0xff));
+    }
+
     void putDoubleBytes(double value) {
         putLongBytes(Double.doubleToLongBits(value));
     }
@@ -859,6 +899,40 @@ public class VirtualMemory implements Closeable {
         putByte(offset + 3, (byte) ((value >> 24) & 0xff));
     }
 
+    private void putLong256Bytes(CharSequence hexString) {
+        final int len;
+        if (hexString == null || (len = hexString.length()) == 0) {
+            putLong(Numbers.LONG_NaN);
+            putLong(Numbers.LONG_NaN);
+            putLong(Numbers.LONG_NaN);
+            putLong(Numbers.LONG_NaN);
+        } else {
+            long value = 0L;
+            for (int i = 2; i < len; i++) {
+                if ((i - 2) % 16 == 0 && i > 2) {
+                    putLong(value);
+                    value = 0L;
+                }
+                final int d = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i));
+                if (d == -1) {
+                    throw CairoException.instance(0).put("malformed LONG256");
+                }
+                value = (value << 4) + d;
+            }
+
+            if (len / 16 < 4) {
+                putLong(value);
+                for (int k = 1 + len / 16; k < 4; k++) {
+                    putLong(0);
+                }
+            }
+        }
+    }
+
+    private void putLong256Null() {
+        Unsafe.getUnsafe().setMemory(appendPointer, 32, (byte) 0xff);
+    }
+
     void putLongBytes(long value) {
         putByte((byte) (value & 0xffL));
         putByte((byte) ((value >> 8) & 0xffL));
@@ -886,17 +960,7 @@ public class VirtualMemory implements Closeable {
         putByte((byte) ((value >> 8) & 0xff));
     }
 
-    void putCharBytes(char value) {
-        putByte((byte) (value & 0xff));
-        putByte((byte) ((value >> 8) & 0xff));
-    }
-
     void putShortBytes(long offset, short value) {
-        putByte(offset, (byte) (value & 0xff));
-        putByte(offset + 1, (byte) ((value >> 8) & 0xff));
-    }
-
-    void putCharBytes(long offset, char value) {
         putByte(offset, (byte) (value & 0xff));
         putByte(offset + 1, (byte) ((value >> 8) & 0xff));
     }

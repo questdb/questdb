@@ -187,6 +187,14 @@ public class VirtualMemoryTest {
     }
 
     @Test
+    public void testLong256() {
+        try (VirtualMemory mem = new VirtualMemory(256)) {
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+        }
+    }
+
+    @Test
     public void testByteRandom() {
         try (VirtualMemory mem = new VirtualMemory(128)) {
             long offset1 = 512;
