@@ -37,6 +37,7 @@ public class RecordSinkFactory {
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong", "(I)Lcom/questdb/std/Long256;");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
@@ -51,6 +52,7 @@ public class RecordSinkFactory {
         //
         int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
+        int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lcom/questdb/std/Long256;)V");
         int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
         int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
@@ -140,6 +142,10 @@ public class RecordSinkFactory {
                 case ColumnType.BINARY:
                     asm.invokeInterface(rGetBin, 1);
                     asm.invokeInterface(wPutBin, 1);
+                    break;
+                case ColumnType.LONG256:
+                    asm.invokeInterface(rGetLong256, 1);
+                    asm.invokeInterface(wPutLong256, 1);
                     break;
                 default:
                     break;

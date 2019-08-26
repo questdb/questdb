@@ -85,6 +85,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public int getConnectionCheckFrequency() {
             return 1_000_000;
         }
+
+        @Override
+        public MillisecondClock getClock() {
+            return DefaultHttpServerConfiguration.this.getClock();
+        }
     };
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();
 
@@ -178,6 +183,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public boolean isEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean getDumpNetworkTraffic() {
+        return false;
     }
 
     @Override

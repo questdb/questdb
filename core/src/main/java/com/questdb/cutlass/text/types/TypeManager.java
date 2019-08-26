@@ -122,6 +122,8 @@ public class TypeManager implements Mutable {
                 return stringAdapter;
             case ColumnType.SYMBOL:
                 return symbolAdapter;
+            case ColumnType.LONG256:
+                return Long256Adapter.INSTANCE;
             default:
                 throw CairoException.instance(0).put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
@@ -136,10 +138,12 @@ public class TypeManager implements Mutable {
     }
 
     private void addDefaultProbes() {
+        probes.add(getTypeAdapter(ColumnType.CHAR));
         probes.add(getTypeAdapter(ColumnType.INT));
         probes.add(getTypeAdapter(ColumnType.LONG));
         probes.add(getTypeAdapter(ColumnType.DOUBLE));
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
+        probes.add(getTypeAdapter(ColumnType.LONG256));
     }
 
     ObjList<TypeAdapter> getAllAdapters() {

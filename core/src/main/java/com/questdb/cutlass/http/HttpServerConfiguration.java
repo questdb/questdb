@@ -65,4 +65,6 @@ public interface HttpServerConfiguration {
     int getSendBufferSize();
 
     boolean isEnabled();
+
+    boolean getDumpNetworkTraffic();
 }

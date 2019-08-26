@@ -25,8 +25,10 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.Numbers;
 import com.questdb.std.Rows;
+import com.questdb.std.str.CharSink;
 
 public class TableReaderRecord implements Record {
 
@@ -83,6 +85,15 @@ public class TableReaderRecord implements Record {
             return Float.NaN;
         }
         return colA(col).getFloat(index * 4);
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+        long index = getIndex(col);
+        if (index < 0) {
+            return;
+        }
+        colA(col).getLong256(index * Long256.BYTES, sink);
     }
 
     @Override

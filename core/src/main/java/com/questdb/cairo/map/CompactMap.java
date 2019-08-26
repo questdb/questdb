@@ -26,10 +26,7 @@ package com.questdb.cairo.map;
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Misc;
-import com.questdb.std.Numbers;
-import com.questdb.std.Unsafe;
+import com.questdb.std.*;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -251,6 +248,9 @@ public class CompactMap implements Map {
                 case ColumnType.CHAR:
                     sz = 2;
                     break;
+                case ColumnType.LONG256:
+                    sz = Long256.BYTES;
+                    break;
                 default:
                     throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
             }
@@ -414,6 +414,11 @@ public class CompactMap implements Map {
 
         public void putLong(long value) {
             entries.putLong(value);
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            entries.putLong256(value);
         }
 
         public void putShort(short value) {

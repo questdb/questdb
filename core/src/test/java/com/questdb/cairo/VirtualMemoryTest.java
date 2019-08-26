@@ -24,7 +24,9 @@
 package com.questdb.cairo;
 
 import com.questdb.std.*;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
@@ -245,6 +247,212 @@ public class VirtualMemoryTest {
             for (int i = 0; i < n; i++) {
                 assertEquals(rnd.nextDouble2(), mem.getDouble(o), 0.00001);
                 o += 8;
+            }
+        }
+    }
+
+    @Test
+    public void testLong256Direct() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl sink = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            for (int i = 0; i < 1000; i++) {
+                mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+            }
+
+            rnd.reset();
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, sink);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256Obj() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl long256 = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            for (int i = 0; i < 1000; i++) {
+                long256.setLong0(rnd.nextLong());
+                long256.setLong1(rnd.nextLong());
+                long256.setLong2(rnd.nextLong());
+                long256.setLong3(rnd.nextLong());
+                mem.putLong256(long256);
+            }
+
+            rnd.reset();
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, long256);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256Null() {
+        long pageSize = 64;
+        final int N = 1000;
+        Long256Impl long256 = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            for (int i = 0; i < N; i++) {
+                mem.putLong256((CharSequence) null);
+            }
+
+            StringSink sink = new StringSink();
+            long offset = 0;
+            for (int i = 0; i < N; i++) {
+                mem.getLong256(offset, long256);
+                Assert.assertEquals(-1L, long256.getLong0());
+                Assert.assertEquals(-1L, long256.getLong1());
+                Assert.assertEquals(-1L, long256.getLong2());
+                Assert.assertEquals(-1L, long256.getLong3());
+                mem.getLong256(offset, sink);
+                Assert.assertEquals(0, sink.length());
+                offset += Long256.BYTES;
+            }
+        }
+    }
+
+    @Test
+    public void testLong256ObjExternallySequenced() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        long offset = 0;
+        Long256Impl long256 = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            for (int i = 0; i < 1000; i++) {
+                long256.setLong0(rnd.nextLong());
+                long256.setLong1(rnd.nextLong());
+                long256.setLong2(rnd.nextLong());
+                long256.setLong3(rnd.nextLong());
+                mem.putLong256(offset, long256);
+                offset += Long256.BYTES;
+            }
+
+            rnd.reset();
+            offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, long256);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256FullStr() {
+        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060";
+        long pageSize = 128;
+        Long256Impl long256 = new Long256Impl();
+        Long256Impl long256a = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+
+            mem.putLong256(expected);
+            mem.putLong256(expected);
+
+            mem.getLong256(0, long256);
+            String actual = "0x" + Long.toHexString(long256.getLong3())
+                    + Long.toHexString(long256.getLong2())
+                    + Long.toHexString(long256.getLong1())
+                    + Long.toHexString(long256.getLong0()
+            );
+
+            Assert.assertEquals(expected, actual);
+            mem.getLong256(Long256.BYTES, long256a);
+
+            String actual2 = "0x" + Long.toHexString(long256a.getLong3())
+                    + Long.toHexString(long256a.getLong2())
+                    + Long.toHexString(long256a.getLong1())
+                    + Long.toHexString(long256a.getLong0()
+            );
+            Assert.assertEquals(expected, actual2);
+        }
+    }
+
+    @Test
+    public void testLong256PartialStr() {
+        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed";
+        long pageSize = 128;
+        Long256Impl long256 = new Long256Impl();
+        Long256Impl long256a = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            mem.putLong256(expected);
+            mem.putLong256(expected);
+            mem.getLong256(0, long256);
+
+            String actual = "0x";
+            if (long256.getLong3() != 0) {
+                actual += Long.toHexString(long256.getLong3());
+            }
+            if (long256.getLong2() != 0) {
+                actual += Long.toHexString(long256.getLong2());
+            }
+            if (long256.getLong1() != 0) {
+                actual += Long.toHexString(long256.getLong1());
+            }
+            if (long256.getLong0() != 0) {
+                actual += Long.toHexString(long256.getLong0());
+            }
+
+            Assert.assertEquals(expected, actual);
+            mem.getLong256(Long256.BYTES, long256a);
+
+            String actual2 = "0x";
+            if (long256a.getLong3() != 0) {
+                actual2 += Long.toHexString(long256a.getLong3());
+            }
+            if (long256a.getLong2() != 0) {
+                actual2 += Long.toHexString(long256a.getLong2());
+            }
+            if (long256a.getLong1() != 0) {
+                actual2 += Long.toHexString(long256a.getLong1());
+            }
+            if (long256a.getLong0() != 0) {
+                actual2 += Long.toHexString(long256a.getLong0());
+            }
+
+            Assert.assertEquals(expected, actual2);
+        }
+    }
+
+    @Test
+    public void testLong256DirectExternallySequenced() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl sink = new Long256Impl();
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                offset += Long256.BYTES;
+            }
+
+            rnd.reset();
+            offset = 0;
+
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, sink);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
             }
         }
     }

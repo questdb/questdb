@@ -21,54 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.std;
 
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Long256;
-import com.questdb.std.str.CharSink;
+import com.questdb.std.time.MillisecondClock;
 
-import java.io.Closeable;
-
-public interface ReadOnlyColumn extends Closeable {
+public class StationaryMillisClock implements MillisecondClock {
+    public static final StationaryMillisClock INSTANCE = new StationaryMillisClock();
 
     @Override
-    void close();
-
-    BinarySequence getBin(long offset);
-
-    long getBinLen(long offset);
-
-    boolean getBool(long offset);
-
-    byte getByte(long offset);
-
-    double getDouble(long offset);
-
-    long getFd();
-
-    float getFloat(long offset);
-
-    int getInt(long offset);
-
-    long getLong(long offset);
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256(long offset);
-
-    void getLong256(long offset, CharSink sink);
-
-    Long256 getLong256B(long offset);
-
-    char getChar(long offset);
-
-    int getStrLen(long offset);
-
-    void grow(long size);
-
-    boolean isDeleted();
+    public long getTicks() {
+        return 0;
+    }
 }

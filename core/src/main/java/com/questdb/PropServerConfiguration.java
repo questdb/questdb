@@ -152,6 +152,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
+    private boolean httpFrozenClock;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -171,6 +172,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             this.httpWorkerHaltOnError = getBoolean(properties, "http.worker.haltOnError", false);
             this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
             this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
+            this.httpFrozenClock = getBoolean(properties, "http.frozen.clock", false);
 
             int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
             int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
@@ -659,7 +661,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
 
         @Override
         public MillisecondClock getClock() {
-            return MillisecondClockImpl.INSTANCE;
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
         }
 
         @Override
@@ -700,6 +702,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
+        }
+
+        @Override
+        public boolean getDumpNetworkTraffic() {
+            return false;
         }
     }
 
@@ -966,6 +973,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
         }
     }
 

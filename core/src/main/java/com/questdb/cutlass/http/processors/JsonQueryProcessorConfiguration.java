@@ -23,6 +23,8 @@
 
 package com.questdb.cutlass.http.processors;
 
+import com.questdb.std.time.MillisecondClock;
+
 public interface JsonQueryProcessorConfiguration {
 
     CharSequence getKeepAliveHeader();
@@ -32,4 +34,6 @@ public interface JsonQueryProcessorConfiguration {
     int getDoubleScale();
 
     int getConnectionCheckFrequency();
+
+    MillisecondClock getClock();
 }

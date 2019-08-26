@@ -34,11 +34,14 @@ import com.questdb.std.ex.ZLibException;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectUnboundedByteSink;
+import com.questdb.std.str.StdoutSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
+
+import static com.questdb.network.Net.dump;
 
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
@@ -79,6 +82,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private long total = 0;
     private boolean header = true;
+    private boolean dumpNetworkTraffic;
 
     public HttpChunkedResponseSocket getChunkedSocket() {
         return chunkedResponse;
@@ -95,6 +99,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = out;
         this.limit = outPtr + responseBufferSize;
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
     }
 
     @Override
@@ -323,8 +328,16 @@ public class HttpResponseSink implements Closeable, Mutable {
                 flushBufSize -= sent;
                 throw PeerIsSlowToReadException.INSTANCE;
             } else {
+                dumpBuffer('<', flushBuf + sent, n);
                 sent += n;
             }
+        }
+    }
+
+    private void dumpBuffer(char direction, long buffer, int size) {
+        if (dumpNetworkTraffic && size > 0) {
+            StdoutSink.INSTANCE.put(direction);
+            dump(buffer, size);
         }
     }
 

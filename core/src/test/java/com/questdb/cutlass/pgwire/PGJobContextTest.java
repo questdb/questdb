@@ -23,12 +23,15 @@
 
 package com.questdb.cutlass.pgwire;
 
+import com.questdb.cutlass.NetUtils;
 import com.questdb.griffin.AbstractGriffinTest;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.*;
-import com.questdb.std.*;
+import com.questdb.std.Chars;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -1511,118 +1514,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                         running
                 );
 
-                long clientFd = clientNf.socketTcp(true);
-                long sockAddress = clientNf.sockaddr(Net.parseIPv4("127.0.0.1"), 9120);
-                Assert.assertEquals(0, clientNf.connect(clientFd, sockAddress));
-
-                final int N = 1024 * 1024;
-                final long sendBuf = Unsafe.malloc(N);
-                final long recvBuf = Unsafe.malloc(N);
-
-                try {
-                    long sendPtr = sendBuf;
-                    boolean expectDisconnect = false;
-
-                    int mode = 0;
-                    int n = script.length();
-                    int i = 0;
-                    while (i < n) {
-                        char c1 = script.charAt(i);
-                        switch (c1) {
-                            case '<':
-                            case '>':
-                                int len = (int) (sendPtr - sendBuf);
-                                if (mode == 0) {
-                                    // we were sending - lets wrap up and send
-                                    if (len > 0) {
-                                        int m = clientNf.send(clientFd, sendBuf, len);
-                                        Assert.assertEquals("disc:" + expectDisconnect, len, m);
-                                        sendPtr = sendBuf;
-                                    }
-                                } else {
-                                    // we meant to receive; sendBuf will contain expected bytes we have to receive
-                                    // and this buffer will also drive the length of the message
-                                    if (len > 0) {
-                                        int m = clientNf.recv(clientFd, recvBuf, len);
-                                        if (expectDisconnect) {
-                                            Assert.assertTrue(m < 0);
-                                            // force exit
-                                            i = n;
-                                        } else {
-                                            Assert.assertEquals(len, m);
-                                            for (int j = 0; j < len; j++) {
-                                                Assert.assertEquals(
-                                                        Unsafe.getUnsafe().getByte(sendBuf + j),
-                                                        Unsafe.getUnsafe().getByte(recvBuf + j)
-                                                );
-                                            }
-                                            // clear sendBuf
-                                            sendPtr = sendBuf;
-                                        }
-                                    }
-                                }
-
-                                if (c1 == '<') {
-                                    mode = 1;
-                                } else {
-                                    mode = 0;
-                                }
-                                i++;
-                                continue;
-                            case '\n':
-                                i++;
-                                continue;
-                            default:
-                                char c2 = script.charAt(i + 1);
-                                if (c1 == '!' && c2 == '!') {
-                                    expectDisconnect = true;
-                                } else {
-                                    try {
-                                        byte b = (byte) ((Numbers.hexToDecimal(c1) << 4) | Numbers.hexToDecimal(c2));
-                                        Unsafe.getUnsafe().putByte(sendPtr++, b);
-                                    } catch (NumericException e) {
-                                        e.printStackTrace();
-                                    }
-                                }
-                                i += 2;
-                                break;
-                        }
-                    }
-
-                    // this we do final receive (or send) when we don't have
-                    // any more script left to process
-                    int len = (int) (sendPtr - sendBuf);
-                    if (mode == 0) {
-                        // we were sending - lets wrap up and send
-                        if (len > 0) {
-                            int m = clientNf.send(clientFd, sendBuf, len);
-                            Assert.assertEquals(len, m);
-                        }
-                    } else {
-                        // we meant to receive; sendBuf will contain expected bytes we have to receive
-                        // and this buffer will also drive the length of the message
-                        if (len > 0 || expectDisconnect) {
-                            if (expectDisconnect) {
-                                Assert.assertTrue(Net.isDead(clientFd));
-                            } else {
-                                int m = clientNf.recv(clientFd, recvBuf, len);
-                                Assert.assertEquals(len, m);
-                                for (int j = 0; j < len; j++) {
-                                    Assert.assertEquals(
-                                            Unsafe.getUnsafe().getByte(sendBuf + j),
-                                            Unsafe.getUnsafe().getByte(recvBuf + j)
-                                    );
-                                }
-                            }
-                        }
-                    }
-                } finally {
-                    Unsafe.free(sendBuf, N);
-                    Unsafe.free(recvBuf, N);
-                    clientNf.freeSockAddr(sockAddress);
-                    LOG.info().$("closed client").$();
-                    clientNf.close(clientFd);
-                }
+                NetUtils.playScript(clientNf, script, "127.0.0.1", 9120);
             } finally {
                 running.set(false);
                 haltLatch.await();

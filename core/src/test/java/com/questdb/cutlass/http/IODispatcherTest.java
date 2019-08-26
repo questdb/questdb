@@ -23,10 +23,9 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.cairo.CairoEngine;
-import com.questdb.cairo.CairoTestUtils;
-import com.questdb.cairo.DefaultCairoConfiguration;
-import com.questdb.cairo.TestRecord;
+import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
+import com.questdb.cutlass.NetUtils;
 import com.questdb.cutlass.http.processors.JsonQueryProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -54,6 +53,48 @@ public class IODispatcherTest {
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
 
     @Before
     public void setUp() throws Exception {
@@ -263,7 +304,7 @@ public class IODispatcherTest {
             });
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)) {
+                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -350,7 +391,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0442\r\n" +
+                        "05d7\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -358,16 +399,15 @@ public class IODispatcherTest {
                         "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
                         "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |         0  |\r\n" +
-                        "|              1  |         0  |\r\n" +
-                        "|              2  |         0  |\r\n" +
-                        "|              3  |         0  |\r\n" +
-                        "|              4  |         0  |\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n").getBytes();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -378,7 +418,7 @@ public class IODispatcherTest {
                         Net.setTcpNoDelay(fd, true);
 
                         final int len = request.length();
-                        long ptr = Unsafe.malloc(((CharSequence) request).length());
+                        long ptr = Unsafe.malloc(expectedResponse.length);
                         try {
                             for (int j = 0; j < 150; j++) {
                                 int sent = 0;
@@ -393,28 +433,27 @@ public class IODispatcherTest {
                                 final int expectedToReceive = expectedResponse.length;
                                 int received = 0;
                                 while (received < expectedToReceive) {
-                                    int n = Net.recv(fd, ptr + received, len - received);
+                                    int n = Net.recv(fd, ptr + received, expectedToReceive - received);
+                                    Assert.assertTrue(n > -1);
                                     // compare bytes
                                     for (int i = 0; i < n; i++) {
                                         if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                            Assert.fail("Error at: " + (received + i) + ", local=" + i + ", excpected=" + ((char) expectedResponse[received + i]) + ", received=" + (char) Unsafe.getUnsafe().getByte(ptr + received + i));
                                         }
                                     }
-
                                     received += n;
                                 }
                             }
                         } finally {
-                            Unsafe.free(ptr, len);
+                            Unsafe.free(ptr, expectedResponse.length);
                         }
                     } finally {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
                     Net.close(fd);
+                    workerPool.halt();
                 }
-
-                workerPool.halt();
             }
         });
     }
@@ -443,7 +482,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -531,7 +570,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0442\r\n" +
+                        "05d7\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -539,11 +578,11 @@ public class IODispatcherTest {
                         "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
                         "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |         0  |\r\n" +
-                        "|              1  |         0  |\r\n" +
-                        "|              2  |         0  |\r\n" +
-                        "|              3  |         0  |\r\n" +
-                        "|              4  |         0  |\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
@@ -561,15 +600,18 @@ public class IODispatcherTest {
                     }
                 };
 
-                sendAndReceive(
-                        nf,
-                        request,
-                        expectedResponse,
-                        5,
-                        0
-                );
+                try {
+                    sendAndReceive(
+                            nf,
+                            request,
+                            expectedResponse,
+                            5,
+                            0
+                    );
 
-                workerPool.halt();
+                } finally {
+                    workerPool.halt();
+                }
             }
         });
     }
@@ -597,7 +639,7 @@ public class IODispatcherTest {
             });
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -685,7 +727,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0442\r\n" +
+                        "05d7\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -693,11 +735,11 @@ public class IODispatcherTest {
                         "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
                         "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |         0  |\r\n" +
-                        "|              1  |         0  |\r\n" +
-                        "|              2  |         0  |\r\n" +
-                        "|              3  |         0  |\r\n" +
-                        "|              4  |         0  |\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
@@ -737,6 +779,77 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testHttpLong256AndCharImport() {
+        // this script uploads text file:
+        // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
+        // 0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b
+        // 0x9e6e19637bb625a8ff3d052b7c2fe57dc78c55a15d258d77c43d5a9c160b0384,p
+        // 0xcb9378977089c773c074045b20ede2cdcc3a6ff562f4e64b51b20c5205234525,w
+        // 0xd23ae9b2e5c68caf2c5663af5ba27679dc3b3cb781c4dc698abbd17d63e32e9f,t
+
+        final String uploadScript = ">504f5354202f696d703f666d743d6a736f6e266f76657277726974653d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a436f6e74656e742d4c656e6774683a203534380d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a436f6e74656e742d547970653a206d756c7469706172742f666f726d2d646174613b20626f756e646172793d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a4f726967696e3a20687474703a2f2f6c6f63616c686f73743a393030300d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                ">2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2264617461223b2066696c656e616d653d2273616d706c652e637376220d0a436f6e74656e742d547970653a206170706c69636174696f6e2f766e642e6d732d657863656c0d0a0d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f2d2d0d0a\n" +
+                "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a\n" +
+                "<0d0a63380d0a\n" +
+                "<7b22737461747573223a224f4b222c226c6f636174696f6e223a2273616d706c652e637376222c22726f777352656a6563746564223a302c22726f7773496d706f72746564223a352c22686561646572223a66616c73652c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536222c2273697a65223a33322c226572726f7273223a307d2c7b226e616d65223a226631222c2274797065223a2243484152222c2273697a65223a322c226572726f7273223a307d5d7d\n" +
+                "<0d0a30300d0a\n" +
+                "<0d0a\n";
+
+        final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
+
+        final String baseDir = temp.getRoot().getAbsolutePath();
+
+        try (
+                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                HttpServer httpServer = HttpServer.create(
+                        new DefaultHttpServerConfiguration() {
+                            @Override
+                            public boolean getDumpNetworkTraffic() {
+                                return true;
+                            }
+
+                            @Override
+                            public MillisecondClock getClock() {
+                                return StationaryMillisClock.INSTANCE;
+                            }
+                        },
+                        null,
+                        LOG,
+                        cairoEngine
+                )) {
+
+            // upload file
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
+
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+                StringSink sink = new StringSink();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expectedTableMetadata, sink);
+            }
+
+            final String selectAsJsonScript = ">474554202f657865633f71756572793d25304125304125323773616d706c652e637376253237266c696d69743d302532433130303026636f756e743d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303166300d0a\n" +
+                    "<7b227175657279223a225c6e5c6e2773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c22636f756e74223a357d\n" +
+                    "<0d0a30300d0a\n" +
+                    "<0d0a";
+
+            // select * from 'sample.csv'
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
+
+            final String downloadAsCsvScript = ">474554202f6578703f71756572793d25304125304125323773616d706c652e63737625323720485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a206e617669676174650d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e382c6170706c69636174696f6e2f7369676e65642d65786368616e67653b763d62330d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a20746578742f6373763b20636861727365743d7574662d380d0a436f6e74656e742d446973706f736974696f6e3a206174746163686d656e743b2066696c656e616d653d22717565737464622d71756572792d302e637376220d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303136390d0a\n" +
+                    "<226630222c226631220d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a\n" +
+                    "<0d0a30300d0a\n" +
+                    "<0d0a";
+
+            // download select * from 'sample.csv' as csv
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, downloadAsCsvScript, "127.0.0.1", 9001);
+        }
+    }
+
+    @Test
     public void testJsonQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -760,7 +873,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -857,7 +970,7 @@ public class IODispatcherTest {
             });
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1018,7 +1131,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1206,7 +1319,7 @@ public class IODispatcherTest {
                     return false;
                 }
             });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)) {
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -1400,7 +1513,7 @@ public class IODispatcherTest {
                     return false;
                 }
             });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)) {
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public String getUrl() {
@@ -2248,7 +2361,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2292,48 +2405,6 @@ public class IODispatcherTest {
                 Thread.sleep(2000000);
             }
         });
-    }
-
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
     @NotNull
@@ -2440,6 +2511,7 @@ public class IODispatcherTest {
 //                                dump(ptr + received, n);
                                 // compare bytes
                                 for (int i = 0; i < n; i++) {
+//                                    System.out.print((char)Unsafe.getUnsafe().getByte(ptr + received + i));
                                     if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
                                         Assert.fail("Error at: " + (received + i) + ", local=" + i);
                                     }

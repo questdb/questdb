@@ -25,30 +25,47 @@ package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
+import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
 
-public final class CharAdapter extends AbstractTypeAdapter {
+public final class Long256Adapter extends AbstractTypeAdapter {
 
-    public static final CharAdapter INSTANCE = new CharAdapter();
+    public static final Long256Adapter INSTANCE = new Long256Adapter();
 
-    private CharAdapter() {
+    private Long256Adapter() {
     }
 
     @Override
     public int getType() {
-        return ColumnType.CHAR;
+        return ColumnType.LONG256;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        if (text != null && text.length() == 1) {
-            return Character.isLetter(text.charAt(0));
+        final int len = text.length();
+        if (len > 2 && ((len & 1) == 0) && len < 67 && text.charAt(0) == '0' && text.charAt(1) == 'x') {
+            try {
+                Numbers.parseHexLong(text, 2, Math.min(len, 18));
+                if (len > 18) {
+                    Numbers.parseHexLong(text, 18, Math.min(len, 34));
+                }
+                if (len > 34) {
+                    Numbers.parseHexLong(text, 34, Math.min(len, 42));
+                }
+                if (len > 42) {
+                    Numbers.parseHexLong(text, 42, Math.min(len, 66));
+                }
+                return true;
+            } catch (NumericException ignored) {
+                return false;
+            }
         }
         return false;
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putChar(column, value.charAt(0));
+        row.putLong256(column, value);
     }
 }

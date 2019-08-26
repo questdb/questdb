@@ -21,54 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.std;
 
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Long256;
-import com.questdb.std.str.CharSink;
+public interface Long256Sink {
+    void setLong0(long value);
 
-import java.io.Closeable;
+    void setLong1(long value);
 
-public interface ReadOnlyColumn extends Closeable {
+    void setLong2(long value);
 
-    @Override
-    void close();
-
-    BinarySequence getBin(long offset);
-
-    long getBinLen(long offset);
-
-    boolean getBool(long offset);
-
-    byte getByte(long offset);
-
-    double getDouble(long offset);
-
-    long getFd();
-
-    float getFloat(long offset);
-
-    int getInt(long offset);
-
-    long getLong(long offset);
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256(long offset);
-
-    void getLong256(long offset, CharSink sink);
-
-    Long256 getLong256B(long offset);
-
-    char getChar(long offset);
-
-    int getStrLen(long offset);
-
-    void grow(long size);
-
-    boolean isDeleted();
+    void setLong3(long value);
 }

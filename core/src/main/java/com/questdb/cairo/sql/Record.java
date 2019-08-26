@@ -84,6 +84,10 @@ public interface Record {
         sink.put(getStr(col));
     }
 
+    default void getLong256(int col, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
     default CharSequence getStrB(int col) {
         throw new UnsupportedOperationException();
     }

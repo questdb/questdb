@@ -41,6 +41,7 @@ import com.questdb.log.LogRecord;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -61,6 +62,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final MillisecondClock clock;
 
     public TextQueryProcessor(JsonQueryProcessorConfiguration configuration, CairoEngine engine) {
         // todo: add scheduler
@@ -68,6 +70,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.doubleScale = configuration.getDoubleScale();
+        this.clock = configuration.getClock();
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
     }
 
     @Override
@@ -273,12 +282,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context, dispatcher);
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     private LogRecord error(JsonQueryProcessorState state) {
         return LOG.error().$('[').$(state.fd).$("] ");
     }
@@ -296,7 +299,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             int status
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.status(status, "text/csv; charset=utf-8");
-        socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(System.currentTimeMillis()).put(".csv\"").put(Misc.EOL);
+        socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
@@ -424,6 +427,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 putStringOrNull(socket, rec.getSym(col));
                 break;
             case ColumnType.BINARY:
+                break;
+            case ColumnType.LONG256:
+                rec.getLong256(col, socket);
                 break;
             default:
                 assert false;

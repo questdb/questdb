@@ -30,6 +30,9 @@ import com.questdb.log.LogFactory;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StdoutSink;
+
+import static com.questdb.network.Net.dump;
 
 public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
@@ -48,6 +51,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final CairoSecurityContext cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private boolean dumpNetworkTraffic;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -61,7 +65,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
-        LOG.debug().$("new").$();
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
     }
 
     @Override
@@ -210,8 +214,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         return;
                     }
 
-//                    dump(recvBuffer, read);
-
+                    dumpBuffer(recvBuffer, read);
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
                 }
             } else {
@@ -273,8 +276,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         break;
                     }
 
-//                    dump(buf, n);
-
                     if (n == 0) {
                         // Text loader needs as big of a data chunk as possible
                         // to analyse columns and delimiters correctly. To make sure we
@@ -307,6 +308,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                     LOG.debug().$("multipart recv [len=").$(n).$(']').$();
 
+                    dumpBuffer(buf, n);
+
                     bufRemaining -= n;
                     buf += n;
 
@@ -329,6 +332,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 // if client has disconnected before we had a chance to reply.
                 read = nf.recv(fd, recvBuffer, 1);
                 if (read != 0) {
+                    dumpBuffer(recvBuffer, read);
                     LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
                     dispatcher.disconnect(this);
                 } else {
@@ -352,4 +356,12 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             e.printStackTrace();
         }
     }
+
+    private void dumpBuffer(long buffer, int size) {
+        if (dumpNetworkTraffic && size > 0) {
+            StdoutSink.INSTANCE.put('>');
+            dump(buffer, size);
+        }
+    }
+
 }

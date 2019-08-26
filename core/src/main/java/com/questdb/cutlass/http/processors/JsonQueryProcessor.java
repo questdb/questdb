@@ -64,6 +64,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.doubleScale = configuration.getDoubleScale();
     }
 
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str == null) {
+            r.put("null");
+        } else {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(compiler);
@@ -291,14 +299,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context, dispatcher);
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str == null) {
-            r.put("null");
-        } else {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     private LogRecord error(JsonQueryProcessorState state) {
         return LOG.error().$('[').$(state.fd).$("] ");
     }
@@ -449,6 +449,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.BINARY:
                 socket.put('[');
                 socket.put(']');
+                break;
+            case ColumnType.LONG256:
+                socket.put('"');
+                rec.getLong256(col, socket);
+                socket.put('"');
                 break;
             default:
                 assert false;

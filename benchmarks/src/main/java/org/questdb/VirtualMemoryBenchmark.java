@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryBenchmark {
 
 
@@ -59,7 +59,7 @@ public class VirtualMemoryBenchmark {
         mem2.jumpTo(0);
     }
 
-    @Benchmark
+    //    @Benchmark
     public void testExternalSequence() {
         long o = 0;
         for (int i = 0; i < 10000; i++) {
@@ -68,7 +68,7 @@ public class VirtualMemoryBenchmark {
         }
     }
 
-    @Benchmark
+    //    @Benchmark
     public void testExternalSequenceStr() {
         long o = 0;
         for (int i = 0; i < 10000; i++) {
@@ -88,14 +88,14 @@ public class VirtualMemoryBenchmark {
         mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
     }
 
-    @Benchmark
+    //    @Benchmark
     public void testInternalSequence() {
         for (int i = 0; i < 10000; i++) {
             mem2.putInt(i);
         }
     }
 
-    @Benchmark
+    //    @Benchmark
     public void testInternalSequenceStr() {
         for (int i = 0; i < 10000; i++) {
             CharSequence cs = rnd.nextChars(rnd.nextInt() % 4);

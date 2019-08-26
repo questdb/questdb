@@ -24,11 +24,22 @@
 package com.questdb.cairo;
 
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
+import com.questdb.std.Long256Impl;
 import com.questdb.std.Numbers;
+import com.questdb.std.str.CharSink;
 
 public class NullColumn implements ReadOnlyColumn {
 
     public static final NullColumn INSTANCE = new NullColumn();
+    private static final Long256Impl NULL_LONG_256 = new Long256Impl();
+
+    static {
+        NULL_LONG_256.setLong0(Numbers.LONG_NaN);
+        NULL_LONG_256.setLong1(Numbers.LONG_NaN);
+        NULL_LONG_256.setLong2(Numbers.LONG_NaN);
+        NULL_LONG_256.setLong3(Numbers.LONG_NaN);
+    }
 
     @Override
     public void close() {
@@ -106,6 +117,21 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public void grow(long size) {
+    }
+
+    @Override
+    public void getLong256(long offset, CharSink sink) {
+
+    }
+
+    @Override
+    public Long256 getLong256(long offset) {
+        return NULL_LONG_256;
+    }
+
+    @Override
+    public Long256 getLong256B(long offset) {
+        return NULL_LONG_256;
     }
 
     @Override

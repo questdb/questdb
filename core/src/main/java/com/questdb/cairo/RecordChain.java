@@ -25,10 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Mutable;
-import com.questdb.std.Transient;
-import com.questdb.std.Unsafe;
+import com.questdb.std.*;
 
 import java.io.Closeable;
 
@@ -196,6 +193,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public void putLong(long value) {
         mem.putLong(value);
+    }
+
+    @Override
+    public void putLong256(Long256 value) {
+        mem.putLong256(value);
     }
 
     @Override

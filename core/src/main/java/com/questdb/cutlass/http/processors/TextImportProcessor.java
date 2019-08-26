@@ -24,6 +24,7 @@
 package com.questdb.cutlass.http.processors;
 
 import com.questdb.cairo.CairoEngine;
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.PartitionBy;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.http.*;
@@ -230,7 +231,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     socket.bookmark();
                     socket.put('|');
                     pad(socket, TO_STRING_COL1_PAD, state.columnIndex);
-//                    col(r, m.getColumnQuick(h.columnIndex), importedMetadata.getQuick(h.columnIndex));
+                    pad(socket, TO_STRING_COL2_PAD, metadata.getColumnName(state.columnIndex));
+                    pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
                     pad(socket, TO_STRING_COL5_PAD, errors.getQuick(state.columnIndex));
                     socket.put(Misc.EOL);
                 }

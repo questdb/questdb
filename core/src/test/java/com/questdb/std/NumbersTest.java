@@ -238,6 +238,30 @@ public class NumbersTest {
     }
 
     @Test
+    public void testLongToHex() {
+        long value = -8372462554923253491L;
+        StringSink sink = new StringSink();
+        Numbers.appendHex(sink, value);
+        TestUtils.assertEquals(Long.toHexString(value), sink);
+    }
+
+    @Test
+    public void testLongToHex2() {
+        long value = 0x5374f5fbcef4819L;
+        StringSink sink = new StringSink();
+        Numbers.appendHex(sink, value);
+        TestUtils.assertEquals("0" + Long.toHexString(value), sink);
+    }
+
+    @Test
+    public void testLongToHex3() {
+        long value = 0xbfbca5da8f0645L;
+        StringSink sink = new StringSink();
+        Numbers.appendHex(sink, value);
+        TestUtils.assertEquals(Long.toHexString(value), sink);
+    }
+
+    @Test
     public void testLongEdge() throws Exception {
         Numbers.append(sink, Long.MAX_VALUE);
         Assert.assertEquals(Long.MAX_VALUE, Numbers.parseLong(sink));

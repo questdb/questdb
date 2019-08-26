@@ -32,6 +32,7 @@ import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1426,6 +1427,52 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
+    private static long allocBlob() {
+        return Unsafe.malloc(blobLen);
+    }
+
+    private static void freeBlob(long blob) {
+        Unsafe.free(blob, blobLen);
+    }
+
+    private static void assertBin(Record r, Rnd exp, long blob, int index) {
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+            Assert.assertEquals(blobLen, r.getBinLen(index));
+            BinarySequence sq = r.getBin(index);
+            for (int l = 0; l < blobLen; l++) {
+                byte b = sq.byteAt(l);
+                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                if (result) {
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                }
+            }
+        } else {
+            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
+        }
+    }
+
+    private static void assertStrColumn(CharSequence expected, Record r, int index) {
+        TestUtils.assertEquals(expected, r.getStr(index));
+        TestUtils.assertEquals(expected, r.getStrB(index));
+        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
+        Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertNullStr(Record r, int index) {
+        Assert.assertNull(r.getStr(index));
+        Assert.assertNull(r.getStrB(index));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
+    }
+
+    private static String padHexLong(long value) {
+        String s = Long.toHexString(value);
+        if (s.length() % 2 == 0) {
+            return s;
+        }
+        return "0" + s;
+    }
+
     @Test
     public void testCharAsString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2192,6 +2239,142 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemoveFirstPartitionByDayTwo() throws Exception {
         testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
+    }
+
+    @Test
+    public void testReadLong256One() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256Two() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256Three() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256Four() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
     }
 
     @Test
@@ -3008,44 +3191,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
             Assert.assertTrue(ff.wasCalled());
         });
-    }
-
-    private static long allocBlob() {
-        return Unsafe.malloc(blobLen);
-    }
-
-    private static void freeBlob(long blob) {
-        Unsafe.free(blob, blobLen);
-    }
-
-    private static void assertBin(Record r, Rnd exp, long blob, int index) {
-        if (exp.nextBoolean()) {
-            exp.nextChars(blob, blobLen / 2);
-            Assert.assertEquals(blobLen, r.getBinLen(index));
-            BinarySequence sq = r.getBin(index);
-            for (int l = 0; l < blobLen; l++) {
-                byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                }
-            }
-        } else {
-            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
-        }
-    }
-
-    private static void assertStrColumn(CharSequence expected, Record r, int index) {
-        TestUtils.assertEquals(expected, r.getStr(index));
-        TestUtils.assertEquals(expected, r.getStrB(index));
-        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
-        Assert.assertEquals(expected.length(), r.getStrLen(index));
-    }
-
-    private static void assertNullStr(Record r, int index) {
-        Assert.assertNull(r.getStr(index));
-        Assert.assertNull(r.getStrB(index));
-        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
     }
 
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {

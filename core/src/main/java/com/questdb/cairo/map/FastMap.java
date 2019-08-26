@@ -122,6 +122,9 @@ public class FastMap implements Map {
                     case ColumnType.TIMESTAMP:
                         offset += 8;
                         break;
+                    case ColumnType.LONG256:
+                        offset += Long256.BYTES;
+                        break;
                     default:
                         close();
                         throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
@@ -443,6 +446,17 @@ public class FastMap implements Map {
             checkSize(8);
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += 8;
+            writeOffset();
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            checkSize(Long256.BYTES);
+            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
+            appendAddress += Long256.BYTES;
             writeOffset();
         }
 

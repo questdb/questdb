@@ -21,54 +21,51 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.std;
 
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Long256;
-import com.questdb.std.str.CharSink;
-
-import java.io.Closeable;
-
-public interface ReadOnlyColumn extends Closeable {
+public class Long256Impl implements Long256Sink, Long256 {
+    private long l0;
+    private long l1;
+    private long l2;
+    private long l3;
 
     @Override
-    void close();
+    public long getLong0() {
+        return l0;
+    }
 
-    BinarySequence getBin(long offset);
+    @Override
+    public void setLong0(long value) {
+        this.l0 = value;
+    }
 
-    long getBinLen(long offset);
+    @Override
+    public long getLong1() {
+        return l1;
+    }
 
-    boolean getBool(long offset);
+    @Override
+    public void setLong1(long value) {
+        this.l1 = value;
+    }
 
-    byte getByte(long offset);
+    @Override
+    public long getLong2() {
+        return l2;
+    }
 
-    double getDouble(long offset);
+    @Override
+    public void setLong2(long value) {
+        this.l2 = value;
+    }
 
-    long getFd();
+    @Override
+    public long getLong3() {
+        return l3;
+    }
 
-    float getFloat(long offset);
-
-    int getInt(long offset);
-
-    long getLong(long offset);
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256(long offset);
-
-    void getLong256(long offset, CharSink sink);
-
-    Long256 getLong256B(long offset);
-
-    char getChar(long offset);
-
-    int getStrLen(long offset);
-
-    void grow(long size);
-
-    boolean isDeleted();
+    @Override
+    public void setLong3(long value) {
+        this.l3 = value;
+    }
 }

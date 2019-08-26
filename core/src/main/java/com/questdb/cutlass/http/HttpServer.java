@@ -46,10 +46,16 @@ public class HttpServer implements Closeable {
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
+    private final WorkerPool workerPool;
 
-    public HttpServer(HttpServerConfiguration configuration, WorkerPool pool) {
+    public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
+        if (localPool) {
+            workerPool = pool;
+        } else {
+            workerPool = null;
+        }
         for (int i = 0; i < workerCount; i++) {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
@@ -113,7 +119,7 @@ public class HttpServer implements Closeable {
             } else {
                 localPool = workerPool;
             }
-            final HttpServer httpServer = new HttpServer(configuration, localPool);
+            final HttpServer httpServer = new HttpServer(configuration, localPool, localPool != workerPool);
 
             httpServer.bind(new HttpRequestProcessorFactory() {
                 @Override
@@ -199,6 +205,9 @@ public class HttpServer implements Closeable {
 
     @Override
     public void close() {
+        if (workerPool != null) {
+            workerPool.halt();
+        }
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
         for (int i = 0; i < workerCount; i++) {

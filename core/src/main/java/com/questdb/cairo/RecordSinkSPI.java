@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 
 public interface RecordSinkSPI {
     void putBin(BinarySequence value);
@@ -41,6 +42,8 @@ public interface RecordSinkSPI {
     void putInt(int value);
 
     void putLong(long value);
+
+    void putLong256(Long256 value);
 
     void putShort(short value);
 

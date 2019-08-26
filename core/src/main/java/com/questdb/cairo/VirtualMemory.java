@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.std.*;
 import com.questdb.std.str.AbstractCharSequence;
+import com.questdb.std.str.CharSink;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -36,6 +37,8 @@ public class VirtualMemory implements Closeable {
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
     private final CharSequenceView csview2 = new CharSequenceView();
+    private final Long256Impl long256 = new Long256Impl();
+    private final Long256Impl long256B = new Long256Impl();
     private long pageSize;
     private int bits;
     private long mod;
@@ -61,6 +64,19 @@ public class VirtualMemory implements Closeable {
         }
 
         return STRING_LENGTH_BYTES + s.length() * 2;
+    }
+
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+        }
+    }
+
+    private static void putInsignificantHexToSink(CharSink sink, long value) {
+        if (value != 0) {
+            Numbers.appendHex(sink, value);
+        }
     }
 
     public long addressOf(long offset) {
@@ -112,42 +128,90 @@ public class VirtualMemory implements Closeable {
     }
 
     public final char getChar(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Character.BYTES) {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
     }
 
     public final double getDouble(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Double.BYTES) {
             return Unsafe.getUnsafe().getDouble(absolutePointer + offset);
         }
         return getDouble0(offset);
     }
 
     public final float getFloat(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Float.BYTES) {
             return Unsafe.getUnsafe().getFloat(absolutePointer + offset);
         }
         return getFloat0(offset);
     }
 
     public final int getInt(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
             return Unsafe.getUnsafe().getInt(absolutePointer + offset);
         }
         return getInt0(offset);
     }
 
     public long getLong(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long.BYTES) {
             return Unsafe.getUnsafe().getLong(absolutePointer + offset);
         }
         return getLong0(offset);
     }
 
+    public void getLong256(long offset, CharSink sink) {
+        final long a, b, c, d;
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
+            b = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES);
+            c = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2);
+            d = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3);
+        } else {
+            a = getLong(offset);
+            b = getLong(offset + Long.BYTES);
+            c = getLong(offset + Long.BYTES * 2);
+            d = getLong(offset + Long.BYTES * 3);
+        }
+
+        if (a == -1L && b == -1L && c == -1L && d == -1L) {
+            return;
+        }
+        sink.put("0x");
+        putInsignificantHexToSink(sink, d);
+        putInsignificantHexToSink(sink, c);
+        putInsignificantHexToSink(sink, b);
+        putInsignificantHexToSink(sink, a);
+    }
+
+    public void getLong256(long offset, Long256Sink sink) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            sink.setLong0(Unsafe.getUnsafe().getLong(absolutePointer + offset));
+            sink.setLong1(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES));
+            sink.setLong2(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2));
+            sink.setLong3(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3));
+        } else {
+            sink.setLong0(getLong(offset));
+            sink.setLong1(getLong(offset + Long.BYTES));
+            sink.setLong2(getLong(offset + Long.BYTES * 2));
+            sink.setLong3(getLong(offset + Long.BYTES * 3));
+        }
+    }
+
+    public Long256 getLong256(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
+    public Long256 getLong256B(long offset) {
+        getLong256(offset, long256B);
+        return long256B;
+    }
+
     public final short getShort(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Short.BYTES) {
             return Unsafe.getUnsafe().getShort(absolutePointer + offset);
         }
         return getShort0(offset);
@@ -338,10 +402,34 @@ public class VirtualMemory implements Closeable {
     }
 
     public void putInt(long offset, int value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
             Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
         } else {
             putIntBytes(offset, value);
+        }
+    }
+
+    public void putLong256(long offset, Long256 value) {
+        putLong256(
+                offset,
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
+    }
+
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
+        } else {
+            putLong(offset, l0);
+            putLong(offset + Long.BYTES, l1);
+            putLong(offset + Long.BYTES * 2, l2);
+            putLong(offset + Long.BYTES * 3, l3);
         }
     }
 
@@ -352,6 +440,30 @@ public class VirtualMemory implements Closeable {
         } else {
             putIntBytes(value);
         }
+    }
+
+    public final void putLong256(long l0, long l1, long l2, long l3) {
+        if (pageHi - appendPointer > Long256.BYTES - 1) {
+            Unsafe.getUnsafe().putLong(appendPointer, l0);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
+            appendPointer += Long256.BYTES;
+        } else {
+            putLong(l0);
+            putLong(l1);
+            putLong(l2);
+            putLong(l3);
+        }
+    }
+
+    public final void putLong256(Long256 value) {
+        putLong256(
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
     }
 
     public void putLong(long offset, long value) {
@@ -379,25 +491,18 @@ public class VirtualMemory implements Closeable {
             if (hexString == null || (len = hexString.length()) == 0) {
                 putLong256Null();
             } else {
-                long value = 0L;
-                for (int i = 2; i < len; i++) {
-                    final int x = (i - 2) % (Long.BYTES * 2);
-                    if (x == 0 && i > 2) {
-                        Unsafe.getUnsafe().putLong(appendPointer + (x - 1) * Long.BYTES, value);
-                        value = 0L;
-                    }
-                    final int d = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i));
-                    if (d == -1) {
-                        throw CairoException.instance(0).put("malformed LONG256");
-                    }
-                    value = (value << 4) + d;
-                }
-
-                for (int last = len / (Long.BYTES * 2); last < 4; last++) {
-                    Unsafe.getUnsafe().putLong(appendPointer + last * Long.BYTES, value);
-                    value = 0;
+                Unsafe.getUnsafe().putLong(appendPointer, 0);
+                Unsafe.getUnsafe().putLong(appendPointer + 8, 0);
+                Unsafe.getUnsafe().putLong(appendPointer + 16, 0);
+                Unsafe.getUnsafe().putLong(appendPointer + 24, 0);
+                long o = 0;
+                for (int i = len / 2 - 1; i > 0; i--) {
+                    final int d1 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2));
+                    final int d2 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2 + 1));
+                    Unsafe.getUnsafe().putByte(appendPointer + o++, (byte) ((d1 << 4) + d2));
                 }
             }
+            appendPointer += Long256.BYTES;
         }
     }
 
@@ -500,13 +605,6 @@ public class VirtualMemory implements Closeable {
                 pages.setQuick(i, address);
             }
             Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
-        }
-    }
-
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
         }
     }
 
@@ -902,35 +1000,29 @@ public class VirtualMemory implements Closeable {
     private void putLong256Bytes(CharSequence hexString) {
         final int len;
         if (hexString == null || (len = hexString.length()) == 0) {
-            putLong(Numbers.LONG_NaN);
-            putLong(Numbers.LONG_NaN);
-            putLong(Numbers.LONG_NaN);
-            putLong(Numbers.LONG_NaN);
+            putLong(-1L);
+            putLong(-1L);
+            putLong(-1L);
+            putLong(-1L);
         } else {
-            long value = 0L;
-            for (int i = 2; i < len; i++) {
-                if ((i - 2) % 16 == 0 && i > 2) {
-                    putLong(value);
-                    value = 0L;
-                }
-                final int d = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i));
-                if (d == -1) {
-                    throw CairoException.instance(0).put("malformed LONG256");
-                }
-                value = (value << 4) + d;
-            }
-
-            if (len / 16 < 4) {
-                putLong(value);
-                for (int k = 1 + len / 16; k < 4; k++) {
-                    putLong(0);
-                }
+            long offset = getAppendOffset();
+            putLong(0);
+            putLong(0);
+            putLong(0);
+            putLong(0);
+            for (int i = len / 2 - 1; i > 0; i--) {
+                int d1 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2));
+                int d2 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2 + 1));
+                putByte(offset++, (byte) ((d1 << 4) + d2));
             }
         }
     }
 
     private void putLong256Null() {
-        Unsafe.getUnsafe().setMemory(appendPointer, 32, (byte) 0xff);
+        Unsafe.getUnsafe().putLong(appendPointer, -1L);
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, -1L);
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, -1L);
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, -1L);
     }
 
     void putLongBytes(long value) {

@@ -107,7 +107,7 @@ public class TypeManagerTest {
     @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[INT,LONG,DOUBLE,BOOLEAN]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256]", typeManager.getAllAdapters().toString());
     }
 
     @Test

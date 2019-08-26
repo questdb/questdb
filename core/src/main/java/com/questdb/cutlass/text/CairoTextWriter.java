@@ -128,14 +128,15 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int hi) {
         final TableWriter.Row w = writer.newRow(0);
         for (int i = 0; i < hi; i++) {
-            if (values.getQuick(i).length() == 0) {
+            final DirectByteCharSequence dbcs = values.getQuick(i);
+            if (dbcs.length() == 0) {
                 continue;
             }
             try {
-                types.getQuick(i).write(w, i, values.getQuick(i));
+                types.getQuick(i).write(w, i, dbcs);
             } catch (Exception ignore) {
                 LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-                logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(values.getQuick(i)).$();
+                logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
                 columnErrorCounts.increment(i);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:

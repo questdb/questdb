@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntObjHashMap;
+import com.questdb.std.Long256;
 import com.questdb.std.str.StringSink;
 
 public final class ColumnType {
@@ -43,9 +44,46 @@ public final class ColumnType {
     public static final int PARAMETER = 11;
     public static final int TIMESTAMP = 12;
     public static final int CHAR = 13;
+    public static final int LONG256 = 14;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
     private static final ThreadLocal<StringSink> caseConverterBuffer = ThreadLocal.withInitial(StringSink::new);
+
+    static {
+        typeNameMap.put(BOOLEAN, "BOOLEAN");
+        typeNameMap.put(BYTE, "BYTE");
+        typeNameMap.put(DOUBLE, "DOUBLE");
+        typeNameMap.put(FLOAT, "FLOAT");
+        typeNameMap.put(INT, "INT");
+        typeNameMap.put(LONG, "LONG");
+        typeNameMap.put(SHORT, "SHORT");
+        typeNameMap.put(CHAR, "CHAR");
+        typeNameMap.put(STRING, "STRING");
+        typeNameMap.put(SYMBOL, "SYMBOL");
+        typeNameMap.put(BINARY, "BINARY");
+        typeNameMap.put(DATE, "DATE");
+        typeNameMap.put(PARAMETER, "PARAMETER");
+        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
+        typeNameMap.put(LONG256, "LONG256");
+
+        nameTypeMap.put("BOOLEAN", BOOLEAN);
+        nameTypeMap.put("BYTE", BYTE);
+        nameTypeMap.put("DOUBLE", DOUBLE);
+        nameTypeMap.put("FLOAT", FLOAT);
+        nameTypeMap.put("INT", INT);
+        nameTypeMap.put("LONG", LONG);
+        nameTypeMap.put("SHORT", SHORT);
+        nameTypeMap.put("CHAR", CHAR);
+        nameTypeMap.put("STRING", STRING);
+        nameTypeMap.put("SYMBOL", SYMBOL);
+        nameTypeMap.put("BINARY", BINARY);
+        nameTypeMap.put("DATE", DATE);
+        nameTypeMap.put("PARAMETER", PARAMETER);
+        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
+        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
+        nameTypeMap.put("LONG256", ColumnType.LONG256);
+    }
 
     private ColumnType() {
     }
@@ -67,40 +105,6 @@ public final class ColumnType {
         return typeNameMap.valueAt(index);
     }
 
-    static {
-        typeNameMap.put(BOOLEAN, "BOOLEAN");
-        typeNameMap.put(BYTE, "BYTE");
-        typeNameMap.put(DOUBLE, "DOUBLE");
-        typeNameMap.put(FLOAT, "FLOAT");
-        typeNameMap.put(INT, "INT");
-        typeNameMap.put(LONG, "LONG");
-        typeNameMap.put(SHORT, "SHORT");
-        typeNameMap.put(CHAR, "CHAR");
-        typeNameMap.put(STRING, "STRING");
-        typeNameMap.put(SYMBOL, "SYMBOL");
-        typeNameMap.put(BINARY, "BINARY");
-        typeNameMap.put(DATE, "DATE");
-        typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
-        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
-
-        nameTypeMap.put("BOOLEAN", BOOLEAN);
-        nameTypeMap.put("BYTE", BYTE);
-        nameTypeMap.put("DOUBLE", DOUBLE);
-        nameTypeMap.put("FLOAT", FLOAT);
-        nameTypeMap.put("INT", INT);
-        nameTypeMap.put("LONG", LONG);
-        nameTypeMap.put("SHORT", SHORT);
-        nameTypeMap.put("CHAR", CHAR);
-        nameTypeMap.put("STRING", STRING);
-        nameTypeMap.put("SYMBOL", SYMBOL);
-        nameTypeMap.put("BINARY", BINARY);
-        nameTypeMap.put("DATE", DATE);
-        nameTypeMap.put("PARAMETER", PARAMETER);
-        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
-        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
-    }
-
     public static int pow2SizeOf(int columnType) {
         switch (columnType) {
             case ColumnType.BOOLEAN:
@@ -118,6 +122,8 @@ public final class ColumnType {
             case ColumnType.SHORT:
             case ColumnType.CHAR:
                 return 1;
+            case ColumnType.LONG256:
+                return 8;
             default:
                 assert false : "Cannot request power of 2 for " + nameOf(columnType);
                 return -1;
@@ -134,6 +140,8 @@ public final class ColumnType {
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
                 return 8;
+            case ColumnType.LONG256:
+                return Long256.BYTES;
             case ColumnType.FLOAT:
             case ColumnType.INT:
             case ColumnType.SYMBOL:
