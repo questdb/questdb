@@ -24,6 +24,7 @@
 package com.questdb.cairo.sql;
 
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
 public interface Record {
@@ -85,6 +86,14 @@ public interface Record {
     }
 
     default void getLong256(int col, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Long256 getLong256A(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Long256 getLong256B(int col) {
         throw new UnsupportedOperationException();
     }
 

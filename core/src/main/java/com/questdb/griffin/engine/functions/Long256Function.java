@@ -29,14 +29,13 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.BinarySequence;
-import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
-public abstract class SymbolFunction implements Function {
+public abstract class Long256Function implements Function {
 
     private final int position;
 
-    public SymbolFunction(int position) {
+    public Long256Function(int position) {
         this.position = position;
     }
 
@@ -71,22 +70,17 @@ public abstract class SymbolFunction implements Function {
     }
 
     @Override
-    public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+    public double getDouble(Record rec) {
+        return getLong(rec);
     }
 
     @Override
-    public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+    public float getFloat(Record rec) {
+        return getLong(rec);
     }
 
     @Override
-    public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getLong(Record rec) {
+    public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -131,22 +125,22 @@ public abstract class SymbolFunction implements Function {
     }
 
     @Override
+    public final CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
+    public long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getType() {
-        return ColumnType.SYMBOL;
-    }
-
-    @Override
-    public Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
+        return ColumnType.LONG256;
     }
 }

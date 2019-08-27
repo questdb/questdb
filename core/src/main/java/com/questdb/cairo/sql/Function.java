@@ -25,6 +25,7 @@ package com.questdb.cairo.sql;
 
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -52,6 +53,10 @@ public interface Function extends Closeable {
     int getInt(Record rec);
 
     long getLong(Record rec);
+
+    Long256 getLong256A(Record rec);
+
+    Long256 getLong256B(Record rec);
 
     RecordMetadata getMetadata();
 

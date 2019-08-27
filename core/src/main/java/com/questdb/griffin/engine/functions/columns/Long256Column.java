@@ -21,54 +21,28 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.std.BinarySequence;
+import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.Long256Function;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.Long256;
-import com.questdb.std.str.CharSink;
 
-import java.io.Closeable;
+public class Long256Column extends Long256Function implements StatelessFunction {
+    private final int columnIndex;
 
-public interface ReadOnlyColumn extends Closeable {
+    public Long256Column(int position, int columnIndex) {
+        super(position);
+        this.columnIndex = columnIndex;
+    }
 
     @Override
-    void close();
+    public Long256 getLong256A(Record rec) {
+        return rec.getLong256A(columnIndex);
+    }
 
-    BinarySequence getBin(long offset);
-
-    long getBinLen(long offset);
-
-    boolean getBool(long offset);
-
-    byte getByte(long offset);
-
-    double getDouble(long offset);
-
-    long getFd();
-
-    float getFloat(long offset);
-
-    int getInt(long offset);
-
-    long getLong(long offset);
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256A(long offset);
-
-    void getLong256A(long offset, CharSink sink);
-
-    Long256 getLong256B(long offset);
-
-    char getChar(long offset);
-
-    int getStrLen(long offset);
-
-    void grow(long size);
-
-    boolean isDeleted();
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return rec.getLong256B(columnIndex);
+    }
 }

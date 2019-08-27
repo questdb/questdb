@@ -52,6 +52,7 @@ public interface FunctionFactory {
      * <li>U = binary</li>
      * <li>V = variable argument list</li>
      * <li>C = cursor</li>
+     * <li>H = long256</li>
      * </ul>
      *
      * @return signature, for example "substr(SII)"

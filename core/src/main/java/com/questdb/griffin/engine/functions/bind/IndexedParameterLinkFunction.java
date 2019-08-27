@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoException;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
 
@@ -145,6 +146,16 @@ public class IndexedParameterLinkFunction implements Function {
     @Override
     public long getTimestamp(Record rec) {
         return getBase().getTimestamp(rec);
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        return getBase().getLong256A(rec);
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return getBase().getLong256B(rec);
     }
 
     @Override

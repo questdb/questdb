@@ -162,7 +162,7 @@ public class VirtualMemory implements Closeable {
         return getLong0(offset);
     }
 
-    public void getLong256(long offset, CharSink sink) {
+    public void getLong256A(long offset, CharSink sink) {
         final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
@@ -200,7 +200,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    public Long256 getLong256(long offset) {
+    public Long256 getLong256A(long offset) {
         getLong256(offset, long256);
         return long256;
     }

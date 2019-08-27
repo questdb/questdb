@@ -289,7 +289,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                         // do we have anything in the buffer?
                         if (buf > start) {
-                            if (multipartContentParser.parse(start, buf, multipartListener)) {
+                            if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
                                 // request is complete
                                 completeRequest(dispatcher, fd, processor);
                                 break;
@@ -314,7 +314,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     buf += n;
 
                     if (bufRemaining == 0) {
-                        if (multipartContentParser.parse(start, buf, multipartListener)) {
+                        if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
                             // request is complete
                             completeRequest(dispatcher, fd, processor);
                             break;

@@ -93,7 +93,25 @@ public class TableReaderRecord implements Record {
         if (index < 0) {
             return;
         }
-        colA(col).getLong256(index * Long256.BYTES, sink);
+        colA(col).getLong256A(index * Long256.BYTES, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getLong256A(index * Long256.BYTES);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getLong256B(index * Long256.BYTES);
     }
 
     @Override

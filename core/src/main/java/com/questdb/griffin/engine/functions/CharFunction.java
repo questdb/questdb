@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
 public abstract class CharFunction implements Function {
@@ -40,6 +41,16 @@ public abstract class CharFunction implements Function {
 
     @Override
     public final BinarySequence getBin(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 

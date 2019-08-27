@@ -55,6 +55,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final ObjList<ValueWriter> valueWriters = new ObjList<>();
 
     public JsonQueryProcessor(JsonQueryProcessorConfiguration configuration, CairoEngine engine) {
         // todo: add scheduler
@@ -62,6 +63,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.doubleScale = configuration.getDoubleScale();
+
+        this.valueWriters.extendAndSet(ColumnType.BOOLEAN, this::putBooleanValue);
+        this.valueWriters.extendAndSet(ColumnType.BYTE, this::putByteValue);
+        this.valueWriters.extendAndSet(ColumnType.DOUBLE, this::putDoubleValue);
+        this.valueWriters.extendAndSet(ColumnType.FLOAT, this::putFloatValue);
+        this.valueWriters.extendAndSet(ColumnType.INT, this::putIntValue);
+        this.valueWriters.extendAndSet(ColumnType.LONG, this::putLongValue);
+        this.valueWriters.extendAndSet(ColumnType.DATE, this::putDateValue);
+        this.valueWriters.extendAndSet(ColumnType.TIMESTAMP, this::putTimestampValue);
+        this.valueWriters.extendAndSet(ColumnType.SHORT, this::putShortValue);
+        this.valueWriters.extendAndSet(ColumnType.CHAR, this::putCharValue);
+        this.valueWriters.extendAndSet(ColumnType.STRING, this::putStrValue);
+        this.valueWriters.extendAndSet(ColumnType.SYMBOL, this::putSymValue);
+        this.valueWriters.extendAndSet(ColumnType.BINARY, this::putBinValue);
+        this.valueWriters.extendAndSet(ColumnType.LONG256, this::putLong256Value);
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -264,7 +280,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0) {
                                 socket.put(',');
                             }
-                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            final ValueWriter vw = valueWriters.getQuick(state.metadata.getColumnType(state.columnIndex));
+                            if (vw != null) {
+                                vw.write(socket, state.record, state.columnIndex);
+                            }
                         }
 
                         state.queryState = AbstractQueryContext.QUERY_RECORD_SUFFIX;
@@ -383,81 +402,88 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         return true;
     }
 
-    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
-        switch (type) {
-            case ColumnType.BOOLEAN:
-                socket.put(rec.getBool(col));
-                break;
-            case ColumnType.BYTE:
-                socket.put(rec.getByte(col));
-                break;
-            case ColumnType.DOUBLE:
-                socket.put(rec.getDouble(col), doubleScale);
-                break;
-            case ColumnType.FLOAT:
-                socket.put(rec.getFloat(col), floatScale);
-                break;
-            case ColumnType.INT:
-                final int i = rec.getInt(col);
-                if (i == Integer.MIN_VALUE) {
-                    socket.put("null");
-                } else {
-                    Numbers.append(socket, i);
-                }
-                break;
-            case ColumnType.LONG:
-                final long l = rec.getLong(col);
-                if (l == Long.MIN_VALUE) {
-                    socket.put("null");
-                } else {
-                    socket.put(l);
-                }
-                break;
-            case ColumnType.DATE:
-                final long d = rec.getDate(col);
-                if (d == Long.MIN_VALUE) {
-                    socket.put("null");
-                    break;
-                }
-                socket.put('"').putISODateMillis(d).put('"');
-                break;
-            case ColumnType.TIMESTAMP:
-                final long t = rec.getTimestamp(col);
-                if (t == Long.MIN_VALUE) {
-                    socket.put("null");
-                    break;
-                }
-                socket.put('"').putISODate(t).put('"');
-                break;
-            case ColumnType.SHORT:
-                socket.put(rec.getShort(col));
-                break;
-            case ColumnType.CHAR:
-                char c = rec.getChar(col);
-                if (c == 0) {
-                    socket.put("\"\"");
-                } else {
-                    socket.put('"').putUtf8(c).put('"');
-                }
-                break;
-            case ColumnType.STRING:
-                putStringOrNull(socket, rec.getStr(col));
-                break;
-            case ColumnType.SYMBOL:
-                putStringOrNull(socket, rec.getSym(col));
-                break;
-            case ColumnType.BINARY:
-                socket.put('[');
-                socket.put(']');
-                break;
-            case ColumnType.LONG256:
-                socket.put('"');
-                rec.getLong256(col, socket);
-                socket.put('"');
-                break;
-            default:
-                assert false;
+    private void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put('"');
+        rec.getLong256(col, socket);
+        socket.put('"');
+    }
+
+    private void putBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
+        socket.put('[');
+        socket.put(']');
+    }
+
+    private void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        putStringOrNull(socket, rec.getSym(col));
+    }
+
+    private void putStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        putStringOrNull(socket, rec.getStr(col));
+    }
+
+    private void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        char c = rec.getChar(col);
+        if (c == 0) {
+            socket.put("\"\"");
+        } else {
+            socket.put('"').putUtf8(c).put('"');
         }
+    }
+
+    private void putShortValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getShort(col));
+    }
+
+    private void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final long t = rec.getTimestamp(col);
+        if (t == Long.MIN_VALUE) {
+            socket.put("null");
+            return;
+        }
+        socket.put('"').putISODate(t).put('"');
+    }
+
+    private void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final long d = rec.getDate(col);
+        if (d == Long.MIN_VALUE) {
+            socket.put("null");
+            return;
+        }
+        socket.put('"').putISODateMillis(d).put('"');
+    }
+
+    private void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final long l = rec.getLong(col);
+        if (l == Long.MIN_VALUE) {
+            socket.put("null");
+        } else {
+            socket.put(l);
+        }
+    }
+
+    private void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final int i = rec.getInt(col);
+        if (i == Integer.MIN_VALUE) {
+            socket.put("null");
+        } else {
+            Numbers.append(socket, i);
+        }
+    }
+
+    private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getFloat(col), floatScale);
+    }
+
+    private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getDouble(col), doubleScale);
+    }
+
+    private void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getByte(col));
+    }
+
+    private void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getBool(col));
     }
 
     private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
@@ -515,5 +541,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();
         sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
+    }
+
+    @FunctionalInterface
+    private interface ValueWriter {
+        void write(HttpChunkedResponseSocket socket, Record rec, int col);
     }
 }

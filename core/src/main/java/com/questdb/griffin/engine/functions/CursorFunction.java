@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
 public class CursorFunction implements Function {
@@ -38,6 +39,16 @@ public class CursorFunction implements Function {
     public CursorFunction(int position, RecordCursorFactory factory) {
         this.position = position;
         this.factory = factory;
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
