@@ -62,8 +62,7 @@ public class TextDelimiterScanner implements Closeable {
         return priorities[value];
     }
 
-    byte scan(long address, int len) {
-        final long hi = address + len;
+    byte scan(long address, long hi) {
         int lineCount = 0;
         boolean quotes = false;
         long cursor = address;

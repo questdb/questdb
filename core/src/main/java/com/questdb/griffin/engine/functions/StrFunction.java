@@ -144,4 +144,9 @@ public abstract class StrFunction implements Function {
     public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
 }

@@ -159,6 +159,9 @@ class GroupByUtils {
                         case ColumnType.TIMESTAMP:
                             fun = new TimestampColumn(node.position, keyColumnIndex - 1);
                             break;
+                        case ColumnType.LONG256:
+                            fun = new Long256Column(node.position, keyColumnIndex - 1);
+                            break;
                         default:
                             fun = new BinColumn(node.position, keyColumnIndex - 1);
                             break;

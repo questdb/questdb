@@ -164,6 +164,11 @@ public class NamedParameterLinkFunction implements Function {
     }
 
     @Override
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
+    }
+
+    @Override
     public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
         base = executionContext.getBindVariableService().getFunction(variableName);
         if (base == null) {

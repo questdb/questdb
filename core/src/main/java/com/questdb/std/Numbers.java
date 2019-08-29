@@ -1731,6 +1731,12 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static void putSignificantHexToSink(CharSink sink, long value) {
+        if (value != 0) {
+            appendHex(sink, value);
+        }
+    }
+
     @FunctionalInterface
     private interface LongHexAppender {
         void append(CharSink sink, long value);

@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.Long256Function;
 import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.Long256;
+import com.questdb.std.str.CharSink;
 
 public class Long256Column extends Long256Function implements StatelessFunction {
     private final int columnIndex;
@@ -34,6 +35,11 @@ public class Long256Column extends Long256Function implements StatelessFunction 
     public Long256Column(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        rec.getLong256(columnIndex, sink);
     }
 
     @Override

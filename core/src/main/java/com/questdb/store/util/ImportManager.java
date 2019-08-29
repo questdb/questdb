@@ -134,7 +134,7 @@ public final class ImportManager {
                 long bufSz = bufSize == -1 ? ByteBuffers.getMaxMappedBufferSize(size) : bufSize;
                 long p = 0;
                 while (p < size) {
-                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSz ? size - p : bufSz);
+                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, Math.min(size - p, bufSz));
                     try {
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, plainTextParser);
@@ -168,7 +168,7 @@ public final class ImportManager {
             try {
                 Chars.strcpy(schema, len, addr);
                 try (JsonLexer lexer = new JsonLexer(1024, 4096)) {
-                    lexer.parse(addr, len, jsonSchemaParser);
+                    lexer.parse(addr, addr + len, jsonSchemaParser);
                     lexer.parseLast();
                 }
                 metadata = jsonSchemaParser.getMetadata();
@@ -185,7 +185,7 @@ public final class ImportManager {
                 long bufSize = ByteBuffers.getMaxMappedBufferSize(size);
                 long p = 0;
                 while (p < size) {
-                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
+                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, Math.min(size - p, bufSize));
                     try {
                         if (p == 0) {
                             parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener, forceHeader, metadata);

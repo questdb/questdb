@@ -313,7 +313,7 @@ public class TypeManager implements Mutable {
                     for (int i = 0; i < len; i++) {
                         Unsafe.getUnsafe().putByte(memBuffer + i, heapBuffer[i]);
                     }
-                    jsonLexer.parse(memBuffer, len, this::onJsonEvent);
+                    jsonLexer.parse(memBuffer, memBuffer + len, this::onJsonEvent);
                 }
                 jsonLexer.clear();
             } finally {

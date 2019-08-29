@@ -112,6 +112,10 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+        }
+
+        @Override
         public RecordCursorFactory getRecordCursorFactory() {
             return null;
         }

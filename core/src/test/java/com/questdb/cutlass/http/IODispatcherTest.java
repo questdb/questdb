@@ -606,7 +606,8 @@ public class IODispatcherTest {
                             request,
                             expectedResponse,
                             5,
-                            0
+                            0,
+                            false
                     );
 
                 } finally {
@@ -758,22 +759,26 @@ public class IODispatcherTest {
                             // start delaying after 800 bytes
 
                             if (totalSent > 800) {
-                                LockSupport.parkNanos(1);
+                                LockSupport.parkNanos(10000);
                             }
                             return result;
                         }
                         return 0;
                     }
                 };
-                sendAndReceive(
-                        nf,
-                        request,
-                        expectedResponse,
-                        1,
-                        0
-                );
 
-                workerPool.halt();
+                try {
+                    sendAndReceive(
+                            nf,
+                            request,
+                            expectedResponse,
+                            1,
+                            0,
+                            true
+                    );
+                } finally {
+                    workerPool.halt();
+                }
             }
         });
     }
@@ -937,7 +942,8 @@ public class IODispatcherTest {
                         request,
                         expectedResponse,
                         100,
-                        0
+                        0,
+                        false
                 );
 
                 workerPool.halt();
@@ -1101,7 +1107,7 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n").getBytes();
 
-                sendAndReceive(nf, request, expectedResponse, 10, 100L);
+                sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 workerPool.halt();
             }
         });
@@ -1195,7 +1201,8 @@ public class IODispatcherTest {
                         request,
                         expectedResponse,
                         10,
-                        0
+                        0,
+                        false
                 );
 
                 workerPool.halt();
@@ -2476,7 +2483,8 @@ public class IODispatcherTest {
             String request,
             byte[] expectedResponse,
             int requestCount,
-            long pauseBetweenSendAndReceive
+            long pauseBetweenSendAndReceive,
+            boolean print
     ) throws InterruptedException {
         long fd = nf.socketTcp(true);
         try {
@@ -2511,7 +2519,9 @@ public class IODispatcherTest {
 //                                dump(ptr + received, n);
                                 // compare bytes
                                 for (int i = 0; i < n; i++) {
-//                                    System.out.print((char)Unsafe.getUnsafe().getByte(ptr + received + i));
+                                    if (print) {
+                                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
+                                    }
                                     if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
                                         Assert.fail("Error at: " + (received + i) + ", local=" + i);
                                     }

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -57,7 +57,7 @@ public class JsonLexerTest {
             long address = TestUtils.toMemory(json);
             try (JsonLexer lexer = new JsonLexer(4, 4)) {
                 try {
-                    lexer.parse(address, len, listener);
+                    lexer.parse(address, address + len, listener);
                     lexer.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
@@ -83,8 +83,8 @@ public class JsonLexerTest {
         int len = in.length();
         long address = TestUtils.toMemory(in);
         try {
-            LEXER.parse(address, len - 7, listener);
-            LEXER.parse(address + len - 7, 7, listener);
+            LEXER.parse(address, address + len - 7, listener);
+            LEXER.parse(address + len - 7, address + len, listener);
             LEXER.parseLast();
             TestUtils.assertEquals("{\"x\":\"abcdefhijklmn\"}", listener.value());
         } finally {
@@ -154,8 +154,8 @@ public class JsonLexerTest {
                 try {
                     listener.clear();
                     LEXER.clear();
-                    LEXER.parse(address, i, listener);
-                    LEXER.parse(address + i, len - i, listener);
+                    LEXER.parse(address, address + i, listener);
+                    LEXER.parse(address + i, address + len, listener);
                     LEXER.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
@@ -243,8 +243,8 @@ public class JsonLexerTest {
                             LEXER.clear();
                             Unsafe.getUnsafe().copyMemory(buf, bufA, i);
                             Unsafe.getUnsafe().copyMemory(buf + i, bufB, l - i);
-                            LEXER.parse(bufA, i, listener);
-                            LEXER.parse(bufB, l - i, listener);
+                            LEXER.parse(bufA, bufA + i, listener);
+                            LEXER.parse(bufB, bufB + l - i, listener);
                             LEXER.parseLast();
                         } catch (JsonException e) {
                             System.out.println(i);
@@ -674,8 +674,8 @@ public class JsonLexerTest {
                 try {
                     listener.clear();
                     lexer.clear();
-                    lexer.parse(address, i, listener);
-                    lexer.parse(address + i, len - i, listener);
+                    lexer.parse(address, address + i, listener);
+                    lexer.parse(address + i, address + len, listener);
                     lexer.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
@@ -705,8 +705,8 @@ public class JsonLexerTest {
             for (int i = 0; i < len; i++) {
                 listener.clear();
                 LEXER.clear();
-                LEXER.parse(address, i, listener);
-                LEXER.parse(address + i, len - i, listener);
+                LEXER.parse(address, address + i, listener);
+                LEXER.parse(address + i, address + len, listener);
                 LEXER.parseLast();
                 TestUtils.assertEquals(expected, listener.value());
             }

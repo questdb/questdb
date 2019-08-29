@@ -58,6 +58,8 @@ public interface Function extends Closeable {
 
     Long256 getLong256B(Record rec);
 
+    void getLong256(Record rec, CharSink sink);
+
     RecordMetadata getMetadata();
 
     int getPosition();

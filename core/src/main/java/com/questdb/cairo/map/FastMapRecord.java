@@ -27,12 +27,10 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.IntList;
-import com.questdb.std.Transient;
-import com.questdb.std.Unsafe;
+import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 final class FastMapRecord implements MapRecord {
     private final int split;
@@ -42,6 +40,8 @@ final class FastMapRecord implements MapRecord {
     private final DirectCharSequence[] csA;
     private final DirectCharSequence[] csB;
     private final DirectBinarySequence[] bs;
+    private final Long256Impl[] long256A;
+    private final Long256Impl[] long256B;
     private final FastMapValue value;
     private long address0;
     private long address1;
@@ -68,6 +68,8 @@ final class FastMapRecord implements MapRecord {
         DirectCharSequence[] csA = null;
         DirectCharSequence[] csB = null;
         DirectBinarySequence[] bs = null;
+        Long256Impl[] long256A = null;
+        Long256Impl[] long256B = null;
 
         for (int i = 0; i < n; i++) {
             switch (keyTypes.getColumnType(i)) {
@@ -85,6 +87,14 @@ final class FastMapRecord implements MapRecord {
                     }
                     bs[i + split] = new DirectBinarySequence();
                     break;
+                case ColumnType.LONG256:
+                    if (long256A == null) {
+                        long256A = new Long256Impl[n + split];
+                        long256B = new Long256Impl[n + split];
+                    }
+                    long256A[i + split] = new Long256Impl();
+                    long256B[i + split] = new Long256Impl();
+                    break;
                 default:
                     break;
             }
@@ -93,6 +103,8 @@ final class FastMapRecord implements MapRecord {
         this.csA = csA;
         this.csB = csB;
         this.bs = bs;
+        this.long256A = long256A;
+        this.long256B = long256B;
     }
 
     private FastMapRecord(
@@ -102,7 +114,10 @@ final class FastMapRecord implements MapRecord {
             int keyBlockOffset,
             DirectCharSequence[] csA,
             DirectCharSequence[] csB,
-            DirectBinarySequence[] bs) {
+            DirectBinarySequence[] bs,
+            Long256Impl[] long256A,
+            Long256Impl[] long256B
+    ) {
 
         this.valueOffsets = valueOffsets;
         this.split = split;
@@ -112,6 +127,8 @@ final class FastMapRecord implements MapRecord {
         this.csA = csA;
         this.csB = csB;
         this.bs = bs;
+        this.long256A = long256A;
+        this.long256B = long256B;
     }
 
     @Override
@@ -177,6 +194,44 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public void getLong256(int columnIndex, CharSink sink) {
+        long address = addressOfColumn(columnIndex);
+        final long a = Unsafe.getUnsafe().getLong(address);
+        final long b = Unsafe.getUnsafe().getLong(address + Long256.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long256.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long256.BYTES * 3);
+        if (a == 0 && b == 0 && c == 0 && d == 0) {
+            return;
+        }
+        sink.put("0x");
+        Numbers.putSignificantHexToSink(sink, d);
+        Numbers.putSignificantHexToSink(sink, c);
+        Numbers.putSignificantHexToSink(sink, b);
+        Numbers.putSignificantHexToSink(sink, a);
+    }
+
+    @Override
+    public Long256 getLong256A(int columnIndex) {
+        return getLong256Generic(long256A, columnIndex);
+    }
+
+    @NotNull
+    private Long256 getLong256Generic(Long256Impl[] array, int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        Long256Impl long256 = array[columnIndex];
+        long256.setLong0(Unsafe.getUnsafe().getLong(address));
+        long256.setLong1(Unsafe.getUnsafe().getLong(address + Long.BYTES));
+        long256.setLong2(Unsafe.getUnsafe().getLong(address + Long.BYTES * 2));
+        long256.setLong3(Unsafe.getUnsafe().getLong(address + Long.BYTES * 3));
+        return long256;
+    }
+
+    @Override
+    public Long256 getLong256B(int columnIndex) {
+        return getLong256Generic(long256B, columnIndex);
+    }
+
+    @Override
     public CharSequence getStr(int columnIndex) {
         assert columnIndex < csA.length;
         return getStr0(columnIndex, Unsafe.arrayGet(csA, columnIndex));
@@ -238,6 +293,8 @@ final class FastMapRecord implements MapRecord {
         final DirectCharSequence[] csA;
         final DirectCharSequence[] csB;
         final DirectBinarySequence[] bs;
+        final Long256Impl[] long256A;
+        final Long256Impl[] long256B;
 
         // csA and csB are pegged, checking one for null should be enough
         if (this.csA != null) {
@@ -267,7 +324,23 @@ final class FastMapRecord implements MapRecord {
         } else {
             bs = null;
         }
-        return new FastMapRecord(valueOffsets, split, keyDataOffset, keyBlockOffset, csA, csB, bs);
+
+        if (this.long256A != null) {
+            int n = this.long256A.length;
+            long256A = new Long256Impl[n];
+            long256B = new Long256Impl[n];
+
+            for (int i = 0; i < n; i++) {
+                if (Unsafe.arrayGet(this.long256A, i) != null) {
+                    Unsafe.arrayPut(csA, i, new Long256Impl());
+                    Unsafe.arrayPut(csB, i, new Long256Impl());
+                }
+            }
+        } else {
+            long256A = null;
+            long256B = null;
+        }
+        return new FastMapRecord(valueOffsets, split, keyDataOffset, keyBlockOffset, csA, csB, bs, long256A, long256B);
     }
 
     private CharSequence getStr0(int index, DirectCharSequence cs) {

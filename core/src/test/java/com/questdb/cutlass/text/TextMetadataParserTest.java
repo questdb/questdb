@@ -90,7 +90,7 @@ public class TextMetadataParserTest {
 
         long buf = TestUtils.toMemory(in);
         try {
-            LEXER.parse(buf, in.length(), textMetadataParser);
+            LEXER.parse(buf, buf + in.length(), textMetadataParser);
             Assert.assertEquals(2, textMetadataParser.getColumnTypes().size());
             Assert.assertEquals(2, textMetadataParser.getColumnNames().size());
             Assert.assertEquals("[INT,DATE]", textMetadataParser.getColumnTypes().toString());
@@ -106,7 +106,7 @@ public class TextMetadataParserTest {
 
         long buf = TestUtils.toMemory(in);
         try {
-            LEXER.parse(buf, in.length(), textMetadataParser);
+            LEXER.parse(buf, buf + in.length(), textMetadataParser);
             Assert.assertEquals(0, textMetadataParser.getColumnTypes().size());
             Assert.assertEquals(0, textMetadataParser.getColumnNames().size());
         } finally {
@@ -190,7 +190,7 @@ public class TextMetadataParserTest {
     private void assertFailure(CharSequence schema, int position, CharSequence message) {
         long buf = TestUtils.toMemory(schema);
         try {
-            LEXER.parse(buf, schema.length(), textMetadataParser);
+            LEXER.parse(buf, buf + schema.length(), textMetadataParser);
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals(position, e.getPosition());

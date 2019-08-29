@@ -157,6 +157,11 @@ public class CursorFunction implements Function {
     }
 
     @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getType() {
         return TypeEx.CURSOR;
     }

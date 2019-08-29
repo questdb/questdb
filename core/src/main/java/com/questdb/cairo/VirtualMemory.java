@@ -73,12 +73,6 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    private static void putInsignificantHexToSink(CharSink sink, long value) {
-        if (value != 0) {
-            Numbers.appendHex(sink, value);
-        }
-    }
-
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -162,7 +156,7 @@ public class VirtualMemory implements Closeable {
         return getLong0(offset);
     }
 
-    public void getLong256A(long offset, CharSink sink) {
+    public void getLong256(long offset, CharSink sink) {
         final long a, b, c, d;
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
@@ -180,10 +174,10 @@ public class VirtualMemory implements Closeable {
             return;
         }
         sink.put("0x");
-        putInsignificantHexToSink(sink, d);
-        putInsignificantHexToSink(sink, c);
-        putInsignificantHexToSink(sink, b);
-        putInsignificantHexToSink(sink, a);
+        Numbers.putSignificantHexToSink(sink, d);
+        Numbers.putSignificantHexToSink(sink, c);
+        Numbers.putSignificantHexToSink(sink, b);
+        Numbers.putSignificantHexToSink(sink, a);
     }
 
     public void getLong256(long offset, Long256Sink sink) {

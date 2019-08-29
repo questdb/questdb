@@ -437,7 +437,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private void parseSchema(IOContext context, ImportHandlerContext h, long lo, int len) throws IOException {
         try {
-            h.jsonLexer.parse(lo, len, h.jsonSchemaParser);
+            h.jsonLexer.parse(lo, lo + len, h.jsonSchemaParser);
         } catch (JsonException e) {
             handleJsonException(context, h, e);
         }

@@ -169,31 +169,31 @@ public class TextLoader implements Closeable, Mutable {
         this.forceHeaders = forceHeaders;
     }
 
-    public void parse(long address, int len, CairoSecurityContext cairoSecurityContext) throws JsonException {
+    public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
 
         switch (state) {
             case LOAD_JSON_METADATA:
-                jsonLexer.parse(address, len, textMetadataParser);
+                jsonLexer.parse(lo, hi, textMetadataParser);
                 break;
             case ANALYZE_STRUCTURE:
                 if (columnDelimiter > 0) {
                     textLexer.of(columnDelimiter);
                 } else {
-                    textLexer.of(textDelimiterScanner.scan(address, len));
+                    textLexer.of(textDelimiterScanner.scan(lo, hi));
                 }
                 textLexer.analyseStructure(
-                        address,
-                        len,
+                        lo,
+                        hi,
                         textAnalysisMaxLines,
                         forceHeaders,
                         textMetadataParser.getColumnNames(),
                         textMetadataParser.getColumnTypes()
                 );
                 textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
-                textLexer.parse(address, len, Integer.MAX_VALUE, textWriter);
+                textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
                 break;
             case LOAD_DATA:
-                textLexer.parse(address, len, Integer.MAX_VALUE, textWriter);
+                textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
                 break;
             default:
                 break;

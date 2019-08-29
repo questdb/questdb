@@ -24,6 +24,7 @@
 package com.questdb.cairo.sql;
 
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Long256;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
@@ -122,6 +123,21 @@ public class VirtualRecord implements Record {
     @Override
     public CharSequence getSym(int col) {
         return getFunction(col).getSymbol(base);
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+        getFunction(col).getLong256(base, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        return getFunction(col).getLong256B(base);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        return getFunction(col).getLong256B(base);
     }
 
     @Override

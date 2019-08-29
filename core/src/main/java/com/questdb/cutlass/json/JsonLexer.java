@@ -88,14 +88,13 @@ public class JsonLexer implements Mutable, Closeable {
         }
     }
 
-    public void parse(long lo, long len, JsonParser listener) throws JsonException {
+    public void parse(long lo, long hi, JsonParser listener) throws JsonException {
 
-        if (len <= 0) {
+        if (lo >= hi) {
             return;
         }
 
         long p = lo;
-        long hi = lo + len;
         long valueStart = useCache ? lo : 0;
         int posAtStart = position;
         int state = this.state;

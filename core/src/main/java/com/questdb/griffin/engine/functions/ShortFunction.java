@@ -149,4 +149,8 @@ public abstract class ShortFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
 }

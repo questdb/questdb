@@ -2233,7 +2233,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                textLoader.parse(smallBuf, 1, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {
@@ -2309,15 +2309,15 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, firstBufSize, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + firstBufSize, AllowAllCairoSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
                     Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                    textLoader.parse(smallBuf, 1, AllowAllCairoSecurityContext.INSTANCE);
+                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
                 }
             } else {
-                textLoader.parse(buf, len, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + len, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {

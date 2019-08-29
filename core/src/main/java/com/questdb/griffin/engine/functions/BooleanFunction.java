@@ -51,6 +51,11 @@ public abstract class BooleanFunction implements Function {
     }
 
     @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }

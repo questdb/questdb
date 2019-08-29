@@ -2239,6 +2239,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putLong256(int index, Long256 value) {
+            getPrimaryColumn(index).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+            notNull(index);
+        }
+
         public void putLong256(int index, CharSequence hexString) {
             getPrimaryColumn(index).putLong256(hexString);
             notNull(index);

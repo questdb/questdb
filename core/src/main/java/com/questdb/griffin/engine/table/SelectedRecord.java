@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.IntList;
+import com.questdb.std.Long256;
 import com.questdb.std.str.CharSink;
 
 class SelectedRecord implements Record {
@@ -145,5 +146,15 @@ class SelectedRecord implements Record {
 
     void of(Record record) {
         this.base = record;
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        return base.getLong256A(col);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        return base.getLong256B(col);
     }
 }

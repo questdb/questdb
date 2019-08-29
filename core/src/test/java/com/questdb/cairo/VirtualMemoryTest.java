@@ -319,7 +319,7 @@ public class VirtualMemoryTest {
                 Assert.assertEquals(-1L, long256.getLong1());
                 Assert.assertEquals(-1L, long256.getLong2());
                 Assert.assertEquals(-1L, long256.getLong3());
-                mem.getLong256A(offset, sink);
+                mem.getLong256(offset, sink);
                 Assert.assertEquals(0, sink.length());
                 offset += Long256.BYTES;
             }

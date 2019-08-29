@@ -347,6 +347,37 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinOnLong256() throws Exception {
+        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
+
+                final String expected = "i\ti1\thash\n" +
+                        "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\n" +
+                        "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                        "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_long256() hash" +
+                                " from long_sequence(3)" +
+                                ")"
+                );
+
+                assertQueryAndCache(expected, query, null);
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        }));
+    }
+
+    @Test
     public void testAsOfJoin() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {

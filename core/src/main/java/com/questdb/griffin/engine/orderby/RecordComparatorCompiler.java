@@ -280,6 +280,12 @@ public class RecordComparatorCompiler {
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     break;
+                case ColumnType.LONG256:
+                    getterNameA = "getLong256A";
+                    getterNameB = "getLong256B";
+                    fieldType = "Lcom/questdb/std/Long256;";
+                    comparatorClass = Long256Util.class;
+                    break;
                 default:
                     // SYMBOL
                     getterNameA = "getSym";

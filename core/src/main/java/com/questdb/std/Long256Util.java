@@ -21,54 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.std;
 
-import com.questdb.std.BinarySequence;
-import com.questdb.std.Long256;
-import com.questdb.std.str.CharSink;
+public class Long256Util {
 
-import java.io.Closeable;
+    public static int compare(Long256 a, Long256 b) {
 
-public interface ReadOnlyColumn extends Closeable {
+        if (a.getLong3() < b.getLong3()) {
+            return -1;
+        }
 
-    @Override
-    void close();
+        if (a.getLong3() > b.getLong3()) {
+            return 1;
+        }
 
-    BinarySequence getBin(long offset);
+        if (a.getLong2() < b.getLong2()) {
+            return -1;
+        }
 
-    long getBinLen(long offset);
+        if (a.getLong2() > b.getLong2()) {
+            return 1;
+        }
 
-    boolean getBool(long offset);
+        if (a.getLong1() < b.getLong1()) {
+            return -1;
+        }
 
-    byte getByte(long offset);
+        if (a.getLong1() > b.getLong1()) {
+            return 1;
+        }
 
-    double getDouble(long offset);
-
-    long getFd();
-
-    float getFloat(long offset);
-
-    int getInt(long offset);
-
-    long getLong(long offset);
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256A(long offset);
-
-    void getLong256(long offset, CharSink sink);
-
-    Long256 getLong256B(long offset);
-
-    char getChar(long offset);
-
-    int getStrLen(long offset);
-
-    void grow(long size);
-
-    boolean isDeleted();
+        return Long.compare(a.getLong0(), b.getLong0());
+    }
 }

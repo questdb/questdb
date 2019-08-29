@@ -24,15 +24,23 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cutlass.json.JsonException;
+import com.questdb.cutlass.text.Atomicity;
+import com.questdb.cutlass.text.DefaultTextConfiguration;
+import com.questdb.cutlass.text.TextConfiguration;
+import com.questdb.cutlass.text.TextLoader;
 import com.questdb.griffin.model.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
+import com.questdb.std.time.DateFormatFactory;
+import com.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,6 +52,31 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.CHAR, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
+    }
+
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -67,6 +100,7 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
     private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
     }
@@ -99,6 +133,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SET", this::compileSet);
         keywordBasedExecutors.put("drop", this::dropTable);
         keywordBasedExecutors.put("DROP", this::dropTable);
+        keywordBasedExecutors.put("copy", this::copyTable);
+        keywordBasedExecutors.put("COPY", this::copyTable);
 
         configureLexer(lexer);
 
@@ -138,30 +174,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    @Override
-    public void close() {
-        Misc.free(path);
-    }
-
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        //
-        // these are quick executions that do not require building of a model
-        //
-        lexer.of(query);
-
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
-        }
-        return executor.execute(executionContext);
-    }
-
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to, ColumnFilter toColumnFilter) {
@@ -173,6 +185,7 @@ public class SqlCompiler implements Closeable {
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lcom/questdb/std/Long256;");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
@@ -188,6 +201,7 @@ public class SqlCompiler implements Closeable {
         //
         int wPutInt = asm.poolMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolMethod(TableWriter.Row.class, "putLong", "(IJ)V");
+        int wPutLong256 = asm.poolMethod(TableWriter.Row.class, "putLong256", "(ILcom/questdb/std/Long256;)V");
         int wPutDate = asm.poolMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -554,6 +568,10 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetBin, 1);
                     asm.invokeVirtual(wPutBin);
                     break;
+                case ColumnType.LONG256:
+                    asm.invokeInterface(rGetLong256, 1);
+                    asm.invokeVirtual(wPutLong256);
+                    break;
                 default:
                     break;
             }
@@ -615,6 +633,30 @@ public class SqlCompiler implements Closeable {
         }
 
         return tok;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(path);
+    }
+
+    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+        return compile(query, DefaultSqlExecutionContext.INSTANCE);
+    }
+
+    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        //
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        if (executor == null) {
+            return compileUsingModel(executionContext);
+        }
+        return executor.execute(executionContext);
     }
 
     private RecordCursorFactory alterTable(SqlExecutionContext executionContext) throws SqlException {
@@ -995,6 +1037,85 @@ public class SqlCompiler implements Closeable {
 
         CharSequence tableName = GenericLexer.immutableOf(tok);
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+
+        return null;
+    }
+
+    private RecordCursorFactory copyTable(SqlExecutionContext executionContext) throws SqlException {
+
+        CharSequence tok;
+
+        final int tableNamePosition = lexer.getPosition();
+
+        tok = expectToken(lexer, "table name");
+
+        LOG.info().$("copying").$();
+
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getRollBufferSize() {
+                return 4 * 1024 * 1024;
+            }
+
+            @Override
+            public int getRollBufferLimit() {
+                return 8 * 1024 * 1024;
+            }
+        };
+
+        try {
+            try (TextLoader textLoader = new TextLoader(
+                    textConfiguration,
+                    engine,
+                    DateLocaleFactory.INSTANCE,
+                    new DateFormatFactory(),
+                    com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
+                    new com.questdb.std.microtime.DateFormatFactory()
+            )) {
+                textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                textLoader.configureDestination("test", true, false, Atomicity.SKIP_ROW);
+                //            if (columnSeparator > 0) {
+                //                textLoader.configureColumnDelimiter(columnSeparator);
+                //            }
+                int len = 4 * 1024 * 1024;
+                long buf = Unsafe.malloc(len);
+                try {
+                    path.of("C:\\Users\\blues\\shared\\transactions.csv").$();
+                    long fd = Files.openRO(path);
+                    if (fd == -1) {
+                        return null;
+                    }
+                    long fileLen = Files.length(fd);
+                    long n = (int) Files.read(fd, buf, len, 0);
+                    if (n > 0) {
+                        textLoader.parse(buf, buf + n, AllowAllCairoSecurityContext.INSTANCE);
+
+                        textLoader.setState(TextLoader.LOAD_DATA);
+
+                        int read;
+                        while (n < fileLen) {
+                            read = (int) Files.read(fd, buf, len, n);
+                            if (read < 1) {
+                                // shit
+                                break;
+                            }
+                            textLoader.parse(buf, buf + read, AllowAllCairoSecurityContext.INSTANCE);
+                            n += read;
+                        }
+                        textLoader.wrapUp();
+                    }
+                } finally {
+                    Unsafe.free(buf, len);
+                }
+            }
+        } catch (JsonException e) {
+            e.printStackTrace();
+        } finally {
+            LOG.info().$("copied").$();
+        }
+
+//        CharSequence tableName = GenericLexer.immutableOf(tok);
+
 
         return null;
     }
@@ -1402,29 +1523,5 @@ public class SqlCompiler implements Closeable {
             this.typeCast = typeCast;
             return this;
         }
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(";");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
     }
 }
