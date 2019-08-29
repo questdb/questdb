@@ -52,7 +52,7 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class ServerMain {
     public ServerMain(String[] args) throws Exception {
-        System.err.printf("QuestDB server %s%nCopyright (C) Appsicle 2014-2019, all rights reserved.%n%n", getVersion());
+        System.err.printf("QuestDB server %s%nCopyright (C) 2014-2019, all rights reserved.%n%n", getVersion());
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;

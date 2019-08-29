@@ -148,7 +148,7 @@ function start {
     -XX:-UseBiasedLocking
     -XX:BiasedLockingStartupDelay=0"
 
-    JAVA_MAIN="com.questdb.BootstrapMain"
+    JAVA_MAIN="com.questdb.ServerMain"
     DATE=`date +%Y-%m-%d:%H:%M:%S`
 
     if [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
@@ -206,7 +206,7 @@ function banner {
     echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
     echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
     echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo '                       www.questdb.org'
+    echo '                        www.questdb.io'
     echo
 }
 
