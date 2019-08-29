@@ -55,7 +55,7 @@ int makeDir(const char *dir) {
 
 void buildJavaArgs(CONFIG *config) {
     // main class
-    LPCSTR mainClass = "com.questdb.BootstrapMain";
+    LPCSTR mainClass = "com.questdb.ServerMain";
 
     // put together static java opts
     LPCSTR javaOpts = "-da" \
@@ -319,7 +319,7 @@ int qdbRun(int argc, char **argv) {
     eprintf("| | | | | | |/ _ \\/ __| __| | | |  _ \\\n");
     eprintf("| |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n");
     eprintf(" \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n");
-    eprintf("                       www.questdb.org\n\n");
+    eprintf("                        www.questdb.io\n\n");
 
     CONFIG config;
     initAndParseConfig(argc, argv, &config);
