@@ -22,6 +22,7 @@
     "gulp-cache": "0.4.2",
     "gulp-cssnano": "2.0.0",
     "gulp-eslint": "0.13.2",
+    "gulp-file-include": "^1.0.0",
     "gulp-htmlmin": "1.3.0",
     "gulp-if": "1.2.5",
     "gulp-imagemin": "2.2.1",
@@ -32,9 +33,9 @@
     "gulp-sourcemaps": "1.5.0",
     "gulp-uglify": "1.1.0",
     "gulp-useref": "3.0.0",
+    "jsdom": "9.11.0",
     "main-bower-files": "2.5.0",
-    "wiredep": "2.2.2",
-    "jsdom": "9.11.0"
+    "wiredep": "2.2.2"
   },
   "eslintConfig": {
     "env": {
