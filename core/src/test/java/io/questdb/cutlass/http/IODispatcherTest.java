@@ -806,7 +806,7 @@ public class IODispatcherTest {
 
         try (
                 CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                HttpServer httpServer = HttpServer.create(
+                HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration() {
                             @Override
                             public boolean getDumpNetworkTraffic() {

@@ -287,7 +287,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                         // do we have anything in the buffer?
                         if (buf > start) {
-                            if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
+                            if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
                                 // request is complete
                                 completeRequest(dispatcher, fd, processor);
                                 break;
