@@ -18,7 +18,7 @@ extern "C" {
  * Method:    abortAccept
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_abortAccept
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -26,7 +26,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_abortAccept
  * Method:    accept
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_accept0
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_accept0
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -34,7 +34,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_accept0
  * Method:    bindTcp
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindTcp
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
         (JNIEnv *, jclass, jlong, jint, jint);
 
 /*
@@ -42,7 +42,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindTcp
  * Method:    bindUdp
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindUdp
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -50,7 +50,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindUdp
  * Method:    configureNoLinger
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNoLinger
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -58,7 +58,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNoLinger
  * Method:    configureNonBlocking
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -66,7 +66,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
  * Method:    connect
  * Signature: (JJ)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_connect
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -74,7 +74,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_connect
  * Method:    freeMsgHeaders
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_network_Net_freeMsgHeaders
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeMsgHeaders
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -82,7 +82,7 @@ JNIEXPORT void JNICALL Java_com_questdb_network_Net_freeMsgHeaders
  * Method:    freeSockAddr
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_network_Net_freeSockAddr
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -90,7 +90,7 @@ JNIEXPORT void JNICALL Java_com_questdb_network_Net_freeSockAddr
  * Method:    getPeerIP
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getPeerIP
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerIP
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -98,7 +98,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getPeerIP
  * Method:    getPeerPort
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getPeerPort
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -106,7 +106,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getPeerPort
  * Method:    isDead
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -114,7 +114,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
  * Method:    join
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_join
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_join
         (JNIEnv *, jclass, jlong, jint, jint);
 
 /*
@@ -122,7 +122,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_join
  * Method:    listen
  * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_network_Net_listen
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_listen
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -130,7 +130,7 @@ JNIEXPORT void JNICALL Java_com_questdb_network_Net_listen
  * Method:    msgHeaders
  * Signature: (II)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_msgHeaders
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_msgHeaders
         (JNIEnv *, jclass, jint, jint);
 
 /*
@@ -138,7 +138,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_msgHeaders
  * Method:    recv
  * Signature: (JJI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
@@ -146,7 +146,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv
  * Method:    recvmmsg
  * Signature: (JJI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recvmmsg
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recvmmsg
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
@@ -154,7 +154,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recvmmsg
  * Method:    send
  * Signature: (JJI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_send
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
@@ -162,7 +162,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_send
  * Method:    sendTo
  * Signature: (JJIJ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_sendTo
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_sendTo
         (JNIEnv *, jclass, jlong, jlong, jint, jlong);
 
 /*
@@ -170,7 +170,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_sendTo
  * Method:    getRcvBuf
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getRcvBuf
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getRcvBuf
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -178,7 +178,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getRcvBuf
  * Method:    setRcvBuf
  * Signature: (JI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setRcvBuf
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setRcvBuf
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -186,7 +186,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setRcvBuf
  * Method:    getSndBuf
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getSndBuf
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getSndBuf
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -194,7 +194,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getSndBuf
  * Method:    getTcpNoDelay
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getTcpNoDelay
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getTcpNoDelay
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -202,7 +202,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getTcpNoDelay
  * Method:    setSndBuf
  * Signature: (JI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setSndBuf
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -210,7 +210,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setSndBuf
  * Method:    setTcpNoDelay
  * Signature: (JZ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setTcpNoDelay
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setTcpNoDelay
         (JNIEnv *, jclass, jlong, jboolean);
 
 /*
@@ -218,7 +218,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setTcpNoDelay
  * Method:    setMulticastInterface
  * Signature: (JI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setMulticastInterface
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastInterface
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -226,7 +226,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setMulticastInterface
  * Method:    setMulticastLoop
  * Signature: (JZ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setMulticastLoop
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastLoop
         (JNIEnv *, jclass, jlong, jboolean);
 
 /*
@@ -234,7 +234,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setMulticastLoop
  * Method:    setReuseAddress
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setReuseAddress
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReuseAddress
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -242,7 +242,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setReuseAddress
  * Method:    setReusePort
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setReusePort
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReusePort
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -250,7 +250,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setReusePort
  * Method:    sockaddr
  * Signature: (II)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_sockaddr
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
         (JNIEnv *, jclass, jint, jint);
 
 /*
@@ -258,7 +258,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_sockaddr
  * Method:    socketTcp
  * Signature: (Z)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_socketTcp0
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *, jclass, jboolean);
 
 /*
@@ -266,7 +266,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_socketTcp0
  * Method:    socketUdp0
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_socketUdp0
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketUdp0
         (JNIEnv *, jclass);
 
 /*
@@ -274,7 +274,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_socketUdp0
  * Method:    getMsgHeaderSize
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderSize
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getMsgHeaderSize
         (JNIEnv *, jclass);
 
 /*
@@ -282,7 +282,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderSize
  * Method:    getMsgHeaderBufferAddressOffset
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderBufferAddressOffset
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getMsgHeaderBufferAddressOffset
         (JNIEnv *, jclass);
 
 /*
@@ -290,7 +290,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderBufferAddressOf
  * Method:    getMsgHeaderBufferLengthOffset
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderBufferLengthOffset
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getMsgHeaderBufferLengthOffset
         (JNIEnv *, jclass);
 
 /*
@@ -298,7 +298,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_getMsgHeaderBufferLengthOff
  * Method:    getEwouldblock
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getEwouldblock
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEwouldblock
         (JNIEnv *, jclass);
 
 #ifdef __cplusplus

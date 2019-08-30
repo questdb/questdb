@@ -1,0 +1,218 @@
+################################################################################
+#    ___                  _   ____  ____
+#   / _ \ _   _  ___  ___| |_|  _ \| __ )
+#  | | | | | | |/ _ \/ __| __| | | |  _ \
+#  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#   \__\_\\__,_|\___||___/\__|____/|____/
+#
+# Copyright (C) 2014-2019 Appsicle
+#
+# This program is free software: you can redistribute it and/or  modify
+# it under the terms of the GNU Affero General Public License, version 3,
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+
+################################################################################
+#    ___                  _   ____  ____
+#   / _ \ _   _  ___  ___| |_|  _ \| __ )
+#  | | | | | | |/ _ \/ __| __| | | |  _ \
+#  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#   \__\_\\__,_|\___||___/\__|____/|____/
+#
+# Copyright (C) 2014-2019 Appsicle
+#
+# This program is free software: you can redistribute it and/or  modify
+# it under the terms of the GNU Affero General Public License, version 3,
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+
+################################################################################
+#    ___                  _   ____  ____
+#   / _ \ _   _  ___  ___| |_|  _ \| __ )
+#  | | | | | | |/ _ \/ __| __| | | |  _ \
+#  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#   \__\_\\__,_|\___||___/\__|____/|____/
+#
+# Copyright (C) 2014-2019 Appsicle
+#
+# This program is free software: you can redistribute it and/or  modify
+# it under the terms of the GNU Affero General Public License, version 3,
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+
+
+# logical operations
+io.questdb.griffin.engine.functions.bool.OrFunctionFactory
+io.questdb.griffin.engine.functions.bool.AndFunctionFactory
+
+# '='
+io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory
+
+# '<>'
+io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory
+
+# '>'
+io.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
+
+# '<' operator
+io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
+
+# '+' operator
+io.questdb.griffin.engine.functions.math.AddByteFunctionFactory
+io.questdb.griffin.engine.functions.math.AddShortFunctionFactory
+io.questdb.griffin.engine.functions.math.AddIntFunctionFactory
+io.questdb.griffin.engine.functions.math.AddLongFunctionFactory
+io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory
+io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory
+io.questdb.griffin.engine.functions.date.AddLongToTimestampFunctionFactory
+
+# '-' operator
+io.questdb.griffin.engine.functions.math.NegIntFunctionFactory
+io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
+io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
+
+# '/' operator
+io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.DivLongFunctionFactory
+
+# '%' operator
+io.questdb.griffin.engine.functions.math.RemIntFunctionFactory
+io.questdb.griffin.engine.functions.math.RemLongFunctionFactory
+
+# '*' operator
+io.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
+io.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.MulLongFunctionFactory
+io.questdb.griffin.engine.functions.math.MulIntFunctionFactory
+
+io.questdb.griffin.engine.functions.math.AbsIntFunctionFactory
+io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory
+io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
+
+# '~='
+io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory
+
+# '!~'
+io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
+
+# 'to_char'
+io.questdb.griffin.engine.functions.str.ToCharDateFunctionFactory
+io.questdb.griffin.engine.functions.str.ToCharTimestampFunctionFactory
+io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory
+
+# 'to_symbol'
+io.questdb.griffin.engine.functions.str.ToSymbolFunctionFactory
+
+# 'length'
+io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory
+io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory
+io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory
+
+# random generator functions
+
+io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndFloatFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndShortCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndShortFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndTimestampFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndStringListFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndCharFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndLong256FunctionFactory
+
+# date conversion functions
+
+io.questdb.griffin.engine.functions.date.SysdateFunctionFactory
+io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
+io.questdb.griffin.engine.functions.str.ToCharTimestampFunctionFactory
+io.questdb.griffin.engine.functions.cast.SecondsToTimestampFunctionFactory
+
+io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
+io.questdb.griffin.engine.functions.str.ToCharDateFunctionFactory
+
+# cast functions
+io.questdb.griffin.engine.functions.cast.ToDateLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.ToTimestampLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.ToIntDoubleFunctionFactory
+io.questdb.griffin.engine.functions.cast.ToIntLongFunctionFactory
+
+# 'in'
+io.questdb.griffin.engine.functions.str.SymbolInCursorFunctionFactory
+io.questdb.griffin.engine.functions.bool.InStrFunctionFactory
+io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
+
+# 'sum' group by function
+io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumByteGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory
+
+# 'max' group
+io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory
+
+# 'count' group by function
+io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory
+
+# 'isOrdered'
+io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
+
+# round()
+io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory
+
+# case conditional statement
+io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
+io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
+
+# PostgeSQL catalogue functions
+io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory

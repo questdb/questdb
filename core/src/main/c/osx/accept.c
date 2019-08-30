@@ -26,7 +26,7 @@
 #include <time.h>
 #include "../share/net.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_abortAccept
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
         (JNIEnv *e, jclass cl, jlong fd) {
     return close((int) fd);
 }

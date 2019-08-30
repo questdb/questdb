@@ -22,7 +22,7 @@ extern "C" {
  * Method:    select
  * Signature: (JJJ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_select
+JNIEXPORT jint JNICALL Java_io_questdb_net_Win32SelectDispatcher_select
         (JNIEnv *, jclass, jlong, jlong, jlong);
 
 /*
@@ -30,7 +30,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_select
  * Method:    countOffset
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_countOffset
+JNIEXPORT jint JNICALL Java_io_questdb_net_Win32SelectDispatcher_countOffset
         (JNIEnv *, jclass);
 
 /*
@@ -38,7 +38,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_countOffset
  * Method:    arrayOffset
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_arrayOffset
+JNIEXPORT jint JNICALL Java_io_questdb_net_Win32SelectDispatcher_arrayOffset
         (JNIEnv *, jclass);
 
 #ifdef __cplusplus

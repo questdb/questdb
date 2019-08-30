@@ -148,7 +148,7 @@ function start {
     -XX:-UseBiasedLocking
     -XX:BiasedLockingStartupDelay=0"
 
-    JAVA_MAIN="com.questdb.ServerMain"
+    JAVA_MAIN="io.questdb.ServerMain"
     DATE=`date +%Y-%m-%d:%H:%M:%S`
 
     if [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then

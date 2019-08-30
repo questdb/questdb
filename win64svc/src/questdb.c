@@ -55,10 +55,10 @@ int makeDir(const char *dir) {
 
 void buildJavaArgs(CONFIG *config) {
     // main class
-    LPCSTR mainClass = "com.questdb.ServerMain";
+    LPCSTR mainClass = "io.questdb.ServerMain";
 
     // put together static java opts
-    LPCSTR javaOpts = "-da" \
+    LPCSTR javaOpts =
     " -XX:+PrintGCApplicationStoppedTime" \
     " -XX:+PrintSafepointStatistics" \
     " -XX:PrintSafepointStatisticsCount=1" \

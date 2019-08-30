@@ -16,7 +16,7 @@ extern "C" {
  * Method:    crc32
  * Signature: (IJI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_crc32
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_crc32
         (JNIEnv *, jclass, jint, jlong, jint);
 
 /*
@@ -24,7 +24,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_crc32
  * Method:    deflate
  * Signature: (JJIZ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflate
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_deflate
         (JNIEnv *, jclass, jlong, jlong, jint, jboolean);
 
 /*
@@ -32,7 +32,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflate
  * Method:    deflateEnd
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_std_Zip_deflateEnd
+JNIEXPORT void JNICALL Java_io_questdb_std_Zip_deflateEnd
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -40,7 +40,7 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Zip_deflateEnd
  * Method:    deflateInit
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_deflateInit
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_deflateInit
         (JNIEnv *, jclass);
 
 /*
@@ -48,7 +48,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_deflateInit
  * Method:    deflateReset
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflateReset
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_deflateReset
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -56,7 +56,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflateReset
  * Method:    inflate
  * Signature: (JJIZ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflate
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflate
         (JNIEnv *, jclass, jlong, jlong, jint, jboolean);
 
 /*
@@ -64,7 +64,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflate
  * Method:    inflateEnd
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_std_Zip_inflateEnd
+JNIEXPORT void JNICALL Java_io_questdb_std_Zip_inflateEnd
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -72,7 +72,7 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Zip_inflateEnd
  * Method:    inflateInit
  * Signature: (Z)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_inflateInit
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInit
         (JNIEnv *, jclass, jboolean);
 
 /*
@@ -80,7 +80,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_inflateInit
  * Method:    inflateReset
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflateReset
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflateReset
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -88,7 +88,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflateReset
  * Method:    availIn
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availIn
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_availIn
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -96,7 +96,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availIn
  * Method:    availOut
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availOut
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_availOut
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -104,7 +104,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availOut
  * Method:    totalOut
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_totalOut
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_totalOut
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -112,7 +112,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_totalOut
  * Method:    setInput
  * Signature: (JJI)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_std_Zip_setInput
+JNIEXPORT void JNICALL Java_io_questdb_std_Zip_setInput
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 #ifdef __cplusplus

@@ -26,68 +26,68 @@
 #include <stddef.h>
 
 
-JNIEXPORT jlong JNICALL Java_com_questdb_network_EpollAccessor_epollCreate
+JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
         (JNIEnv *e, jclass cl) {
     return epoll_create1(0);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_epollCtl
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCtl
         (JNIEnv *e, jclass cl, jlong epfd, jint op, jlong fd, jlong event) {
     return epoll_ctl((int) epfd, op, (int) fd, (struct epoll_event *) event);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_epollWait
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollWait
         (JNIEnv *e, jclass cl, jlong epfd, jlong eventPtr, jint eventCount, jint timeout) {
     return epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout);
 }
 
 
-JNIEXPORT jshort JNICALL Java_com_questdb_network_EpollAccessor_getDataOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getDataOffset
         (JNIEnv *e, jclass cl) {
     return (jshort) offsetof(struct epoll_event, data);
 }
 
-JNIEXPORT jshort JNICALL Java_com_questdb_network_EpollAccessor_getEventsOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getEventsOffset
         (JNIEnv *e, jclass cl) {
     return (jshort) offsetof(struct epoll_event, events);
 }
 
-JNIEXPORT jshort JNICALL Java_com_questdb_network_EpollAccessor_getEventSize
+JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getEventSize
         (JNIEnv *e, jclass cl) {
     return sizeof(struct epoll_event);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getEPOLLIN
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getEPOLLIN
         (JNIEnv *e, jclass cl) {
     return EPOLLIN;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getEPOLLET
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getEPOLLET
         (JNIEnv *e, jclass cl) {
     return EPOLLET;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getEPOLLOUT
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getEPOLLOUT
         (JNIEnv *e, jclass cl) {
     return EPOLLOUT;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getEPOLLONESHOT
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getEPOLLONESHOT
         (JNIEnv *e, jclass cl) {
     return EPOLLONESHOT;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getCtlAdd
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlAdd
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_ADD;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getCtlMod
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlMod
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_MOD;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_EpollAccessor_getCtlDel
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlDel
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_DEL;
 }

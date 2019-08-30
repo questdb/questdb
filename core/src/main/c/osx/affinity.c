@@ -29,7 +29,7 @@
 #include <mach/thread_act.h>
 #include "../share/os.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
         (JNIEnv *e, jclass cl, jint cpu) {
     thread_affinity_policy_data_t policy_data = {cpu};
     mach_port_t mach_thread = pthread_mach_thread_np(pthread_self());

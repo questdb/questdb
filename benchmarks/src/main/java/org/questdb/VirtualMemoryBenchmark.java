@@ -23,8 +23,8 @@
 
 package org.questdb;
 
-import com.questdb.cairo.VirtualMemory;
-import com.questdb.std.Rnd;
+import io.questdb.cairo.VirtualMemory;
+import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;

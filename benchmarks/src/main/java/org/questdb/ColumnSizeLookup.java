@@ -23,7 +23,7 @@
 
 package org.questdb;
 
-import com.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnType;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;

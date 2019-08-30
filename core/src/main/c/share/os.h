@@ -22,7 +22,7 @@ extern "C" {
  * Method:    currentTimeMicros
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeMicros
         (JNIEnv *, jclass);
 
 /*
@@ -30,7 +30,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
  * Method:    errno
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *, jclass);
 
 /*
@@ -38,7 +38,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
  * Method:    getPid
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *, jclass);
 
 /*
@@ -46,7 +46,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
  * Method:    setCurrentThreadAffinity0
  * Signature: (I)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
         (JNIEnv *, jclass, jint);
 
 /*
@@ -54,7 +54,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
  * Method:    generateKrbToken
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_generateKrbToken
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_generateKrbToken
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -62,7 +62,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_generateKrbToken
  * Method:    freeKrbToken
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
+JNIEXPORT void JNICALL Java_io_questdb_std_Os_freeKrbToken
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -70,7 +70,7 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
  * Method:    forkExec
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_forkExec
         (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus

@@ -28,7 +28,7 @@
 #include <sched.h>
 #include "../share/os.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
         (JNIEnv *e, jclass cl, jint cpu) {
     cpu_set_t set;
     CPU_ZERO(&set);

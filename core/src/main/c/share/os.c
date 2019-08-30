@@ -30,19 +30,19 @@
 #include <time.h>
 #include "../share/os.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *e, jclass cp) {
     return getpid();
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeMicros
         (JNIEnv *e, jclass cl) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeNanos
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeNanos
         (JNIEnv *e, jclass cl) {
 
     struct timespec timespec;
@@ -50,7 +50,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeNanos
     return timespec.tv_sec * 100000000L + timespec.tv_nsec;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return errno;
 }
@@ -108,7 +108,7 @@ fork_exec_t *forkExec(char *argv[]) {
 
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_forkExec
         (JNIEnv *e, jclass cl, jlong argv) {
     return (jlong) forkExec((char **) argv);
 }

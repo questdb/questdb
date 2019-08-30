@@ -34,7 +34,7 @@ extern "C" {
  * Method:    append
  * Signature: (JJJ)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_append
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
         (JNIEnv *, jclass, jlong, jlong, jlong);
 
 /*
@@ -42,7 +42,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_append
  * Method:    exists
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -50,7 +50,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists
  * Method:    findClose
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_std_Files_findClose
+JNIEXPORT void JNICALL Java_io_questdb_std_Files_findClose
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -58,7 +58,7 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Files_findClose
  * Method:    findName
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findName
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -66,7 +66,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findName
  * Method:    findNext
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findNext
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findNext
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -74,7 +74,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findNext
  * Method:    findType
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findType
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -82,7 +82,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findType
  * Method:    getStdOutFd
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getStdOutFd
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getStdOutFd
         (JNIEnv *, jclass);
 
 /*
@@ -90,7 +90,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getStdOutFd
  * Method:    length
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -98,7 +98,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length
  * Method:    lock
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_lock
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -106,7 +106,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_lock
  * Method:    read
  * Signature: (JJJJ)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
         (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
 
 /*
@@ -114,7 +114,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
  * Method:    truncate
  * Signature: (JJ)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_truncate
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -122,7 +122,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_truncate
  * Method:    write
  * Signature: (JJJJ)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_write
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
 
 /*
@@ -130,7 +130,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_write
  * Method:    close0
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_close0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -138,7 +138,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_close0
  * Method:    munmap0
  * Signature: (JJ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_munmap0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -146,7 +146,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_munmap0
  * Method:    mmap0
  * Signature: (JJJI)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_mmap0
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         (JNIEnv *, jclass, jlong, jlong, jlong, jint);
 
 /*
@@ -154,7 +154,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_mmap0
  * Method:    getPageSize
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getPageSize
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
         (JNIEnv *, jclass);
 
 /*
@@ -162,7 +162,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getPageSize
  * Method:    remove
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_remove
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -170,7 +170,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_remove
  * Method:    rmdir
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rmdir
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -178,7 +178,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rmdir
  * Method:    getLastModified
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -186,7 +186,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
  * Method:    length0
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length0
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -194,7 +194,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length0
  * Method:    mkdir
  * Signature: (JI)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Files_mkdir
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
         (JNIEnv *, jclass, jlong, jint);
 
 /*
@@ -202,7 +202,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_mkdir
  * Method:    openRO
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRO
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -210,7 +210,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRO
  * Method:    openRW
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRW
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -218,7 +218,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRW
  * Method:    openAppend
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openAppend
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -226,7 +226,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openAppend
  * Method:    findFirst
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findFirst
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -234,7 +234,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findFirst
  * Method:    setLastModified
  * Signature: (JJ)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -242,7 +242,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
  * Method:    rename
  * Signature: (JJ)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rename
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *, jclass, jlong, jlong);
 
 #ifdef __cplusplus

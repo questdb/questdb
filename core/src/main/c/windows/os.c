@@ -34,12 +34,12 @@
 #include "errno.h"
 #include "timer.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *e, jclass cl) {
     return GetCurrentProcessId();
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return (jint) (intptr_t) TlsGetValue(dwTlsIndexLastError);
 }
@@ -52,7 +52,7 @@ typedef struct {
 
 #define SEC_PACKAGE_NAME "Kerberos"
 
-jlong JNICALL Java_com_questdb_std_Os_generateKrbToken
+jlong JNICALL Java_io_questdb_std_Os_generateKrbToken
         (JNIEnv *e, jclass cl, jlong spn) {
 
     PKRB_TOKEN result = malloc(sizeof(KRB_TOKEN));
@@ -122,7 +122,7 @@ jlong JNICALL Java_com_questdb_std_Os_generateKrbToken
     return (jlong) result;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
         (JNIEnv *e, jclass fd, jint cpu) {
     DWORD_PTR mask = (DWORD_PTR) (1L << cpu);
     if (SetThreadAffinityMask(GetCurrentThread(), mask) == 0) {
@@ -171,14 +171,14 @@ int clock_gettime(struct timespec *spec) {
     return 0;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeNanos
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeNanos
         (JNIEnv *e, jclass cl) {
     struct timespec spec;
     clock_gettime(&spec);
     return spec.tv_sec * 1000000000 + spec.tv_nsec;
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
+JNIEXPORT void JNICALL Java_io_questdb_std_Os_freeKrbToken
         (JNIEnv *e, jclass cl, jlong ptr) {
 
     PKRB_TOKEN ptoken = (PKRB_TOKEN) ptr;
@@ -208,12 +208,12 @@ BOOL WINAPI DllMain(
     return TRUE;
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_std_Os_setupTimer
+JNIEXPORT void JNICALL Java_io_questdb_std_Os_setupTimer
         (JNIEnv *e, jclass cl) {
     setupTimer();
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeMicros
         (JNIEnv *e, jclass cl) {
     return now();
 }

@@ -23,7 +23,7 @@
 
 package org.questdb;
 
-import com.questdb.std.Os;
+import io.questdb.std.Os;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;

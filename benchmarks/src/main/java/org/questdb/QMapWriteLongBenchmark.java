@@ -23,13 +23,13 @@
 
 package org.questdb;
 
-import com.questdb.cairo.ColumnType;
-import com.questdb.cairo.SingleColumnType;
-import com.questdb.cairo.map.CompactMap;
-import com.questdb.cairo.map.FastMap;
-import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.MapValue;
-import com.questdb.std.Rnd;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.map.CompactMap;
+import io.questdb.cairo.map.FastMap;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;

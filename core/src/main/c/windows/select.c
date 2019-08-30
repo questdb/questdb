@@ -26,7 +26,7 @@
 #include "select.h"
 #include "errno.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_select
+JNIEXPORT jint JNICALL Java_io_questdb_network_SelectAccessor_select
         (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
     struct timeval tv = {0, 0};
     int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
@@ -36,12 +36,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_select
     return n;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_arrayOffset
+JNIEXPORT jint JNICALL Java_io_questdb_network_SelectAccessor_arrayOffset
         (JNIEnv *e, jclass cl) {
     return offsetof(struct fd_set, fd_array[0]);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_countOffset
+JNIEXPORT jint JNICALL Java_io_questdb_network_SelectAccessor_countOffset
         (JNIEnv *e, jclass cl) {
     return offsetof(struct fd_set, fd_count);
 }
