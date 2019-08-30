@@ -32,7 +32,6 @@ import com.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import com.questdb.std.ObjList;
@@ -45,7 +44,7 @@ public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
         return "pg_catalog.pg_namespace()";
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
                 new GenericRecordCursorFactory(

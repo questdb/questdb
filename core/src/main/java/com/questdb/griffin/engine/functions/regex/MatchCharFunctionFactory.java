@@ -27,7 +27,6 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.Chars;
@@ -40,7 +39,7 @@ public class MatchCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new MatchFunction(
                 position,
                 args.getQuick(0),

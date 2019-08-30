@@ -43,7 +43,7 @@ public class HttpHeaderParserTest {
             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
             "\r\n";
 
-    private static ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+    private static final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
 
     @Test
     public void testContentDisposition() throws Exception {

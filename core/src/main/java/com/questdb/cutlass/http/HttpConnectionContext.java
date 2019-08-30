@@ -51,7 +51,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final CairoSecurityContext cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
-    private boolean dumpNetworkTraffic;
+    private final boolean dumpNetworkTraffic;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;

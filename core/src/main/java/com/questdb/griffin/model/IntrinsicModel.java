@@ -164,7 +164,7 @@ public class IntrinsicModel implements Mutable {
                 intervalB++;
             } else {
 
-                append(out, aLo > bLo ? aLo : bLo, aHi < bHi ? aHi : bHi);
+                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
 
                 if (aHi < bHi) {
                     // b hanging lower than a

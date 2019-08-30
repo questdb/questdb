@@ -107,7 +107,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
         if (size > this.size) {
             final long fileSize = ff.length(fd);
-            grow0(size > fileSize ? size : fileSize);
+            grow0(Math.max(size, fileSize));
         }
     }
 
@@ -149,7 +149,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         if (targetPageSize != getMapPageSize()) {
             setPageSize(targetPageSize);
             ensurePagesListCapacity(size);
-            this.lastPageSize = targetPageSize < size ? targetPageSize : size;
+            this.lastPageSize = Math.min(targetPageSize, size);
         } else {
             ensurePagesListCapacity(size);
             if (lastPageSize < getMapPageSize()) {

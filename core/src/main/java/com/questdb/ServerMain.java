@@ -164,7 +164,7 @@ public class ServerMain {
             if (force) {
                 File pub = new File(dir, "public");
                 if (pub.exists()) {
-                    com.questdb.store.Files.delete(pub);
+                    delete(pub);
                 }
             }
 
@@ -218,8 +218,67 @@ public class ServerMain {
         }
     }
 
+    public static void deleteOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        deleteDirContentsOrException(file);
+
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
+            throw new RuntimeException("Cannot delete file " + file);
+        }
+    }
+
+    private static void deleteDirContentsOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        try {
+            if (notSymlink(file)) {
+                File[] files = file.listFiles();
+                if (files != null) {
+                    for (int i = 0; i < files.length; i++) {
+                        deleteOrException(files[i]);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot delete dir contents: " + file, e);
+        }
+    }
+
+    private static boolean notSymlink(File file) throws IOException {
+        if (file == null) {
+            throw new IllegalArgumentException("File must not be null");
+        }
+        if (File.separatorChar == '\\') {
+            return true;
+        }
+
+        File fileInCanonicalDir;
+        if (file.getParentFile() == null) {
+            fileInCanonicalDir = file;
+        } else {
+            File canonicalDir = file.getParentFile().getCanonicalFile();
+            fileInCanonicalDir = new File(canonicalDir, file.getName());
+        }
+
+        return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
+    }
+
+    static void delete(File file) {
+        deleteOrException(file);
+    }
+
     private String getVersion() throws IOException {
-        Enumeration<URL> resources = BootstrapMain.class.getClassLoader()
+        Enumeration<URL> resources = ServerMain.class.getClassLoader()
                 .getResources("META-INF/MANIFEST.MF");
         while (resources.hasMoreElements()) {
             try (InputStream is = resources.nextElement().openStream()) {

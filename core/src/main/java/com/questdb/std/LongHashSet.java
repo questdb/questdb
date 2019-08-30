@@ -55,16 +55,14 @@ public class LongHashSet extends AbstractLongHashSet {
      * Adds key to hash set preserving key uniqueness.
      *
      * @param key immutable sequence of characters.
-     * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(long key) {
+    public void add(long key) {
         int index = keyIndex(key);
         if (index < 0) {
-            return false;
+            return;
         }
 
         addAt(index, key);
-        return true;
     }
 
     public final void addAll(LongHashSet that) {

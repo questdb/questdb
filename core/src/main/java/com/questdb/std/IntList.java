@@ -38,7 +38,7 @@ public class IntList implements Mutable {
     }
 
     public IntList(int capacity) {
-        this.buffer = new int[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
+        this.buffer = new int[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
 
     public void add(int value) {

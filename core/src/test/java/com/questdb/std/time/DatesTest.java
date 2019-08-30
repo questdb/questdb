@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -33,16 +33,6 @@ import org.junit.Test;
 public class DatesTest {
 
     private final StringSink sink = new StringSink();
-
-    @Test(expected = NumericException.class)
-    public void parseBrokenInterval1() throws Exception {
-        DateFormatUtils.parseInterval("2016-01-01T10:25:32.34");
-    }
-
-    @Test(expected = NumericException.class)
-    public void parseBrokenInterval2() throws Exception {
-        DateFormatUtils.parseInterval("2016-01-01T1");
-    }
 
     @Before
     public void setUp() {
@@ -216,32 +206,6 @@ public class DatesTest {
     public void testFormatMMMDYYYY() throws NumericException {
         DateFormatUtils.formatMMMDYYYY(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("May 10 2008", sink);
-    }
-
-    @Test
-    public void testIntervalParse() throws Exception {
-        TestUtils.assertEquals("Interval{lo=2015-01-01T00:00:00.000Z, hi=2015-12-31T23:59:59.999Z}", DateFormatUtils.parseInterval("2015").toString());
-        TestUtils.assertEquals("Interval{lo=2014-03-01T00:00:00.000Z, hi=2014-03-31T23:59:59.999Z}", DateFormatUtils.parseInterval("2014-03").toString());
-        TestUtils.assertEquals("Interval{lo=2013-05-10T00:00:00.000Z, hi=2013-05-10T23:59:59.999Z}", DateFormatUtils.parseInterval("2013-05-10").toString());
-        TestUtils.assertEquals("Interval{lo=2014-07-10T14:00:00.000Z, hi=2014-07-10T14:59:59.999Z}", DateFormatUtils.parseInterval("2014-07-10T14").toString());
-        TestUtils.assertEquals("Interval{lo=2014-09-22T10:15:00.000Z, hi=2014-09-22T10:15:59.999Z}", DateFormatUtils.parseInterval("2014-09-22T10:15").toString());
-        TestUtils.assertEquals("Interval{lo=2013-08-06T08:25:30.000Z, hi=2013-08-06T08:25:30.999Z}", DateFormatUtils.parseInterval("2013-08-06T08:25:30").toString());
-    }
-
-    @Test(expected = NumericException.class)
-    public void testIntervalParseBadValue() throws Exception {
-        DateFormatUtils.parseInterval("2014-31");
-
-    }
-
-    @Test
-    public void testLeapYearIntervals() throws Exception {
-        TestUtils.assertEquals("Interval{lo=2016-01-01T00:00:00.000Z, hi=2016-12-31T23:59:59.999Z}", DateFormatUtils.parseInterval("2016").toString());
-        TestUtils.assertEquals("Interval{lo=2016-02-01T00:00:00.000Z, hi=2016-02-29T23:59:59.999Z}", DateFormatUtils.parseInterval("2016-02").toString());
-        TestUtils.assertEquals("Interval{lo=2016-02-29T00:00:00.000Z, hi=2016-02-29T23:59:59.999Z}", DateFormatUtils.parseInterval("2016-02-29").toString());
-        TestUtils.assertEquals("Interval{lo=2016-02-29T14:00:00.000Z, hi=2016-02-29T14:59:59.999Z}", DateFormatUtils.parseInterval("2016-02-29T14").toString());
-        TestUtils.assertEquals("Interval{lo=2016-02-29T10:15:00.000Z, hi=2016-02-29T10:15:59.999Z}", DateFormatUtils.parseInterval("2016-02-29T10:15").toString());
-        TestUtils.assertEquals("Interval{lo=2016-02-29T08:25:30.000Z, hi=2016-02-29T08:25:30.999Z}", DateFormatUtils.parseInterval("2016-02-29T08:25:30").toString());
     }
 
     @Test

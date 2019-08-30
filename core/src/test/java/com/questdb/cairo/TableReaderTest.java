@@ -4025,7 +4025,7 @@ public class TableReaderTest extends AbstractCairoTest {
         void generate(TableWriter.Row r, Rnd rnd, long ts, long blob);
     }
 
-    private abstract class RecoverableTestFilesFacade extends TestFilesFacade {
+    private abstract static class RecoverableTestFilesFacade extends TestFilesFacade {
         protected boolean recovered = false;
 
         public void setRecovered(boolean recovered) {

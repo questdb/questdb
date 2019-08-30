@@ -462,13 +462,6 @@ public final class Chars {
         }
     }
 
-    public static int strcpyw(CharSequence value, long address) {
-        int len = value.length();
-        Unsafe.getUnsafe().putInt(address, len);
-        strcpyw(value, len, address + 4);
-        return (len << 1) + 4;
-    }
-
     public static void strcpyw(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
@@ -484,22 +477,6 @@ public final class Chars {
             return null;
         }
         return charSequence.toString();
-    }
-
-    public static String stripQuotes(String s) {
-        int l;
-        if (s == null || (l = s.length()) == 0) {
-            return s;
-        }
-
-        switch (s.charAt(0)) {
-            case '\'':
-            case '"':
-            case '`':
-                return s.substring(1, l - 1);
-            default:
-                return s;
-        }
     }
 
     public static char toLowerCaseAscii(char character) {

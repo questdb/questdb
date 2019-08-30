@@ -38,7 +38,7 @@ public class HttpMultipartContentParserTest {
     private final static TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 

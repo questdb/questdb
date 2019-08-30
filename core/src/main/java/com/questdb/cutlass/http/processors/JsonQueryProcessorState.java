@@ -28,7 +28,7 @@ public class JsonQueryProcessorState extends AbstractQueryContext {
     boolean noMeta = false;
 
     public JsonQueryProcessorState(long fd, int connectionCheckFrequency) {
-        super(fd, connectionCheckFrequency);
+        super(fd);
     }
 
     @Override

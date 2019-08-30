@@ -23,7 +23,6 @@
 
 package com.questdb.network;
 
-import com.questdb.net.ChannelStatus;
 import com.questdb.std.Os;
 
 public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
@@ -181,7 +180,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                         continue;
                     }
 
-                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE, pending.get(row));
+                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, pending.get(row));
                     pending.deleteRow(row);
                     watermark--;
                 }

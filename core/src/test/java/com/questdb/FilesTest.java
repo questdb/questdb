@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -24,7 +24,6 @@
 package com.questdb;
 
 import com.questdb.std.*;
-import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
@@ -46,15 +45,9 @@ public class FilesTest {
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-    @Test
-    public void testDeleteDir() throws Exception {
-        File r = temporaryFolder.newFolder("to_delete");
-        Assert.assertTrue(new File(r, "a/b/c").mkdirs());
-        Assert.assertTrue(new File(r, "d/e/f").mkdirs());
-        touch(new File(r, "d/1.txt"));
-        touch(new File(r, "a/b/2.txt"));
-        Assert.assertTrue(com.questdb.store.Files.delete(r));
-        Assert.assertFalse(r.exists());
+    private static void touch(File file) throws IOException {
+        FileOutputStream fos = new FileOutputStream(file);
+        fos.close();
     }
 
     @Test
@@ -158,7 +151,7 @@ public class FilesTest {
     @Test
     public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
-        com.questdb.store.Files.writeStringToFile(temp, "abcde");
+        TestUtils.writeStringToFile(temp, "abcde");
         try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.exists(path));
             Assert.assertEquals(5, Files.length(path));
@@ -220,17 +213,5 @@ public class FilesTest {
             Assert.assertTrue(Files.exists(path));
             Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
         }
-    }
-
-    @Test
-    public void testWriteStringToFile() throws IOException, JournalException {
-        File f = temporaryFolder.newFile();
-        com.questdb.store.Files.writeStringToFile(f, "TEST123");
-        Assert.assertEquals("TEST123", com.questdb.store.Files.readStringFromFile(f));
-    }
-
-    private static void touch(File file) throws IOException {
-        FileOutputStream fos = new FileOutputStream(file);
-        fos.close();
     }
 }

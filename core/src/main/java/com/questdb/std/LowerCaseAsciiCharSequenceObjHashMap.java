@@ -49,13 +49,13 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
 
     public final void clear() {
         super.clear();
-        Arrays.fill(values, noEntryValue);
+        Arrays.fill(values, null);
     }
 
     @Override
     protected void erase(int index) {
         Unsafe.arrayPut(keys, index, noEntryKey);
-        Unsafe.arrayPut(values, index, noEntryValue);
+        Unsafe.arrayPut(values, index, null);
     }
 
     @Override

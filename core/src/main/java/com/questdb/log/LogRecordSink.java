@@ -72,7 +72,7 @@ public class LogRecordSink extends AbstractCharSink implements Closeable {
     public CharSink put(CharSequence cs) {
         int rem = (int) (lim - _wptr);
         int len = cs.length();
-        int n = rem < len ? rem : len;
+        int n = Math.min(rem, len);
         Chars.strcpy(cs, n, _wptr);
         _wptr += n;
         return this;

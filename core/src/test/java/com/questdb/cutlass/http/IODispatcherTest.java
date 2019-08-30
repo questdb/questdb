@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class IODispatcherTest {
-    private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -2591,7 +2591,7 @@ public class IODispatcherTest {
         }
     }
 
-    class Status {
+    static class Status {
         boolean valid;
     }
 }

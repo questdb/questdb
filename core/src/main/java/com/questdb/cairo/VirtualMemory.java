@@ -276,14 +276,15 @@ public class VirtualMemory implements Closeable {
         return getPageSize(pageIndex(offset)) - offsetInPage(offset);
     }
 
-    public final long putBin(ByteBuffer buf) {
+    public final void putBin(ByteBuffer buf) {
         if (buf instanceof DirectBuffer) {
             int pos = buf.position();
             int len = buf.remaining();
             buf.position(pos + len);
-            return putBin(ByteBuffers.getAddress(buf) + pos, len);
+            putBin(ByteBuffers.getAddress(buf) + pos, len);
+            return;
         }
-        return putBin0(buf);
+        putBin0(buf);
     }
 
     public final long putBin(BinarySequence value) {
@@ -885,12 +886,10 @@ public class VirtualMemory implements Closeable {
         } while (true);
     }
 
-    private long putBin0(ByteBuffer buf) {
-        final long offset = getAppendOffset();
-
+    private void putBin0(ByteBuffer buf) {
         if (buf == null) {
             putLong(TableUtils.NULL_LEN);
-            return offset;
+            return;
         }
 
         int pos = buf.position();
@@ -905,8 +904,6 @@ public class VirtualMemory implements Closeable {
         } else {
             putBinSplit(buf, pos, len);
         }
-
-        return offset;
     }
 
     private void putBinSequence(BinarySequence value, long pos, long len) {

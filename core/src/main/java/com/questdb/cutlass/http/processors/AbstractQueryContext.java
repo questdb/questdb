@@ -27,7 +27,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.ql.ChannelCheckCancellationHandler;
 import com.questdb.std.AssociativeCache;
 import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
@@ -47,7 +46,6 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
-    final ChannelCheckCancellationHandler cancellationHandler;
     final long fd;
     RecordCursorFactory recordCursorFactory;
     CharSequence query;
@@ -61,8 +59,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     int queryState = QUERY_PREFIX;
     int columnIndex;
 
-    public AbstractQueryContext(long fd, int connectionCheckFrequency) {
-        this.cancellationHandler = new ChannelCheckCancellationHandler(fd, connectionCheckFrequency);
+    public AbstractQueryContext(long fd) {
         this.fd = fd;
     }
 

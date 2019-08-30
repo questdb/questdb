@@ -32,7 +32,6 @@ import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.store.Files;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -219,8 +218,8 @@ public class LogFactoryTest {
             // let async writer catch up in a busy environment
             Thread.sleep(100);
 
-            Assert.assertEquals("this is for network" + Misc.EOL, Files.readStringFromFile(a));
-            Assert.assertEquals("this is for std" + Misc.EOL, Files.readStringFromFile(b));
+            Assert.assertEquals("this is for network" + Misc.EOL, TestUtils.readStringFromFile(a));
+            Assert.assertEquals("this is for std" + Misc.EOL, TestUtils.readStringFromFile(b));
         }
     }
 
@@ -300,6 +299,7 @@ public class LogFactoryTest {
                     writer.runSerially();
                 }
 
+                //noinspection StatementWithEmptyBody
                 while (writer.runSerially()) ;
 
                 halted.countDown();
@@ -427,7 +427,7 @@ public class LogFactoryTest {
         File conf = temp.newFile();
         File out = temp.newFile();
 
-        Files.writeStringToFile(conf, "writers=file\n" +
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
                 "recordLength=4096\n" +
                 "queueDepth=1024\n" +
                 "w.file.class=com.questdb.log.LogFileWriter\n" +

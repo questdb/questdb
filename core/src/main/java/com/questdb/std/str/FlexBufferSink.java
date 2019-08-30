@@ -35,11 +35,6 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
     private ByteBuffer buffer;
     private int capacity;
 
-    public FlexBufferSink(WritableByteChannel channel, int bufferSize) {
-        this(bufferSize);
-        this.channel = channel;
-    }
-
     FlexBufferSink() {
         this(1024);
     }

@@ -913,7 +913,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
         NetworkFacade nf = new NetworkFacadeImpl() {
             int counter = 0;
-            int counterBreak = 2;
+            final int counterBreak = 2;
 
             @Override
             public int send(long fd, long buffer, int bufferLen) {
@@ -956,7 +956,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
         NetworkFacade nf = new NetworkFacadeImpl() {
             int counter = 0;
-            int counterBreak = 3; // another branch of retry logic
+            final int counterBreak = 3; // another branch of retry logic
 
             @Override
             public int send(long fd, long buffer, int bufferLen) {

@@ -46,7 +46,7 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.Properties;
 
-public class PropServerConfiguration implements ServerConfigurationV2 {
+public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new HttpIODispatcherConfiguration();
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new PropTextImportProcessorConfiguration();

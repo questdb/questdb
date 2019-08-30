@@ -66,7 +66,7 @@ public class LongList implements Mutable {
     }
 
     public LongList(LongList other) {
-        this.buffer = new long[other.size() < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : other.size()];
+        this.buffer = new long[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
         setPos(other.size());
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
         this.noEntryValue = other.noEntryValue;
@@ -234,13 +234,11 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
     }
 
-    public boolean remove(long v) {
+    public void remove(long v) {
         int index = indexOf(v);
         if (index > -1) {
             removeIndex(index);
-            return true;
         }
-        return false;
     }
 
     public void removeIndex(int index) {
@@ -302,7 +300,7 @@ public class LongList implements Mutable {
     }
 
     public LongList subset(int lo, int hi) {
-        int _hi = hi > pos ? pos : hi;
+        int _hi = Math.min(hi, pos);
         LongList that = new LongList(_hi - lo);
         System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
         that.pos = _hi - lo;

@@ -26,7 +26,6 @@ package com.questdb.griffin.engine.functions.catalogue;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.constants.StrConstant;
 import com.questdb.std.ObjList;
 
@@ -37,7 +36,7 @@ public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new StrConstant(position, "public");
     }
 }

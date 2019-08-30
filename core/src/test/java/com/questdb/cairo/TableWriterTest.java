@@ -1513,7 +1513,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals((long) N, writer.size());
+                Assert.assertEquals(N, writer.size());
             }
         });
     }
@@ -2848,7 +2848,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals((long) N, writer.size());
+                Assert.assertEquals(N, writer.size());
             }
         });
     }
@@ -3303,7 +3303,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     }
 
-    class CountingFilesFacade extends FilesFacadeImpl {
+    static class CountingFilesFacade extends FilesFacadeImpl {
         long count = Long.MAX_VALUE;
     }
 }

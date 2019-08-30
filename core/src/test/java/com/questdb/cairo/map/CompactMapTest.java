@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -752,7 +752,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
     // This hash function will use first three characters as hash code
     // we need decent spread of hash codes making single character not enough
-    private class MockHash implements CompactMap.HashFunction {
+    private static class MockHash implements CompactMap.HashFunction {
         @Override
         public long hash(VirtualMemory mem, long offset, long size) {
             // string begins after 8-byte cell for key value

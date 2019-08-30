@@ -40,7 +40,7 @@ public class ObjList<T> implements Mutable, Sinkable {
 
     @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
-        this.buffer = (T[]) new Object[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
+        this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
 
     /**
