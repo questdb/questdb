@@ -139,6 +139,71 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256AndCharAsKey() {
+        Rnd rnd = new Rnd();
+
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+
+        keyTypes.add(ColumnType.LONG256);
+        keyTypes.add(ColumnType.CHAR);
+
+        valueTypes.add(ColumnType.DOUBLE);
+
+        Long256Impl long256 = new Long256Impl();
+
+        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8)) {
+            final int N = 100000;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+
+                long256.setLong0(rnd.nextLong());
+                long256.setLong1(rnd.nextLong());
+                long256.setLong2(rnd.nextLong());
+                long256.setLong3(rnd.nextLong());
+
+                key.putLong256(long256);
+                key.putChar(rnd.nextChar());
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+
+                value.putDouble(0, rnd.nextDouble2());
+            }
+
+
+            rnd.reset();
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                long256.setLong0(rnd.nextLong());
+                long256.setLong1(rnd.nextLong());
+                long256.setLong2(rnd.nextLong());
+                long256.setLong3(rnd.nextLong());
+
+                key.putLong256(long256);
+                key.putChar(rnd.nextChar());
+
+
+                MapValue value = key.createValue();
+                Assert.assertFalse(value.isNew());
+                Assert.assertEquals(rnd.nextDouble2(), value.getDouble(0), 0.000000001d);
+            }
+
+
+            try (RecordCursor cursor = map.getCursor()) {
+                rnd.reset();
+                assertCursorLong256(rnd, cursor, long256);
+
+                rnd.reset();
+                cursor.toTop();
+                assertCursorLong256(rnd, cursor, long256);
+            }
+        }
+    }
+
+    @Test
     public void testAppendExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -705,6 +770,36 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextDouble2(), record.getDouble(5), 0.000000001d);
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(6));
             Assert.assertEquals(rnd.nextLong(), record.getDate(7));
+        }
+    }
+
+    private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            long256.setLong0(rnd.nextLong());
+            long256.setLong1(rnd.nextLong());
+            long256.setLong2(rnd.nextLong());
+            long256.setLong3(rnd.nextLong());
+
+            Long256 long256a = record.getLong256A(1);
+            Long256 long256b = record.getLong256B(1);
+
+            Assert.assertEquals(long256a.getLong0(), long256.getLong0());
+            Assert.assertEquals(long256a.getLong1(), long256.getLong1());
+            Assert.assertEquals(long256a.getLong2(), long256.getLong2());
+            Assert.assertEquals(long256a.getLong3(), long256.getLong3());
+
+            Assert.assertEquals(long256b.getLong0(), long256.getLong0());
+            Assert.assertEquals(long256b.getLong1(), long256.getLong1());
+            Assert.assertEquals(long256b.getLong2(), long256.getLong2());
+            Assert.assertEquals(long256b.getLong3(), long256.getLong3());
+
+            Assert.assertEquals(rnd.nextChar(), record.getChar(2));
+
+
+            // value part, it comes first in record
+
+            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(0), 0.000000001d);
         }
     }
 

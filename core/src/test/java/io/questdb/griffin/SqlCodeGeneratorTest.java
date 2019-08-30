@@ -2195,6 +2195,76 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByLong256AndChar() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
+                "0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\t1970-01-14T21:20:00.000000Z\n" +
+                "0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t1970-01-17T04:53:20.000000Z\n" +
+                "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
+                "0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t1970-01-03T07:33:20.000000Z\n" +
+                "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t1970-01-05T15:06:40.000000Z\n" +
+                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
+                "0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\t1970-01-13T17:33:20.000000Z\n" +
+                "0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\t1970-01-20T16:13:20.000000Z\n" +
+                "0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t1970-01-06T18:53:20.000000Z\n" +
+                "0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t1970-01-11T10:00:00.000000Z\n" +
+                "0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\t1970-01-19T12:26:40.000000Z\n" +
+                "0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\t1970-01-18T08:40:00.000000Z\n" +
+                "0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\t1970-01-16T01:06:40.000000Z\n" +
+                "0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\t1970-01-07T22:40:00.000000Z\n" +
+                "0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t1970-01-02T03:46:40.000000Z\n" +
+                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
+                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
+                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
+
+        final String expected2 = "a\tb\tk\n" +
+                "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
+                "0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\t1970-01-14T21:20:00.000000Z\n" +
+                "0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t1970-01-17T04:53:20.000000Z\n" +
+                "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
+                "0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t1970-01-03T07:33:20.000000Z\n" +
+                "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t1970-01-05T15:06:40.000000Z\n" +
+                "0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\t1970-01-22T23:46:40.000000Z\n" +
+                "0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\t1970-01-13T17:33:20.000000Z\n" +
+                "0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\t1970-01-20T16:13:20.000000Z\n" +
+                "0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t1970-01-06T18:53:20.000000Z\n" +
+                "0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t1970-01-11T10:00:00.000000Z\n" +
+                "0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\t1970-01-19T12:26:40.000000Z\n" +
+                "0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\t1970-01-18T08:40:00.000000Z\n" +
+                "0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\t1970-01-16T01:06:40.000000Z\n" +
+                "0xc736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3ebedf29efb28cdcb1\tW\t1971-01-01T00:00:00.000000Z\n" +
+                "0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\t1970-01-07T22:40:00.000000Z\n" +
+                "0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t1970-01-02T03:46:40.000000Z\n" +
+                "0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t1970-01-09T02:26:40.000000Z\n" +
+                "0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\t1970-01-21T20:00:00.000000Z\n" +
+                "0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t1970-01-04T11:20:00.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x " +
+                        " order by b, a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_long256() a," +
+                        " rnd_char() b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_long256()," +
+                        " 'W'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected2);
+    }
+
+    @Test
     public void testOrderByAllSupported() throws Exception {
         final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
                 "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +

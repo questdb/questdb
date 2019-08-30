@@ -419,33 +419,33 @@ public class FastMap implements Map {
 
         @Override
         public void putDouble(double value) {
-            checkSize(8);
+            checkSize(Double.BYTES);
             Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8;
+            appendAddress += Double.BYTES;
             writeOffset();
         }
 
         @Override
         public void putFloat(float value) {
-            checkSize(4);
+            checkSize(Float.BYTES);
             Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += 4;
+            appendAddress += Float.BYTES;
             writeOffset();
         }
 
         @Override
         public void putInt(int value) {
-            checkSize(4);
+            checkSize(Integer.BYTES);
             Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4;
+            appendAddress += Integer.BYTES;
             writeOffset();
         }
 
         @Override
         public void putLong(long value) {
-            checkSize(8);
+            checkSize(Long.BYTES);
             Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8;
+            appendAddress += Long.BYTES;
             writeOffset();
         }
 

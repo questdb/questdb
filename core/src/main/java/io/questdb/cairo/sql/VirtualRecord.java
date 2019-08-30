@@ -132,7 +132,7 @@ public class VirtualRecord implements Record {
 
     @Override
     public Long256 getLong256A(int col) {
-        return getFunction(col).getLong256B(base);
+        return getFunction(col).getLong256A(base);
     }
 
     @Override

@@ -285,7 +285,7 @@ public class IODispatcherTest {
     public void testImportMultipleOnSameConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -462,7 +462,7 @@ public class IODispatcherTest {
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -621,7 +621,7 @@ public class IODispatcherTest {
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, true);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -858,7 +858,7 @@ public class IODispatcherTest {
     public void testJsonQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -957,7 +957,7 @@ public class IODispatcherTest {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -1117,7 +1117,7 @@ public class IODispatcherTest {
     public void testJsonQuerySyntaxError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -1309,7 +1309,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -1503,7 +1503,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -2348,7 +2348,7 @@ public class IODispatcherTest {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
 //            final String baseDir = "/home/vlad/dev/123";
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -2415,12 +2415,17 @@ public class IODispatcherTest {
     }
 
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(String baseDir) {
-        return createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 1024 * 1024);
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(String baseDir, boolean dumpTraffic) {
+        return createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 1024 * 1024, dumpTraffic);
     }
 
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(NetworkFacade nf, String baseDir, int sendBufferSize) {
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            NetworkFacade nf,
+            String baseDir,
+            int sendBufferSize,
+            boolean dumpTraffic
+    ) {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
@@ -2455,6 +2460,11 @@ public class IODispatcherTest {
                     return null;
                 }
             };
+
+            @Override
+            public boolean getDumpNetworkTraffic() {
+                return dumpTraffic;
+            }
 
             @Override
             public int getSendBufferSize() {

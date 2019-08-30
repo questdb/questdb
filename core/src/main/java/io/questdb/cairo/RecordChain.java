@@ -26,6 +26,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
@@ -302,6 +303,21 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public char getChar(int col) {
             return mem.getChar(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public void getLong256(int col, CharSink sink) {
+            mem.getLong256(fixedWithColumnOffset(col), sink);
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            return mem.getLong256A(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public Long256 getLong256B(int col) {
+            return mem.getLong256B(fixedWithColumnOffset(col));
         }
 
         @Override

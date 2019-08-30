@@ -197,9 +197,9 @@ final class FastMapRecord implements MapRecord {
     public void getLong256(int columnIndex, CharSink sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);
-        final long b = Unsafe.getUnsafe().getLong(address + Long256.BYTES);
-        final long c = Unsafe.getUnsafe().getLong(address + Long256.BYTES * 2);
-        final long d = Unsafe.getUnsafe().getLong(address + Long256.BYTES * 3);
+        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
         if (a == 0 && b == 0 && c == 0 && d == 0) {
             return;
         }

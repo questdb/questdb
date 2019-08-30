@@ -23,12 +23,12 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
-final public class EmptyTableRandomRecordCursor implements RecordCursor {
+final public class EmptyTableRandomRecordCursor implements NoRandomAccessRecordCursor {
     public static final EmptyTableRandomRecordCursor INSTANCE = new EmptyTableRandomRecordCursor();
 
     private final Record record = new VirtualRecordNoRowid(new ObjList<>());
@@ -51,15 +51,6 @@ final public class EmptyTableRandomRecordCursor implements RecordCursor {
     public Record newRecord() {
         return record;
     }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-    }
-
     @Override
     public void toTop() {
     }

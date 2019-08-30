@@ -347,37 +347,6 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinOnLong256() throws Exception {
-        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
-
-                final String expected = "i\ti1\thash\n" +
-                        "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\n" +
-                        "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
-                        "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
-
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " to_int(x) i," +
-                                " rnd_long256() hash" +
-                                " from long_sequence(3)" +
-                                ")"
-                );
-
-                assertQueryAndCache(expected, query, null);
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        }));
-    }
-
-    @Test
     public void testAsOfJoin() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -1677,6 +1646,108 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinInnerLong256AndChar() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "kk\ta\tb\tkk1\ta1\tb1\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xc736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3ebedf29efb28cdcb1\tC\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0xba37e200ad5b17cdada00dc8b85c1bc8a5f80be4b45bf437492990e1a29afcac\tG\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x37b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b997918f622d62989\tS\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\tE\n";
+
+                compiler.compile("create table x as (select" +
+                        " to_int(x) kk, " +
+                        " rnd_long256() a," +
+                        " rnd_char() b " +
+                        " from long_sequence(5))"
+                );
+
+                compiler.compile("create table y as (select" +
+                        " to_int((x-1)/4 + 1) kk," +
+                        " rnd_long256() a," +
+                        " rnd_char() b " +
+                        " from long_sequence(20))"
+                );
+
+                // filter is applied to final join result
+                assertQuery(expected, "select * from x join y on (kk)", null);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerLong256AndCharAndOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "kk\ta\tb\tkk1\ta1\tb1\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\t3\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xc736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3ebedf29efb28cdcb1\tC\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0xba37e200ad5b17cdada00dc8b85c1bc8a5f80be4b45bf437492990e1a29afcac\tG\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x37b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b997918f622d62989\tS\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\tE\n";
+
+                compiler.compile("create table x as (select" +
+                        " to_int(x) kk, " +
+                        " rnd_long256() a," +
+                        " rnd_char() b " +
+                        " from long_sequence(5))"
+                );
+
+                compiler.compile("create table y as (select" +
+                        " to_int((x-1)/4 + 1) kk," +
+                        " rnd_long256() a," +
+                        " rnd_char() b " +
+                        " from long_sequence(20))"
+                );
+
+                // filter is applied to final join result
+                assertQuery(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testJoinInnerNoSlaveRecords() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -1965,6 +2036,37 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinOnLong256() throws Exception {
+        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
+
+                final String expected = "i\ti1\thash\n" +
+                        "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\n" +
+                        "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                        "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_long256() hash" +
+                                " from long_sequence(3)" +
+                                ")"
+                );
+
+                assertQueryAndCache(expected, query, null);
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        }));
+    }
+
+    @Test
     public void testJoinOuterAllTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -2040,6 +2142,107 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinOuterAllTypesFF() throws Exception {
         testFullFat(this::testJoinOuterAllTypes);
+    }
+
+    @Test
+    public void testJoinOuterLong256AndChar() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "kk\ta\tb\tkk1\ta1\tb1\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\tNaN\t\t\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\tNaN\t\t\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\tNaN\t\t\n" +
+                        "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                        "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n" +
+                        "7\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\tNaN\t\t\n" +
+                        "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                        "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                        "9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tNaN\t\t\n" +
+                        "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                        "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n";
+
+                compiler.compile("create table x as (select" +
+                        " to_int(x) kk, " +
+                        " rnd_long256() a," +
+                        " rnd_char() b" +
+                        " from long_sequence(10))"
+                );
+
+                compiler.compile("create table y as (select" +
+                        " to_int(2*((x-1)/2))+2 kk," +
+                        " rnd_long256() a," +
+                        " rnd_char() b" +
+                        " from long_sequence(10))"
+                );
+
+                // filter is applied to final join result
+                assertQuery(
+                        expected,
+                        "select * from x outer join y on (kk)",
+                        null
+                );
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOuterLong256AndCharAndOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "kk\ta\tb\tkk1\ta1\tb1\n" +
+                        "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\tR\n" +
+                        "8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM\n" +
+                        "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\tNaN\t\t\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU\n" +
+                        "4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ\n" +
+                        "2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\n" +
+                        "7\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\tY\tNaN\t\t\n" +
+                        "1\t0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\tNaN\t\t\n" +
+                        "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ\n" +
+                        "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n" +
+                        "3\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\tH\tNaN\t\t\n" +
+                        "9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tNaN\t\t\n" +
+                        "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\n" +
+                        "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n";
+
+                compiler.compile("create table x as (select" +
+                        " to_int(x) kk, " +
+                        " rnd_long256() a," +
+                        " rnd_char() b" +
+                        " from long_sequence(10))"
+                );
+
+                compiler.compile("create table y as (select" +
+                        " to_int(2*((x-1)/2))+2 kk," +
+                        " rnd_long256() a," +
+                        " rnd_char() b" +
+                        " from long_sequence(10))"
+                );
+
+                // filter is applied to final join result
+                assertQuery(
+                        expected,
+                        "select * from x outer join y on (kk) order by x.a desc, y.a",
+                        null,
+                        true
+                );
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
     }
 
     @Test

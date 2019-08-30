@@ -31,97 +31,83 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.BinFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.*;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 public class NullRecordFactory {
-    private static final ByteConstant BYTE_NULL = new ByteConstant(0, (byte) 0);
-    private static final ShortConstant SHORT_NULL = new ShortConstant(0, (short) 0);
-    private static final CharConstant CHAR_NULL = new CharConstant(0, (char) 0);
-    private static final IntConstant INT_NULL = new IntConstant(0, Numbers.INT_NaN);
-    private static final LongConstant LONG_NULL = new LongConstant(0, Numbers.LONG_NaN);
-    private static final DateConstant DATE_NULL = new DateConstant(0, Numbers.LONG_NaN);
-    private static final TimestampConstant TIMESTAMP_NULL = new TimestampConstant(0, Numbers.LONG_NaN);
-    private static final BooleanConstant BOOLEAN_NULL = new BooleanConstant(0, false);
-    private static final FloatConstant FLOAT_NULL = new FloatConstant(0, Float.NaN);
-    private static final DoubleConstant DOUBLE_NULL = new DoubleConstant(0, Double.NaN);
-    private static final StrConstant STRING_NULL = new StrConstant(0, null);
-    private static final BinFunction BINARY_NULL = new BinFunction(0) {
-        @Override
-        public BinarySequence getBin(Record rec) {
-            return null;
-        }
 
-        @Override
-        public long getBinLen(Record rec) {
-            return TableUtils.NULL_LEN;
-        }
-    };
-
-    private static final SymbolFunction SYMBOL_NULL = new SymbolFunction(0) {
-        @Override
-        public int getInt(Record rec) {
-            return SymbolTable.VALUE_IS_NULL;
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            return null;
-        }
-    };
+    private static final Long256Impl LONG_256_NULL = new Long256Impl();
+    private static final ObjList<Function> constantNulls = new ObjList<>();
 
     public static Record getInstance(ColumnTypes types) {
         final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            switch (types.getColumnType(i)) {
-                case ColumnType.INT:
-                    functions.add(INT_NULL);
-                    break;
-                case ColumnType.SYMBOL:
-                    functions.add(SYMBOL_NULL);
-                    break;
-                case ColumnType.LONG:
-                    functions.add(LONG_NULL);
-                    break;
-                case ColumnType.DATE:
-                    functions.add(DATE_NULL);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    functions.add(TIMESTAMP_NULL);
-                    break;
-                case ColumnType.BYTE:
-                    functions.add(BYTE_NULL);
-                    break;
-                case ColumnType.SHORT:
-                    functions.add(SHORT_NULL);
-                    break;
-                case ColumnType.CHAR:
-                    functions.add(CHAR_NULL);
-                    break;
-                case ColumnType.BOOLEAN:
-                    functions.add(BOOLEAN_NULL);
-                    break;
-                case ColumnType.FLOAT:
-                    functions.add(FLOAT_NULL);
-                    break;
-                case ColumnType.DOUBLE:
-                    functions.add(DOUBLE_NULL);
-                    break;
-                case ColumnType.STRING:
-                    functions.add(STRING_NULL);
-                    break;
-                case ColumnType.BINARY:
-                    functions.add(BINARY_NULL);
-                    break;
-                default:
-                    break;
-
-            }
+            Function function = constantNulls.get(types.getColumnType(i));
+            assert function != null;
+            functions.add(function);
         }
 
         return new VirtualRecord(functions);
+    }
+
+    static {
+        LONG_256_NULL.setLong0(-1);
+        LONG_256_NULL.setLong1(-1);
+        LONG_256_NULL.setLong2(-1);
+        LONG_256_NULL.setLong3(-1);
+
+        constantNulls.extendAndSet(ColumnType.INT, new IntConstant(0, Numbers.INT_NaN));
+        constantNulls.extendAndSet(ColumnType.STRING, new StrConstant(0, null));
+        constantNulls.extendAndSet(ColumnType.SYMBOL, new SymbolFunction(0) {
+            @Override
+            public int getInt(Record rec) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+
+            @Override
+            public CharSequence getSymbol(Record rec) {
+                return null;
+            }
+        });
+        constantNulls.extendAndSet(ColumnType.LONG, new LongConstant(0, Numbers.LONG_NaN));
+        constantNulls.extendAndSet(ColumnType.DATE, new DateConstant(0, Numbers.LONG_NaN));
+        constantNulls.extendAndSet(ColumnType.TIMESTAMP, new TimestampConstant(0, Numbers.LONG_NaN));
+        constantNulls.extendAndSet(ColumnType.BYTE, new ByteConstant(0, (byte) 0));
+        constantNulls.extendAndSet(ColumnType.SHORT, new ShortConstant(0, (short) 0));
+        constantNulls.extendAndSet(ColumnType.CHAR, new CharConstant(0, (char) 0));
+        constantNulls.extendAndSet(ColumnType.BOOLEAN, new BooleanConstant(0, false));
+        constantNulls.extendAndSet(ColumnType.DOUBLE, new DoubleConstant(0, Double.NaN));
+        constantNulls.extendAndSet(ColumnType.FLOAT, new FloatConstant(0, Float.NaN));
+        constantNulls.extendAndSet(ColumnType.BINARY, new BinFunction(0) {
+            @Override
+            public BinarySequence getBin(Record rec) {
+                return null;
+            }
+
+            @Override
+            public long getBinLen(Record rec) {
+                return TableUtils.NULL_LEN;
+            }
+        });
+
+        constantNulls.extendAndSet(ColumnType.LONG256, new Long256Function(0) {
+            @Override
+            public Long256 getLong256A(Record rec) {
+                return LONG_256_NULL;
+            }
+
+            @Override
+            public Long256 getLong256B(Record rec) {
+                return LONG_256_NULL;
+            }
+
+            @Override
+            public void getLong256(Record rec, CharSink sink) {
+
+            }
+        });
     }
 }

@@ -101,7 +101,10 @@ public class RecordCursorPrinter {
                 Numbers.append(sink, r.getShort(i));
                 break;
             case ColumnType.CHAR:
-                sink.put(r.getChar(i));
+                char c = r.getChar(i);
+                if (c > 0) {
+                    sink.put(c);
+                }
                 break;
             case ColumnType.LONG:
                 Numbers.append(sink, r.getLong(i));
