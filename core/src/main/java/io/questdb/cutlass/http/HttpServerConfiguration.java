@@ -67,4 +67,6 @@ public interface HttpServerConfiguration {
     boolean isEnabled();
 
     boolean getDumpNetworkTraffic();
+
+    boolean allowDeflateBeforeSend();
 }

@@ -108,6 +108,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return 0;
         }
     };
+    private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
     private int connectionStringPoolCapacity;
@@ -173,6 +174,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
             this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
             this.httpFrozenClock = getBoolean(properties, "http.frozen.clock", false);
+            this.httpAllowDeflateBeforeSend = getBoolean(properties, "http.allow.deflate.before.send", false);
 
             int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
             int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
@@ -199,7 +201,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
             }
 
-            this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
             this.activeConnectionLimit = getInt(properties, "http.net.active.connection.limit", 256);
             this.eventCapacity = getInt(properties, "http.net.event.capacity", 1024);
             this.ioQueueCapacity = getInt(properties, "http.net.io.queue.capacity", 1024);
@@ -221,6 +222,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
             this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
             this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
+            this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
 
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
@@ -632,6 +634,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionStringPoolCapacity() {
             return connectionStringPoolCapacity;
+        }
+
+        @Override
+        public boolean allowDeflateBeforeSend() {
+            return httpAllowDeflateBeforeSend;
         }
 
         @Override

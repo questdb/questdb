@@ -36,7 +36,6 @@ import io.questdb.std.time.DateFormatUtils;
 import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
 
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
@@ -79,13 +78,14 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final int responseBufferSize;
     private long fd;
     private long _wPtr;
-    private ByteBuffer zout;
     private long flushBuf;
     private int flushBufSize;
     private int state;
     private long z_streamp = 0;
-    private boolean compressed = false;
-    private long pzout;
+    private boolean deflateBeforeSend = false;
+    private long pzout = 0;
+    private int zpos;
+    private int zlimit;
     private int crc = 0;
     private long total = 0;
     private boolean header = true;
@@ -114,9 +114,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         Unsafe.getUnsafe().setMemory(out, responseBufferSize, (byte) 0);
         headerImpl.clear();
         this._wPtr = outPtr;
-        if (zout != null) {
-            zout.clear();
-        }
+        this.zpos = this.zlimit = 0;
+        header = true;
         resetZip();
     }
 
@@ -125,11 +124,17 @@ public class HttpResponseSink implements Closeable, Mutable {
         Unsafe.free(out, responseBufferSize);
         Unsafe.free(chunkHeaderBuf, 8 + 2L * Misc.EOL.length());
         headerImpl.close();
-        ByteBuffers.release(zout);
+        if (pzout != 0) {
+            Unsafe.free(pzout, responseBufferSize);
+        }
         if (z_streamp != 0) {
             Zip.deflateEnd(z_streamp);
             z_streamp = 0;
         }
+    }
+
+    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+        this.deflateBeforeSend = deflateBeforeSend;
     }
 
     public int getCode() {
@@ -149,7 +154,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
             switch (state) {
                 case MULTI_CHUNK:
-                    if (compressed) {
+                    if (deflateBeforeSend) {
                         prepareCompressedBody();
                         state = DEFLATE;
                     } else {
@@ -161,13 +166,13 @@ public class HttpResponseSink implements Closeable, Mutable {
                     state = deflate(false);
                     break;
                 case SEND_DEFLATED_END:
-                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
-                    flushBufSize = zout.limit() - zout.position();
+                    flushBuf = pzout + zpos;
+                    flushBufSize = zlimit - zpos;
                     state = END_CHUNK;
                     break;
                 case SEND_DEFLATED_CONT:
-                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
-                    flushBufSize = zout.limit() - zout.position();
+                    flushBuf = pzout + zpos;
+                    flushBufSize = zlimit - zpos;
                     state = DONE;
                     break;
                 case MULTI_BUF_CHUNK:
@@ -238,22 +243,22 @@ public class HttpResponseSink implements Closeable, Mutable {
         if (header) {
             Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, pzout, Zip.gzipHeaderLen);
             header = false;
-            zout.position(0);
+            zpos = 0;
         } else {
-            zout.position(Zip.gzipHeaderLen);
+            zpos = Zip.gzipHeaderLen;
         }
 
         // trailer
         if (flush && ret == 1) {
             Unsafe.getUnsafe().putInt(p + len, crc); // crc
             Unsafe.getUnsafe().putInt(p + len + 4, (int) total); // total
-            zout.limit(Zip.gzipHeaderLen + len + 8);
+            zlimit = Zip.gzipHeaderLen + len + 8;
         } else {
-            zout.limit(Zip.gzipHeaderLen + len);
+            zlimit = Zip.gzipHeaderLen + len;
         }
 
         // first we need to flush chunk header
-        prepareChunk(zout.remaining());
+        prepareChunk(zlimit - zpos);
 
         // if there is input remaining, don't change
         return flush && ret == 1 ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
@@ -293,8 +298,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void prepareCompressedBody() {
         if (z_streamp == 0) {
             z_streamp = Zip.deflateInit();
-            zout = ByteBuffer.allocateDirect(responseBufferSize);
-            pzout = ByteBuffers.getAddress(zout);
+            pzout = Unsafe.malloc(responseBufferSize);
+            zpos = zlimit = 0;
         }
         int r = (int) (_wPtr - outPtr);
         Zip.setInput(z_streamp, outPtr, r);
@@ -584,7 +589,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
             flushBufSize = 0;
-            if (compressed) {
+            if (deflateBeforeSend) {
                 resumeSend(FLUSH);
             } else {
                 resumeSend(END_CHUNK);
@@ -611,7 +616,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (outPtr != _wPtr) {
-                if (compressed) {
+                if (deflateBeforeSend) {
                     flushBufSize = 0;
                     resumeSend(MULTI_CHUNK);
                 } else {
@@ -627,14 +632,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             flushSingle();
         }
 
-        public void setCompressed(boolean compressed) {
-            HttpResponseSink.this.compressed = compressed;
-        }
-
         @Override
         public void status(int status, CharSequence contentType) {
             super.status(status, contentType);
-            if (compressed) {
+            if (deflateBeforeSend) {
                 headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
             }
         }

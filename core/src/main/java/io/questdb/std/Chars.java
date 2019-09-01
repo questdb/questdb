@@ -529,7 +529,7 @@ public final class Chars {
         return b.toString();
     }
 
-    public static String toUtf8String(long lo, long hi) {
+    public static String stringFromUtf8Bytes(long lo, long hi) {
         if (hi == lo) {
             return "";
         }

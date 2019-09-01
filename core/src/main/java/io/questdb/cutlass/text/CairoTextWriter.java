@@ -125,9 +125,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     }
 
     @Override
-    public void onFields(long line, ObjList<DirectByteCharSequence> values, int hi) {
-        final TableWriter.Row w = writer.newRow(0);
-        for (int i = 0; i < hi; i++) {
+    public void onFields(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+        final TableWriter.Row w = writer.newRow();
+        for (int i = 0; i < valuesLength; i++) {
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
                 continue;

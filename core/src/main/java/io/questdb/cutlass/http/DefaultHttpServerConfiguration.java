@@ -191,6 +191,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean allowDeflateBeforeSend() {
+        return false;
+    }
+
+    @Override
     public boolean workerHaltOnError() {
         return false;
     }

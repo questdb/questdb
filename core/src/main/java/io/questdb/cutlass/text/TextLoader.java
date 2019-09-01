@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.DateFormatFactory;
@@ -55,6 +56,7 @@ public class TextLoader implements Closeable, Mutable {
     private final TextDelimiterScanner textDelimiterScanner;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
+    private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private int state;
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
@@ -86,6 +88,9 @@ public class TextLoader implements Closeable, Mutable {
         );
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
+        parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
+        parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
+        parseMethods.extendAndSet(LOAD_DATA, this::parseData);
     }
 
     @Override
@@ -170,34 +175,33 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
+        parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
+    }
 
-        switch (state) {
-            case LOAD_JSON_METADATA:
-                jsonLexer.parse(lo, hi, textMetadataParser);
-                break;
-            case ANALYZE_STRUCTURE:
-                if (columnDelimiter > 0) {
-                    textLexer.of(columnDelimiter);
-                } else {
-                    textLexer.of(textDelimiterScanner.scan(lo, hi));
-                }
-                textLexer.analyseStructure(
-                        lo,
-                        hi,
-                        textAnalysisMaxLines,
-                        forceHeaders,
-                        textMetadataParser.getColumnNames(),
-                        textMetadataParser.getColumnTypes()
-                );
-                textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
-                textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
-                break;
-            case LOAD_DATA:
-                textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
-                break;
-            default:
-                break;
+    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+    }
+
+    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+        if (columnDelimiter > 0) {
+            textLexer.of(columnDelimiter);
+        } else {
+            textLexer.of(textDelimiterScanner.scan(lo, hi));
         }
+        textLexer.analyseStructure(
+                lo,
+                hi,
+                textAnalysisMaxLines,
+                forceHeaders,
+                textMetadataParser.getColumnNames(),
+                textMetadataParser.getColumnTypes()
+        );
+        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+    }
+
+    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
+        jsonLexer.parse(lo, hi, textMetadataParser);
     }
 
     public void setState(int state) {
@@ -219,5 +223,10 @@ public class TextLoader implements Closeable, Mutable {
             default:
                 break;
         }
+    }
+
+    @FunctionalInterface
+    private interface ParserMethod {
+        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException;
     }
 }

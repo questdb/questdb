@@ -86,7 +86,7 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     @NotNull
     @Override
     public String toString() {
-        return Chars.toUtf8String(lo, hi);
+        return Chars.stringFromUtf8Bytes(lo, hi);
     }
 
     @Override

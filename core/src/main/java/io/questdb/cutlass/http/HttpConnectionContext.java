@@ -48,6 +48,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final long multipartIdleSpinCount;
     private final CairoSecurityContext cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
     private final boolean dumpNetworkTraffic;
+    private final boolean allowDeflateBeforeSend;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
 
@@ -64,6 +65,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
     }
 
     @Override
@@ -228,6 +230,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
 
+            if (allowDeflateBeforeSend && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+                responseSink.setDeflateBeforeSend(true);
+            }
+
             if (multipartRequest && !multipartProcessor) {
                 // bad request - multipart request for processor that doesn't expect multipart
                 headerParser.clear();
@@ -361,5 +367,4 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             Net.dump(buffer, size);
         }
     }
-
 }
