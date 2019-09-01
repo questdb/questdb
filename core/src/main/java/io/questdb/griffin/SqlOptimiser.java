@@ -244,7 +244,16 @@ class SqlOptimiser {
         deletedContexts.add(idx);
     }
 
-    private void addFunction(QueryColumn qc, QueryModel baseModel, QueryModel groupByModel, QueryModel outerModel, QueryModel innerModel, QueryModel analyticModel, QueryModel translatingModel) throws SqlException {
+    private void addFunction(
+            QueryColumn qc,
+            QueryModel baseModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel analyticModel,
+            QueryModel groupByModel,
+            QueryModel outerModel,
+            QueryModel distinctModel
+    ) throws SqlException {
         // there were no aggregation functions emitted therefore
         // this is just a function that goes into virtual model
         innerModel.addColumn(qc);
@@ -261,6 +270,7 @@ class SqlOptimiser {
         groupByModel.addColumn(innerColumn);
         analyticModel.addColumn(innerColumn);
         outerModel.addColumn(innerColumn);
+        distinctModel.addColumn(innerColumn);
     }
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
@@ -629,9 +639,10 @@ class SqlOptimiser {
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel groupByModel,
             QueryModel analyticModel,
-            QueryModel outerModel
+            QueryModel groupByModel,
+            QueryModel outerModel,
+            QueryModel distinctModel
     ) throws SqlException {
         // add duplicate column names only to group-by model
         // taking into account that column is pre-aliased, e.g.
@@ -644,10 +655,11 @@ class SqlOptimiser {
             final CharSequence translatedColumnName = translatingAliasMap.valueAt(index);
             final CharSequence alias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
+            innerModel.addColumn(translatedColumn);
             groupByModel.addColumn(translatedColumn);
             analyticModel.addColumn(translatedColumn);
             outerModel.addColumn(translatedColumn);
-            innerModel.addColumn(translatedColumn);
+            distinctModel.addColumn(translatedColumn);
         } else {
             final CharSequence alias = createColumnAlias(columnName, translatingModel);
             addColumnToTranslatingModel(
@@ -663,21 +675,23 @@ class SqlOptimiser {
 
             // create column that references inner alias we just created
             innerModel.addColumn(translatedColumn);
-            groupByModel.addColumn(translatedColumn);
             analyticModel.addColumn(translatedColumn);
+            groupByModel.addColumn(translatedColumn);
             outerModel.addColumn(translatedColumn);
+            distinctModel.addColumn(translatedColumn);
         }
     }
 
     private void createSelectColumnsForWildcard(
             QueryColumn qc,
+            boolean hasJoins,
             QueryModel baseModel,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel groupByModel,
             QueryModel analyticModel,
+            QueryModel groupByModel,
             QueryModel outerModel,
-            boolean hasJoins
+            QueryModel distinctModel
     ) throws SqlException {
         // this could be a wildcard, such as '*' or 'a.*'
         int dot = Chars.indexOf(qc.getAst().token, '.');
@@ -690,26 +704,28 @@ class SqlOptimiser {
             // we are targeting single table
             createSelectColumnsForWildcard0(
                     baseModel.getJoinModels().getQuick(index),
+                    hasJoins,
                     qc.getAst().position,
                     translatingModel,
                     innerModel,
-                    groupByModel,
                     analyticModel,
+                    groupByModel,
                     outerModel,
-                    hasJoins
+                    distinctModel
             );
         } else {
             ObjList<QueryModel> models = baseModel.getJoinModels();
             for (int j = 0, z = models.size(); j < z; j++) {
                 createSelectColumnsForWildcard0(
                         models.getQuick(j),
+                        hasJoins,
                         qc.getAst().position,
                         translatingModel,
                         innerModel,
-                        groupByModel,
                         analyticModel,
+                        groupByModel,
                         outerModel,
-                        hasJoins
+                        distinctModel
                 );
             }
         }
@@ -717,13 +733,14 @@ class SqlOptimiser {
 
     private void createSelectColumnsForWildcard0(
             QueryModel srcModel,
+            boolean hasJoins,
             int wildcardPosition,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel groupByModel,
             QueryModel analyticModel,
+            QueryModel groupByModel,
             QueryModel outerModel,
-            boolean hasJoins
+            QueryModel distinctModel
     ) throws SqlException {
         final ObjList<CharSequence> columnNames = srcModel.getColumnNames();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
@@ -744,9 +761,10 @@ class SqlOptimiser {
                     null, // do not validate
                     translatingModel,
                     innerModel,
-                    groupByModel,
                     analyticModel,
-                    outerModel
+                    groupByModel,
+                    outerModel,
+                    distinctModel
             );
         }
     }
@@ -1866,6 +1884,22 @@ class SqlOptimiser {
                 }
             }
         }
+
+        QueryModel nested = base.getNestedModel();
+        if (nested != null) {
+            rewriteOrderByPosition(nested);
+        }
+
+        ObjList<QueryModel> joinModels = base.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            // we can ignore result of order by rewrite for because
+            // 1. when join model is not a sub-query it will always have all the fields, so order by wouldn't
+            //    introduce synthetic model (no column needs to be hidden)
+            // 2. when join model is a sub-query it will have nested model, which can be rewritten. Parent model
+            //    would remain the same again.
+            rewriteOrderByPosition(joinModels.getQuick(i));
+        }
+
         return model;
     }
 
@@ -1880,7 +1914,7 @@ class SqlOptimiser {
      *
      * @param model inbound model
      * @return outbound model
-     * @throws SqlException when column names are ambiguos or not found at all.
+     * @throws SqlException when column names are ambiguous or not found at all.
      */
     private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
@@ -1900,7 +1934,7 @@ class SqlOptimiser {
         final int modelColumnCount = model.getColumns().size();
         boolean groupBy = false;
 
-        while (base.getColumns().size() > 0) {
+        while (base.getColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
             base = base.getNestedModel();
             groupBy = groupBy || baseParent.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY;
@@ -2004,7 +2038,7 @@ class SqlOptimiser {
                         }
                     }
                 }
-                if (ascendColumns && base != model) {
+                if (ascendColumns && base != baseParent) {
                     model.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
             }
@@ -2070,6 +2104,8 @@ class SqlOptimiser {
 
         QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+        QueryModel distinctModel = queryModelPool.next();
+        distinctModel.setSelectModelType(QueryModel.SELECT_MODEL_DISTINCT);
         QueryModel outerModel = queryModelPool.next();
         outerModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         QueryModel innerModel = queryModelPool.next();
@@ -2082,10 +2118,10 @@ class SqlOptimiser {
         boolean useAnalyticModel = false;
         boolean useGroupByModel = false;
         boolean useOuterModel = false;
+        boolean useDistinctModel = model.isDistinct();
 
         final ObjList<QueryColumn> columns = model.getColumns();
         final QueryModel baseModel = model.getNestedModel();
-//        baseModel.moveLimitFrom(model);
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
         // sample by clause should be promoted to all of the models as well as validated
@@ -2112,13 +2148,32 @@ class SqlOptimiser {
 
             if (qc.getAst().type == ExpressionNode.LITERAL) {
                 if (!isNotBindVariable(qc.getAst().token)) {
-                    addFunction(qc, baseModel, groupByModel, outerModel, innerModel, analyticModel, translatingModel);
+                    addFunction(
+                            qc,
+                            baseModel,
+                            translatingModel,
+                            innerModel,
+                            analyticModel,
+                            groupByModel,
+                            outerModel,
+                            distinctModel
+                    );
                     useInnerModel = true;
                 } else if (Chars.endsWith(qc.getAst().token, '*')) {
                     // in general sense we need to create new column in case
                     // there is change of alias, for example we may have something as simple as
                     // select a.f, b.f from ....
-                    createSelectColumnsForWildcard(qc, baseModel, translatingModel, innerModel, groupByModel, analyticModel, outerModel, hasJoins);
+                    createSelectColumnsForWildcard(
+                            qc,
+                            hasJoins,
+                            baseModel,
+                            translatingModel,
+                            innerModel,
+                            analyticModel,
+                            groupByModel,
+                            outerModel,
+                            distinctModel
+                    );
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
@@ -2126,9 +2181,10 @@ class SqlOptimiser {
                             baseModel,
                             translatingModel,
                             innerModel,
-                            groupByModel,
                             analyticModel,
-                            outerModel
+                            groupByModel,
+                            outerModel,
+                            distinctModel
                     );
                 }
             } else {
@@ -2152,7 +2208,9 @@ class SqlOptimiser {
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ....
-                        outerModel.addColumn(nextColumn(qc.getAlias()));
+                        QueryColumn aggregateRef = nextColumn(qc.getAlias());
+                        outerModel.addColumn(aggregateRef);
+                        distinctModel.addColumn(aggregateRef);
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerModel, baseModel);
                         useGroupByModel = true;
@@ -2167,6 +2225,7 @@ class SqlOptimiser {
                 emitAggregates(qc.getAst(), groupByModel);
                 if (beforeSplit < groupByModel.getColumns().size()) {
                     outerModel.addColumn(qc);
+                    distinctModel.addColumn(nextColumn(qc.getAlias()));
 
                     // pull literals from newly created group-by columns into both of underlying models
                     for (int j = beforeSplit, n = groupByModel.getColumns().size(); j < n; j++) {
@@ -2176,7 +2235,16 @@ class SqlOptimiser {
                     useGroupByModel = true;
                     useOuterModel = true;
                 } else {
-                    addFunction(qc, baseModel, groupByModel, outerModel, innerModel, analyticModel, translatingModel);
+                    addFunction(
+                            qc,
+                            baseModel,
+                            translatingModel,
+                            innerModel,
+                            analyticModel,
+                            groupByModel,
+                            outerModel,
+                            distinctModel
+                    );
                     useInnerModel = true;
                 }
             }
@@ -2243,6 +2311,11 @@ class SqlOptimiser {
             // in this case outer model should be of "choose" type
             outerModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
             root = outerModel;
+        }
+
+        if (useDistinctModel) {
+            distinctModel.setNestedModel(root);
+            root = distinctModel;
         }
 
         if (!useGroupByModel && groupByModel.getSampleBy() != null) {

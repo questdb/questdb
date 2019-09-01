@@ -559,12 +559,6 @@ public final class SqlParser {
             parseSelectClause(lexer, model);
         } else {
             lexer.unparse();
-            // do not default to wildcard column selection when
-            // dealing with sub-queries
-            if (subQueryMode) {
-                parseFromClause(lexer, model, model);
-                return model;
-            }
             model.addColumn(SqlUtil.nextColumn(queryColumnPool, sqlNodePool, "*", "*"));
         }
         QueryModel nestedModel = queryModelPool.next();
@@ -573,22 +567,8 @@ public final class SqlParser {
             model.setLimit(nestedModel.getLimitLo(), nestedModel.getLimitHi());
             nestedModel.setLimit(null, null);
         }
-        if (
-                nestedModel.getColumns().size() == 0
-                        && nestedModel.getNestedModel() != null
-                        && nestedModel.getWhereClause() == null
-                        && nestedModel.getSampleBy() == null
-                        && nestedModel.getJoinModels().size() == 1
-                        && nestedModel.getTimestamp() == null
-                        && nestedModel.getOrderBy().size() == 0
-                        && nestedModel.getAlias() == null
-        ) {
-            nestedModel = nestedModel.getNestedModel();
-        } else {
-            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-        }
+        model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
         model.setNestedModel(nestedModel);
-
         return model;
     }
 
@@ -598,6 +578,7 @@ public final class SqlParser {
 
         if (Chars.equals(tok, '(')) {
             model.setNestedModel(parseSubQuery(lexer));
+            model.setNestedModelIsSubQuery(true);
 
             tok = optTok(lexer);
 
@@ -886,7 +867,12 @@ public final class SqlParser {
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model) throws SqlException {
         while (true) {
-            CharSequence tok = tok(lexer, "column");
+            CharSequence tok = tok(lexer, "[distinct] column");
+
+            if (Chars.equalsLowerCaseAscii(tok, "distinct")) {
+                model.setDistinct(true);
+                tok = tok(lexer, "column");
+            }
 
             final ExpressionNode expr;
             // this is quite dramatic workaround for lexer

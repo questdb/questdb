@@ -83,7 +83,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 recordFunctions,
                 groupByMetadata,
                 keyTypes,
-                valueTypes,
+                valueTypes.getColumnCount(),
                 symbolTableIndex,
                 true
         );

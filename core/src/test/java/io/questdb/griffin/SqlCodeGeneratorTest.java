@@ -2265,6 +2265,114 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectDistinct() throws Exception {
+        final String expected = "a\n" +
+                "0\n" +
+                "8\n" +
+                "3\n" +
+                "1\n" +
+                "9\n" +
+                "2\n" +
+                "6\n" +
+                "4\n" +
+                "7\n" +
+                "5\n";
+
+        assertQuery(expected,
+                "select distinct a from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " abs(rnd_int())%10 a" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " abs(rnd_int())%10 a" +
+                        " from long_sequence(1000000)" +
+                        ") ",
+                expected, true);
+    }
+
+    @Test
+    public void testSelectDistinctSymbol() throws Exception {
+        final String expected = "a\n" +
+                "EHNRX\n" +
+                "\n" +
+                "BHFOW\n" +
+                "QULOF\n" +
+                "RUEDR\n" +
+                "SZSRY\n" +
+                "YYQE\n" +
+                "IBBTGP\n" +
+                "TJWC\n" +
+                "ZSXU\n" +
+                "CCXZ\n" +
+                "KGHVUV\n" +
+                "SWHYRX\n" +
+                "OUOJS\n" +
+                "PDXYSB\n" +
+                "OOZZ\n" +
+                "WFFYUD\n" +
+                "DZJMY\n" +
+                "GETJ\n" +
+                "FBVTMH\n" +
+                "UICW\n";
+
+        final String expected2 = "a\n" +
+                "EHNRX\n" +
+                "\n" +
+                "BHFOW\n" +
+                "QULOF\n" +
+                "RUEDR\n" +
+                "SZSRY\n" +
+                "YYQE\n" +
+                "IBBTGP\n" +
+                "TJWC\n" +
+                "ZSXU\n" +
+                "CCXZ\n" +
+                "KGHVUV\n" +
+                "SWHYRX\n" +
+                "OUOJS\n" +
+                "PDXYSB\n" +
+                "OOZZ\n" +
+                "WFFYUD\n" +
+                "DZJMY\n" +
+                "GETJ\n" +
+                "FBVTMH\n" +
+                "UICW\n" +
+                "SSCL\n" +
+                "HLDN\n" +
+                "IIB\n" +
+                "ROGHY\n" +
+                "CJFT\n" +
+                "WNX\n" +
+                "VZKE\n" +
+                "NDMRS\n" +
+                "SVNVD\n" +
+                "ILQP\n";
+
+        assertQuery(expected,
+                "select distinct a from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(20,4,6,2) a" +
+                        " from" +
+                        " long_sequence(10000)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_symbol(10,3,5,0) a" +
+                        " from long_sequence(1000000)" +
+                        ") ",
+                expected2, true);
+    }
+
+    @Test
     public void testOrderByAllSupported() throws Exception {
         final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
                 "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +

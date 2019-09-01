@@ -45,6 +45,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
+    public static final int SELECT_MODEL_DISTINCT = 5;
+    private static final ObjList<String> modelTypeName = new ObjList<>();
+
+    static {
+        modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
+        modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
+        modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
+        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
+        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
+        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
+    }
+
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
@@ -89,7 +101,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitLo;
     private ExpressionNode limitHi;
     private int selectModelType = SELECT_MODEL_NONE;
-
+    private boolean nestedModelIsSubQuery = false;
+    private boolean distinct = false;
 
     private QueryModel() {
         joinModels.add(this);
@@ -103,6 +116,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } else {
             sink.put(alias);
         }
+    }
+
+    public boolean isDistinct() {
+        return distinct;
+    }
+
+    public void setDistinct(boolean distinct) {
+        this.distinct = distinct;
     }
 
     public boolean addAliasIndex(ExpressionNode node, int index) {
@@ -199,6 +220,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         tableVersion = -1;
         columnNames.clear();
         expressionModels.clear();
+        distinct = false;
+        nestedModelIsSubQuery = false;
     }
 
     public void clearOrderBy() {
@@ -245,6 +268,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             return aliasIndexes.valueAt(index);
         }
         return -1;
+    }
+
+    public boolean isNestedModelIsSubQuery() {
+        return nestedModelIsSubQuery;
+    }
+
+    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+        this.nestedModelIsSubQuery = nestedModelIsSubQuery;
     }
 
     public CharSequenceObjHashMap<CharSequence> getAliasToColumnMap() {
@@ -536,16 +567,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     private String getSelectModelTypeText() {
-        switch (selectModelType) {
-            case SELECT_MODEL_CHOOSE:
-                return "select-choose";
-            case SELECT_MODEL_VIRTUAL:
-                return "select-virtual";
-            case SELECT_MODEL_ANALYTIC:
-                return "select-analytic";
-            default:
-                return "select-group-by";
-        }
+        return modelTypeName.get(selectModelType);
     }
 
     private void toSink0(CharSink sink, boolean joinSlave) {

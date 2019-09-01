@@ -48,7 +48,8 @@ class GroupByUtils {
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
             ObjList<GroupByFunction> groupByFunctions,
-            ArrayColumnTypes valueTypes) throws SqlException {
+            ArrayColumnTypes valueTypes
+    ) throws SqlException {
 
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -82,7 +83,7 @@ class GroupByUtils {
             ObjList<Function> recordFunctions,
             GenericRecordMetadata groupByMetadata,
             ArrayColumnTypes keyTypes,
-            ArrayColumnTypes valueTypes,
+            int keyColumnIndex,
             IntIntHashMap symbolTableIndex,
             boolean timestampUnimportant
     ) {
@@ -96,7 +97,6 @@ class GroupByUtils {
         final ObjList<QueryColumn> columns = model.getColumns();
 //        assert timestampIndex != -1;
 
-        int keyColumnIndex = valueTypes.getColumnCount();
         int valueColumnIndex = 0;
 
         // when we have same column several times in a row

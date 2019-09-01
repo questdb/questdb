@@ -752,9 +752,14 @@ public class SqlCodeGenerator {
             } else {
                 return generateTableQuery(model, executionContext);
             }
-
         }
-        return generateSubQuery(model, executionContext);
+
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        final ExpressionNode filter = model.getWhereClause();
+        if (filter != null) {
+            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
+        }
+        return factory;
     }
 
     private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
@@ -975,6 +980,8 @@ public class SqlCodeGenerator {
                 return generateSelectVirtual(model, executionContext);
             case QueryModel.SELECT_MODEL_ANALYTIC:
                 return generateSelectAnalytic(model, executionContext);
+            case QueryModel.SELECT_MODEL_DISTINCT:
+                return generateSelectDistinct(model, executionContext);
             default:
                 if (model.getJoinModels().size() > 1 && processJoins) {
                     return generateJoins(model, executionContext);
@@ -1071,6 +1078,22 @@ public class SqlCodeGenerator {
                     asm,
                     keyTypes,
                     valueTypes
+            );
+
+        } catch (CairoException e) {
+            factory.close();
+            throw e;
+        }
+    }
+
+    private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        try {
+            return new DistinctRecordCursorFactory(
+                    configuration,
+                    factory,
+                    entityColumnFilter,
+                    asm
             );
 
         } catch (CairoException e) {

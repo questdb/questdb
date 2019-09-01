@@ -118,9 +118,9 @@ public class FilesTest {
     @Test
     public void testListNonExistingDir() {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
-        try (Path path = new Path().of(temp).concat("xyz")) {
+        try (Path path = new Path().of(temp).concat("xyz").$()) {
             long pFind = Files.findFirst(path);
-            Assert.assertEquals(0, pFind);
+            Assert.assertEquals("failed os=" + Os.errno(), 0, pFind);
         }
     }
 

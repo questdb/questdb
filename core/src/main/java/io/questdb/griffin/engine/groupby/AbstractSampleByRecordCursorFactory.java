@@ -87,7 +87,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
                 recordFunctions,
                 groupByMetadata,
                 keyTypes,
-                valueTypes,
+                valueTypes.getColumnCount(),
                 symbolTableIndex,
                 false
         );

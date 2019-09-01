@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class FastMap implements Map {
 
@@ -62,7 +63,7 @@ public class FastMap implements Map {
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
-                   @Transient @NotNull ColumnTypes valueTypes,
+                   @Transient @Nullable ColumnTypes valueTypes,
                    int keyCapacity,
                    double loadFactor
     ) {

@@ -97,7 +97,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 recordFunctions,
                 groupByMetadata,
                 keyTypes,
-                valueTypes,
+                valueTypes.getColumnCount(),
                 symbolTableIndex,
                 false
         );
