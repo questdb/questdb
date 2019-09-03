@@ -27,13 +27,13 @@ import io.questdb.cairo.sql.Record;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LongFunctionTest {
+public class CharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final LongFunction function = new LongFunction(25) {
+    private static final CharFunction function = new CharFunction(25) {
         @Override
-        public long getLong(Record rec) {
-            return 0;
+        public char getChar(Record rec) {
+            return 0x30;
         }
     };
 
@@ -63,8 +63,23 @@ public class LongFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDouble() {
+        function.getDouble(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetFloat() {
+        function.getFloat(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong() {
+        function.getLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -113,13 +128,8 @@ public class LongFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
+    public void testTimestamp() {
         function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

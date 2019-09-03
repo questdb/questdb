@@ -126,4 +126,24 @@ public class TimestampFunctionTest {
     public void testGetSym() {
         function.getSymbol(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256B() {
+        function.getLong256B(null);
+    }
 }

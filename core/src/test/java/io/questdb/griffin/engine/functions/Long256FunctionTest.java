@@ -24,16 +24,27 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LongFunctionTest {
+public class Long256FunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final LongFunction function = new LongFunction(25) {
+    private static final Long256Function function = new Long256Function(25) {
         @Override
-        public long getLong(Record rec) {
-            return 0;
+        public Long256 getLong256A(Record rec) {
+            return null;
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            return null;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
         }
     };
 
@@ -63,8 +74,23 @@ public class LongFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDouble() {
+        function.getDouble(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetFloat() {
+        function.getFloat(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong() {
+        function.getLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -113,27 +139,12 @@ public class LongFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
+    public void testTimestamp() {
         function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testChar() {
         function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
-        function.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
-        function.getLong256B(null);
     }
 }
