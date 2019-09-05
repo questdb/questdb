@@ -684,6 +684,29 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
+    public void testUnion() throws SqlException {
+        assertQuery(
+                "select-choose x from (a) union select-choose y from (b) union select-choose z from (c)",
+                "select * from a union select * from b union select * from c",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionAllInSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x from (a) union select-choose * column from (b) union all select-choose * column from (c)) _xQdbA1)",
+                "select x from (select * from a union select * from b union all select * from c)",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCreateAsSelectInvalidIndex() {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",

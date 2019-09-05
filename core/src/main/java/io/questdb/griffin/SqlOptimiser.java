@@ -1392,6 +1392,10 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return optimise0(model, executionContext);
+    }
+
+    private QueryModel optimise0(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         optimiseExpressionModels(model, executionContext);
         enumerateTableColumns(model, executionContext);
         resolveJoinColumns(model);
@@ -2322,6 +2326,10 @@ class SqlOptimiser {
             throw SqlException.$(groupByModel.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
         }
 
+        if (model != root) {
+            root.setUnionModel(model.getUnionModel());
+            root.setUnionModelType(model.getUnionModelType());
+        }
         return root;
     }
 

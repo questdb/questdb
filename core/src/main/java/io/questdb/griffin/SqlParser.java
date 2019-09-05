@@ -56,6 +56,7 @@ public final class SqlParser {
         tableAliasStop.add("limit");
         tableAliasStop.add(")");
         tableAliasStop.add(";");
+        tableAliasStop.add("union");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -543,7 +544,37 @@ public final class SqlParser {
     }
 
     private QueryModel parseDml(GenericLexer lexer) throws SqlException {
+        QueryModel model = null;
+        QueryModel prevModel = null;
+        while (true) {
 
+            QueryModel unionModel = parseDml0(lexer);
+            if (prevModel == null) {
+                model = unionModel;
+                prevModel = model;
+            } else {
+                prevModel.setUnionModel(unionModel);
+                prevModel = unionModel;
+            }
+
+            CharSequence tok = optTok(lexer);
+            if (tok == null || !Chars.equalsLowerCaseAscii(tok, "union")) {
+                lexer.unparse();
+                return model;
+            }
+
+            tok = tok(lexer, "all or select");
+            if (Chars.equalsLowerCaseAscii(tok, "all")) {
+                prevModel.setUnionModelType(QueryModel.UNION_MODEL_ALL);
+            } else {
+                prevModel.setUnionModelType(QueryModel.UNION_MODEL_DISTINCT);
+                lexer.unparse();
+            }
+        }
+    }
+
+    @NotNull
+    private QueryModel parseDml0(GenericLexer lexer) throws SqlException {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
 

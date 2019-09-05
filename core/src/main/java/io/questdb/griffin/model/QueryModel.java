@@ -46,6 +46,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_DISTINCT = 5;
+    public static final int UNION_MODEL_ALL = 0;
+    public static final int UNION_MODEL_DISTINCT = 1;
     private static final ObjList<String> modelTypeName = new ObjList<>();
 
     static {
@@ -103,6 +105,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int selectModelType = SELECT_MODEL_NONE;
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
+    private QueryModel unionModel;
+    private int unionModelType;
 
     private QueryModel() {
         joinModels.add(this);
@@ -116,6 +120,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } else {
             sink.put(alias);
         }
+    }
+
+    public QueryModel getUnionModel() {
+        return unionModel;
+    }
+
+    public void setUnionModel(QueryModel unionModel) {
+        this.unionModel = unionModel;
+    }
+
+    public int getUnionModelType() {
+        return unionModelType;
+    }
+
+    public void setUnionModelType(int unionModelType) {
+        this.unionModelType = unionModelType;
     }
 
     public boolean isDistinct() {
@@ -222,6 +242,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
+        unionModel = null;
     }
 
     public void clearOrderBy() {
@@ -769,6 +790,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sink.put(',');
                 getLimitHi().toSink(sink);
             }
+        }
+
+        if (unionModel != null) {
+            sink.put(" union ");
+            if (unionModelType == QueryModel.UNION_MODEL_ALL) {
+                sink.put("all ");
+            }
+            unionModel.toSink0(sink, false);
         }
     }
 
