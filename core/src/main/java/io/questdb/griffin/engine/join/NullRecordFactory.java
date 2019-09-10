@@ -39,7 +39,7 @@ import io.questdb.std.str.CharSink;
 
 public class NullRecordFactory {
 
-    private static final Long256Impl LONG_256_NULL = new Long256Impl();
+    public static final Long256Impl LONG_256_NULL = new Long256Impl();
     private static final ObjList<Function> constantNulls = new ObjList<>();
 
     public static Record getInstance(ColumnTypes types) {

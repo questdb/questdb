@@ -23,19 +23,14 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 
-class UnionRecordCursor implements NoRandomAccessRecordCursor {
+class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private final UnionRecord record = new UnionRecord();
-    private final Map map;
-    private final RecordSink recordSink;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private final NextMethod nextSlave = this::nextSlave;
@@ -45,19 +40,11 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
-    public UnionRecordCursor(
-            Map map,
-            RecordSink recordSink) {
-        this.map = map;
-        this.recordSink = recordSink;
-    }
-
     void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
         this.masterCursor = masterCursor;
         this.slaveCursor = slaveCursor;
         this.masterRecord = masterCursor.getRecord();
         this.slaveRecord = slaveCursor.getRecord();
-        map.clear();
         toTop();
     }
 
@@ -65,7 +52,6 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
-        Misc.free(map);
     }
 
     @Override
@@ -79,18 +65,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextSlave() {
-        while (true) {
-            boolean next = slaveCursor.hasNext();
-            if (next) {
-                MapKey key = map.withKey();
-                key.put(record, recordSink);
-                if (key.create()) {
-                    return true;
-                }
-            } else {
-                return false;
-            }
-        }
+        return slaveCursor.hasNext();
     }
 
     @Override
@@ -99,13 +74,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextMaster() {
-        if (masterCursor.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            key.create();
-            return true;
-        }
-        return switchToSlaveCursor();
+        return masterCursor.hasNext() || switchToSlaveCursor();
     }
 
     private boolean switchToSlaveCursor() {
@@ -117,7 +86,6 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        map.clear();
         record.of(masterRecord);
         nextMethod = nextMaster;
         symbolCursor = masterCursor;

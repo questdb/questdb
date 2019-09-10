@@ -576,7 +576,10 @@ public final class SqlParser {
     @NotNull
     private QueryModel parseDml0(GenericLexer lexer) throws SqlException {
         CharSequence tok;
+        final int modelPosition = lexer.getPosition();
+
         QueryModel model = queryModelPool.next();
+        model.setModelPosition(modelPosition);
 
         tok = tok(lexer, "'select', 'with' or table name expected");
 
@@ -592,7 +595,10 @@ public final class SqlParser {
             lexer.unparse();
             model.addColumn(SqlUtil.nextColumn(queryColumnPool, sqlNodePool, "*", "*"));
         }
+
         QueryModel nestedModel = queryModelPool.next();
+        nestedModel.setModelPosition(modelPosition);
+
         parseFromClause(lexer, nestedModel, model);
         if (nestedModel.getLimitHi() != null || nestedModel.getLimitLo() != null) {
             model.setLimit(nestedModel.getLimitLo(), nestedModel.getLimitHi());

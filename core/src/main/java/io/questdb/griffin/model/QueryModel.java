@@ -107,6 +107,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean distinct = false;
     private QueryModel unionModel;
     private int unionModelType;
+    private int modelPosition = 0;
 
     private QueryModel() {
         joinModels.add(this);
@@ -159,6 +160,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnToAliasMap.put(ast.token, alias);
         columnNameTypeMap.put(alias, ast.type);
         columnNames.add(alias);
+    }
+
+    public int getModelPosition() {
+        return modelPosition;
+    }
+
+    public void setModelPosition(int modelPosition) {
+        this.modelPosition = modelPosition;
     }
 
     public void addDependency(int index) {
@@ -243,6 +252,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         distinct = false;
         nestedModelIsSubQuery = false;
         unionModel = null;
+        orderHash.clear();
+        modelPosition = 0;
     }
 
     public void clearOrderBy() {
@@ -768,14 +779,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (orderBy.size() > 0) {
+        if (orderHash.size() > 0 && orderBy.size() > 0) {
             sink.put(" order by ");
-            for (int i = 0, n = orderBy.size(); i < n; i++) {
+
+            ObjList<CharSequence> columnNames = orderHash.keys();
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
                 if (i > 0) {
                     sink.put(", ");
                 }
-                orderBy.getQuick(i).toSink(sink);
-                if (orderByDirection.getQuick(i) == 1) {
+
+                CharSequence key = columnNames.getQuick(i);
+                sink.put(key);
+                if (orderHash.get(key) == 1) {
                     sink.put(" desc");
                 }
             }

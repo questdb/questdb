@@ -29,6 +29,7 @@ import java.util.Arrays;
 public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
+    private final ObjList<CharSequence> list;
     private int[] values;
 
     public CharSequenceIntHashMap() {
@@ -42,13 +43,27 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
+        this.list = new ObjList<>(capacity);
         values = new int[capacity];
         clear();
     }
 
     public final void clear() {
         super.clear();
+        list.clear();
         Arrays.fill(values, noEntryValue);
+    }
+
+    public void removeAt(int index) {
+        if (index < 0) {
+            CharSequence key = Unsafe.arrayGet(keys, -index - 1);
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
     }
 
     public boolean contains(CharSequence key) {
@@ -100,8 +115,14 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
             Unsafe.arrayPut(values, -index - 1, value);
             return false;
         }
-        putAt0(index, key.toString(), value);
+        String keyString = key.toString();
+        putAt0(index, keyString, value);
+        list.add(keyString);
         return true;
+    }
+
+    public int valueQuick(int index) {
+        return get(list.getQuick(index));
     }
 
     public void putIfAbsent(CharSequence key, int value) {

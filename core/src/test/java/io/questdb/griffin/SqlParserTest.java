@@ -684,7 +684,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testUnion() throws SqlException {
         assertQuery(
                 "select-choose x from (a) union select-choose y from (b) union select-choose z from (c)",
@@ -698,8 +697,87 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionAllInSubQuery() throws SqlException {
         assertQuery(
-                "select-choose x from ((select-choose x from (a) union select-choose * column from (b) union all select-choose * column from (c)) _xQdbA1)",
+                "select-choose x from ((select-choose x from (a) union select-choose y from (b) union all select-choose z from (c)) _xQdbA1)",
                 "select x from (select * from a union select * from b union all select * from c)",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionRemoveOrderBy() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x from (a) union select-choose y from (b) union all select-choose z from (c)) _xQdbA1) order by x",
+                "select x from (select * from a union select * from b union all select * from c order by z) order by x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionKeepOrderBy() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x from (a) union select-choose y from (b) union all select-choose z from (c order by z)) _xQdbA1)",
+                "select x from (select * from a union select * from b union all select * from c order by z)",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionKeepOrderByIndex() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x from (a) union select-choose y from (b) union all select-choose z from (c order by z)) _xQdbA1)",
+                "select x from (select * from a union select * from b union all select * from c order by 1)",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x, t from (a) union select-choose y, t from (b) union all select-group-by k, sum(z) sum from (select-virtual 'a' k, z from ((select-choose z, t from (c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
+                modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testUnionDifferentColumnCount() {
+        assertSyntaxError(
+                "select x from (select * from a union select * from b union all select sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
+                63,
+                "queries have different number of columns",
+                modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testUnionRemoveRedundantOrderBy() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x, t from (a) union select-choose y, t from (b) union all select-group-by 1, sum(z) sum from (select-virtual 1 1, z from ((select-choose z, t from (c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
+                modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+
+    @Test
+    public void testSubQueryKeepOrderBy() throws SqlException {
+        assertQuery(
+                "select-choose x from ((select-choose x from (a) order by x) _xQdbA1)",
+                "select x from (select * from a order by x)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
                 modelOf("c").col("z", ColumnType.INT)
@@ -1944,6 +2022,22 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionMoveWhereIntoSubQuery() throws Exception {
+        assertQuery(
+                "select-virtual 1 1, 2 2, 3 3 from (long_sequence(1)) union select-choose c.customerId customerId, o.customerId customerId1, o.x x from (customers c outer join (select-choose customerId, x from (orders o where x = 10 and customerId = 100)) o on customerId = c.customerId where customerId = 100)",
+                "select 1, 2, 3 from long_sequence(1)" +
+                        " union " +
+                        "customers c" +
+                        " outer join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testExpressionSyntaxError() {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
@@ -2845,6 +2939,28 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " cross join customers" +
                         " const-where 1 = 1)",
                 "orders" +
+                        " outer join customers on 1=1" +
+                        " join shippers on shippers.shipper = orders.orderId" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " join products on d.productId = products.productId" +
+                        " where d.productId = d.orderId",
+                modelOf("orders").col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.INT),
+                modelOf("suppliers").col("supplier", ColumnType.INT),
+                modelOf("shippers").col("shipper", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUnionJoinReorder3() throws Exception {
+        assertQuery(
+                "select-virtual 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 from (orders join shippers on shippers.shipper = orders.orderId join (orderDetails d where productId = orderId) d on d.productId = shippers.shipper join products on products.productId = d.productId join suppliers on suppliers.supplier = products.supplier cross join customers const-where 1 = 1)",
+                "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
+                        " union " +
+                        "orders" +
                         " outer join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
@@ -4575,6 +4691,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("orders").col("orderId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testLatestByKeepWhereOutside() throws SqlException {
+        assertQuery(
+                "select-choose a, b from (x latest by b where b = 'PEHN' and a < 22 and test_match())",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING));
     }
 
     @Test

@@ -118,7 +118,7 @@ public class SqlCompiler implements Closeable {
         );
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
-        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, characterStore);
+        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);

@@ -30,8 +30,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -117,6 +119,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             final RecordMetadata metadata = factory.getMetadata();
 
             testSymbolAPI(metadata, cursor);
+            cursor.toTop();
+            testStringsLong256AndBinary(metadata, cursor);
 
             // test API where same record is being updated by cursor
             cursor.toTop();
@@ -199,7 +203,51 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
+    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
+        Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                switch (metadata.getColumnType(i)) {
+                    case ColumnType.STRING:
+                        CharSequence s = record.getStr(i);
+                        if (s != null) {
+                            Assert.assertNotSame(s, record.getStrB(i));
+                            TestUtils.assertEquals(s, record.getStrB(i));
+                            Assert.assertEquals(s.length(), record.getStrLen(i));
+                        } else {
+                            Assert.assertNull(record.getStrB(i));
+                            Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                        }
+                        break;
+                    case ColumnType.BINARY:
+                        BinarySequence bs = record.getBin(i);
+                        if (bs != null) {
+                            Assert.assertEquals(record.getBin(i).length(), record.getBinLen(i));
+                        } else {
+                            Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                        }
+                        break;
+                    case ColumnType.LONG256:
+                        Long256 l1 = record.getLong256A(i);
+                        Long256 l2 = record.getLong256B(i);
+                        if (l1 == NullRecordFactory.LONG_256_NULL) {
+                            Assert.assertSame(l1, l2);
+                        } else {
+                            Assert.assertNotSame(l1, l2);
+                        }
+                        Assert.assertEquals(l1.getLong0(), l2.getLong0());
+                        Assert.assertEquals(l1.getLong1(), l2.getLong1());
+                        Assert.assertEquals(l1.getLong2(), l2.getLong2());
+                        Assert.assertEquals(l1.getLong3(), l2.getLong3());
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
         IntList symbolIndexes = null;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getColumnType(i) == ColumnType.SYMBOL) {

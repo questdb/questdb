@@ -615,21 +615,35 @@ class SqlOptimiser {
             for (int i = 0; i < n; i++) {
                 hash.put(orderBy.getQuick(i).token, orderByDirection.getQuick(i));
             }
-        } else if (nestedModel != null && m > 0) {
+        }
+
+        if (nestedModel != null) {
             createOrderHash(nestedModel);
-            CharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
-            if (thatHash.size() > 0) {
-                for (int i = 0; i < m; i++) {
-                    QueryColumn column = columns.getQuick(i);
-                    ExpressionNode node = column.getAst();
-                    if (node.type == ExpressionNode.LITERAL) {
-                        int direction = thatHash.get(node.token);
-                        if (direction != -1) {
-                            hash.put(column.getName(), direction);
+            if (m > 0) {
+                CharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
+                if (thatHash.size() > 0) {
+                    for (int i = 0; i < m; i++) {
+                        QueryColumn column = columns.getQuick(i);
+                        ExpressionNode node = column.getAst();
+                        if (node.type == ExpressionNode.LITERAL) {
+                            int direction = thatHash.get(node.token);
+                            if (direction != -1) {
+                                hash.put(column.getName(), direction);
+                            }
                         }
                     }
                 }
             }
+        }
+
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, z = joinModels.size(); i < z; i++) {
+            createOrderHash(joinModels.getQuick(i));
+        }
+
+        final QueryModel union = model.getUnionModel();
+        if (union != null) {
+            createOrderHash(union);
         }
     }
 
@@ -944,6 +958,10 @@ class SqlOptimiser {
         for (int i = 1, n = jm.size(); i < n; i++) {
             enumerateTableColumns(jm.getQuick(i), executionContext);
         }
+
+        if (model.getUnionModel() != null) {
+            enumerateTableColumns(model.getUnionModel(), executionContext);
+        }
     }
 
     private void eraseColumnPrefixInWhereClauses(QueryModel model) throws SqlException {
@@ -966,8 +984,15 @@ class SqlOptimiser {
                     traversalAlgo.traverse(where, columnPrefixEraser);
                 }
             }
-            if (m.getNestedModel() != null) {
-                eraseColumnPrefixInWhereClauses(m.getNestedModel());
+
+            QueryModel nested = m.getNestedModel();
+            if (nested != null) {
+                eraseColumnPrefixInWhereClauses(nested);
+            }
+
+            nested = m.getUnionModel();
+            if (nested != null) {
+                eraseColumnPrefixInWhereClauses(nested);
             }
         }
     }
@@ -1234,6 +1259,11 @@ class SqlOptimiser {
                 nested.setTimestamp(null);
             }
         }
+
+        nested = model.getUnionModel();
+        if (nested != null) {
+            moveTimestampToChooseModel(nested);
+        }
     }
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
@@ -1304,7 +1334,7 @@ class SqlOptimiser {
                         traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnMap()));
 
                         // whenever nested model has explicitly defined columns it must also
-                        // have its owen nested model, where we assign new "where" clauses
+                        // have its own nested model, where we assign new "where" clauses
                         addWhereNode(nested, node);
                     } catch (NonLiteralException ignore) {
                         // keep node where it is
@@ -1315,16 +1345,22 @@ class SqlOptimiser {
             model.getParsedWhere().clear();
         }
 
-        if (model.getNestedModel() != null) {
-            moveWhereInsideSubQueries(model.getNestedModel());
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            moveWhereInsideSubQueries(nested);
         }
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 0, m = joinModels.size(); i < m; i++) {
-            QueryModel nested = joinModels.getQuick(i);
+        for (int i = 1, m = joinModels.size(); i < m; i++) {
+            nested = joinModels.getQuick(i);
             if (nested != model) {
                 moveWhereInsideSubQueries(nested);
             }
+        }
+
+        nested = model.getUnionModel();
+        if (nested != null) {
+            moveWhereInsideSubQueries(nested);
         }
     }
 
@@ -1392,15 +1428,19 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return optimise0(model, executionContext);
-    }
-
-    private QueryModel optimise0(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         optimiseExpressionModels(model, executionContext);
         enumerateTableColumns(model, executionContext);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
-        final QueryModel rewrittenModel = rewriteOrderBy(rewriteOrderByPosition(rewriteSelectClause(model, true)));
+        final QueryModel rewrittenModel = rewriteOrderBy(
+                rewriteOrderByPositionForUnionModels(
+                        rewriteOrderByPosition(
+                                rewriteSelectClause(
+                                        model, true
+                                )
+                        )
+                )
+        );
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
@@ -1502,6 +1542,10 @@ class SqlOptimiser {
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
+
+        if (model.getUnionModel() != null) {
+            optimiseBooleanNot(model.getNestedModel());
+        }
     }
 
     private void optimiseExpressionModels(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1529,6 +1573,11 @@ class SqlOptimiser {
             for (int i = 1; i < m; i++) {
                 optimiseExpressionModels(joinModels.getQuick(i), executionContext);
             }
+        }
+
+        // call out to union models
+        if (model.getUnionModel() != null) {
+            optimiseExpressionModels(model.getUnionModel(), executionContext);
         }
     }
 
@@ -1573,6 +1622,11 @@ class SqlOptimiser {
             if (m != null) {
                 optimiseJoins(m);
             }
+
+            m = model.getJoinModels().getQuick(i).getUnionModel();
+            if (m != null) {
+                optimiseJoins(m);
+            }
         }
     }
 
@@ -1580,13 +1634,16 @@ class SqlOptimiser {
     private void optimiseOrderBy(QueryModel model, int orderByState) {
         ObjList<QueryColumn> columns = model.getColumns();
         int subQueryOrderByState;
-
         int n = columns.size();
         // determine if ordering is required
         switch (orderByState) {
             case ORDER_BY_UNKNOWN:
                 // we have sample by, so expect sub-query has to be ordered
-                subQueryOrderByState = ORDER_BY_REQUIRED;
+                if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
+                    subQueryOrderByState = ORDER_BY_INVARIANT;
+                } else {
+                    subQueryOrderByState = ORDER_BY_REQUIRED;
+                }
                 if (model.getSampleBy() == null) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
@@ -1617,12 +1674,17 @@ class SqlOptimiser {
                 break;
         }
 
-        ObjList<QueryModel> jm = model.getJoinModels();
+        final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
                 optimiseOrderBy(qm, subQueryOrderByState);
             }
+        }
+
+        final QueryModel union = model.getUnionModel();
+        if (union != null) {
+            optimiseOrderBy(union, subQueryOrderByState);
         }
     }
 
@@ -1843,6 +1905,36 @@ class SqlOptimiser {
         if (model.getNestedModel() != null) {
             resolveJoinColumns(model.getNestedModel());
         }
+
+        // and union models too
+        if (model.getUnionModel() != null) {
+            resolveJoinColumns(model.getUnionModel());
+        }
+    }
+
+    private QueryModel rewriteOrderByPositionForUnionModels(QueryModel model) throws SqlException {
+        QueryModel next = model.getUnionModel();
+        if (next != null) {
+            doRewriteOrderByPositionForUnionModels(model, model, next);
+        }
+
+        next = model.getNestedModel();
+        if (next != null) {
+            rewriteOrderByPositionForUnionModels(next);
+        }
+        return model;
+    }
+
+    private void doRewriteOrderByPositionForUnionModels(QueryModel model, QueryModel parent, QueryModel next) throws SqlException {
+        final int columnCount = model.getColumns().size();
+        while (next != null) {
+            if (next.getColumns().size() != columnCount) {
+                throw SqlException.$(next.getModelPosition(), "queries have different number of columns");
+            }
+            parent.setUnionModel(rewriteOrderByPosition(next));
+            parent = next;
+            next = next.getUnionModel();
+        }
     }
 
     private QueryModel rewriteOrderByPosition(QueryModel model) throws SqlException {
@@ -2052,11 +2144,19 @@ class SqlOptimiser {
             }
         }
 
-        QueryModel nested = base.getNestedModel();
+        final QueryModel nested = base.getNestedModel();
         if (nested != null) {
-            QueryModel rewritten = rewriteOrderBy(nested);
+            final QueryModel rewritten = rewriteOrderBy(nested);
             if (rewritten != nested) {
                 base.setNestedModel(rewritten);
+            }
+        }
+
+        final QueryModel union = base.getUnionModel();
+        if (union != null) {
+            final QueryModel rewritten = rewriteOrderBy(union);
+            if (rewritten != union) {
+                base.setUnionModel(rewritten);
             }
         }
 
@@ -2075,6 +2175,14 @@ class SqlOptimiser {
 
     // flatParent = true means that parent model does not have selected columns
     private QueryModel rewriteSelectClause(QueryModel model, boolean flatParent) throws SqlException {
+
+        if (model.getUnionModel() != null) {
+            QueryModel rewrittenUnionModel = rewriteSelectClause(model.getUnionModel(), true);
+            if (rewrittenUnionModel != model.getUnionModel()) {
+                model.setUnionModel(rewrittenUnionModel);
+            }
+        }
+
         ObjList<QueryModel> models = model.getJoinModels();
         for (int i = 0, n = models.size(); i < n; i++) {
             final QueryModel m = models.getQuick(i);
@@ -2329,6 +2437,7 @@ class SqlOptimiser {
         if (model != root) {
             root.setUnionModel(model.getUnionModel());
             root.setUnionModelType(model.getUnionModelType());
+            root.setModelPosition(model.getModelPosition());
         }
         return root;
     }

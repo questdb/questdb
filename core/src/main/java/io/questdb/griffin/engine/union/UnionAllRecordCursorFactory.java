@@ -23,37 +23,27 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 
-public class UnionRecordCursorFactory implements RecordCursorFactory {
+public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
-    private final UnionRecordCursor cursor;
+    private final UnionAllRecordCursor cursor;
 
-    public UnionRecordCursorFactory(
-            CairoConfiguration configuration,
+    public UnionAllRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
-            RecordSink recordSink,
-            ColumnTypes valueTypes
+            RecordCursorFactory slaveFactory
     ) {
         this.metadata = metadata;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
 
-        this.cursor = new UnionRecordCursor(
-                MapFactory.createMap(configuration, metadata, valueTypes),
-                recordSink
+        this.cursor = new UnionAllRecordCursor(
         );
     }
 
@@ -74,11 +64,5 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean isRandomAccessCursor() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
     }
 }
