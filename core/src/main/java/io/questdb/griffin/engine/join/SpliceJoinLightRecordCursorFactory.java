@@ -61,7 +61,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     private final Map joinKeyMap;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final FullAslOfJoinCursor cursor;
+    private final SpliceJoinLightRecordCursor cursor;
 
     public SpliceJoinLightRecordCursorFactory(
             CairoConfiguration cairoConfiguration,
@@ -84,7 +84,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         );
         this.masterKeySink = masterSink;
         this.slaveKeySink = slaveSink;
-        this.cursor = new FullAslOfJoinCursor(
+        this.cursor = new SpliceJoinLightRecordCursor(
                 joinKeyMap,
                 columnSplit,
                 masterFactory.getMetadata().getTimestampIndex(),
@@ -272,7 +272,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    private class FullAslOfJoinCursor implements NoRandomAccessRecordCursor {
+    private class SpliceJoinLightRecordCursor implements NoRandomAccessRecordCursor {
         private final FullJoinRecord record;
         private final Map joinKeyMap;
         private final int columnSplit;
@@ -296,7 +296,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private boolean hasSlave = true;
         private boolean dualRecord = false;
 
-        public FullAslOfJoinCursor(
+        public SpliceJoinLightRecordCursor(
                 Map joinKeyMap,
                 int columnSplit,
                 int masterTimestampIndex,
@@ -330,6 +330,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 return masterCursor.getSymbolTable(columnIndex);
             }
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
+        }
+
+        @Override
+        public long size() {
+            return -1L;
         }
 
         @Override

@@ -52,6 +52,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     CharSequence query;
     RecordMetadata metadata;
     RecordCursor cursor;
+    long size;
     long count;
     long skip;
     long stop;

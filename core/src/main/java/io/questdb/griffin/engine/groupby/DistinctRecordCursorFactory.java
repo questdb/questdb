@@ -151,5 +151,10 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             this.recordSink = recordSink;
             this.record = baseCursor.getRecord();
         }
+
+        @Override
+        public long size() {
+            return -1;
+        }
     }
 }

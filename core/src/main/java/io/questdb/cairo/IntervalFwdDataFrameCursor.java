@@ -114,6 +114,11 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         super.toTop();
         partitionLimit = 0;

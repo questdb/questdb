@@ -69,6 +69,16 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public long size() {
+        final long masterSize = masterCursor.size();
+        final long slaveSize = slaveCursor.size();
+        if (masterSize == -1 || slaveSize == -1) {
+            return -1;
+        }
+        return masterSize + slaveSize;
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return symbolCursor.getSymbolTable(columnIndex);
     }

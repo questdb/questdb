@@ -44,4 +44,6 @@ public interface RecordCursor extends Closeable {
     void recordAt(long rowId);
 
     void toTop();
+
+    long size();
 }

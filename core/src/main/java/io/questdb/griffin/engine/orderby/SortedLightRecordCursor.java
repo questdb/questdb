@@ -50,6 +50,11 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public long size() {
+        return base.size();
+    }
+
+    @Override
     public Record getRecord() {
         return baseRecord;
     }

@@ -244,6 +244,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         recordOffset += 8;
     }
 
+    @Override
+    public long size() {
+        return -1;
+    }
+
     private class RecordChainRecord implements Record {
         long fixedOffset;
         long baseOffset;

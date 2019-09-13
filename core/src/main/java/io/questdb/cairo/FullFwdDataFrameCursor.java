@@ -44,6 +44,11 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
+    public long size() {
+        return reader.size();
+    }
+
+    @Override
     public void toTop() {
         this.partitionIndex = 0;
     }

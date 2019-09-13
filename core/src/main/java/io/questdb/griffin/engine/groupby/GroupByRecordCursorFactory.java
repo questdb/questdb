@@ -189,6 +189,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             assert record instanceof VirtualRecord;
             mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);

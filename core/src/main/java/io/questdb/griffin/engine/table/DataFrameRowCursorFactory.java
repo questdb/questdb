@@ -36,4 +36,8 @@ public class DataFrameRowCursorFactory implements RowCursorFactory {
         return cursor;
     }
 
+    @Override
+    public boolean isEntity() {
+        return true;
+    }
 }

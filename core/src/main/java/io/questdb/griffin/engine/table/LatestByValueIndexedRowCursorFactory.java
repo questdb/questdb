@@ -55,4 +55,9 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
         }
         return EmptyRowCursor.INSTANCE;
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

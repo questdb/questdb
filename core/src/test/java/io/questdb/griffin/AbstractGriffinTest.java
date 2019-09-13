@@ -128,9 +128,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Assert.assertNotNull(record);
             sink.clear();
             printer.printHeader(metadata);
+            long count = 0;
+            long cursorSize = cursor.size();
             while (cursor.hasNext()) {
                 printer.print(record, metadata);
+                count++;
             }
+
+            Assert.assertTrue(cursorSize == -1 || count == cursorSize);
+
             TestUtils.assertEquals(expected, sink);
 
             if (supportsRandomAccess) {

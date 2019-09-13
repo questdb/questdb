@@ -63,4 +63,9 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
             this.symbolKey = TableUtils.toIndexKey(symbolKey);
         }
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

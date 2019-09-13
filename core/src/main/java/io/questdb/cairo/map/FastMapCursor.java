@@ -29,13 +29,20 @@ import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
     private final FastMapRecord record;
+    private final FastMap map;
     private int remaining;
     private long address;
     private long topAddress;
     private int count;
 
-    FastMapCursor(FastMapRecord record) {
+    FastMapCursor(FastMapRecord record, FastMap map) {
         this.record = record;
+        this.map = map;
+    }
+
+    @Override
+    public long size() {
+        return map.size();
     }
 
     @Override

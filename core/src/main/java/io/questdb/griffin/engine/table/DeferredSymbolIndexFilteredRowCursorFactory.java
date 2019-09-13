@@ -55,4 +55,9 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
             this.cursor.setTableReader(tableReader);
         }
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

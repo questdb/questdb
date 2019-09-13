@@ -70,4 +70,9 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
             }
         }
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

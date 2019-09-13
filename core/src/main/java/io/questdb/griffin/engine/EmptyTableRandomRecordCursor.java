@@ -51,7 +51,13 @@ final public class EmptyTableRandomRecordCursor implements NoRandomAccessRecordC
     public Record newRecord() {
         return record;
     }
+
     @Override
     public void toTop() {
+    }
+
+    @Override
+    public long size() {
+        return 0;
     }
 }

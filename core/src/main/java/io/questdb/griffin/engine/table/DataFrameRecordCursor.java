@@ -30,11 +30,13 @@ import org.jetbrains.annotations.Nullable;
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
     private final Function filter;
+    private final boolean entityCursor;
     private RowCursor rowCursor;
 
-    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter) {
+    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter, boolean entityCursor) {
         this.rowCursorFactory = rowCursorFactory;
         this.filter = filter;
+        this.entityCursor = entityCursor;
     }
 
     @Override
@@ -71,6 +73,11 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         if (filter != null) {
             filter.init(this, executionContext);
         }
+    }
+
+    @Override
+    public long size() {
+        return entityCursor ? dataFrameCursor.size() : -1;
     }
 
     private boolean nextFrame() {

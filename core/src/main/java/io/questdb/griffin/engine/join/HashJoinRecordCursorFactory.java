@@ -133,6 +133,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public boolean hasNext() {
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;

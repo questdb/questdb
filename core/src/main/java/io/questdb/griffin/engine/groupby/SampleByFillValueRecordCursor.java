@@ -169,6 +169,11 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         this.base.toTop();
         if (base.hasNext()) {

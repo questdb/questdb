@@ -125,6 +125,11 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         slaveCursor.toTop();
     }
 
+    @Override
+    public long size() {
+        return -1;
+    }
+
     interface NextMethod {
         boolean next();
     }

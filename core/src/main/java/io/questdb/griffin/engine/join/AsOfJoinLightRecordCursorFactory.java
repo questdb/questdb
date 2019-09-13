@@ -43,7 +43,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final HashJoinRecordCursor cursor;
+    private final AsOfLightJoinRecordCursor cursor;
 
     public AsOfJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -63,7 +63,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(
+        this.cursor = new AsOfLightJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -94,7 +94,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
-    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private class AsOfLightJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final Map joinKeyMap;
         private final int columnSplit;
@@ -107,7 +107,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
 
-        public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, Record nullRecord, int masterTimestampIndex, int slaveTimestampIndex) {
+        public AsOfLightJoinRecordCursor(int columnSplit, Map joinKeyMap, Record nullRecord, int masterTimestampIndex, int slaveTimestampIndex) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.columnSplit = columnSplit;
@@ -132,6 +132,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 return masterCursor.getSymbolTable(columnIndex);
             }
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
+        }
+
+        @Override
+        public long size() {
+            return -1;
         }
 
         @Override

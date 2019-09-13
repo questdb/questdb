@@ -30,4 +30,6 @@ public interface RowCursorFactory {
 
     default void prepareCursor(TableReader tableReader) {
     }
+
+    boolean isEntity();
 }

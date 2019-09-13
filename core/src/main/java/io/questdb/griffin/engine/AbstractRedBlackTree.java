@@ -31,13 +31,13 @@ import io.questdb.std.Unsafe;
 import java.io.Closeable;
 
 public abstract class AbstractRedBlackTree implements Mutable, Closeable {
+    // parent is at offset 0
     protected static final int O_LEFT = 8;
     // P(8) + L + R + C(1) + REF
-    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8;
+    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8; // 33(it would be good to align to power of two, but entry would use way too much memory)
     private static final int O_RIGHT = 16;
     private static final int O_COLOUR = 24;
     private static final int O_REF = 25;
-//    private static final int O_TOP = 33;
 
     private static final byte RED = 1;
     private static final byte BLACK = 0;
@@ -76,17 +76,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         Unsafe.getUnsafe().putLong(blockAddress + O_RIGHT, right);
     }
 
-//    protected static long topOf(long blockAddress) {
-//        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
-//    }
-
     protected static long parentOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);
     }
-
-//    protected static void setTop(long blockAddress, long recRef) {
-//        Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);
-//    }
 
     protected static long parent2Of(long blockAddress) {
         return parentOf(parentOf(blockAddress));
@@ -135,6 +127,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         setRight(p, -1);
         setColor(p, BLACK);
         return p;
+    }
+
+    public long size() {
+        return mem.size() / getBlockSize();
     }
 
     protected void fix(long x) {

@@ -137,6 +137,11 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             if (findFileStruct != 0) {
                 ff.findClose(findFileStruct);

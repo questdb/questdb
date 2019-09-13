@@ -54,6 +54,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long size() {
+        return baseCursor.size();
+    }
+
+    @Override
     public boolean hasNext() {
         return baseCursor.hasNext();
     }

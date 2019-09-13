@@ -80,4 +80,9 @@ public class CompactMapCursor implements RecordCursor {
         this.nextOffset = 0;
         this.offsetHi = offsetHi;
     }
+
+    @Override
+    public long size() {
+        return -1;
+    }
 }

@@ -186,6 +186,11 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;

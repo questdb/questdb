@@ -50,4 +50,9 @@ final public class EmptyTableRecordCursor implements NoRandomAccessRecordCursor 
     @Override
     public void toTop() {
     }
+
+    @Override
+    public long size() {
+        return 0;
+    }
 }

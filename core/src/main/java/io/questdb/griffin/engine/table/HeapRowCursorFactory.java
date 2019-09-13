@@ -41,6 +41,11 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));

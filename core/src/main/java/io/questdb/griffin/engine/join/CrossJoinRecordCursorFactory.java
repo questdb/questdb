@@ -102,6 +102,16 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            long sizeA = masterCursor.size();
+            long sizeB = slaveCursor.size();
+            if (sizeA == -1 || sizeB == -1) {
+                return -1;
+            }
+            return sizeA * sizeB;
+        }
+
+        @Override
         public boolean hasNext() {
 
             if (slaveCursor.hasNext()) {

@@ -64,6 +64,11 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public Record newRecord() {
         return base.newRecord();
     }

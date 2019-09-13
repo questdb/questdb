@@ -78,6 +78,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public long size() {
+        return chainCursor.size();
+    }
+
+    @Override
     public void of(RecordCursor base) {
         this.chainCursor = chain.getCursor(base);
         final Record record = base.getRecord();

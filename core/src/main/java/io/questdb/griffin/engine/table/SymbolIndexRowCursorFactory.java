@@ -46,4 +46,9 @@ public class SymbolIndexRowCursorFactory implements RowCursorFactory {
                 .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

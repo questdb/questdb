@@ -146,6 +146,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveChainCursor.next());

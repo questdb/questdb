@@ -81,6 +81,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long size() {
+            return recordCount;
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }

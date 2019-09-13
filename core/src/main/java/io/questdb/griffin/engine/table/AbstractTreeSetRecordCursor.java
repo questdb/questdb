@@ -42,6 +42,11 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
         treeCursor = null;
     }
 
+    @Override
+    public long size() {
+        return treeSet.size();
+    }
+
     abstract protected void buildTreeMap(SqlExecutionContext executionContext);
 
     @Override

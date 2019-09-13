@@ -37,7 +37,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             RowCursorFactory rowCursorFactory,
             @Nullable Function filter) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, filter);
+        this.cursor = new DataFrameRecordCursor(rowCursorFactory, filter, rowCursorFactory.isEntity());
         this.filter = filter;
     }
 

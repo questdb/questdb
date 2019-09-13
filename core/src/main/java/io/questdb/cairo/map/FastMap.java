@@ -143,7 +143,7 @@ public class FastMap implements Map {
             this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
         }
         assert this.keyBlockOffset < kLimit - kStart : "page size is too small for number of columns";
-        this.cursor = new FastMapCursor(record);
+        this.cursor = new FastMapCursor(record, this);
     }
 
     @Override

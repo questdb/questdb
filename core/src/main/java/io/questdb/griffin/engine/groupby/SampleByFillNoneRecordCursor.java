@@ -74,6 +74,11 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void close() {
         base.close();
     }

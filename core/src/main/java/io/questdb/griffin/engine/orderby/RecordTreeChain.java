@@ -331,6 +331,11 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
+        public long size() {
+            return base.size();
+        }
+
+        @Override
         public Record newRecord() {
             return recordChain.newRecord();
         }

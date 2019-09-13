@@ -41,4 +41,6 @@ public interface DataFrameCursor extends ImmutableIterator<DataFrame>, Closeable
     boolean reload();
 
     void toTop();
+
+    long size();
 }

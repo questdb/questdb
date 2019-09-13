@@ -492,6 +492,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
 
         @Override
+        public long size() {
+            return mapCursor.size();
+        }
+
+        @Override
         public Record newRecord() {
             VirtualRecord record = new VirtualRecord(functionRecord.getFunctions());
             record.of(mapCursor.newRecord());

@@ -54,6 +54,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Function hiFunction;
         private RecordCursor base;
         private long limit;
+        private long size;
 
         public LimitRecordCursor(Function loFunction, Function hiFunction) {
             this.loFunction = loFunction;
@@ -63,6 +64,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             base.close();
+        }
+
+        @Override
+        public long size() {
+            if (size > -1) {
+                return size;
+            }
+            return -1;
         }
 
         @Override
@@ -121,9 +130,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 // set limit to return remaining rows
                 limit = -lo;
+                size = -lo;
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
                 limit = lo;
+                size = lo;
             } else {
                 // at this stage we have 'hi'
                 long hi = hiFunction.getLong(null);
@@ -141,21 +152,26 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 // if we asked for -9,-4 but there are 7 records in cursor
                                 // we would first ignore last 4 and return first 3
                                 limit = count + hi;
+                                size = limit;
                             } else {
                                 skipTo(count + lo);
                                 limit = -lo + hi;
+                                size = limit;
                             }
                         }
                     } else {
                         // this is invalid bottom range, for example -3, -10
                         limit = 0;
+                        size = 0;
                     }
                 } else {
                     if (hi < 0) {
                         limit = countRows() - lo + hi;
+                        size = limit;
                         base.toTop();
                     } else {
                         limit = hi - lo;
+                        size = limit;
                     }
 
                     if (lo > 0 && limit > 0) {
@@ -166,7 +182,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private long countRows() {
-            long count = 0;
+            long count = base.size();
+            if (count > -1) {
+                return count;
+            }
             while (base.hasNext()) {
                 count++;
             }

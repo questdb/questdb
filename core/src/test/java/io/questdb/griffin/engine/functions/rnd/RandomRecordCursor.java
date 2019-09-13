@@ -40,6 +40,11 @@ class RandomRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public long size() {
+        return recordCount;
+    }
+
+    @Override
     public void close() {
     }
 

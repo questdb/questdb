@@ -60,6 +60,11 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long size() {
+        return baseCursor.size();
+    }
+
+    @Override
     public Record newRecord() {
         final VirtualRecord record = new VirtualRecord(this.record.getFunctions());
         record.of(baseCursor.newRecord());

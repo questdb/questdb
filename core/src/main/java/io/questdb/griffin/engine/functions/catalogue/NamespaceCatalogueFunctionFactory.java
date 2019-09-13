@@ -84,6 +84,11 @@ public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
         public void toTop() {
             row = 0;
         }
+
+        @Override
+        public long size() {
+            return 1;
+        }
     }
 
     private static class NamespaceCatalogueRecord implements Record {

@@ -45,4 +45,9 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     public void prepareCursor(TableReader tableReader) {
         this.cursor.setTableReader(tableReader);
     }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
 }

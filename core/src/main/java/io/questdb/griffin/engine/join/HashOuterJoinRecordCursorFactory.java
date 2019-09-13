@@ -40,7 +40,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
-    private final HashJoinRecordCursor cursor;
+    private final HashOuterJoinRecordCursor cursor;
 
     public HashOuterJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -62,7 +62,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(
+        this.cursor = new HashOuterJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 slaveChain,
@@ -118,7 +118,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain);
     }
 
-    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private class HashOuterJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final RecordChain slaveChain;
         private final Map joinKeyMap;
@@ -128,7 +128,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         private Record masterRecord;
         private boolean useSlaveCursor;
 
-        public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain, Record nullRecord) {
+        public HashOuterJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain, Record nullRecord) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
@@ -139,6 +139,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         public void close() {
             masterCursor = Misc.free(masterCursor);
             slaveCursor = Misc.free(slaveCursor);
+        }
+
+        @Override
+        public long size() {
+            return -1;
         }
 
         @Override

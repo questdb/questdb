@@ -40,7 +40,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final HashJoinRecordCursor cursor;
+    private final HashOuterJoinLightRecordCursor cursor;
 
     public HashOuterJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -61,7 +61,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(
+        this.cursor = new HashOuterJoinLightRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 slaveChain,
@@ -114,7 +114,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
     }
 
-    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private class HashOuterJoinLightRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final LongChain slaveChain;
         private final Map joinKeyMap;
@@ -124,7 +124,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
 
-        public HashJoinRecordCursor(
+        public HashOuterJoinLightRecordCursor(
                 int columnSplit,
                 Map joinKeyMap,
                 LongChain slaveChain,
@@ -140,6 +140,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         public void close() {
             masterCursor = Misc.free(masterCursor);
             slaveCursor = Misc.free(slaveCursor);
+        }
+
+        @Override
+        public long size() {
+            return -1L;
         }
 
         @Override

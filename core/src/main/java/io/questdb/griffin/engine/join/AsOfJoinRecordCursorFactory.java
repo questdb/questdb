@@ -146,6 +146,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public boolean hasNext() {
 
             if (masterCursor.hasNext()) {

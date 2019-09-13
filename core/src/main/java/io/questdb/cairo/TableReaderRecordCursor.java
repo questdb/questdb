@@ -71,6 +71,11 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long size() {
+        return reader.size();
+    }
+
+    @Override
     public void recordAt(Record record, long rowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
