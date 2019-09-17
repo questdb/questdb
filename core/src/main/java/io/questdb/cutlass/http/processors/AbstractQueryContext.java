@@ -35,18 +35,20 @@ import java.io.Closeable;
 
 
 public abstract class AbstractQueryContext implements Mutable, Closeable {
+    static final int QUERY_NEXT_RECORD = 9;
+    static final int QUERY_SETUP_FIST_RECORD = 8;
     static final int QUERY_DATA_SUFFIX = 7;
     static final int QUERY_RECORD_SUFFIX = 6;
     static final int QUERY_RECORD_COLUMNS = 5;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_META_SUFFIX = 3;
     static final int QUERY_METADATA = 2;
+    static final int QUERY_PREFIX = 1;
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
-    static final int QUERY_PREFIX = 1;
     final long fd;
     RecordCursorFactory recordCursorFactory;
     CharSequence query;

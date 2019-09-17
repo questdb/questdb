@@ -215,7 +215,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.cursor.hasNext()) {
                                     state.count++;
 
-                                    if (state.fetchAll && state.count > state.stop) {
+                                    if (state.countRows && state.count > state.stop) {
 //                                        state.cancellationHandler.check();
                                         continue;
                                     }
@@ -361,7 +361,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.count = 0L;
         state.stop = stop;
         state.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        state.fetchAll = Chars.equalsNc("true", request.getUrlParam("count"));
+        state.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
         return true;
     }
 

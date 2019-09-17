@@ -24,7 +24,7 @@
 package io.questdb.cutlass.http.processors;
 
 public class JsonQueryProcessorState extends AbstractQueryContext {
-    boolean fetchAll = false;
+    boolean countRows = false;
     boolean noMeta = false;
 
     public JsonQueryProcessorState(long fd, int connectionCheckFrequency) {
@@ -35,6 +35,6 @@ public class JsonQueryProcessorState extends AbstractQueryContext {
     public void clear() {
         super.clear();
         queryState = QUERY_PREFIX;
-        fetchAll = false;
+        countRows = false;
     }
 }

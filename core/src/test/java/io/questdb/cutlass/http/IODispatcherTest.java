@@ -850,7 +850,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQuery() throws Exception {
+    public void testJsonQuerySingleRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
@@ -929,6 +929,699 @@ public class IODispatcherTest {
                         "\r\n" +
                         "0224\r\n" +
                         "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0b86\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423277,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.0538440031,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311520,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959172,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.1858643558,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.1159185576,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.1129625732,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836402,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.5335243841,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101995,\"DXCBJ\",null,true,[]]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryTopLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x&limit=10 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0687\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423277,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.0538440031,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311520,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959172,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]]],\"count\":10}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryTopLimitAndCount() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x&limit=10&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0687\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423277,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.0538440031,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311520,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959172,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryMiddleLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x&limit=10,14 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "042b\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.1858643558,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.1159185576,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.1129625732,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692,\"BQQEM\",null,false,[]]],\"count\":14}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryOutsideLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x&limit=35,40 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryBottomLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x&limit=10,25 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "070e\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.1858643558,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.1159185576,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.1129625732,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836402,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.5335243841,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101995,\"DXCBJ\",null,true,[]]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n").getBytes();
+
+                try {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            100,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryZeroRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        0,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n").getBytes();
 
@@ -2534,9 +3227,10 @@ public class IODispatcherTest {
                                 for (int i = 0; i < n; i++) {
                                     if (print) {
                                         System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                                    }
-                                    if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                                        Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                    } else {
+                                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                        }
                                     }
                                 }
                                 received += n;

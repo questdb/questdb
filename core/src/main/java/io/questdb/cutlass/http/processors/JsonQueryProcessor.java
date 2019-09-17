@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -179,10 +180,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-    }
-
-    @Override
     public void resumeSend(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher
@@ -200,103 +197,83 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         OUT:
         while (true) {
             try {
-                SWITCH:
                 switch (state.queryState) {
                     case AbstractQueryContext.QUERY_PREFIX:
-                        if (state.noMeta) {
-                            socket.put('{').putQuoted("dataset").put(":[");
-                            state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        if (onQueryPrefix(state, socket)) {
                             break;
                         }
-                        socket.bookmark();
-                        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(state.query);
-                        socket.put(',').putQuoted("columns").put(':').put('[');
-                        state.queryState = AbstractQueryContext.QUERY_METADATA;
-                        state.columnIndex = 0;
                         // fall through
                     case AbstractQueryContext.QUERY_METADATA:
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-
-                            socket.bookmark();
-
-                            if (state.columnIndex > 0) {
-                                socket.put(',');
-                            }
-                            socket.put('{').
-                                    putQuoted("name").put(':').putQuoted(state.metadata.getColumnName(state.columnIndex)).
-                                    put(',').
-                                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(state.metadata.getColumnType(state.columnIndex)));
-                            socket.put('}');
-                        }
-                        state.queryState = AbstractQueryContext.QUERY_META_SUFFIX;
+                        onQeeryMetadata(state, socket, columnCount);
                         // fall through
                     case AbstractQueryContext.QUERY_META_SUFFIX:
-                        socket.bookmark();
-                        socket.put("],\"dataset\":[");
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        onMetadataSuffix(state, socket);
                         // fall through
-                    case AbstractQueryContext.QUERY_RECORD_START:
-
-                        if (state.record == null) {
-                            // check if cursor has any records
-                            state.record = state.cursor.getRecord();
-                            while (true) {
-                                if (state.cursor.hasNext()) {
-                                    state.count++;
-
-                                    if (state.fetchAll && state.count > state.stop) {
-//                                        state.cancellationHandler.check();
-                                        continue;
-                                    }
-
-                                    if (state.count > state.skip) {
-                                        break;
-                                    }
-                                } else {
-                                    state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                                    break SWITCH;
-                                }
+                    case AbstractQueryContext.QUERY_SETUP_FIST_RECORD:
+                        if (state.skip > 0) {
+                            final RecordCursor cursor = state.cursor;
+                            long target = state.skip;
+                            while (target > 0 && cursor.hasNext()) {
+                                target--;
+                            }
+                            if (target > 0) {
+                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                                break;
+                            }
+                            state.count = state.skip;
+                        } else {
+                            if (state.cursor.hasNext()) {
+                                state.count++;
+                            } else {
+                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                                break;
                             }
                         }
-
-                        if (state.count > state.stop) {
-                            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                            break;
-                        }
-
-                        socket.bookmark();
-                        if (state.count > state.skip + 1) {
-                            socket.put(',');
-                        }
-                        socket.put('[');
-
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
                         state.columnIndex = 0;
-                        // fall through
-                    case AbstractQueryContext.QUERY_RECORD_COLUMNS:
-
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-                            socket.bookmark();
-                            if (state.columnIndex > 0) {
-                                socket.put(',');
-                            }
-                            final ValueWriter vw = valueWriters.getQuick(state.metadata.getColumnType(state.columnIndex));
-                            if (vw != null) {
-                                vw.write(socket, state.record, state.columnIndex);
-                            }
-                        }
-
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_SUFFIX;
-                        // fall through
-
-                    case AbstractQueryContext.QUERY_RECORD_SUFFIX:
+                        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+                        state.record = state.cursor.getRecord();
                         socket.bookmark();
-                        socket.put(']');
-                        state.record = null;
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        socket.put('[');
+                        break;
+                    case AbstractQueryContext.QUERY_NEXT_RECORD:
+                        if (state.cursor.hasNext()) {
+                            state.count++;
+                            if (state.count > state.stop) {
+                                if (state.countRows) {
+                                    // this is the tail end of the cursor
+                                    // we don't need to read records, just round up record count
+                                    final RecordCursor cursor = state.cursor;
+                                    long count = 0;
+                                    while (cursor.hasNext()) {
+                                        count++;
+                                    }
+                                    state.count += count;
+                                } else {
+                                    state.count--;
+                                }
+                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                            } else {
+                                socket.bookmark();
+                                if (state.count > state.skip) {
+                                    socket.put(',');
+                                }
+                                socket.put('[');
+
+                                state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+                                state.columnIndex = 0;
+                            }
+                        } else {
+                            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                        }
+                        break;
+                    case AbstractQueryContext.QUERY_RECORD_COLUMNS:
+                        onRecordColumn(state, socket, columnCount);
+                        // fall through
+                    case AbstractQueryContext.QUERY_RECORD_SUFFIX:
+                        onRecordSuffix(state, socket);
                         break;
                     case AbstractQueryContext.QUERY_DATA_SUFFIX:
-                        sendDone(socket, state);
+                        onDataSuffix(socket, state);
                         break OUT;
                     default:
                         break OUT;
@@ -316,6 +293,64 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context, dispatcher);
+    }
+
+    private void onRecordSuffix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
+        socket.bookmark();
+        socket.put(']');
+        state.queryState = AbstractQueryContext.QUERY_NEXT_RECORD;
+    }
+
+    private void onRecordColumn(JsonQueryProcessorState state, HttpChunkedResponseSocket socket, int columnCount) {
+        for (; state.columnIndex < columnCount; state.columnIndex++) {
+            socket.bookmark();
+            if (state.columnIndex > 0) {
+                socket.put(',');
+            }
+            final ValueWriter vw = valueWriters.getQuick(state.metadata.getColumnType(state.columnIndex));
+            if (vw != null) {
+                vw.write(socket, state.record, state.columnIndex);
+            }
+        }
+
+        state.queryState = AbstractQueryContext.QUERY_RECORD_SUFFIX;
+    }
+
+    private void onMetadataSuffix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
+        socket.bookmark();
+        socket.put("],\"dataset\":[");
+        state.queryState = AbstractQueryContext.QUERY_SETUP_FIST_RECORD;
+    }
+
+    private void onQeeryMetadata(JsonQueryProcessorState state, HttpChunkedResponseSocket socket, int columnCount) {
+        for (; state.columnIndex < columnCount; state.columnIndex++) {
+
+            socket.bookmark();
+
+            if (state.columnIndex > 0) {
+                socket.put(',');
+            }
+            socket.put('{').
+                    putQuoted("name").put(':').putQuoted(state.metadata.getColumnName(state.columnIndex)).
+                    put(',').
+                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(state.metadata.getColumnType(state.columnIndex)));
+            socket.put('}');
+        }
+        state.queryState = AbstractQueryContext.QUERY_META_SUFFIX;
+    }
+
+    private boolean onQueryPrefix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
+        if (state.noMeta) {
+            socket.put('{').putQuoted("dataset").put(":[");
+            state.queryState = AbstractQueryContext.QUERY_SETUP_FIST_RECORD;
+            return true;
+        }
+        socket.bookmark();
+        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(state.query);
+        socket.put(',').putQuoted("columns").put(':').put('[');
+        state.queryState = AbstractQueryContext.QUERY_METADATA;
+        state.columnIndex = 0;
+        return false;
     }
 
     private LogRecord error(JsonQueryProcessorState state) {
@@ -398,7 +433,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         state.count = 0L;
         state.stop = stop;
         state.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        state.fetchAll = Chars.equalsNc("true", request.getUrlParam("count"));
+        state.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
         return true;
     }
 
@@ -498,7 +533,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.done();
     }
 
-    private void sendDone(
+    private void onDataSuffix(
             HttpChunkedResponseSocket socket,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
