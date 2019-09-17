@@ -209,62 +209,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     case AbstractQueryContext.QUERY_META_SUFFIX:
                         onMetadataSuffix(state, socket);
                         // fall through
-                    case AbstractQueryContext.QUERY_SETUP_FIST_RECORD:
-                        if (state.skip > 0) {
-                            final RecordCursor cursor = state.cursor;
-                            long target = state.skip;
-                            while (target > 0 && cursor.hasNext()) {
-                                target--;
-                            }
-                            if (target > 0) {
-                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                                break;
-                            }
-                            state.count = state.skip;
-                        } else {
-                            if (state.cursor.hasNext()) {
-                                state.count++;
-                            } else {
-                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                                break;
-                            }
-                        }
-                        state.columnIndex = 0;
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
-                        state.record = state.cursor.getRecord();
-                        socket.bookmark();
-                        socket.put('[');
+                    case AbstractQueryContext.QUERY_SETUP_FIRST_RECORD:
+                        onSetupFirstRecord(state, socket);
                         break;
                     case AbstractQueryContext.QUERY_NEXT_RECORD:
-                        if (state.cursor.hasNext()) {
-                            state.count++;
-                            if (state.count > state.stop) {
-                                if (state.countRows) {
-                                    // this is the tail end of the cursor
-                                    // we don't need to read records, just round up record count
-                                    final RecordCursor cursor = state.cursor;
-                                    long count = 0;
-                                    while (cursor.hasNext()) {
-                                        count++;
-                                    }
-                                    state.count += count;
-                                } else {
-                                    state.count--;
-                                }
-                                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                            } else {
-                                socket.bookmark();
-                                if (state.count > state.skip) {
-                                    socket.put(',');
-                                }
-                                socket.put('[');
-
-                                state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
-                                state.columnIndex = 0;
-                            }
-                        } else {
-                            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
-                        }
+                        onNextRecord(state, socket);
                         break;
                     case AbstractQueryContext.QUERY_RECORD_COLUMNS:
                         onRecordColumn(state, socket, columnCount);
@@ -295,6 +244,74 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context, dispatcher);
     }
 
+    private void onSetupFirstRecord(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
+        if (state.skip > 0) {
+            final RecordCursor cursor = state.cursor;
+            long target = state.skip;
+            while (target > 0 && cursor.hasNext()) {
+                target--;
+            }
+            if (target > 0) {
+                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                return;
+            }
+            state.count = state.skip;
+        } else {
+            if (state.cursor.hasNext()) {
+                state.count++;
+            } else {
+                state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                return;
+            }
+        }
+        state.columnIndex = 0;
+        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+        state.record = state.cursor.getRecord();
+        socket.bookmark();
+        socket.put('[');
+    }
+
+    private void onNextRecord(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
+        if (state.cursor.hasNext()) {
+            state.count++;
+            if (state.count > state.stop) {
+                onNoMoreData(state);
+            } else {
+                socket.bookmark();
+                if (state.count > state.skip) {
+                    socket.put(',');
+                }
+                socket.put('[');
+
+                state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+                state.columnIndex = 0;
+            }
+        } else {
+            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+        }
+    }
+
+    private void onNoMoreData(JsonQueryProcessorState state) {
+        if (state.countRows) {
+            // this is the tail end of the cursor
+            // we don't need to read records, just round up record count
+            final RecordCursor cursor = state.cursor;
+            final long size = cursor.size();
+            if (size < 0) {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                state.count += count;
+            } else {
+                state.count = size;
+            }
+        } else {
+            state.count--;
+        }
+        state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+    }
+
     private void onRecordSuffix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
         socket.bookmark();
         socket.put(']');
@@ -319,7 +336,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void onMetadataSuffix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
         socket.bookmark();
         socket.put("],\"dataset\":[");
-        state.queryState = AbstractQueryContext.QUERY_SETUP_FIST_RECORD;
+        state.queryState = AbstractQueryContext.QUERY_SETUP_FIRST_RECORD;
     }
 
     private void onQeeryMetadata(JsonQueryProcessorState state, HttpChunkedResponseSocket socket, int columnCount) {
@@ -342,7 +359,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private boolean onQueryPrefix(JsonQueryProcessorState state, HttpChunkedResponseSocket socket) {
         if (state.noMeta) {
             socket.put('{').putQuoted("dataset").put(":[");
-            state.queryState = AbstractQueryContext.QUERY_SETUP_FIST_RECORD;
+            state.queryState = AbstractQueryContext.QUERY_SETUP_FIRST_RECORD;
             return true;
         }
         socket.bookmark();
