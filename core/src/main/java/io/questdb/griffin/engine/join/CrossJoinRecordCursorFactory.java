@@ -32,7 +32,7 @@ import io.questdb.std.Misc;
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
-    private final HashJoinRecordCursor cursor;
+    private final CrossJoinRecordCursor cursor;
 
     public CrossJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -44,7 +44,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.cursor = new HashJoinRecordCursor(columnSplit);
+        this.cursor = new CrossJoinRecordCursor(columnSplit);
     }
 
     @Override
@@ -71,13 +71,13 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private static class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private static class CrossJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final JoinRecord record;
         private final int columnSplit;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
 
-        public HashJoinRecordCursor(int columnSplit) {
+        public CrossJoinRecordCursor(int columnSplit) {
             this.record = new JoinRecord(columnSplit);
             this.columnSplit = columnSplit;
         }

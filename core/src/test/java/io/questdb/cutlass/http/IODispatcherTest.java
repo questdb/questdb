@@ -2847,6 +2847,10 @@ public class IODispatcherTest {
                         // receive response
                         final int expectedToReceive = expectedResponse.length;
                         int received = 0;
+                        if (print) {
+                            System.out.println("expected");
+                            System.out.println(new String(expectedResponse));
+                        }
                         while (received < expectedToReceive) {
                             int n = nf.recv(fd, ptr + received, len - received);
                             if (n > 0) {

@@ -224,21 +224,21 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                         break;
                                     }
                                 } else {
-                                    state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                                    state.queryState = AbstractQueryContext.QUERY_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (state.count > state.stop) {
-                            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                            state.queryState = AbstractQueryContext.QUERY_SUFFIX;
                             break;
                         }
 
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+                        state.queryState = AbstractQueryContext.QUERY_RECORD;
                         state.columnIndex = 0;
                         // fall through
-                    case AbstractQueryContext.QUERY_RECORD_COLUMNS:
+                    case AbstractQueryContext.QUERY_RECORD:
 
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
                             socket.bookmark();
@@ -257,7 +257,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.record = null;
                         state.queryState = AbstractQueryContext.QUERY_RECORD_START;
                         break;
-                    case AbstractQueryContext.QUERY_DATA_SUFFIX:
+                    case AbstractQueryContext.QUERY_SUFFIX:
                         sendDone(socket, state);
                         break OUT;
                     default:

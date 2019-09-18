@@ -35,13 +35,13 @@ import java.io.Closeable;
 
 
 public abstract class AbstractQueryContext implements Mutable, Closeable {
-    static final int QUERY_NEXT_RECORD = 9;
+    static final int QUERY_RECORD_PREFIX = 9;
     static final int QUERY_SETUP_FIRST_RECORD = 8;
-    static final int QUERY_DATA_SUFFIX = 7;
+    static final int QUERY_SUFFIX = 7;
     static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_RECORD_COLUMNS = 5;
+    static final int QUERY_RECORD = 5;
     static final int QUERY_RECORD_START = 4;
-    static final int QUERY_META_SUFFIX = 3;
+    static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PREFIX = 1;
     // Factory cache is thread local due to possibility of factory being
