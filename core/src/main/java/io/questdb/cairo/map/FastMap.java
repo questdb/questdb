@@ -146,6 +146,45 @@ public class FastMap implements Map {
         this.cursor = new FastMapCursor(record, this);
     }
 
+    private static boolean eqMixed(long a, long b, long lim) {
+        while (b < lim - 8) {
+            if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
+                return false;
+            }
+            a += 8;
+            b += 8;
+        }
+
+        while (b < lim) {
+            if (Unsafe.getUnsafe().getByte(a++) != Unsafe.getUnsafe().getByte(b++)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean eqLong(long a, long b, long lim) {
+        while (b < lim) {
+            if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
+                return false;
+            }
+            a += 8;
+            b += 8;
+        }
+        return true;
+    }
+
+    private static boolean eqInt(long a, long b, long lim) {
+        while (b < lim) {
+            if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {
+                return false;
+            }
+            a += 4;
+            b += 4;
+        }
+        return true;
+    }
+
     @Override
     public void clear() {
         kPos = kStart;
@@ -228,20 +267,16 @@ public class FastMap implements Map {
         a += keyDataOffset;
         b += keyDataOffset;
 
-        while (b < lim - 8) {
-            if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
-                return false;
-            }
-            a += 8;
-            b += 8;
+        long d = lim - b;
+        if (d % Long.BYTES == 0) {
+            return eqLong(a, b, lim);
         }
 
-        while (b < lim) {
-            if (Unsafe.getUnsafe().getByte(a++) != Unsafe.getUnsafe().getByte(b++)) {
-                return false;
-            }
+        if (d % Integer.BYTES == 0) {
+            return eqInt(a, b, lim);
         }
-        return true;
+
+        return eqMixed(a, b, lim);
     }
 
     long getAppendOffset() {

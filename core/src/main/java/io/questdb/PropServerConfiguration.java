@@ -263,7 +263,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlFastMapLoadFactor = getDouble(properties, "cairo.fast.map.load.factor", 0.5);
         this.sqlJoinContextPoolCapacity = getInt(properties, "cairo.sql.join.context.pool.capacity", 64);
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
-        this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048);
+        this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getIntSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);

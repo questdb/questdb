@@ -143,7 +143,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.5, configuration.getCairoConfiguration().getSqlFastMapLoadFactor(), 0.0000001);
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlJoinContextPoolCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlLexerPoolCapacity());
-        Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlMapKeyCapacity());
+        Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlMapKeyCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getCairoConfiguration().getSqlMapPageSize());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());

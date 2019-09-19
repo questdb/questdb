@@ -23,8 +23,6 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.DirectBytes;
-
 public final class Hash {
     private Hash() {
     }
@@ -40,10 +38,6 @@ public final class Hash {
         return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
     }
 
-    public static int boundedHash(DirectBytes s, int max) {
-        return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
-    }
-
     /**
      * Calculates positive integer hash of memory pointer using Java hashcode() algorithm.
      *
@@ -53,7 +47,7 @@ public final class Hash {
      */
     public static int hashMem(long p, int len) {
         int hash = 0;
-        long hi = p + len;
+        final long hi = p + len;
         while (hi - p > 3) {
             hash = (hash << 5) - hash + Unsafe.getUnsafe().getInt(p);
             p += 4;
