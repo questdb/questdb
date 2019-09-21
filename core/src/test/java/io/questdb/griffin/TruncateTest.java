@@ -115,16 +115,17 @@ public class TruncateTest extends AbstractGriffinTest {
                                         "10\n",
                                 "select count() from x",
                                 null,
-                                true
+                                false
                         );
 
                         Assert.assertNull(compiler.compile("truncate table x"));
 
                         assertQuery(
-                                "count\n",
+                                "count\n" +
+                                        "0\n",
                                 "select count() from x",
                                 null,
-                                true
+                                false
                         );
 
                         Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -148,7 +149,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             "10\n",
                     "select count() from x",
                     null,
-                    true
+                    false
             );
 
             assertQuery(
@@ -156,7 +157,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             "20\n",
                     "select count() from y",
                     null,
-                    true
+                    false
             );
 
             CyclicBarrier useBarrier = new CyclicBarrier(2);
@@ -192,7 +193,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             "10\n",
                     "select count() from x",
                     null,
-                    true
+                    false
             );
 
             assertQuery(
@@ -200,10 +201,61 @@ public class TruncateTest extends AbstractGriffinTest {
                             "20\n",
                     "select count() from y",
                     null,
-                    true
+                    false
             );
 
             haltLatch.await(1, TimeUnit.SECONDS);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
+    }
+
+    @Test
+    public void testTableDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            createY();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "20\n",
+                    "select count() from y",
+                    null,
+                    false
+            );
+
+            try {
+                Assert.assertNull(compiler.compile("truncate table x, y,z"));
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(20, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "20\n",
+                    "select count() from y",
+                    null,
+                    false
+            );
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -220,7 +272,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             "1000000\n",
                     "select count() from x",
                     null,
-                    true
+                    false
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x")) {
@@ -243,57 +295,6 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableDoesNotExist() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            createY();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            try {
-                Assert.assertNull(compiler.compile("truncate table x, y,z"));
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(20, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
-            }
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
     public void testTwoTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
@@ -304,7 +305,7 @@ public class TruncateTest extends AbstractGriffinTest {
                             "10\n",
                     "select count() from x",
                     null,
-                    true
+                    false
             );
 
             assertQuery(
@@ -312,23 +313,25 @@ public class TruncateTest extends AbstractGriffinTest {
                             "20\n",
                     "select count() from y",
                     null,
-                    true
+                    false
             );
 
             Assert.assertNull(compiler.compile("truncate table x, y"));
 
             assertQuery(
-                    "count\n",
+                    "count\n" +
+                            "0\n",
                     "select count() from x",
                     null,
-                    true
+                    false
             );
 
             assertQuery(
-                    "count\n",
+                    "count\n" +
+                            "0\n",
                     "select count() from y",
                     null,
-                    true
+                    false
             );
 
 

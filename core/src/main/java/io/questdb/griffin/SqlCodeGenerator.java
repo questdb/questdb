@@ -42,16 +42,10 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+
 public class SqlCodeGenerator {
     private static final IntHashSet limitTypes = new IntHashSet();
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
-    }
-
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -67,7 +61,6 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private boolean fullFatJoins = false;
-
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
@@ -753,7 +746,7 @@ public class SqlCodeGenerator {
     ) throws SqlException {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
-            if (tableName.type == ExpressionNode.FUNCTION) {
+            if (tableName.type == FUNCTION) {
                 return generateFunctionQuery(model, executionContext);
             } else {
                 return generateTableQuery(model, executionContext);
@@ -877,90 +870,6 @@ public class SqlCodeGenerator {
             return generateSetFactory(model, factory, executionContext);
         }
         return factory;
-    }
-
-    /**
-     * Generates chain of parent factories each of which takes only two argument factories.
-     * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
-     * INTERSECT or EXCEPT
-     *
-     * @param model            incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
-     * @param masterFactory    is compiled first argument
-     * @param executionContext execution context for authorization and parallel execution purposes
-     * @return factory that performs a SET operation
-     * @throws SqlException when query contains syntax errors
-     */
-    private RecordCursorFactory generateSetFactory(
-            QueryModel model,
-            RecordCursorFactory masterFactory,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        RecordCursorFactory slaveFactory = generateQuery0(model.getUnionModel(), executionContext, true);
-        if (model.getUnionModelType() == QueryModel.UNION_MODEL_DISTINCT) {
-            return generateUnionFactory(model, masterFactory, executionContext, slaveFactory);
-        } else if (model.getUnionModelType() == QueryModel.UNION_MODEL_ALL) {
-            return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
-        }
-        assert false;
-        return null;
-    }
-
-    private RecordCursorFactory generateUnionFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
-        final RecordMetadata metadata = masterFactory.getMetadata();
-        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
-                throw SqlException
-                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
-                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
-                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
-                        .put(']');
-            }
-        }
-
-        entityColumnFilter.of(columnCount);
-        final RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
-
-        valueTypes.reset();
-
-        RecordCursorFactory unionFactory = new UnionRecordCursorFactory(
-                configuration,
-                metadata,
-                masterFactory,
-                slaveFactory,
-                recordSink,
-                valueTypes
-        );
-
-        if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
-        }
-        return unionFactory;
-    }
-
-    private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
-        final RecordMetadata metadata = masterFactory.getMetadata();
-        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
-                throw SqlException
-                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
-                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
-                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
-                        .put(']');
-            }
-        }
-
-        final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(metadata, masterFactory, slaveFactory);
-
-        if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
-        }
-        return unionAllFactory;
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
@@ -1161,6 +1070,22 @@ public class SqlCodeGenerator {
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
+    private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        try {
+            return new DistinctRecordCursorFactory(
+                    configuration,
+                    factory,
+                    entityColumnFilter,
+                    asm
+            );
+
+        } catch (CairoException e) {
+            factory.close();
+            throw e;
+        }
+    }
+
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
         // fail fast if we cannot create timestamp sampler
@@ -1172,6 +1097,22 @@ public class SqlCodeGenerator {
 
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
+
+            // generate special case plan for "select count() from somewhere"
+            ObjList<QueryColumn> columns = model.getColumns();
+            if (columns.size() == 1) {
+                QueryColumn column = columns.getQuick(0);
+                if (column.getAst().type == FUNCTION && Chars.equalsLowerCaseAscii(column.getAst().token, "count")) {
+                    if (Chars.equalsLowerCaseAscii(column.getName(), "count")) {
+                        return new CountRecordCursorFactory(CountRecordCursorFactory.DEFAULT_COUNT_METADATA, factory);
+                    }
+
+                    GenericRecordMetadata metadata = new GenericRecordMetadata();
+                    metadata.add(new TableColumnMetadata(Chars.toString(column.getName()), ColumnType.LONG));
+                    return new CountRecordCursorFactory(metadata, factory);
+                }
+            }
+
             keyTypes.reset();
             valueTypes.reset();
             listColumnFilterA.clear();
@@ -1186,22 +1127,6 @@ public class SqlCodeGenerator {
                     asm,
                     keyTypes,
                     valueTypes
-            );
-
-        } catch (CairoException e) {
-            factory.close();
-            throw e;
-        }
-    }
-
-    private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        try {
-            return new DistinctRecordCursorFactory(
-                    configuration,
-                    factory,
-                    entityColumnFilter,
-                    asm
             );
 
         } catch (CairoException e) {
@@ -1264,6 +1189,32 @@ public class SqlCodeGenerator {
             factory.close();
             throw e;
         }
+    }
+
+    /**
+     * Generates chain of parent factories each of which takes only two argument factories.
+     * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
+     * INTERSECT or EXCEPT
+     *
+     * @param model            incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
+     * @param masterFactory    is compiled first argument
+     * @param executionContext execution context for authorization and parallel execution purposes
+     * @return factory that performs a SET operation
+     * @throws SqlException when query contains syntax errors
+     */
+    private RecordCursorFactory generateSetFactory(
+            QueryModel model,
+            RecordCursorFactory masterFactory,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        RecordCursorFactory slaveFactory = generateQuery0(model.getUnionModel(), executionContext, true);
+        if (model.getUnionModelType() == QueryModel.UNION_MODEL_DISTINCT) {
+            return generateUnionFactory(model, masterFactory, executionContext, slaveFactory);
+        } else if (model.getUnionModelType() == QueryModel.UNION_MODEL_ALL) {
+            return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
+        }
+        assert false;
+        return null;
     }
 
     private RecordCursorFactory generateSubQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1446,6 +1397,64 @@ public class SqlCodeGenerator {
         }
     }
 
+    private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+        final RecordMetadata metadata = masterFactory.getMetadata();
+        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
+                throw SqlException
+                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
+                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
+                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
+                        .put(']');
+            }
+        }
+
+        final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(metadata, masterFactory, slaveFactory);
+
+        if (model.getUnionModel().getUnionModel() != null) {
+            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
+        }
+        return unionAllFactory;
+    }
+
+    private RecordCursorFactory generateUnionFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+        final RecordMetadata metadata = masterFactory.getMetadata();
+        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
+                throw SqlException
+                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
+                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
+                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
+                        .put(']');
+            }
+        }
+
+        entityColumnFilter.of(columnCount);
+        final RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
+
+        valueTypes.reset();
+
+        RecordCursorFactory unionFactory = new UnionRecordCursorFactory(
+                configuration,
+                metadata,
+                masterFactory,
+                slaveFactory,
+                recordSink,
+                valueTypes
+        );
+
+        if (model.getUnionModel().getUnionModel() != null) {
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+        }
+        return unionFactory;
+    }
+
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
@@ -1506,6 +1515,13 @@ public class SqlCodeGenerator {
                     .put(ColumnType.nameOf(firstColumnType));
         }
         return firstColumnType;
+    }
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
     }
 
 }
