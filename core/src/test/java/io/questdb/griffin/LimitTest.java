@@ -405,7 +405,7 @@ public class LimitTest extends AbstractGriffinTest {
 
     @Test
     public void testTopNIndexVariable() throws Exception {
-        String query = "select * from y limit ?";
+        String query = "select * from y limit $1";
         TestUtils.assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +

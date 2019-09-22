@@ -79,12 +79,12 @@ public final class SqlParser {
     private final ExpressionTreeBuilder expressionTreeBuilder = new ExpressionTreeBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
-    private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
-    private final ObjectPool<CreateTableModel> createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, 4);
-    private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
-    private final ObjectPool<RenameTableModel> renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, 8);
-    private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
-    private final ObjectPool<InsertAsSelectModel> insertAsSelectModelPool = new ObjectPool<>(InsertAsSelectModel.FACTORY, 2);
+    private final ObjectPool<AnalyticColumn> analyticColumnPool;
+    private final ObjectPool<CreateTableModel> createTableModelPool;
+    private final ObjectPool<ColumnCastModel> columnCastModelPool;
+    private final ObjectPool<RenameTableModel> renameTableModelPool;
+    private final ObjectPool<WithClauseModel> withClauseModelPool;
+    private final ObjectPool<InsertModel> insertModelPool;
     private final ExpressionParser expressionParser;
     private final CairoConfiguration configuration;
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -100,10 +100,17 @@ public final class SqlParser {
             ObjectPool<ExpressionNode> sqlNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo) {
+            PostOrderTreeTraversalAlgo traversalAlgo
+    ) {
         this.sqlNodePool = sqlNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
+        this.analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, configuration.getAnalyticColumnPoolCapacity());
+        this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
+        this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
+        this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
+        this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
+        this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
@@ -130,7 +137,7 @@ public final class SqlParser {
         withClauseModelPool.clear();
         subQueryMode = false;
         characterStore.clear();
-        insertAsSelectModelPool.clear();
+        insertModelPool.clear();
         expressionTreeBuilder.reset();
     }
 
@@ -141,7 +148,7 @@ public final class SqlParser {
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
         ExpressionNode n = expr(lexer, (QueryModel) null);
         if (n == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
+            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
         }
         return n;
     }
@@ -282,7 +289,7 @@ public final class SqlParser {
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "insert")) {
-            return parseInsertAsSelect(lexer);
+            return parseInsert(lexer);
         }
 
         return parseSelect(lexer);
@@ -745,10 +752,10 @@ public final class SqlParser {
         }
     }
 
-    private ExecutionModel parseInsertAsSelect(GenericLexer lexer) throws SqlException {
+    private ExecutionModel parseInsert(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "into");
 
-        final InsertAsSelectModel model = insertAsSelectModelPool.next();
+        final InsertModel model = insertModelPool.next();
         model.setTableName(expectLiteral(lexer));
 
         CharSequence tok = tok(lexer, "'(' or 'select'");
@@ -771,7 +778,7 @@ public final class SqlParser {
         }
 
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'select' expected");
+            throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "select")) {
@@ -782,7 +789,23 @@ public final class SqlParser {
             return model;
         }
 
-        throw err(lexer, "'select' expected");
+        if (Chars.equalsLowerCaseAscii(tok, "values")) {
+            expectTok(lexer, '(');
+
+            do {
+                ExpressionNode expr = expectExpr(lexer);
+                if (Chars.equals(expr.token, ')')) {
+                    throw err(lexer, "missing column value");
+                }
+
+                model.addColumnValue(expr);
+            } while (Chars.equals((tok = tok(lexer, "','")), ','));
+
+            expectTok(tok, lexer.lastTokenPosition(), ')');
+
+            return model;
+        }
+        throw err(lexer, "'select' or 'values' expected");
     }
 
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {

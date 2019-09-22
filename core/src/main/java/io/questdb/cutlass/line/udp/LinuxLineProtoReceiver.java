@@ -65,7 +65,8 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
         }
 
         try {
-            if (!nf.bindUdp(fd, receiverCfg.getPort())) {
+            // when listening for multicast packets bind address must be 0
+            if (!nf.bindUdp(fd, 0, receiverCfg.getPort())) {
                 int errno = nf.errno();
                 LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
                 throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());

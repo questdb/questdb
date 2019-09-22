@@ -37,6 +37,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.CompiledQuery.ALTER;
+
 public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Before
@@ -104,7 +106,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column mycol int"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int").getType());
 
                         assertQuery(
                                 "c\tmycol\n" +
@@ -179,7 +181,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                         try (CairoEngine engine = new CairoEngine(configuration)) {
                             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                Assert.assertNull(compiler.compile("alter table x add column meh symbol cache"));
+                                Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache").getType());
 
                                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                                     SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -210,7 +212,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol capacity 2048"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048").getType());
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -274,7 +276,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index").getType());
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -302,7 +304,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index capacity 9000"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000").getType());
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -336,7 +338,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol nocache"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache").getType());
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -364,7 +366,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column mycol int, second symbol"));
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol").getType());
 
                         assertQuery(
                                 "c\tmycol\tsecond\n" +

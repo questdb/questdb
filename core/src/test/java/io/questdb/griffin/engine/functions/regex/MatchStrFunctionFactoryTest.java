@@ -65,7 +65,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "XJN\n";
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~= 'XJ'")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~= 'XJ'").getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor()) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);

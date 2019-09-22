@@ -46,7 +46,7 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return (char) getShort(rec);
     }
 
     @Override

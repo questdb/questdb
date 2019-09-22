@@ -48,6 +48,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.CompiledQuery.SET;
+
 public class SqlCompilerTest extends AbstractGriffinTest {
     private final static Path path = new Path();
     private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
@@ -1654,7 +1656,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext);
+                final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                 factory.close();
             } finally {
                 engine.releaseAllWriters();
@@ -1668,7 +1670,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String query = "SET x = y";
         TestUtils.assertMemoryLeak(() -> {
             try {
-                Assert.assertNull(compiler.compile(query));
+                Assert.assertEquals(SET, compiler.compile(query).getType());
             } finally {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -2949,7 +2951,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))");
                     compiler.compile("insert into x select * from y");
 
-                    try (RecordCursorFactory factory = compiler.compile("select * from x")) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x").getRecordCursorFactory()) {
                         sink.clear();
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
@@ -3391,7 +3393,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 compiler.compile(ddl);
                 compiler.compile(insert);
 
-                try (RecordCursorFactory factory = compiler.compile(select)) {
+                try (RecordCursorFactory factory = compiler.compile(select).getRecordCursorFactory()) {
                     sink.clear();
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         printer.print(cursor, factory.getMetadata(), true);

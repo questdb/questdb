@@ -65,7 +65,8 @@ public interface NetworkFacade {
 
     long socketUdp();
 
-    boolean bindUdp(long fd, int port);
+    // todo: un-tangle
+    boolean bindUdp(long fd, int ipv4Address, int port);
 
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 
@@ -101,4 +102,6 @@ public interface NetworkFacade {
     boolean setSndBuf(long fd, int size);
 
     int getSndBuf(long fd);
+
+    int setMulticastTtl(long fd, int ttl);
 }

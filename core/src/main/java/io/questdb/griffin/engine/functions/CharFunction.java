@@ -76,27 +76,27 @@ public abstract class CharFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return getChar(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return getChar(rec);
     }
 
     @Override
     public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return getChar(rec);
     }
 
     @Override
     public long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getChar(rec);
     }
 
     @Override
     public short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return (short) getChar(rec);
     }
 
     @Override

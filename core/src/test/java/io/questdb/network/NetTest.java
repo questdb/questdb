@@ -200,22 +200,35 @@ public class NetTest {
     public void testMulticast() {
         long socket = Net.socketUdp();
         System.out.println(socket);
+        bindSocket(socket);
         System.out.println(Net.setMulticastInterface(socket, Net.parseIPv4("192.168.1.156")));
         System.out.println(Net.setMulticastLoop(socket, true));
+        System.out.println(Net.setMulticastTtl(socket, 1));
+        System.out.println(Os.errno());
     }
 
     @Test
-    @Ignore
-    public void testReusePort() {
-        bindSocket(Net.socketUdp());
-        bindSocket(Net.socketUdp());
+    public void testReusePort() throws InterruptedException {
+        long fd1 = Net.socketUdp();
+        try {
+            bindSocket(fd1);
+            Thread.sleep(1000L);
+            long fd2 = Net.socketUdp();
+            try {
+                bindSocket(fd2);
+            } finally {
+                Net.close(fd2);
+            }
+        } finally {
+            Net.close(fd1);
+        }
     }
 
     private void bindSocket(long fd) {
         Assert.assertTrue(fd > 0);
         Assert.assertEquals(0, Net.setReuseAddress(fd));
         Assert.assertEquals(0, Net.setReusePort(fd));
-        Assert.assertTrue(Net.bindUdp(fd, 18215));
+        Assert.assertTrue(Net.bindUdp(fd, 0, 18215));
         Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
     }
 }

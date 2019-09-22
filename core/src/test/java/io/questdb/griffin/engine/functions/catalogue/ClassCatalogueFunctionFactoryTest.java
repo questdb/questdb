@@ -38,7 +38,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testLeakAfterIncompleteFetch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class").getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
@@ -75,7 +75,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname").getRecordCursorFactory()) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true);

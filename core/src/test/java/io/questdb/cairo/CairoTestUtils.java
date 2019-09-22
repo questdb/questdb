@@ -45,6 +45,12 @@ public class CairoTestUtils {
         }
     }
 
+    public static void createAllTableWithNewTypes(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModelWithNewTypes(configuration, partitionBy)) {
+            create(model);
+        }
+    }
+
     public static void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
         createTestTable(AbstractCairoTest.configuration, n, rnd, binarySequence);
     }
@@ -148,5 +154,25 @@ public class CairoTestUtils {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
                 .col("date", ColumnType.DATE);
+    }
+
+    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
+        return new TableModel(configuration, "all2", partitionBy)
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)
+                .col("long256", ColumnType.LONG256)
+                .col("chr", ColumnType.CHAR)
+                .timestamp()
+                ;
+
     }
 }

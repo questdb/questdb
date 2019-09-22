@@ -154,6 +154,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
+    private int sqlAnalyticColumnPoolCapacity;
+    private int sqlCreateTableModelPoolCapacity;
+    private int sqlColumnCastModelPoolCapacity;
+    private int sqlRenameTableModelPoolCapacity;
+    private int sqlWithClauseModelPoolCapacity;
+    private int sqlInsertAsSelectModelPoolCapacity;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -275,6 +281,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
+        this.sqlAnalyticColumnPoolCapacity = getInt(properties, "cairo.sql.analytic.column.pool.capacity", 64);
+        this.sqlCreateTableModelPoolCapacity = getInt(properties, "cairo.sql.create.table.model.pool.capacity", 16);
+        this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);
+        this.sqlRenameTableModelPoolCapacity = getInt(properties, "cairo.sql.rename.table.model.pool.capacity", 16);
+        this.sqlWithClauseModelPoolCapacity = getInt(properties, "cairo.sql.with.clause.model.pool.capacity", 128);
+        this.sqlInsertAsSelectModelPoolCapacity = getInt(properties, "cairo.sql.insert.as.select.model.pool.capacity", 64);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -916,6 +928,36 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJoinMetadataPageSize() {
             return sqlJoinMetadataPageSize;
+        }
+
+        @Override
+        public int getAnalyticColumnPoolCapacity() {
+            return sqlAnalyticColumnPoolCapacity;
+        }
+
+        @Override
+        public int getCreateTableModelPoolCapacity() {
+            return sqlCreateTableModelPoolCapacity;
+        }
+
+        @Override
+        public int getColumnCastModelPoolCapacity() {
+            return sqlColumnCastModelPoolCapacity;
+        }
+
+        @Override
+        public int getRenameTableModelPoolCapacity() {
+            return sqlRenameTableModelPoolCapacity;
+        }
+
+        @Override
+        public int getWithClauseModelPoolCapacity() {
+            return sqlWithClauseModelPoolCapacity;
+        }
+
+        @Override
+        public int getInsertPoolCapacity() {
+            return sqlInsertAsSelectModelPoolCapacity;
         }
     }
 

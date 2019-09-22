@@ -39,6 +39,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.griffin.CompiledQuery.TRUNCATE;
+
 public class TruncateTest extends AbstractGriffinTest {
 
     @Before
@@ -118,7 +120,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                 false
                         );
 
-                        Assert.assertNull(compiler.compile("truncate table x"));
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x").getType());
 
                         assertQuery(
                                 "count\n" +
@@ -275,7 +277,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     false
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x").getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(DefaultSqlExecutionContext.INSTANCE)) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
@@ -316,7 +318,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     false
             );
 
-            Assert.assertNull(compiler.compile("truncate table x, y"));
+            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y").getType());
 
             assertQuery(
                     "count\n" +

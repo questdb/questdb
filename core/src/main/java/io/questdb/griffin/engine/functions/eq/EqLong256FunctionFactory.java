@@ -28,90 +28,47 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class EqLong256FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(Hs)";
+        return "=(HH)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        final CharSequence hexLong256 = args.getQuick(1).getStr(null);
-        int len = hexLong256.length();
-        int n;
-
-        long long0 = 0;
-        long long1 = 0;
-        long long2 = 0;
-        long long3 = 0;
-        try {
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long0 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long1 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long2 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long3 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            if (len > 2) {
-                throw SqlException.position(args.getQuick(1).getPosition()).put("value is too long");
-            }
-
-            return new Func(position, args.getQuick(0), long0, long1, long2, long3);
-        } catch (NumericException e) {
-            throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
-        }
-
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final long long0;
-        private final long long1;
-        private final long long2;
-        private final long long3;
+    private static class Func extends BooleanFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public Func(int position, Function arg, long long0, long long1, long long2, long long3) {
+        public Func(int position, Function left, Function right) {
             super(position);
-            this.arg = arg;
-            this.long0 = long0;
-            this.long1 = long1;
-            this.long2 = long2;
-            this.long3 = long3;
+            this.left = left;
+            this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            final Long256 value = arg.getLong256A(rec);
-            return value.getLong0() == long0 && value.getLong1() == long1 && value.getLong2() == long2 && value.getLong3() == long3;
+            final Long256 lv = left.getLong256A(rec);
+            final Long256 rv = right.getLong256A(rec);
+            return lv.equals(rv);
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

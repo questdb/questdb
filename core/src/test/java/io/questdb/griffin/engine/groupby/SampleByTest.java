@@ -250,7 +250,7 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x")) {
+                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x").getRecordCursorFactory()) {
                             factory.getCursor(sqlExecutionContext);
                         }
                         Assert.fail();
@@ -1194,7 +1194,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
-                            try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)")) {
+                            try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)").getRecordCursorFactory()) {
                                 // with mmap count = 5 we should get failure in cursor
                                 factory.getCursor(sqlExecutionContext);
                             }
@@ -2609,7 +2609,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillPrevNoTimestampLong256AndChar() throws Exception {
         assertQuery("a\tb\tsum\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\tNaN\n" +
@@ -2629,7 +2629,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tNaN\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2649,7 +2649,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tNaN\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2669,7 +2669,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tNaN\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2689,7 +2689,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tNaN\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2709,7 +2709,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tNaN\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2729,7 +2729,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.577894791518\n" +
                         "0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tNaN\n" +
                         "0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2771,7 +2771,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(5)" +
                         ") timestamp(k)",
                 "a\tb\tsum\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\tNaN\n" +
@@ -2796,7 +2796,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2821,7 +2821,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2846,7 +2846,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2871,7 +2871,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2896,7 +2896,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2921,7 +2921,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2946,7 +2946,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2971,7 +2971,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -2996,7 +2996,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -3021,7 +3021,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tNaN\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tNaN\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -3046,7 +3046,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\t0.287997393968\n" +
                         "0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\t0.240083628591\n" +
                         "0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tNaN\n" +
-                        "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t0.284557779121\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.284557779121\n" +
                         "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.842341092088\n" +
                         "0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.349107036373\n" +
                         "0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.559916180480\n" +
@@ -3484,7 +3484,7 @@ public class SampleByTest extends AbstractGriffinTest {
                                 " long_sequence(20)" +
                                 ") timestamp(k) partition by NONE"));
 
-                try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
+                try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)").getRecordCursorFactory()) {
                     assertTimestamp("k", factory);
                     String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                             "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +

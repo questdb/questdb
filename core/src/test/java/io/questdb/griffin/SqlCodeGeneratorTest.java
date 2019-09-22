@@ -25,18 +25,19 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
 
 public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
@@ -64,8 +65,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, ? from long_sequence(2)", sqlExecutionContext)) {
-                    assertCursor("x\t?\n" +
+                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
+                    assertCursor("x\t$1\n" +
                                     "1\t10\n" +
                                     "2\t10\n",
                             factory,
@@ -87,7 +88,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("y", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext)) {
+                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t:y\n" +
                                     "1\t10\n" +
                                     "2\t10\n",
@@ -110,7 +111,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext)) {
+                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
                                     "2\t10\n",
@@ -133,7 +134,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = ?", sqlExecutionContext)) {
+                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\n" +
                                     "10\n",
                             factory,
@@ -147,7 +148,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", sqlExecutionContext));
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -175,7 +176,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", sqlExecutionContext));
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
             try {
                 compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", sqlExecutionContext);
                 Assert.fail();
@@ -192,7 +193,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", sqlExecutionContext));
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
             compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
 
@@ -278,6 +279,130 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "97.595346366902\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testInsertAll() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                CairoTestUtils.createAllTableWithNewTypes(configuration, PartitionBy.NONE);
+                // this is BLOB
+                byte[] blob = new byte[500];
+                TestBinarySequence bs = new TestBinarySequence();
+                bs.of(blob);
+                Rnd rnd = new Rnd();
+
+                // this is type declaration to have query compile correctly
+                bindVariableService.setInt(0, 0);
+                bindVariableService.setShort(1, (short) 10);
+                bindVariableService.setByte(2, (byte) 91);
+                bindVariableService.setDouble(3, 9.2);
+                bindVariableService.setFloat(4, 5.6f);
+                bindVariableService.setLong(5, 99901);
+                bindVariableService.setStr(6, "hello kitty");
+                bindVariableService.setStr(7, "sym?");
+                bindVariableService.setBoolean(8, true);
+                bindVariableService.setBin(9, bs);
+                bindVariableService.setDate(10, 1234L);
+                bindVariableService.setLong256(11, 1, 2, 3, 4);
+                bindVariableService.setChar(12, 'A');
+                bindVariableService.setTimestamp(13, 0);
+
+                final CompiledQuery cq = compiler.compile(
+                        "insert into all2 (" +
+                                "int, " +
+                                "short, " +
+                                "byte, " +
+                                "double, " +
+                                "float, " +
+                                "long, " +
+                                "str, " +
+                                "sym, " +
+                                "bool, " +
+                                "bin, " +
+                                "date, " +
+                                "long256, " +
+                                "chr, " +
+                                "timestamp" +
+                                ") values (" +
+                                "$1, " +
+                                "$2, " +
+                                "$3, " +
+                                "$4, " +
+                                "$5, " +
+                                "$6, " +
+                                "$7, " +
+                                "$8, " +
+                                "$9, " +
+                                "$10, " +
+                                "$11, " +
+                                "$12, " +
+                                "$13, " +
+                                "$14)",
+                        sqlExecutionContext
+                );
+
+                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "all2")) {
+                    for (int i = 0; i < 1_000_000; i++) {
+                        bindVariableService.setInt(0, rnd.nextInt());
+                        bindVariableService.setShort(1, rnd.nextShort());
+                        bindVariableService.setByte(2, rnd.nextByte());
+                        bindVariableService.setDouble(3, rnd.nextDouble2());
+                        bindVariableService.setFloat(4, rnd.nextFloat2());
+                        bindVariableService.setLong(5, rnd.nextLong());
+                        bindVariableService.setStr(6, rnd.nextChars(6));
+                        bindVariableService.setStr(7, rnd.nextChars(1));
+                        bindVariableService.setBoolean(8, rnd.nextBoolean());
+                        rnd.nextBytes(blob);
+                        bindVariableService.setBin(9, bs);
+                        bindVariableService.setDate(10, rnd.nextLong());
+                        bindVariableService.setLong256(11, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                        bindVariableService.setChar(12, rnd.nextChar());
+                        bindVariableService.setTimestamp(13, 0);
+
+                        cq.getInsertStatement().execute(writer, sqlExecutionContext);
+                    }
+                    writer.commit();
+                }
+
+                rnd.reset();
+
+                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "all2")) {
+                    final TableReaderRecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(0));
+                        Assert.assertEquals(rnd.nextShort(), record.getShort(1));
+                        Assert.assertEquals(rnd.nextByte(), record.getByte(2));
+                        Assert.assertEquals(rnd.nextDouble2(), record.getDouble(3), 0.0001);
+                        Assert.assertEquals(rnd.nextFloat2(), record.getFloat(4), 0.000001);
+                        Assert.assertEquals(rnd.nextLong(), record.getLong(5));
+                        TestUtils.assertEquals(rnd.nextChars(6), record.getStr(6));
+                        TestUtils.assertEquals(rnd.nextChars(1), record.getSym(7));
+                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(8));
+                        rnd.nextBytes(blob);
+                        BinarySequence binarySequence = record.getBin(9);
+                        Assert.assertEquals(blob.length, binarySequence.length());
+                        for (int j = 0, m = blob.length; j < m; j++) {
+                            Assert.assertEquals(blob[j], binarySequence.byteAt(j));
+                        }
+                        Assert.assertEquals(rnd.nextLong(), record.getDate(10));
+                        Long256 long256 = record.getLong256A(11);
+                        Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                        Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                        Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                        Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+                        Assert.assertEquals(rnd.nextChar(), record.getChar(12));
+                        Assert.assertEquals(0, record.getTimestamp(13));
+                    }
+                }
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
     }
 
     @Test
@@ -368,7 +493,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "insert into x (a,b)",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
                 19,
-                "'select' expected"
+                "'select' or 'values' expected"
         );
     }
 
@@ -1222,7 +1347,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     try (final RecordCursorFactory factory = compiler.compile(
                             "select * from x latest by b where b = 'PEHN' and a < 22",
                             sqlExecutionContext
-                    )) {
+                    ).getRecordCursorFactory()) {
                         try {
                             assertCursor(("a\tb\tk\n" +
                                     "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory, true);
@@ -2141,7 +2266,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("var", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", sqlExecutionContext)) {
+                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\n" +
                                     "10\n",
                             factory,
@@ -2198,7 +2323,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testOrderByLong256AndChar() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
-                "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
                 "0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\t1970-01-14T21:20:00.000000Z\n" +
                 "0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t1970-01-17T04:53:20.000000Z\n" +
                 "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
@@ -2220,7 +2345,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final String expected2 = "a\tb\tk\n" +
                 "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
-                "0x9f9b2131d49fcd1d6b8139815c50d34110cde812ce60ee10a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t1970-01-01T00:00:00.000000Z\n" +
                 "0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE\t1970-01-14T21:20:00.000000Z\n" +
                 "0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t1970-01-17T04:53:20.000000Z\n" +
                 "0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\t1970-01-10T06:13:20.000000Z\n" +
@@ -3108,10 +3233,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext));
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
 
             try {
-                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext)) {
+                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext).getRecordCursorFactory()) {
                     Assert.assertNotNull(factory);
                 }
             } finally {

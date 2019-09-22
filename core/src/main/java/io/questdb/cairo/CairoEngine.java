@@ -105,6 +105,13 @@ public class CairoEngine implements Closeable {
 
     public TableReader getReader(
             CairoSecurityContext securityContext,
+            CharSequence tableName
+    ) {
+        return getReader(securityContext, tableName, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    public TableReader getReader(
+            CairoSecurityContext securityContext,
             CharSequence tableName,
             long version
     ) {

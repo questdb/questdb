@@ -23,17 +23,20 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class VirtualRecord implements Record {
+public class VirtualRecord implements Record, ColumnTypes {
     private final ObjList<? extends Function> functions;
+    private final int columnCount;
     private Record base;
 
     public VirtualRecord(ObjList<? extends Function> functions) {
         this.functions = functions;
+        this.columnCount = functions.size();
     }
 
     public Record getBaseRecord() {
@@ -48,6 +51,16 @@ public class VirtualRecord implements Record {
     @Override
     public long getBinLen(int col) {
         return getFunction(col).getBinLen(base);
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return functions.getQuick(columnIndex).getType();
     }
 
     @Override

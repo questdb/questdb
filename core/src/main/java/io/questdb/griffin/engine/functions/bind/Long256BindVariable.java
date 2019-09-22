@@ -24,58 +24,43 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.StatelessFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
-class StrBindVariable extends StrFunction implements StatelessFunction {
-    private final StringSink sink = new StringSink();
-    private boolean isNull = false;
+class Long256BindVariable extends Long256Function implements StatelessFunction {
+    final Long256Impl value = new Long256Impl();
 
-    public StrBindVariable(CharSequence value) {
+    public Long256BindVariable(Long256 value) {
         super(0);
-        if (value == null) {
-            isNull = true;
-        } else {
-            sink.put(value);
-        }
+        this.value.copyFrom(value);
+    }
+
+    public Long256BindVariable(long l0, long l1, long l2, long l3) {
+        super(0);
+        this.value.setAll(l0, l1, l2, l3);
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return isNull ? null : sink;
+    public Long256 getLong256A(Record rec) {
+        return value;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return isNull ? null : sink;
+    public Long256 getLong256B(Record rec) {
+        return value;
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        if (isNull) {
-            sink.put((CharSequence) null);
-        } else {
-            sink.put(this.sink);
-        }
-    }
+    public void getLong256(Record rec, CharSink sink) {
+        final long a = value.getLong0();
+        final long b = value.getLong1();
+        final long c = value.getLong2();
+        final long d = value.getLong3();
 
-    @Override
-    public int getStrLen(Record rec) {
-        if (isNull) {
-            return -1;
-        }
-        return sink.length();
-    }
-
-    public void setValue(CharSequence value) {
-        sink.clear();
-        if (value == null) {
-            isNull = true;
-        } else {
-            isNull = false;
-            sink.put(value);
-        }
+        Numbers.appendLong256(a, b, c, d, sink);
     }
 }

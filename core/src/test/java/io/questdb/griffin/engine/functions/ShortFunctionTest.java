@@ -108,11 +108,6 @@ public class ShortFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testLong256() {
         function.getLong256(null, null);
     }

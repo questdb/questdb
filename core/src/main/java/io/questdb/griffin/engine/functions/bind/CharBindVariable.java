@@ -23,34 +23,20 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.griffin.engine.functions.StatelessFunction;
 
-public class StrBindVariableTest {
-    @Test
-    public void testNull() {
-        StrBindVariable variable = new StrBindVariable(null);
-        Assert.assertNull(variable.getStr(null));
-        Assert.assertNull(variable.getStrB(null));
-        Assert.assertEquals(-1, variable.getStrLen(null));
+class CharBindVariable extends CharFunction implements StatelessFunction {
+    char value;
 
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
+    public CharBindVariable(char value) {
+        super(0);
+        this.value = value;
     }
 
-    @Test
-    public void testSimple() {
-        String expected = "xyz";
-        StrBindVariable variable = new StrBindVariable(expected);
-        TestUtils.assertEquals(expected, variable.getStr(null));
-        TestUtils.assertEquals(expected, variable.getStrB(null));
-        Assert.assertEquals(expected.length(), variable.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        TestUtils.assertEquals(expected, sink);
+    @Override
+    public char getChar(Record rec) {
+        return value;
     }
 }

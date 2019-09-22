@@ -241,4 +241,34 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getSqlJoinMetadataPageSize() {
         return 16 * 1024;
     }
+
+    @Override
+    public int getAnalyticColumnPoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getCreateTableModelPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getColumnCastModelPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getRenameTableModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getWithClauseModelPoolCapacity() {
+        return 128;
+    }
+
+    @Override
+    public int getInsertPoolCapacity() {
+        return 8;
+    }
 }

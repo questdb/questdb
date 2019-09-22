@@ -128,7 +128,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean bindUdp(long fd, int port) {
+                public boolean bindUdp(long fd, int ipv4Address, int port) {
                     return false;
                 }
             };

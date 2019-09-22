@@ -2190,7 +2190,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void assertTable(String expected) throws IOException, SqlException {
         try (
-                RecordCursorFactory factory = compiler.compile("test");
+                RecordCursorFactory factory = compiler.compile("test").getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             sink.clear();

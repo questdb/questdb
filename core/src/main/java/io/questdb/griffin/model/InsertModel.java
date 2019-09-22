@@ -26,15 +26,16 @@ package io.questdb.griffin.model;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
-    public static final ObjectFactory<InsertAsSelectModel> FACTORY = InsertAsSelectModel::new;
+public class InsertModel implements ExecutionModel, Mutable, Sinkable {
+    public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
+    private final ObjList<ExpressionNode> columnValues = new ObjList<>();
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
     private int selectKeywordPosition;
 
-    private InsertAsSelectModel() {
+    private InsertModel() {
     }
 
     public boolean addColumn(CharSequence columnName, int columnPosition) {
@@ -45,12 +46,17 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
         return false;
     }
 
+    public void addColumnValue(ExpressionNode value) {
+        columnValues.add(value);
+    }
+
     @Override
     public void clear() {
         this.tableName = null;
         this.queryModel = null;
         this.columnSet.clear();
         this.columnPositions.clear();
+        this.columnValues.clear();
         this.selectKeywordPosition = 0;
     }
 
@@ -60,6 +66,10 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
 
     public CharSequenceHashSet getColumnSet() {
         return columnSet;
+    }
+
+    public ObjList<ExpressionNode> getColumnValues() {
+        return columnValues;
     }
 
     public int getSelectKeywordPosition() {
@@ -105,6 +115,19 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
             }
             sink.put(") ");
         }
-        queryModel.toSink(sink);
+        if (queryModel != null) {
+            queryModel.toSink(sink);
+        } else {
+            sink.put("values (");
+
+            for (int i = 0, m = columnValues.size(); i < m; i++) {
+                if (i > 0) {
+                    sink.put(", ");
+                }
+                sink.put(columnValues.getQuick(i));
+            }
+
+            sink.put(')');
+        }
     }
 }

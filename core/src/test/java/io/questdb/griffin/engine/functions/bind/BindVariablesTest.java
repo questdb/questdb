@@ -34,11 +34,10 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.*;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.time.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -132,14 +131,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setBin(1, null);
         bindVariableService.setBin(0, sequence);
 
-        Function func = expr("to_char(?)")
+        Function func = expr("to_char($1)")
                 .withFunction(new ToCharBinFunctionFactory())
                 .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
 
-        Function func2 = expr("length(?)")
+        Function func2 = expr("length($1)")
                 .withFunction(new LengthBinFunctionFactory())
                 .$();
 
@@ -198,7 +197,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testBooleanIndexed() throws SqlException {
         bindVariableService.setBoolean(1, false);
         bindVariableService.setBoolean(0, false);
-        Function func = expr("not ?")
+        Function func = expr("not $1")
                 .withFunction(new NotFunctionFactory())
                 .$();
 
@@ -228,7 +227,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testByteIndexed() throws SqlException {
         bindVariableService.setByte(1, (byte) -1);
         bindVariableService.setByte(0, (byte) 8);
-        Function func = expr("b + ?")
+        Function func = expr("b + $1")
                 .withFunction(new AddByteFunctionFactory())
                 .withColumn("b", ColumnType.BYTE, (byte) 22)
                 .$();
@@ -255,10 +254,23 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testChar() throws SqlException {
+        bindVariableService.setChar("abc", 'x');
+        Function func = expr(":abc")
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        Assert.assertEquals('x', func.getChar(builder.getRecord()));
+
+        bindVariableService.setChar("abc", 'y');
+        Assert.assertEquals('y', func.getChar(builder.getRecord()));
+    }
+
+    @Test
     public void testDateIndexed() throws SqlException, NumericException {
         bindVariableService.setDate(1, 0);
         bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
-        Function func = expr("to_char(?, 'yyyy-MM')")
+        Function func = expr("to_char($1, 'yyyy-MM')")
                 .withFunction(new ToCharDateFunctionFactory())
                 .$();
 
@@ -290,7 +302,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setDouble(0, 0.223232);
         bindVariableService.setDouble(1, 9.222333);
 
-        Function func = expr("? + ?")
+        Function func = expr("$1 + $2")
                 .withFunction(new AddDoubleFunctionFactory())
                 .$();
 
@@ -302,6 +314,27 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
 
         Assert.assertEquals(0.355531, func.getDouble(builder.getRecord()), 0.001);
+
+        func.close();
+    }
+
+    @Test
+    public void testCharIndexed() throws SqlException {
+        bindVariableService.setInt(0, 'C');
+        bindVariableService.setChar(1, 'A');
+
+        Function func = expr("$1 - $2")
+                .withFunction(new SubIntFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        Assert.assertEquals(2, func.getInt(builder.getRecord()));
+
+        bindVariableService.setChar(1, '0');
+
+        func.init(null, sqlExecutionContext);
+
+        Assert.assertEquals(19, func.getInt(builder.getRecord()));
 
         func.close();
     }
@@ -393,7 +426,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setFloat(0, 7.6f);
         bindVariableService.setFloat(1, 9.21f);
 
-        Function func = expr("? + ?")
+        Function func = expr("$1 + $2")
                 .withFunction(new AddFloatFunctionFactory())
                 .$();
 
@@ -429,11 +462,63 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLong256Compare() throws SqlException {
+        bindVariableService.setLong256("x", 1, 2, 3, 4);
+        bindVariableService.setLong256("y", 1, 2, 3, 4);
+
+        Function func = expr(":x = :y")
+                .withFunction(new EqLong256FunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+
+        Assert.assertTrue(func.getBool(builder.getRecord()));
+
+        bindVariableService.setLong256("y", 2, 4, 5, 6);
+        Assert.assertFalse(func.getBool(builder.getRecord()));
+    }
+
+    @Test
+    public void testLong256() throws SqlException {
+        bindVariableService.setLong256("x", 1, 2, 3, 4);
+
+        Function func = expr(":x")
+                .$();
+
+        func.init(null, sqlExecutionContext);
+
+        Long256 longA = func.getLong256A(builder.getRecord());
+        Long256 longB = func.getLong256B(builder.getRecord());
+        Assert.assertSame(longA, longB);
+
+        sink.clear();
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("0x04000000000000000300000000000000020000000000000001", sink);
+
+        sink.clear();
+        bindVariableService.setLong256Null("x");
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("", sink);
+
+        // test we can set the wrapper
+        Long256Impl wrapper = new Long256Impl();
+        wrapper.setLong0(999);
+        wrapper.setLong1(888);
+        wrapper.setLong2(777);
+        wrapper.setLong3(666);
+
+        bindVariableService.setLong256("x", wrapper);
+        sink.clear();
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("0x029a0000000000000309000000000000037800000000000003e7", sink);
+    }
+
+    @Test
     public void testIntIndexed() throws SqlException {
         bindVariableService.setInt(2, 9000);
         bindVariableService.setInt(0, 9);
         bindVariableService.setInt(1, 20);
-        Function func = expr("? + ?")
+        Function func = expr("$1 + $2")
                 .withFunction(new AddIntFunctionFactory())
                 .$();
 
@@ -467,7 +552,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setLong(2, 90000);
         bindVariableService.setLong(0, 9);
         bindVariableService.setLong(1, 20);
-        Function func = expr("? + ?")
+        Function func = expr("$1 + $2")
                 .withFunction(new AddLongFunctionFactory())
                 .$();
 
@@ -499,7 +584,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testShortIndexed() throws SqlException {
         bindVariableService.setShort(1, (short) 2);
         bindVariableService.setShort(0, (short) 8);
-        Function func = expr("b + ?")
+        Function func = expr("b + $1")
                 .withFunction(new AddShortFunctionFactory())
                 .withColumn("b", ColumnType.SHORT, (short) 22)
                 .$();
@@ -545,7 +630,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt(0, 1);
         bindVariableService.setStr(1, "abcd");
 
-        Function func = expr("substr(?, ?)")
+        Function func = expr("substr($2, $1)")
                 .withFunction(new SubStrFunctionFactory())
                 .$();
 
@@ -557,7 +642,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testStrIndexed() throws SqlException {
         bindVariableService.setStr(0, "abc");
-        Function func = expr("length(?)")
+        Function func = expr("length($1)")
                 .withFunction(new LengthStrFunctionFactory())
                 .$();
 
@@ -588,7 +673,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setTimestamp(1, 25);
         bindVariableService.setTimestamp(0, io.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
 
-        Function func = expr("to_char(?, 'yyyy-MM')")
+        Function func = expr("to_char($1, 'yyyy-MM')")
                 .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
@@ -615,7 +700,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testUndefinedIndexed() {
         try {
-            expr("to_char(?, 'yyyy-MM')")
+            expr("to_char($1, 'yyyy-MM')")
                     .withFunction(new ToCharDateFunctionFactory())
                     .withFunction(new ToCharTimestampFunctionFactory())
                     .$();

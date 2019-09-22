@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -94,7 +95,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             do {
                 sqlExecutionContext.with(context.getCairoSecurityContext(), null);
                 if (state.recordCursorFactory == null) {
-                    state.recordCursorFactory = compiler.compile(state.query, sqlExecutionContext);
+                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    if (cc.getType() == CompiledQuery.SELECT) {
+                        state.recordCursorFactory = cc.getRecordCursorFactory();
+                    }
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).

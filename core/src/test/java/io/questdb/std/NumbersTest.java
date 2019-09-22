@@ -241,7 +241,7 @@ public class NumbersTest {
     public void testLongToHex() {
         long value = -8372462554923253491L;
         StringSink sink = new StringSink();
-        Numbers.appendHex(sink, value);
+        Numbers.appendHex(sink, value, false);
         TestUtils.assertEquals(Long.toHexString(value), sink);
     }
 
@@ -249,7 +249,7 @@ public class NumbersTest {
     public void testLongToHex2() {
         long value = 0x5374f5fbcef4819L;
         StringSink sink = new StringSink();
-        Numbers.appendHex(sink, value);
+        Numbers.appendHex(sink, value, false);
         TestUtils.assertEquals("0" + Long.toHexString(value), sink);
     }
 
@@ -257,7 +257,7 @@ public class NumbersTest {
     public void testLongToHex3() {
         long value = 0xbfbca5da8f0645L;
         StringSink sink = new StringSink();
-        Numbers.appendHex(sink, value);
+        Numbers.appendHex(sink, value, false);
         TestUtils.assertEquals(Long.toHexString(value), sink);
     }
 

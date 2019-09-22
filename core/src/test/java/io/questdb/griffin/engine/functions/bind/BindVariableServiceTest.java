@@ -126,6 +126,16 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testCharIndexedOverride() {
+        bindVariableService.setInt(2, 10);
+        try {
+            bindVariableService.setChar(2, 'o');
+        } catch (BindException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 2 is already defined as INT");
+        }
+    }
+
+    @Test
     public void testDoubleOverride() {
         bindVariableService.setInt("a", 10);
         try {
@@ -170,6 +180,16 @@ public class BindVariableServiceTest {
         bindVariableService.setLong("a", 10);
         try {
             bindVariableService.setInt("a", 5);
+        } catch (BindException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
+    public void testCharOverride() {
+        bindVariableService.setLong("a", 10);
+        try {
+            bindVariableService.setChar("a", 'k');
         } catch (BindException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
         }

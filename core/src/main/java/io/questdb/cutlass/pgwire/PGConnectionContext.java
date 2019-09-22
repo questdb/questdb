@@ -912,8 +912,10 @@ public class PGConnectionContext implements IOContext, Mutable {
 
                 currentFactory = factoryCache.peek(queryText);
                 if (currentFactory == null) {
-                    currentFactory = compiler.compile(queryText, sqlExecutionContext);
-                    if (currentFactory != null) {
+                    CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+
+                    if (cc.getType() == CompiledQuery.SELECT) {
+                        currentFactory = cc.getRecordCursorFactory();
                         factoryCache.put(queryText, currentFactory);
                     } else {
                         // DDL SQL
@@ -951,8 +953,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.reset();
         currentFactory = factoryCache.peek(query);
         if (currentFactory == null) {
-            currentFactory = compiler.compile(query, sqlExecutionContext);
-            if (currentFactory != null) {
+            final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+            if (cc.getType() == CompiledQuery.SELECT) {
+                currentFactory = cc.getRecordCursorFactory();
                 factoryCache.put(query, currentFactory);
             } else {
                 // DDL SQL

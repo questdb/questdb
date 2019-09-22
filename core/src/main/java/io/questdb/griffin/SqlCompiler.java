@@ -25,10 +25,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
@@ -97,9 +94,10 @@ public class SqlCompiler implements Closeable {
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
+    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    private final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -176,7 +174,7 @@ public class SqlCompiler implements Closeable {
 
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
-    private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to, ColumnFilter toColumnFilter) {
+    private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
         asm.setupPool();
@@ -640,11 +638,11 @@ public class SqlCompiler implements Closeable {
         Misc.free(path);
     }
 
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+    public CompiledQuery compile(CharSequence query) throws SqlException {
         return compile(query, DefaultSqlExecutionContext.INSTANCE);
     }
 
-    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+    public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         //
         // these are quick executions that do not require building of a model
@@ -659,7 +657,7 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
-    private RecordCursorFactory alterTable(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         expectKeyword(lexer, "table");
 
@@ -684,7 +682,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is busy");
         }
 
-        return null;
+        return compiledQuery.ofAlter();
     }
 
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
@@ -840,7 +838,6 @@ public class SqlCompiler implements Closeable {
     }
 
     private void clear() {
-        functionParser.clear();
         sqlNodePool.clear();
         characterStore.clear();
         queryColumnPool.clear();
@@ -855,18 +852,36 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext);
             case ExecutionModel.INSERT_AS_SELECT:
-                return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model, executionContext);
+                InsertModel insertModel = (InsertModel) model;
+                if (insertModel.getQueryModel() != null) {
+                    return validateAndOptimiseInsertAsSelect(insertModel, executionContext);
+                } else {
+                    return lightlyValidateInsertModel(insertModel);
+                }
             default:
                 return model;
         }
     }
 
-    private RecordCursorFactory compileSet(SqlExecutionContext executionContext) {
-        return null;
+    private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
+        ExpressionNode tableName = model.getTableName();
+        if (tableName.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tableName.position, "literal expected");
+        }
+
+        if (model.getColumnSet().size() > 0 && model.getColumnSet().size() != model.getColumnValues().size()) {
+            throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
+        }
+
+        return model;
+    }
+
+    private CompiledQuery compileSet(SqlExecutionContext executionContext) {
+        return compiledQuery.ofSet();
     }
 
     @Nullable
-    private RecordCursorFactory compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non reentrant and once
         // factory is out of this method the caller assumes
@@ -880,22 +895,21 @@ public class SqlCompiler implements Closeable {
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, executionContext);
+                return compiledQuery.of(generate((QueryModel) executionModel, executionContext));
             case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(executionModel, executionContext);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        insertAsSelectMethod,
-                        executionModel,
-                        configuration.getCreateAsSelectRetryCount(),
-                        executionContext
-                );
-                break;
+                return createTableWithRetries(executionModel, executionContext);
             default:
-                break;
+                InsertModel insertModel = (InsertModel) executionModel;
+                if (insertModel.getQueryModel() != null) {
+                    return executeWithRetries(
+                            insertAsSelectMethod,
+                            executionModel,
+                            configuration.getCreateAsSelectRetryCount(),
+                            executionContext
+                    );
+                }
+                return insert(executionModel, executionContext);
         }
-        return null;
     }
 
     private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
@@ -938,7 +952,7 @@ public class SqlCompiler implements Closeable {
         writer.commit();
     }
 
-    private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
@@ -971,6 +985,8 @@ public class SqlCompiler implements Closeable {
         } else {
             throw SqlException.$(name.position, "cannot acquire table lock");
         }
+
+        return compiledQuery.ofCreateTable();
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1018,14 +1034,14 @@ public class SqlCompiler implements Closeable {
      * @param executionContext provides access to bind variables and athorization module
      * @throws SqlException contains text of error and error position in SQL text.
      */
-    private void createTableWithRetries(
+    private CompiledQuery createTableWithRetries(
             ExecutionModel executionModel,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
+        return executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
-    private RecordCursorFactory dropTable(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         expectKeyword(lexer, "table");
 
@@ -1038,10 +1054,10 @@ public class SqlCompiler implements Closeable {
         CharSequence tableName = GenericLexer.immutableOf(tok);
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
 
-        return null;
+        return compiledQuery.ofDrop();
     }
 
-    private RecordCursorFactory copyTable(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery copyTable(SqlExecutionContext executionContext) throws SqlException {
 
         CharSequence tok;
 
@@ -1117,10 +1133,10 @@ public class SqlCompiler implements Closeable {
 //        CharSequence tableName = GenericLexer.immutableOf(tok);
 
 
-        return null;
+        return compiledQuery.ofCopy();
     }
 
-    private void executeWithRetries(
+    private CompiledQuery executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
             int retries,
@@ -1129,8 +1145,7 @@ public class SqlCompiler implements Closeable {
         int attemptsLeft = retries;
         do {
             try {
-                method.execute(executionModel, executionContext);
-                break;
+                return method.execute(executionModel, executionContext);
             } catch (ReaderOutOfDateException e) {
                 attemptsLeft--;
                 clear();
@@ -1139,17 +1154,15 @@ public class SqlCompiler implements Closeable {
             }
         } while (attemptsLeft > 0);
 
-        if (attemptsLeft < 1) {
-            throw SqlException.position(0).put("underlying cursor is extremely volatile");
-        }
+        throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
-        final InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
+    private CompiledQuery insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
@@ -1245,6 +1258,72 @@ public class SqlCompiler implements Closeable {
                 }
             }
         }
+        return compiledQuery.ofInsertAsSelect();
+    }
+
+    private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final InsertModel model = (InsertModel) executionModel;
+        final ExpressionNode name = model.getTableName();
+        tableExistsOrFail(name.position, name.token, executionContext);
+
+        try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
+            final long structureVersion = reader.getVersion();
+            final RecordMetadata metadata = reader.getMetadata();
+            final int writerTimestampIndex = metadata.getTimestampIndex();
+            final CharSequenceHashSet columnSet = model.getColumnSet();
+            final int columnSetSize = columnSet.size();
+            final ColumnFilter columnFilter;
+            final ObjList<Function> valueFunctions;
+            Function timestampFunction = null;
+            if (columnSetSize > 0) {
+                listColumnFilter.clear();
+                columnFilter = listColumnFilter;
+                valueFunctions = new ObjList<>(columnSetSize);
+                for (int i = 0; i < columnSetSize; i++) {
+                    int index = metadata.getColumnIndex(columnSet.get(i));
+                    if (index < 0) {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
+                    }
+
+                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), metadata, executionContext);
+                    if (!isAssignableFrom(metadata.getColumnType(index), function.getType())) {
+                        throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(index)));
+                    }
+
+                    if (i == writerTimestampIndex) {
+                        timestampFunction = function;
+                    } else {
+                        valueFunctions.add(function);
+                        listColumnFilter.add(index);
+                    }
+                }
+            } else {
+                final int columnCount = metadata.getColumnCount();
+                entityColumnFilter.of(columnCount);
+                columnFilter = entityColumnFilter;
+                valueFunctions = new ObjList<>(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), metadata, executionContext);
+                    if (!isAssignableFrom(metadata.getColumnType(i), function.getType())) {
+                        throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(i)));
+                    }
+                    if (i == writerTimestampIndex) {
+                        timestampFunction = function;
+                    } else {
+                        valueFunctions.add(function);
+                    }
+                }
+            }
+
+            // validate timestamp
+            if (writerTimestampIndex > -1 && timestampFunction == null) {
+                throw SqlException.$(0, "insert statement must populate timestamp");
+            }
+
+            VirtualRecord record = new VirtualRecord(valueFunctions);
+            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, columnFilter);
+            return compiledQuery.ofInsert(new InsertStatementImpl(record, copier, timestampFunction, structureVersion));
+        }
     }
 
     private boolean removeTableDirectory(CreateTableModel model) {
@@ -1258,7 +1337,7 @@ public class SqlCompiler implements Closeable {
         return false;
     }
 
-    private RecordCursorFactory repairTables(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery repairTables(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !Chars.equalsLowerCaseAscii(tok, "table")) {
@@ -1286,7 +1365,7 @@ public class SqlCompiler implements Closeable {
             tok = SqlUtil.fetchNext(lexer);
 
         } while (tok != null && Chars.equals(tok, ','));
-        return null;
+        return compiledQuery.ofRepair();
     }
 
     void setFullSatJoins(boolean value) {
@@ -1319,7 +1398,7 @@ public class SqlCompiler implements Closeable {
         parser.expr(lexer, listener);
     }
 
-    private RecordCursorFactory truncateTables(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery truncateTables(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
 
@@ -1383,11 +1462,11 @@ public class SqlCompiler implements Closeable {
         } finally {
             tableWriters.clear();
         }
-        return null;
+        return compiledQuery.ofTruncate();
     }
 
-    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(
-            InsertAsSelectModel model,
+    private InsertModel validateAndOptimiseInsertAsSelect(
+            InsertModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
@@ -1437,12 +1516,12 @@ public class SqlCompiler implements Closeable {
 
     @FunctionalInterface
     private interface KeywordBasedExecutor {
-        RecordCursorFactory execute(SqlExecutionContext executionContext) throws SqlException;
+        CompiledQuery execute(SqlExecutionContext executionContext) throws SqlException;
     }
 
     @FunctionalInterface
     private interface ExecutableMethod {
-        void execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
+        CompiledQuery execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 
     public interface RecordToRowCopier {

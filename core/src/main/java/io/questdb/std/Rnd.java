@@ -43,7 +43,7 @@ public class Rnd {
     }
 
     public boolean nextBoolean() {
-        return nextLong(1) != 0;
+        return nextLong() >>> (64 - 1) != 0;
     }
 
     public byte nextByte() {
@@ -56,6 +56,13 @@ public class Rnd {
             bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
         }
         return bytes;
+    }
+
+    public void nextBytes(byte[] bytes) {
+        int len = bytes.length;
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
+        }
     }
 
     public char nextChar() {
@@ -80,18 +87,8 @@ public class Rnd {
         }
     }
 
-    @Deprecated
-    public double nextDouble() {
-        return (nextLong(26) << 27 + nextLong(27)) * DOUBLE_UNIT;
-    }
-
     public double nextDouble2() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
-    }
-
-    @Deprecated
-    public float nextFloat() {
-        return nextLong(24) * FLOAT_UNIT;
     }
 
     public float nextFloat2() {
@@ -150,7 +147,4 @@ public class Rnd {
         return (int) ((nextLong() & mask) >>> (48 - bits));
     }
 
-    private long nextLong(int bits) {
-        return nextLong() >>> (64 - bits);
-    }
 }

@@ -63,26 +63,6 @@ public class CharFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDouble() {
-        function.getDouble(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetFloat() {
-        function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetInt() {
-        function.getInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong() {
-        function.getLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetMetadata() {
         function.getMetadata();
     }
@@ -95,11 +75,6 @@ public class CharFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetShort() {
-        function.getShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

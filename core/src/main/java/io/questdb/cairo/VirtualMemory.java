@@ -169,15 +169,7 @@ public class VirtualMemory implements Closeable {
             c = getLong(offset + Long.BYTES * 2);
             d = getLong(offset + Long.BYTES * 3);
         }
-
-        if (a == -1L && b == -1L && c == -1L && d == -1L) {
-            return;
-        }
-        sink.put("0x");
-        Numbers.putSignificantHexToSink(sink, d);
-        Numbers.putSignificantHexToSink(sink, c);
-        Numbers.putSignificantHexToSink(sink, b);
-        Numbers.putSignificantHexToSink(sink, a);
+        Numbers.appendLong256(a, b, c, d, sink);
     }
 
     public void getLong256(long offset, Long256Sink sink) {

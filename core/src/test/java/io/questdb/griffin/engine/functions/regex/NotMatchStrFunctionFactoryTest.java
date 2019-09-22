@@ -98,7 +98,7 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
 
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'")) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'").getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor()) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);

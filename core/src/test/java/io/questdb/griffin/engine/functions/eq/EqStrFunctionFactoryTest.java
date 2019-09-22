@@ -67,7 +67,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -124,7 +124,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
@@ -164,7 +164,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = 'UW'", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = 'UW'", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -205,7 +205,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where 'UW' = a", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("x where 'UW' = a", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -245,7 +245,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = null", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = null", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

@@ -25,10 +25,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class BindVariableService {
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
@@ -55,7 +52,8 @@ public class BindVariableService {
     }
 
     public Function getFunction(int index) {
-        if (index < indexedVariables.size()) {
+        final int n = indexedVariables.size();
+        if (index < n) {
             return indexedVariables.getQuick(index);
         }
         return null;
@@ -162,6 +160,20 @@ public class BindVariableService {
         }
     }
 
+    public void setChar(CharSequence name, char value) {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new CharBindVariable(value));
+        } else {
+            Function function = namedVariables.valueAt(index);
+            if (function instanceof CharBindVariable) {
+                ((CharBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
     public void setDate(int index, long value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -249,6 +261,42 @@ public class BindVariableService {
         }
     }
 
+    public void setLong256Null(CharSequence name) {
+        setLong256(name, -1, -1, -1, -1);
+    }
+
+    public void setLong256(CharSequence name, long l0, long l1, long l2, long l3) {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new Long256BindVariable(l0, l1, l2, l3));
+        } else {
+            Function function = namedVariables.valueAt(index);
+            if (function instanceof Long256BindVariable) {
+                Long256Impl v = ((Long256BindVariable) function).value;
+                v.setLong0(l0);
+                v.setLong1(l1);
+                v.setLong2(l2);
+                v.setLong3(l3);
+            } else {
+                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
+    public void setLong256(CharSequence name, Long256 value) {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new Long256BindVariable(value));
+        } else {
+            Function function = namedVariables.valueAt(index);
+            if (function instanceof Long256BindVariable) {
+                ((Long256BindVariable) function).value.copyFrom(value);
+            } else {
+                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
     public void setInt(int index, int value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -261,6 +309,40 @@ public class BindVariableService {
             }
         } else {
             indexedVariables.extendAndSet(index, new IntBindVariable(value));
+        }
+    }
+
+    public void setLong256(int index, long l0, long l1, long l2, long l3) {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new Long256BindVariable(l0, l1, l2, l3));
+            } else if (function instanceof Long256BindVariable) {
+                final Long256Impl v = ((Long256BindVariable) function).value;
+                v.setLong0(l0);
+                v.setLong1(l1);
+                v.setLong2(l2);
+                v.setLong3(l3);
+            } else {
+                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new Long256BindVariable(l0, l1, l2, l3));
+        }
+    }
+
+    public void setChar(int index, char value) {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new CharBindVariable(value));
+            } else if (function instanceof CharBindVariable) {
+                ((CharBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new CharBindVariable(value));
         }
     }
 
@@ -328,7 +410,7 @@ public class BindVariableService {
             if (function == null) {
                 indexedVariables.setQuick(index, new StrBindVariable(value));
             } else if (function instanceof StrBindVariable) {
-                ((StrBindVariable) function).value = value;
+                ((StrBindVariable) function).setValue(value);
             } else {
                 throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
             }
@@ -344,7 +426,7 @@ public class BindVariableService {
         } else {
             Function function = namedVariables.valueAt(index);
             if (function instanceof StrBindVariable) {
-                ((StrBindVariable) function).value = value;
+                ((StrBindVariable) function).setValue(value);
             } else {
                 throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
             }

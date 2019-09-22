@@ -40,7 +40,7 @@ import io.questdb.std.*;
 
 import java.util.ArrayDeque;
 
-public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
 
     // order of values matters here, partial match must have greater value than fuzzy match
@@ -72,7 +72,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
-    private int bindVariableIndex = 0;
     private SqlExecutionContext sqlExecutionContext;
 
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
@@ -200,11 +199,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
-    @Override
-    public void clear() {
-        bindVariableIndex = 0;
-    }
-
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = sqlExecutionContext.getBindVariableService().getFunction(variableIndex);
         if (function == null) {
@@ -286,9 +280,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    if (Chars.equals(node.token, '?')) {
-                        stack.push(createIndexParameter(bindVariableIndex++, node));
-                    } else if (Chars.startsWith(node.token, ':')) {
+                    if (Chars.startsWith(node.token, ':')) {
                         stack.push(createNamedParameter(node));
                     } else if (Chars.startsWith(node.token, '$')) {
                         // get variable index from token

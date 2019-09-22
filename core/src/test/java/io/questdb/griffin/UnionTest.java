@@ -123,7 +123,7 @@ public class UnionTest extends AbstractGriffinTest {
                     ") partition by NONE");
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x")) {
+            try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true);
             }
 
@@ -174,7 +174,7 @@ public class UnionTest extends AbstractGriffinTest {
                     " long_sequence(4)" +
                     ") partition by NONE");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false);
             }
 
@@ -279,7 +279,7 @@ public class UnionTest extends AbstractGriffinTest {
                     ") partition by NONE");
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x")) {
+            try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true);
             }
 
@@ -337,7 +337,7 @@ public class UnionTest extends AbstractGriffinTest {
 //            }
 
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false);
             }
 
@@ -437,7 +437,7 @@ public class UnionTest extends AbstractGriffinTest {
                     ") partition by NONE");
 
 
-            try (RecordCursorFactory rcf = compiler.compile("x")) {
+            try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true);
             }
 
@@ -465,7 +465,7 @@ public class UnionTest extends AbstractGriffinTest {
                     " long_sequence(10)" +
                     ") partition by NONE");
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext)) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false);
             }
 

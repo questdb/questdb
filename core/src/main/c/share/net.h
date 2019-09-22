@@ -43,7 +43,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
  * Signature: (JII)Z
  */
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
-        (JNIEnv *, jclass, jlong, jint);
+        (JNIEnv *, jclass, jlong, jint, jint);
 
 /*
  * Class:     com_questdb_network_Net

@@ -318,7 +318,7 @@ public class LogFactoryTest {
 
             // now publish
             int published = 0;
-            int toPublish = 1_000_000;
+            int toPublish = 100_000;
             while (published < toPublish) {
                 long cursor = pubSeq.next();
 

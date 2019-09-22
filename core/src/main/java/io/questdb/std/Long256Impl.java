@@ -68,4 +68,25 @@ public class Long256Impl implements Long256Sink, Long256 {
     public void setLong3(long value) {
         this.l3 = value;
     }
+
+    @SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
+    @Override
+    public boolean equals(Object obj) {
+        final Long256Impl that = (Long256Impl) obj;
+        return l0 == that.l0 && l1 == that.l1 && l2 == that.l2 && l3 == that.l3;
+    }
+
+    public void copyFrom(Long256 value) {
+        this.l0 = value.getLong0();
+        this.l1 = value.getLong1();
+        this.l2 = value.getLong2();
+        this.l3 = value.getLong3();
+    }
+
+    public void setAll(long l0, long l1, long l2, long l3) {
+        this.l0 = l0;
+        this.l1 = l1;
+        this.l2 = l2;
+        this.l3 = l3;
+    }
 }

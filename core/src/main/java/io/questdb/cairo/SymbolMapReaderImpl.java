@@ -166,7 +166,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void updateSymbolCount(int symbolCount) {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
             this.offsetMem.grow(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         }

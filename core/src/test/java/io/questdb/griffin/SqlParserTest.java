@@ -728,6 +728,83 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertValues() throws SqlException {
+        assertModel("insert into x values (3, 'abc', ?)",
+                "insert into x values (3, 'abc', ?)",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertColumnsAndValues() throws SqlException {
+        assertModel("insert into x (a, b) values (3, ?)",
+                "insert into x (a,b) values (3, ?)",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingValues() {
+        assertSyntaxError("insert into x values",
+                20,
+                "'(' expected",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingValue() {
+        assertSyntaxError("insert into x values ()",
+                22,
+                "Expression expected",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingClosingBracket() {
+        assertSyntaxError("insert into x values (?,?",
+                25,
+                "',' expected",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingValueAfterComma() {
+        assertSyntaxError("insert into x values (?,",
+                24,
+                "Expression expected",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertColumnValueMismatch() {
+        assertSyntaxError("insert into x (a,b) values (?)",
+                15,
+                "value count does not match column count",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
     public void testUnionKeepOrderByIndex() throws SqlException {
         assertQuery(
                 "select-choose x from ((select-choose x from (a) union select-choose y from (b) union all select-choose z from (c order by z)) _xQdbA1)",
@@ -4981,10 +5058,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         createModelsAndRun(() -> {
             sink.clear();
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-//            RecordCursorFactory factory = compiler.compile(query);
-//            if (factory != null) {
-//                factory.close();
-//            }
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

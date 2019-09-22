@@ -155,6 +155,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
         Assert.assertTrue(configuration.getCairoConfiguration().isParallelIndexingEnabled());
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertPoolCapacity());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
@@ -332,6 +338,13 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
             Assert.assertFalse(configuration.getCairoConfiguration().isParallelIndexingEnabled());
             Assert.assertEquals(8 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
+
+            Assert.assertEquals(256, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getInsertPoolCapacity());
+            Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
+            Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
 
             Assert.assertEquals(167903521, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9915, configuration.getLineUdpReceiverConfiguration().getPort());

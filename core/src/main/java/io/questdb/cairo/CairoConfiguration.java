@@ -113,4 +113,16 @@ public interface CairoConfiguration {
      * @return memory page size
      */
     int getSqlJoinMetadataPageSize();
+
+    int getAnalyticColumnPoolCapacity();
+
+    int getCreateTableModelPoolCapacity();
+
+    int getColumnCastModelPoolCapacity();
+
+    int getRenameTableModelPoolCapacity();
+
+    int getWithClauseModelPoolCapacity();
+
+    int getInsertPoolCapacity();
 }

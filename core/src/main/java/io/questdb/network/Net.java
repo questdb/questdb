@@ -93,7 +93,7 @@ public final class Net {
         return bindTcp(fd, parseIPv4(ipv4address), port);
     }
 
-    public native static boolean bindUdp(long fd, int port);
+    public native static boolean bindUdp(long fd, int ipv4Address, int port);
 
     public static int close(long fd) {
         return Files.close(fd);
@@ -233,4 +233,6 @@ public final class Net {
     private static native long getMsgHeaderBufferLengthOffset();
 
     private native static int getEwouldblock();
+
+    public native static int setMulticastTtl(long fd, int ttl);
 }
