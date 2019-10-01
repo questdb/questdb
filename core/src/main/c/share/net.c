@@ -100,8 +100,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
-        (JNIEnv *e, jobject cl, jlong fd, jint port) {
-    return Java_io_questdb_network_Net_bindTcp(e, cl, fd, 0, port);
+        (JNIEnv *e, jobject cl, jlong fd, jint ipv4Address, jint port) {
+    return Java_io_questdb_network_Net_bindTcp(e, cl, fd, ipv4Address, port);
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_join
@@ -203,6 +203,17 @@ int get_int_sockopt(int fd, int level, int opt) {
     }
     return -1;
 }
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastTtl
+        (JNIEnv *e, jclass cl, jlong fd, jint ttl) {
+    u_char lTTL = ttl;
+    int result = setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, (char *) &lTTL, sizeof(lTTL));
+    if (result == 0) {
+        return result;
+    }
+    return -1;
+}
+
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getSndBuf
         (JNIEnv *e, jclass cl, jlong fd) {

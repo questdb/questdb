@@ -27,10 +27,9 @@
 
     <version>1.0</version>
     <groupId>io.questdb</groupId>
-    <artifactId>parent</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>pom</packaging>
-
-    <name>parent</name>
+    <name>QuestDB</name>
 
     <build>
         <plugins>
