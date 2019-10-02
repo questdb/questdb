@@ -50,13 +50,10 @@ public class LongTreeChain extends AbstractRedBlackTree {
         Misc.free(valueChain);
     }
 
-    protected void putParent(long value) {
-        root = allocateBlock();
-        long r = appendValue(value, -1L);
-        setRef(root, r);
-        setParent(root, -1);
-        setLeft(root, -1);
-        setRight(root, -1);
+    private long appendValue(long value, long prevValueOffset) {
+        final long offset = valueChain.getAppendOffset();
+        valueChain.putLong128(value, prevValueOffset);
+        return offset;
     }
 
     public TreeCursor getCursor() {
@@ -111,11 +108,10 @@ public class LongTreeChain extends AbstractRedBlackTree {
         fix(p);
     }
 
-    private long appendValue(long value, long prevValueOffset) {
-        final long offset = valueChain.getAppendOffset();
-        valueChain.putLong(value);
-        valueChain.putLong(prevValueOffset);
-        return offset;
+    protected void putParent(long value) {
+        root = allocateBlock();
+        setRef(root, appendValue(value, -1L));
+        setParent(root, -1);
     }
 
     public class TreeCursor {

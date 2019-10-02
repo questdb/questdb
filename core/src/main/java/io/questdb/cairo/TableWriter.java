@@ -1931,8 +1931,7 @@ public class TableWriter implements Closeable {
         // For simplicity use partitionLo, which can be
         // translated to directory name when needed
         if (txPartitionCount++ > 0) {
-            txPendingPartitionSizes.putLong(transientRowCount);
-            txPendingPartitionSizes.putLong(maxTimestamp);
+            txPendingPartitionSizes.putLong128(transientRowCount, maxTimestamp);
         }
         fixedRowCount += transientRowCount;
         txPrevTransientRowCount = transientRowCount;

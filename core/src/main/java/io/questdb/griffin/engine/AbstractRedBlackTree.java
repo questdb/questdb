@@ -48,6 +48,21 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         this.mem = new MemoryPages(keyPageSize);
     }
 
+    @Override
+    public void clear() {
+        root = -1;
+        this.mem.clear();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(mem);
+    }
+
+    public long size() {
+        return mem.size() / getBlockSize();
+    }
+
     protected static void setLeft(long blockAddress, long left) {
         Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
     }
@@ -110,17 +125,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         return p;
     }
 
-    @Override
-    public void clear() {
-        root = -1;
-        this.mem.clear();
-    }
-
-    @Override
-    public void close() {
-        Misc.free(mem);
-    }
-
     protected long allocateBlock() {
         long p = mem.allocate(getBlockSize());
         setLeft(p, -1);
@@ -129,45 +133,47 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         return p;
     }
 
-    public long size() {
-        return mem.size() / getBlockSize();
-    }
-
     protected void fix(long x) {
         setColor(x, RED);
 
-        while (x != -1 && x != root && colorOf(parentOf(x)) == RED) {
-            if (parentOf(x) == leftOf(parent2Of(x))) {
-                long y = rightOf(parent2Of(x));
+        long px;
+        while (x != -1 && x != root && colorOf(px = parentOf(x)) == RED) {
+            long p20x = parent2Of(x);
+            if (px == leftOf(p20x)) {
+                long y = rightOf(p20x);
                 if (colorOf(y) == RED) {
-                    setColor(parentOf(x), BLACK);
+                    setColor(px, BLACK);
                     setColor(y, BLACK);
-                    setColor(parent2Of(x), RED);
-                    x = parent2Of(x);
+                    setColor(p20x, RED);
+                    x = p20x;
                 } else {
-                    if (x == rightOf(parentOf(x))) {
-                        x = parentOf(x);
+                    if (x == rightOf(px)) {
+                        x = px;
                         rotateLeft(x);
+                        px = parentOf(x);
+                        p20x = parent2Of(x);
                     }
-                    setColor(parentOf(x), BLACK);
-                    setColor(parent2Of(x), RED);
-                    rotateRight(parent2Of(x));
+                    setColor(px, BLACK);
+                    setColor(p20x, RED);
+                    rotateRight(p20x);
                 }
             } else {
-                long y = leftOf(parent2Of(x));
+                long y = leftOf(p20x);
                 if (colorOf(y) == RED) {
-                    setColor(parentOf(x), BLACK);
+                    setColor(px, BLACK);
                     setColor(y, BLACK);
-                    setColor(parent2Of(x), RED);
-                    x = parent2Of(x);
+                    setColor(p20x, RED);
+                    x = p20x;
                 } else {
-                    if (x == leftOf(parentOf(x))) {
+                    if (x == leftOf(px)) {
                         x = parentOf(x);
                         rotateRight(x);
+                        px = parentOf(x);
+                        p20x = parent2Of(x);
                     }
-                    setColor(parentOf(x), BLACK);
-                    setColor(parent2Of(x), RED);
-                    rotateLeft(parent2Of(x));
+                    setColor(px, BLACK);
+                    setColor(p20x, RED);
+                    rotateLeft(p20x);
                 }
             }
         }
@@ -182,24 +188,24 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         root = allocateBlock();
         setRef(root, value);
         setParent(root, -1);
-        setLeft(root, -1);
-        setRight(root, -1);
     }
 
     private void rotateLeft(long p) {
         if (p != -1) {
-            long r = rightOf(p);
-            setRight(p, leftOf(r));
-            if (leftOf(r) != -1) {
-                setParent(leftOf(r), p);
+            final long r = rightOf(p);
+            final long lr = leftOf(r);
+            setRight(p, lr);
+            if (lr != -1) {
+                setParent(lr, p);
             }
-            setParent(r, parentOf(p));
-            if (parentOf(p) == -1) {
+            final long pp = parentOf(p);
+            setParent(r, pp);
+            if (pp == -1) {
                 root = r;
-            } else if (leftOf(parentOf(p)) == p) {
-                setLeft(parentOf(p), r);
+            } else if (leftOf(pp) == p) {
+                setLeft(pp, r);
             } else {
-                setRight(parentOf(p), r);
+                setRight(pp, r);
             }
             setLeft(r, p);
             setParent(p, r);
@@ -208,18 +214,20 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
 
     private void rotateRight(long p) {
         if (p != -1) {
-            long l = leftOf(p);
-            setLeft(p, rightOf(l));
-            if (rightOf(l) != -1) {
-                setParent(rightOf(l), p);
+            final long l = leftOf(p);
+            final long rl = rightOf(l);
+            setLeft(p, rl);
+            if (rl != -1) {
+                setParent(rl, p);
             }
-            setParent(l, parentOf(p));
-            if (parentOf(p) == -1) {
+            final long pp = parentOf(p);
+            setParent(l, pp);
+            if (pp == -1) {
                 root = l;
-            } else if (rightOf(parentOf(p)) == p) {
-                setRight(parentOf(p), l);
+            } else if (rightOf(pp) == p) {
+                setRight(pp, l);
             } else {
-                setLeft(parentOf(p), l);
+                setLeft(pp, l);
             }
             setRight(l, p);
             setParent(p, l);

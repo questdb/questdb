@@ -66,13 +66,6 @@ public class VirtualMemory implements Closeable {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
-        }
-    }
-
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -396,6 +389,43 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    public final void putInt(int value) {
+        if (pageHi - appendPointer > 3) {
+            Unsafe.getUnsafe().putInt(appendPointer, value);
+            appendPointer += 4;
+        } else {
+            putIntBytes(value);
+        }
+    }
+
+    public void putLong(long offset, long value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
+        } else {
+            putLongBytes(offset, value);
+        }
+    }
+
+    public final void putLong(long value) {
+        if (pageHi - appendPointer > 7) {
+            Unsafe.getUnsafe().putLong(appendPointer, value);
+            appendPointer += 8;
+        } else {
+            putLongBytes(value);
+        }
+    }
+
+    public final void putLong128(long l1, long l2) {
+        if (pageHi - appendPointer > 15) {
+            Unsafe.getUnsafe().putLong(appendPointer, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l2);
+            appendPointer += 16;
+        } else {
+            putLong(l1);
+            putLong(l2);
+        }
+    }
+
     public void putLong256(long offset, Long256 value) {
         putLong256(
                 offset,
@@ -417,15 +447,6 @@ public class VirtualMemory implements Closeable {
             putLong(offset + Long.BYTES, l1);
             putLong(offset + Long.BYTES * 2, l2);
             putLong(offset + Long.BYTES * 3, l3);
-        }
-    }
-
-    public final void putInt(int value) {
-        if (pageHi - appendPointer > 3) {
-            Unsafe.getUnsafe().putInt(appendPointer, value);
-            appendPointer += 4;
-        } else {
-            putIntBytes(value);
         }
     }
 
@@ -451,23 +472,6 @@ public class VirtualMemory implements Closeable {
                 value.getLong2(),
                 value.getLong3()
         );
-    }
-
-    public void putLong(long offset, long value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
-        } else {
-            putLongBytes(offset, value);
-        }
-    }
-
-    public final void putLong(long value) {
-        if (pageHi - appendPointer > 7) {
-            Unsafe.getUnsafe().putLong(appendPointer, value);
-            appendPointer += 8;
-        } else {
-            putLongBytes(value);
-        }
     }
 
     public final void putLong256(CharSequence hexString) {
@@ -592,6 +596,13 @@ public class VirtualMemory implements Closeable {
                 pages.setQuick(i, address);
             }
             Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
+        }
+    }
+
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
         }
     }
 
