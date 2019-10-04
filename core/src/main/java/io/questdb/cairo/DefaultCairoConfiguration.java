@@ -271,4 +271,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getInsertPoolCapacity() {
         return 8;
     }
+
+    @Override
+    public int getCopyPoolCapacity() {
+        return 16;
+    }
 }

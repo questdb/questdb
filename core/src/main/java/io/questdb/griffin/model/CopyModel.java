@@ -21,22 +21,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin.model;
 
-import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
-public interface JsonQueryProcessorConfiguration {
+public class CopyModel implements ExecutionModel, Mutable, Sinkable {
+    public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
+    private ExpressionNode tableName;
+    private ExpressionNode fileName;
 
-    MillisecondClock getClock();
+    @Override
+    public void clear() {
+    }
 
-    int getConnectionCheckFrequency();
+    public ExpressionNode getFileName() {
+        return fileName;
+    }
 
-    int getDoubleScale();
+    public void setFileName(ExpressionNode fileName) {
+        this.fileName = fileName;
+    }
 
-    int getFloatScale();
+    @Override
+    public int getModelType() {
+        return ExecutionModel.COPY;
+    }
 
-    CharSequence getKeepAliveHeader();
+    public ExpressionNode getTableName() {
+        return tableName;
+    }
 
-    TextConfiguration getTextConfiguration();
+    public void setTableName(ExpressionNode tableName) {
+        this.tableName = tableName;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+
+    }
 }

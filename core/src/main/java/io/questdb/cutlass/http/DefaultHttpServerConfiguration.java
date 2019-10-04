@@ -27,6 +27,7 @@ import io.questdb.cutlass.http.processors.DefaultTextImportProcessorConfiguratio
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -89,6 +90,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return DefaultHttpServerConfiguration.this.getClock();
+        }
+
+        @Override
+        public TextConfiguration getTextConfiguration() {
+            return textImportProcessorConfiguration.getTextConfiguration();
         }
     };
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();

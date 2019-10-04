@@ -728,25 +728,33 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertValues() throws SqlException {
-        assertModel("insert into x values (3, 'abc', ?)",
-                "insert into x values (3, 'abc', ?)",
-                ExecutionModel.INSERT_AS_SELECT,
+    public void testInsertAsSelect() throws SqlException {
+        assertModel(
+                "insert into x select-choose c, d from (y)",
+                "insert into x select * from y",
+                ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
     }
 
     @Test
-    public void testInsertColumnsAndValues() throws SqlException {
-        assertModel("insert into x (a, b) values (3, ?)",
-                "insert into x (a,b) values (3, ?)",
-                ExecutionModel.INSERT_AS_SELECT,
+    public void testInsertAsSelectColumnList() throws SqlException {
+        assertModel(
+                "insert into x (a, b) select-choose c, d from (y)",
+                "insert into x (a,b) select * from y",
+                ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING)
-                        .col("c", ColumnType.STRING));
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -2343,18 +2351,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelect() throws SqlException {
-        assertModel(
-                "insert into x select-choose c, d from (y)",
-                "insert into x select * from y",
-                ExecutionModel.INSERT_AS_SELECT,
+    public void testInsertColumnsAndValues() throws SqlException {
+        assertModel("insert into x (a, b) values (3, ?)",
+                "insert into x (a,b) values (3, ?)",
+                ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING)
-        );
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
     }
 
     @Test
@@ -2370,18 +2374,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectColumnList() throws SqlException {
-        assertModel(
-                "insert into x (a, b) select-choose c, d from (y)",
-                "insert into x (a,b) select * from y",
-                ExecutionModel.INSERT_AS_SELECT,
+    public void testInsertValues() throws SqlException {
+        assertModel("insert into x values (3, 'abc', ?)",
+                "insert into x values (3, 'abc', ?)",
+                ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING)
-        );
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
     }
 
     @Test

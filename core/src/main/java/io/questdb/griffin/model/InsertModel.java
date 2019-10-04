@@ -82,7 +82,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public int getModelType() {
-        return INSERT_AS_SELECT;
+        return INSERT;
     }
 
     public QueryModel getQueryModel() {

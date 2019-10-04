@@ -29,6 +29,8 @@ import io.questdb.std.time.MillisecondClock;
 
 public interface CairoConfiguration {
 
+    int getCopyPoolCapacity();
+
     int getCreateAsSelectRetryCount();
 
     CharSequence getDefaultMapType();

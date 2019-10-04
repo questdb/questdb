@@ -85,6 +85,7 @@ public final class SqlParser {
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private final ObjectPool<InsertModel> insertModelPool;
+    private final ObjectPool<CopyModel> copyModelPool;
     private final ExpressionParser expressionParser;
     private final CairoConfiguration configuration;
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -111,6 +112,7 @@ public final class SqlParser {
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertPoolCapacity());
+        this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
@@ -139,6 +141,7 @@ public final class SqlParser {
         characterStore.clear();
         insertModelPool.clear();
         expressionTreeBuilder.reset();
+        copyModelPool.clear();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -292,7 +295,24 @@ public final class SqlParser {
             return parseInsert(lexer);
         }
 
+        if (Chars.equalsLowerCaseAscii(tok, "copy")) {
+            return parseCopy(lexer);
+        }
+
         return parseSelect(lexer);
+    }
+
+    private ExecutionModel parseCopy(GenericLexer lexer) throws SqlException {
+        ExpressionNode tableName = expectExpr(lexer);
+        CharSequence tok = tok(lexer, "'from' or 'to'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "from")) {
+            CopyModel model = copyModelPool.next();
+            model.setTableName(tableName);
+            model.setFileName(expectExpr(lexer));
+            return model;
+        }
+        return null;
     }
 
     private ExecutionModel parseCreateStatement(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {

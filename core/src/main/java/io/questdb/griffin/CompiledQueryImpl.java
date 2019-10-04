@@ -25,11 +25,33 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.CopyModel;
 
 public class CompiledQueryImpl implements CompiledQuery {
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
+    private CopyModel copyModel;
     private int type;
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+        return recordCursorFactory;
+    }
+
+    @Override
+    public InsertStatement getInsertStatement() {
+        return insertStatement;
+    }
+
+    @Override
+    public CopyModel getCopyModel() {
+        return copyModel;
+    }
+
+    @Override
+    public int getType() {
+        return type;
+    }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
         this.type = SELECT;
@@ -37,13 +59,35 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofTruncate() {
-        this.type = TRUNCATE;
+    CompiledQuery ofAlter() {
+        this.type = ALTER;
         return this;
     }
 
-    CompiledQuery ofAlter() {
-        this.type = ALTER;
+    CompiledQuery ofCopy(CopyModel copyModel) {
+        this.copyModel = copyModel;
+        this.type = COPY;
+        return this;
+    }
+
+    CompiledQuery ofCreateTable() {
+        this.type = CREATE_TABLE;
+        return this;
+    }
+
+    CompiledQuery ofDrop() {
+        this.type = DROP;
+        return this;
+    }
+
+    CompiledQuery ofInsert(InsertStatement insertStatement) {
+        this.insertStatement = insertStatement;
+        this.type = INSERT;
+        return this;
+    }
+
+    CompiledQuery ofInsertAsSelect() {
+        this.type = INSERT_AS_SELECT;
         return this;
     }
 
@@ -57,44 +101,8 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofDrop() {
-        this.type = DROP;
+    CompiledQuery ofTruncate() {
+        this.type = TRUNCATE;
         return this;
-    }
-
-    CompiledQuery ofCopy() {
-        this.type = COPY;
-        return this;
-    }
-
-    CompiledQuery ofCreateTable() {
-        this.type = CREATE_TABLE;
-        return this;
-    }
-
-    CompiledQuery ofInsertAsSelect() {
-        this.type = INSERT_AS_SELECT;
-        return this;
-    }
-
-    CompiledQuery ofInsert(InsertStatement insertStatement) {
-        this.insertStatement = insertStatement;
-        this.type = INSERT;
-        return this;
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        return recordCursorFactory;
-    }
-
-    @Override
-    public InsertStatement getInsertStatement() {
-        return insertStatement;
-    }
-
-    @Override
-    public int getType() {
-        return type;
     }
 }

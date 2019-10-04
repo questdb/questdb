@@ -25,6 +25,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.CopyModel;
 
 public interface CompiledQuery {
     int SELECT = 0;
@@ -41,6 +42,8 @@ public interface CompiledQuery {
     RecordCursorFactory getRecordCursorFactory();
 
     InsertStatement getInsertStatement();
+
+    CopyModel getCopyModel();
 
     int getType();
 }

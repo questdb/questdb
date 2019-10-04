@@ -27,7 +27,8 @@ public interface ExecutionModel {
     int QUERY = 1;
     int CREATE_TABLE = 2;
     int RENAME_TABLE = 3;
-    int INSERT_AS_SELECT = 4;
+    int INSERT = 4;
+    int COPY = 5;
 
     int getModelType();
 }

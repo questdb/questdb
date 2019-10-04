@@ -61,6 +61,9 @@ public class TextLoader implements Closeable, Mutable {
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
 
+    /**
+     * @throws JsonException when default configuration cannot be loaded from classpath
+     */
     public TextLoader(
             TextConfiguration textConfiguration,
             CairoEngine engine,

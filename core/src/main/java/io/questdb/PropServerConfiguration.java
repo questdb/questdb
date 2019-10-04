@@ -76,6 +76,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
     private final int sqlColumnPoolCapacity;
+    private final int sqlCopyModelPoolCapacity;
     private final double sqlCompactMapLoadFactor;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
@@ -159,7 +160,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlColumnCastModelPoolCapacity;
     private int sqlRenameTableModelPoolCapacity;
     private int sqlWithClauseModelPoolCapacity;
-    private int sqlInsertAsSelectModelPoolCapacity;
+    private int sqlInsertModelPoolCapacity;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -286,7 +287,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);
         this.sqlRenameTableModelPoolCapacity = getInt(properties, "cairo.sql.rename.table.model.pool.capacity", 16);
         this.sqlWithClauseModelPoolCapacity = getInt(properties, "cairo.sql.with.clause.model.pool.capacity", 128);
-        this.sqlInsertAsSelectModelPoolCapacity = getInt(properties, "cairo.sql.insert.as.select.model.pool.capacity", 64);
+        this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
+        this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.copy.model.pool.capacity", 32);
+
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -311,11 +314,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
-        return pgWireConfiguration;
-    }
-
-    @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
     }
@@ -323,6 +321,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return workerPoolConfiguration;
+    }
+
+    @Override
+    public PGWireConfiguration getPGWireConfiguration() {
+        return pgWireConfiguration;
     }
 
     private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
@@ -509,6 +512,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getDispatcherLogName() {
+            return "http-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getEventCapacity() {
             return eventCapacity;
         }
@@ -521,6 +534,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getIdleConnectionTimeout() {
             return idleConnectionTimeout;
+        }
+
+        @Override
+        public int getInitialBias() {
+            return IOOperation.READ;
         }
 
         @Override
@@ -539,8 +557,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public EpollFacade getEpollFacade() {
-            return EpollFacadeImpl.INSTANCE;
+        public int getRcvBufSize() {
+            return rcvBufSize;
         }
 
         @Override
@@ -549,23 +567,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInitialBias() {
-            return IOOperation.READ;
-        }
-
-        @Override
         public int getSndBufSize() {
             return sndBufSize;
-        }
-
-        @Override
-        public int getRcvBufSize() {
-            return rcvBufSize;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "http-server";
         }
     }
 
@@ -634,11 +637,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
-        public boolean workerHaltOnError() {
-            return httpWorkerHaltOnError;
-        }
-
-        @Override
         public int getConnectionPoolInitialCapacity() {
             return connectionPoolInitialCapacity;
         }
@@ -646,11 +644,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionStringPoolCapacity() {
             return connectionStringPoolCapacity;
-        }
-
-        @Override
-        public boolean allowDeflateBeforeSend() {
-            return httpAllowDeflateBeforeSend;
         }
 
         @Override
@@ -709,6 +702,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean workerHaltOnError() {
+            return httpWorkerHaltOnError;
+        }
+
+        @Override
         public int[] getWorkerAffinity() {
             return httpWorkerAffinity;
         }
@@ -727,9 +725,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean getDumpNetworkTraffic() {
             return false;
         }
+
+        @Override
+        public boolean allowDeflateBeforeSend() {
+            return httpAllowDeflateBeforeSend;
+        }
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+        @Override
+        public int getCopyPoolCapacity() {
+            return sqlCopyModelPoolCapacity;
+        }
+
         @Override
         public int getCreateAsSelectRetryCount() {
             return createAsSelectRetryCount;
@@ -957,7 +965,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getInsertPoolCapacity() {
-            return sqlInsertAsSelectModelPoolCapacity;
+            return sqlInsertModelPoolCapacity;
         }
     }
 
@@ -1022,6 +1030,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
+        }
+
+        @Override
+        public TextConfiguration getTextConfiguration() {
+            return textConfiguration;
         }
 
         @Override
