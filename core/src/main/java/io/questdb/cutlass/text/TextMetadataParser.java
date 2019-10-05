@@ -50,14 +50,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_PATTERN = 3;
     private static final int P_LOCALE = 4;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
-
-    static {
-        propertyNameMap.put("name", P_NAME);
-        propertyNameMap.put("type", P_TYPE);
-        propertyNameMap.put("pattern", P_PATTERN);
-        propertyNameMap.put("locale", P_LOCALE);
-    }
-
     private final DateLocaleFactory dateLocaleFactory;
     private final io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
@@ -78,21 +70,14 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private CharSequence tableName;
     private int localePosition;
 
-    public TextMetadataParser(
-            TextConfiguration textConfiguration,
-            DateLocaleFactory dateLocaleFactory,
-            DateFormatFactory dateFormatFactory,
-            io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory,
-            io.questdb.std.microtime.DateFormatFactory timestampFormatFactory,
-            TypeManager typeManager
-    ) {
+    public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.columnNames = new ObjList<>();
         this.columnTypes = new ObjList<>();
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
-        this.dateLocaleFactory = dateLocaleFactory;
-        this.dateFormatFactory = dateFormatFactory;
-        this.timestampLocaleFactory = timestampLocaleFactory;
-        this.timestampFormatFactory = timestampFormatFactory;
+        this.dateLocaleFactory = typeManager.getInputFormatConfiguration().getDateLocaleFactory();
+        this.dateFormatFactory = typeManager.getInputFormatConfiguration().getDateFormatFactory();
+        this.timestampLocaleFactory = typeManager.getInputFormatConfiguration().getTimestampLocaleFactory();
+        this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
         this.typeManager = typeManager;
     }
 
@@ -277,5 +262,12 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             this.len = len;
             return this;
         }
+    }
+
+    static {
+        propertyNameMap.put("name", P_NAME);
+        propertyNameMap.put("type", P_TYPE);
+        propertyNameMap.put("pattern", P_PATTERN);
+        propertyNameMap.put("locale", P_LOCALE);
     }
 }

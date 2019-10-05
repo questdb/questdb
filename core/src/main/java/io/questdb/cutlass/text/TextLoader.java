@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -37,8 +38,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
 
 import java.io.Closeable;
 
@@ -62,33 +61,18 @@ public class TextLoader implements Closeable, Mutable {
     private byte columnDelimiter = -1;
 
     /**
-     * @throws JsonException when default configuration cannot be loaded from classpath
+     *
      */
-    public TextLoader(
-            TextConfiguration textConfiguration,
-            CairoEngine engine,
-            DateLocaleFactory dateLocaleFactory,
-            DateFormatFactory dateFormatFactory,
-            io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory,
-            io.questdb.std.microtime.DateFormatFactory timestampFormatFactory
-
-    ) throws JsonException {
+    public TextLoader(TextConfiguration textConfiguration, CairoEngine engine, InputFormatConfiguration inputFormatConfiguration) {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         jsonLexer = new JsonLexer(
                 textConfiguration.getJsonCacheSize(),
                 textConfiguration.getJsonCacheLimit()
         );
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink, jsonLexer);
+        this.typeManager = new TypeManager(textConfiguration, utf8Sink, inputFormatConfiguration);
         textLexer = new TextLexer(textConfiguration, typeManager);
         textWriter = new CairoTextWriter(engine, path, textConfiguration, typeManager);
-        textMetadataParser = new TextMetadataParser(
-                textConfiguration,
-                dateLocaleFactory,
-                dateFormatFactory,
-                timestampLocaleFactory,
-                timestampFormatFactory,
-                typeManager
-        );
+        textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
@@ -149,12 +133,12 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getMetadata();
     }
 
-    public int getPartitionBy() {
-        return textWriter.getPartitionBy();
-    }
-
     public long getParsedLineCount() {
         return textLexer.getLineCount();
+    }
+
+    public int getPartitionBy() {
+        return textWriter.getPartitionBy();
     }
 
     public CharSequence getTableName() {
@@ -181,32 +165,6 @@ public class TextLoader implements Closeable, Mutable {
         parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
     }
 
-    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
-    }
-
-    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
-        if (columnDelimiter > 0) {
-            textLexer.of(columnDelimiter);
-        } else {
-            textLexer.of(textDelimiterScanner.scan(lo, hi));
-        }
-        textLexer.analyseStructure(
-                lo,
-                hi,
-                textAnalysisMaxLines,
-                forceHeaders,
-                textMetadataParser.getColumnNames(),
-                textMetadataParser.getColumnTypes()
-        );
-        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
-    }
-
-    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
-        jsonLexer.parse(lo, hi, textMetadataParser);
-    }
-
     public void setState(int state) {
         LOG.debug().$("state change [old=").$(this.state).$(", new=").$(state).$(']').$();
         this.state = state;
@@ -226,6 +184,32 @@ public class TextLoader implements Closeable, Mutable {
             default:
                 break;
         }
+    }
+
+    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+    }
+
+    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
+        jsonLexer.parse(lo, hi, textMetadataParser);
+    }
+
+    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+        if (columnDelimiter > 0) {
+            textLexer.of(columnDelimiter);
+        } else {
+            textLexer.of(textDelimiterScanner.scan(lo, hi));
+        }
+        textLexer.analyseStructure(
+                lo,
+                hi,
+                textAnalysisMaxLines,
+                forceHeaders,
+                textMetadataParser.getColumnNames(),
+                textMetadataParser.getColumnTypes()
+        );
+        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
     }
 
     @FunctionalInterface

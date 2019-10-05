@@ -117,6 +117,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
+        Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCopyBufferSize());
 
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals("fast", configuration.getCairoConfiguration().getDefaultMapType());
@@ -301,6 +302,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
             Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
+            Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCopyBufferSize());
+            Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
 
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
             Assert.assertEquals("compact", configuration.getCairoConfiguration().getDefaultMapType());

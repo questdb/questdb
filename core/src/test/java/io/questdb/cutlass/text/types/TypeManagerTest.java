@@ -28,8 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -111,6 +114,21 @@ public class TypeManagerTest {
     }
 
     @Test
+    public void testIllegalMethodParameterBinary() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.BINARY);
+    }
+
+    @Test
+    public void testIllegalMethodParameterDate() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.DATE);
+    }
+
+    @Test
+    public void testIllegalMethodParameterTimestamp() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
+    }
+
+    @Test
     public void testResourceNotFound() {
         assertFailure("/textloader/types/not_found.json", 0, "could not find [resource=/textloader/types/not_found.json]");
     }
@@ -170,31 +188,6 @@ public class TypeManagerTest {
         assertFailure("/textloader/types/unknown_top_level_prop.json", 309, "'date' and/or 'timestamp' expected");
     }
 
-    @Test
-    public void testIllegalMethodParameterBinary() throws JsonException {
-        testIllegalParameterForGetTypeAdapter(ColumnType.BINARY);
-    }
-
-    @Test
-    public void testIllegalMethodParameterDate() throws JsonException {
-        testIllegalParameterForGetTypeAdapter(ColumnType.DATE);
-    }
-
-    @Test
-    public void testIllegalMethodParameterTimestamp() throws JsonException {
-        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
-    }
-
-    private void testIllegalParameterForGetTypeAdapter(int columnType) throws JsonException {
-        TypeManager typeManager = new TypeManager(new DefaultTextConfiguration(), utf8Sink, jsonLexer);
-        try {
-            typeManager.getTypeAdapter(columnType);
-            Assert.fail();
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getMessage(), "no adapter for type");
-        }
-    }
-
     private void assertFailure(String resourceName, int position, CharSequence text) {
         try {
             createTypeManager(resourceName);
@@ -206,11 +199,47 @@ public class TypeManagerTest {
     }
 
     private TypeManager createTypeManager(String fileResource) throws JsonException {
-        return new TypeManager(new DefaultTextConfiguration() {
-            @Override
-            public String getAdapterSetConfigurationFileName() {
-                return fileResource;
-            }
-        }, utf8Sink, jsonLexer);
+        InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
+                new DateFormatFactory(),
+                DateLocaleFactory.INSTANCE,
+                new io.questdb.std.microtime.DateFormatFactory(),
+                io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+        );
+
+        inputFormatConfiguration.parseConfiguration(jsonLexer, fileResource);
+        return new TypeManager(
+                new DefaultTextConfiguration() {
+                    @Override
+                    public String getAdapterSetConfigurationFileName() {
+                        return fileResource;
+                    }
+                },
+                utf8Sink,
+                inputFormatConfiguration
+        );
+    }
+
+    private void testIllegalParameterForGetTypeAdapter(int columnType) throws JsonException {
+
+        TextConfiguration textConfiguration = new DefaultTextConfiguration();
+        InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
+                new DateFormatFactory(),
+                DateLocaleFactory.INSTANCE,
+                new io.questdb.std.microtime.DateFormatFactory(),
+                io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+        );
+
+        inputFormatConfiguration.parseConfiguration(jsonLexer, textConfiguration.getAdapterSetConfigurationFileName());
+        TypeManager typeManager = new TypeManager(
+                textConfiguration,
+                utf8Sink,
+                inputFormatConfiguration
+        );
+        try {
+            typeManager.getTypeAdapter(columnType);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "no adapter for type");
+        }
     }
 }

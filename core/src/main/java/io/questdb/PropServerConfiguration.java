@@ -153,6 +153,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpPort;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
+    private int jsonQueryCopyBufferSize;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
     private int sqlAnalyticColumnPoolCapacity;
@@ -234,6 +235,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
+            this.jsonQueryCopyBufferSize = getIntSize(properties, "http.json.query.copy.buffer.size", 2 * 1024 * 1024);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -1013,18 +1015,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
         @Override
-        public CharSequence getKeepAliveHeader() {
-            return keepAliveHeader;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return jsonQueryFloatScale;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return jsonQueryDoubleScale;
+        public MillisecondClock getClock() {
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
         }
 
         @Override
@@ -1033,13 +1025,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDoubleScale() {
+            return jsonQueryDoubleScale;
+        }
+
+        @Override
+        public int getFloatScale() {
+            return jsonQueryFloatScale;
+        }
+
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return keepAliveHeader;
+        }
+
+        @Override
         public TextConfiguration getTextConfiguration() {
             return textConfiguration;
         }
 
         @Override
-        public MillisecondClock getClock() {
-            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
+        public int getCopyBufferSize() {
+            return jsonQueryCopyBufferSize;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
         }
     }
 

@@ -25,6 +25,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectCharSink;
@@ -38,19 +39,26 @@ public class TextMetadataParserTest {
     private static TextMetadataParser textMetadataParser;
     private static TypeManager typeManager;
     private static DirectCharSink utf8Sink;
-    private static JsonLexer jsonLexer;
 
     @BeforeClass
     public static void setUpClass() throws JsonException {
         utf8Sink = new DirectCharSink(1024);
-        jsonLexer = new JsonLexer(1024, 1024);
-        typeManager = new TypeManager(new DefaultTextConfiguration(), utf8Sink, jsonLexer);
+        InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
+                new DateFormatFactory(),
+                DateLocaleFactory.INSTANCE,
+                new io.questdb.std.microtime.DateFormatFactory(),
+                io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+        );
+        try (JsonLexer jsonLexer = new JsonLexer(1024, 1024)) {
+            inputFormatConfiguration.parseConfiguration(jsonLexer, new DefaultTextConfiguration().getAdapterSetConfigurationFileName());
+        }
+        typeManager = new TypeManager(
+                new DefaultTextConfiguration(),
+                utf8Sink,
+                inputFormatConfiguration
+        );
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),
-                DateLocaleFactory.INSTANCE,
-                new DateFormatFactory(),
-                io.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                new io.questdb.std.microtime.DateFormatFactory(),
                 typeManager
         );
     }
@@ -58,7 +66,6 @@ public class TextMetadataParserTest {
     @AfterClass
     public static void tearDown() {
         LEXER.close();
-        jsonLexer.close();
         utf8Sink.close();
         textMetadataParser.close();
     }

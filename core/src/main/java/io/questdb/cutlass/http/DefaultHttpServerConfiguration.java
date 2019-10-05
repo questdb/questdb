@@ -66,20 +66,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             return null;
         }
     };
+    private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
         @Override
-        public CharSequence getKeepAliveHeader() {
-            return "Keep-Alive: timeout=5, max=10000\r\n";
-        }
-
-        @Override
-        public int getFloatScale() {
-            return 10;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return 10;
+        public MillisecondClock getClock() {
+            return DefaultHttpServerConfiguration.this.getClock();
         }
 
         @Override
@@ -88,16 +79,35 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public MillisecondClock getClock() {
-            return DefaultHttpServerConfiguration.this.getClock();
+        public int getDoubleScale() {
+            return 10;
+        }
+
+        @Override
+        public int getFloatScale() {
+            return 10;
+        }
+
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return "Keep-Alive: timeout=5, max=10000\r\n";
         }
 
         @Override
         public TextConfiguration getTextConfiguration() {
             return textImportProcessorConfiguration.getTextConfiguration();
         }
+
+        @Override
+        public int getCopyBufferSize() {
+            return 2 * 1024 * 1024;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
     };
-    private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();
 
     public DefaultHttpServerConfiguration() {
         String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
@@ -177,6 +187,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean workerHaltOnError() {
+        return false;
+    }
+
+    @Override
     public int[] getWorkerAffinity() {
         return new int[]{-1, -1};
     }
@@ -198,11 +213,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public boolean allowDeflateBeforeSend() {
-        return false;
-    }
-
-    @Override
-    public boolean workerHaltOnError() {
         return false;
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -62,15 +63,19 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
     private final TextImportProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final InputFormatConfiguration inputFormatConfiguration;
     private HttpConnectionContext transientContext;
     private IODispatcher<HttpConnectionContext> transientDispatcher;
     private TextImportProcessorState transientState;
+
     public TextImportProcessor(
             TextImportProcessorConfiguration configuration,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            InputFormatConfiguration inputFormatConfiguration
     ) {
         this.configuration = configuration;
         this.engine = cairoEngine;
+        this.inputFormatConfiguration = inputFormatConfiguration;
     }
 
     @Override
@@ -170,13 +175,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         this.transientDispatcher = dispatcher;
         this.transientState = LV.get(context);
         if (this.transientState == null) {
-            try {
-                LOG.debug().$("new text state").$();
-                LV.set(context, this.transientState = new TextImportProcessorState(configuration.getTextConfiguration(), engine));
-            } catch (JsonException e) {
-                // todo: handle gracefully
-                e.printStackTrace();
-            }
+            LOG.debug().$("new text state").$();
+            LV.set(context, this.transientState = new TextImportProcessorState(
+                            configuration.getTextConfiguration(),
+                            engine,
+                            inputFormatConfiguration
+                    )
+            );
         }
     }
 

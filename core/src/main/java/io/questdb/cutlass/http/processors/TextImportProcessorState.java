@@ -24,13 +24,11 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
 
 import java.io.Closeable;
 
@@ -48,18 +46,8 @@ class TextImportProcessorState implements Mutable, Closeable {
     int state;
     boolean json = false;
 
-    TextImportProcessorState(
-            TextConfiguration configuration,
-            CairoEngine engine
-    ) throws JsonException {
-        this.textLoader = new TextLoader(
-                configuration,
-                engine,
-                DateLocaleFactory.INSTANCE,
-                new DateFormatFactory(),
-                io.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                new io.questdb.std.microtime.DateFormatFactory()
-        );
+    TextImportProcessorState(TextConfiguration configuration, CairoEngine engine, InputFormatConfiguration inputFormatConfiguration) {
+        this.textLoader = new TextLoader(configuration, engine, inputFormatConfiguration);
     }
 
     @Override

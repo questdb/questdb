@@ -29,6 +29,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
@@ -49,11 +51,20 @@ import java.nio.charset.StandardCharsets;
 public class TextLoaderTest extends AbstractGriffinTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
+    private static final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
+            new DateFormatFactory(),
+            DateLocaleFactory.INSTANCE,
+            new io.questdb.std.microtime.DateFormatFactory(),
+            io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+    );
+
+    private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
     public static void tearDownClass() {
         compiler.close();
         engine.close();
+        jsonLexer.close();
     }
 
     @After
@@ -815,23 +826,27 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            try (TextLoader loader = new TextLoader(
-                    new DefaultTextConfiguration() {
-                        @Override
-                        public int getRollBufferLimit() {
-                            return 128;
-                        }
+            final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+                @Override
+                public int getRollBufferLimit() {
+                    return 128;
+                }
 
-                        @Override
-                        public int getRollBufferSize() {
-                            return 32;
-                        }
-                    },
+                @Override
+                public int getRollBufferSize() {
+                    return 32;
+                }
+            };
+
+            inputFormatConfiguration.parseConfiguration(
+                    jsonLexer,
+                    textConfiguration.getAdapterSetConfigurationFileName()
+            );
+
+            try (TextLoader loader = new TextLoader(
+                    textConfiguration,
                     engine,
-                    DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory(),
-                    io.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                    new io.questdb.std.microtime.DateFormatFactory()
+                    inputFormatConfiguration
             )) {
                 configureLoaderDefaults(loader, (byte) ',');
                 playText(
@@ -1013,23 +1028,27 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            try (TextLoader loader = new TextLoader(
-                    new DefaultTextConfiguration() {
-                        @Override
-                        public int getRollBufferLimit() {
-                            return 128;
-                        }
+            TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+                @Override
+                public int getRollBufferLimit() {
+                    return 128;
+                }
 
-                        @Override
-                        public int getRollBufferSize() {
-                            return 32;
-                        }
-                    },
+                @Override
+                public int getRollBufferSize() {
+                    return 32;
+                }
+            };
+
+            inputFormatConfiguration.parseConfiguration(
+                    jsonLexer,
+                    textConfiguration.getAdapterSetConfigurationFileName()
+            );
+
+            try (TextLoader loader = new TextLoader(
+                    textConfiguration,
                     engine,
-                    DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory(),
-                    io.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                    new io.questdb.std.microtime.DateFormatFactory()
+                    inputFormatConfiguration
             )) {
                 configureLoaderDefaults(loader, (byte) ',');
                 playText(
@@ -2171,13 +2190,15 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void assertNoLeak(TextConfiguration textConfiguration, TestCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            inputFormatConfiguration.parseConfiguration(
+                    jsonLexer,
+                    textConfiguration.getAdapterSetConfigurationFileName()
+            );
+
             try (TextLoader loader = new TextLoader(
                     textConfiguration,
                     engine,
-                    DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory(),
-                    io.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                    new io.questdb.std.microtime.DateFormatFactory()
+                    inputFormatConfiguration
             )) {
                 code.run(loader);
             }
