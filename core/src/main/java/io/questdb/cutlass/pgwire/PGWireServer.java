@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -129,7 +130,7 @@ public class PGWireServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable {
+    private static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
@@ -157,6 +158,11 @@ public class PGWireServer implements Closeable {
                 contextPool.get().push(context);
                 LOG.info().$("pushed").$();
             }
+        }
+
+        @Override
+        public void setup() {
+            contextPool.get();
         }
 
         private void closeContextPool() {

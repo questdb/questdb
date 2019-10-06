@@ -28,6 +28,8 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocaleFactory;
@@ -46,8 +48,8 @@ public class TextMetadataParserTest {
         InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
-                new io.questdb.std.microtime.DateFormatFactory(),
-                io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+                new TimestampFormatFactory(),
+                TimestampLocaleFactory.INSTANCE
         );
         try (JsonLexer jsonLexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(jsonLexer, new DefaultTextConfiguration().getAdapterSetConfigurationFileName());

@@ -26,10 +26,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormat;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.microtime.DateLocaleFactory;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -2155,17 +2155,17 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveActivePartitionByDay() throws Exception {
-        testRemoveActivePartition(PartitionBy.DAY, current -> Dates.addDays(Dates.floorDD(current), 1), "2017-12-15");
+        testRemoveActivePartition(PartitionBy.DAY, current -> Timestamps.addDays(Timestamps.floorDD(current), 1), "2017-12-15");
     }
 
     @Test
     public void testRemoveActivePartitionByMonth() throws Exception {
-        testRemoveActivePartition(PartitionBy.MONTH, current -> Dates.addMonths(Dates.floorMM(current), 1), "2018-04");
+        testRemoveActivePartition(PartitionBy.MONTH, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1), "2018-04");
     }
 
     @Test
     public void testRemoveActivePartitionByYear() throws Exception {
-        testRemoveActivePartition(PartitionBy.YEAR, current -> Dates.addYear(Dates.floorYYYY(current), 1), "2021");
+        testRemoveActivePartition(PartitionBy.YEAR, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1), "2021");
     }
 
     @Test
@@ -2194,7 +2194,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.commit();
                         timestampUs += stride;
                     }
-                    timestampUs = Dates.addDays(Dates.floorDD(timestampUs), 1);
+                    timestampUs = Timestamps.addDays(Timestamps.floorDD(timestampUs), 1);
                 }
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
@@ -2223,22 +2223,22 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveFirstPartitionByDay() throws Exception {
-        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
+        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Timestamps.addDays(Timestamps.floorDD(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByDayReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Timestamps.addDays(Timestamps.floorDD(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByDayReloadTwo() throws Exception {
-        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Timestamps.addDays(Timestamps.floorDD(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByDayTwo() throws Exception {
-        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
+        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Timestamps.addDays(Timestamps.floorDD(current), 2));
     }
 
     @Test
@@ -2379,47 +2379,47 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveFirstPartitionByMonth() throws Exception {
-        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
+        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByMonthReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
+        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByMonthReloadTwo() throws Exception {
-        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
+        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByMonthTwo() throws Exception {
-        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
+        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByYear() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearReloadTwo() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearTwo() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 2));
     }
 
     @Test
     public void testRemovePartitionByDay() throws Exception {
-        testRemovePartition(PartitionBy.DAY, "2017-12-14", 3000, current -> Dates.addDays(Dates.floorDD(current), 1));
+        testRemovePartition(PartitionBy.DAY, "2017-12-14", 3000, current -> Timestamps.addDays(Timestamps.floorDD(current), 1));
     }
 
     @Test
@@ -2465,14 +2465,14 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.commit();
                         timestampUs += stride;
                     }
-                    timestampUs = Dates.addDays(Dates.floorDD(timestampUs), 1);
+                    timestampUs = Timestamps.addDays(Timestamps.floorDD(timestampUs), 1);
                 }
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
+                TimestampFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
                 assert fmt != null;
-                final long timestamp = fmt.parse("2017-12-14", DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                final long timestamp = fmt.parse("2017-12-14", TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -2513,27 +2513,27 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemovePartitionByDayReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.DAY, "2017-12-14", 3000, current -> Dates.addDays(Dates.floorDD(current), 1));
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-14", 3000, current -> Timestamps.addDays(Timestamps.floorDD(current), 1));
     }
 
     @Test
     public void testRemovePartitionByMonth() throws Exception {
-        testRemovePartition(PartitionBy.MONTH, "2018-01", 1000, current -> Dates.addMonths(Dates.floorMM(current), 1));
+        testRemovePartition(PartitionBy.MONTH, "2018-01", 1000, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
     }
 
     @Test
     public void testRemovePartitionByMonthReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.MONTH, "2018-01", 1000, current -> Dates.addMonths(Dates.floorMM(current), 1));
+        testRemovePartitionReload(PartitionBy.MONTH, "2018-01", 1000, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
     }
 
     @Test
     public void testRemovePartitionByYear() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2020", 3000, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+        testRemovePartition(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemovePartitionByYearReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+        testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
@@ -3759,10 +3759,10 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(500, totalCount);
 
 
-                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                     assert fmt != null;
                     Assert.assertFalse(
-                            writer.removePartition(fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale()))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale()))
                     );
 
                     Assert.assertEquals(500, writer.size());
@@ -3816,9 +3816,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                 assert fmt != null;
-                final long timestamp = fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                final long timestamp = fmt.parse(partitionNameToDelete, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -3900,10 +3900,10 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
 
-                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                     assert fmt != null;
                     Assert.assertTrue(
-                            writer.removePartition(fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale()))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale()))
                     );
 
                     Assert.assertEquals(N * (N_PARTITIONS - 1), writer.size());

@@ -23,24 +23,14 @@
 
 package io.questdb.std.microtime;
 
+import io.questdb.std.NumericException;
+import io.questdb.std.str.CharSink;
 
-import io.questdb.std.ConcurrentHashMap;
+public interface TimestampFormat {
 
-public class DateFormatFactory {
-    private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
-    private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
+    void format(long micros, TimestampLocale locale, CharSequence timeZoneName, CharSink sink);
 
-    /**
-     * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
-     * backed by ConcurrentHashMap, making method calls thread-safe and largely non-blocking.
-     * <p>
-     * Input pattern does not have to be a string, but it does have to implement hashCode/equals methods
-     * correctly. No new objects created when pattern already exists.
-     *
-     * @param pattern can be mutable and is not stored if same pattern already in cache.
-     * @return compiled implementation of DateFormat
-     */
-    public DateFormat get(CharSequence pattern) {
-        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p));
-    }
+    long parse(CharSequence in, TimestampLocale locale) throws NumericException;
+
+    long parse(CharSequence in, int lo, int hi, TimestampLocale locale) throws NumericException;
 }

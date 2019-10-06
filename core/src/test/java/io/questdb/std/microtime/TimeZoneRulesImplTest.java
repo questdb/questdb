@@ -50,14 +50,14 @@ public class TimeZoneRulesImplTest {
             zoneRules.add(new TimeZoneRulesImpl(z, zone.getRules()));
         }
 
-        long micros = Dates.toMicros(1900, 1, 1, 0, 0);
-        long deadline = Dates.toMicros(2115, 12, 31, 0, 0);
+        long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
+        long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
 
         while (micros < deadline) {
-            int y = Dates.getYear(micros);
-            boolean leap = Dates.isLeapYear(y);
-            int m = Dates.getMonthOfYear(micros, y, leap);
-            int d = Dates.getDayOfMonth(micros, y, m, leap);
+            int y = Timestamps.getYear(micros);
+            boolean leap = Timestamps.isLeapYear(y);
+            int m = Timestamps.getMonthOfYear(micros, y, leap);
+            int d = Timestamps.getDayOfMonth(micros, y, m, leap);
 
             LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
 
@@ -69,23 +69,23 @@ public class TimeZoneRulesImplTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long changed = Dates.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Dates.SECOND_MICROS;
+                long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Timestamps.SECOND_MICROS;
                 // add any extra time
-                expected += (changed - micros) / Dates.SECOND_MICROS;
+                expected += (changed - micros) / Timestamps.SECOND_MICROS;
 
                 long offset = rules.getOffset(micros, y, leap);
 
                 try {
-                    Assert.assertEquals(expected, offset / Dates.SECOND_MICROS);
+                    Assert.assertEquals(expected, offset / Timestamps.SECOND_MICROS);
                 } catch (Throwable e) {
-                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(micros + offset));
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(micros + offset));
                     System.out.println("e: " + expected + "; a: " + offset);
                     System.out.println(dt);
-                    System.out.println(Dates.toString(micros));
+                    System.out.println(Timestamps.toString(micros));
                     throw e;
                 }
             }
-            micros += Dates.DAY_MICROS;
+            micros += Timestamps.DAY_MICROS;
         }
     }
 
@@ -103,14 +103,14 @@ public class TimeZoneRulesImplTest {
             zoneRules.add(new TimeZoneRulesImpl(z, zone.getRules()));
         }
 
-        long millis = Dates.toMicros(1900, 1, 1, 0, 0);
-        long deadline = Dates.toMicros(2615, 12, 31, 0, 0);
+        long millis = Timestamps.toMicros(1900, 1, 1, 0, 0);
+        long deadline = Timestamps.toMicros(2615, 12, 31, 0, 0);
 
         while (millis < deadline) {
             for (int i = 0, n = zones.size(); i < n; i++) {
                 zoneRules.get(i).getOffset(millis);
             }
-            millis += Dates.DAY_MICROS;
+            millis += Timestamps.DAY_MICROS;
         }
     }
 
@@ -124,21 +124,21 @@ public class TimeZoneRulesImplTest {
         int d = 29;
 
         LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
-        long millis = Dates.toMicros(y, m, d, 0, 0);
+        long millis = Timestamps.toMicros(y, m, d, 0, 0);
 
         ZonedDateTime zdt = dt.atZone(zone);
         long expected = zdt.getOffset().getTotalSeconds();
 
         // find out how much algo added to datetime itself
-        long changed = Dates.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000;
+        long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000;
         // add any extra time
         expected += (changed - millis) / 1000;
-        long offset = rules.getOffset(millis, y, Dates.isLeapYear(y));
+        long offset = rules.getOffset(millis, y, Timestamps.isLeapYear(y));
 
         try {
             Assert.assertEquals(expected, offset / 1000);
         } catch (Throwable e) {
-            System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(millis + offset));
+            System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(millis + offset));
             throw e;
         }
     }

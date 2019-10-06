@@ -253,23 +253,23 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private long getNextDayDealine() {
-        return Dates.addDays(Dates.floorDD(clock.getTicks()), 1);
+        return Timestamps.addDays(Timestamps.floorDD(clock.getTicks()), 1);
     }
 
     private long getNextHourDeadline() {
-        return Dates.addHours(Dates.floorHH(clock.getTicks()), 1);
+        return Timestamps.addHours(Timestamps.floorHH(clock.getTicks()), 1);
     }
 
     private long getNextMinuteDeadline() {
-        return Dates.floorMI(clock.getTicks()) + Dates.MINUTE_MICROS;
+        return Timestamps.floorMI(clock.getTicks()) + Timestamps.MINUTE_MICROS;
     }
 
     private long getNextMonthDeadline() {
-        return Dates.addMonths(Dates.floorMM(clock.getTicks()), 1);
+        return Timestamps.addMonths(Timestamps.floorMM(clock.getTicks()), 1);
     }
 
     private long getNextYearDeadline() {
-        return Dates.addYear(Dates.floorYYYY(clock.getTicks()), 1);
+        return Timestamps.addYear(Timestamps.floorYYYY(clock.getTicks()), 1);
     }
 
     private void openFile() {
@@ -406,9 +406,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private class DateSinkable implements Sinkable {
-        private final DateFormat format;
+        private final TimestampFormat format;
 
-        public DateSinkable(DateFormat format) {
+        public DateSinkable(TimestampFormat format) {
             this.format = format;
         }
 
@@ -416,7 +416,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         public void toSink(CharSink sink) {
             format.format(
                     fileTimestamp,
-                    DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                    TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
                     null,
                     sink
             );

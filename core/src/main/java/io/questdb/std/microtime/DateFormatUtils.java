@@ -33,12 +33,12 @@ public class DateFormatUtils {
     public static final int HOUR_24 = 2;
     public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
-    public static final DateFormat UTC_FORMAT;
-    public static final DateFormat USEC_UTC_FORMAT;
-    public static final DateFormat PG_TIMESTAMP_FORMAT;
+    public static final TimestampFormat UTC_FORMAT;
+    public static final TimestampFormat USEC_UTC_FORMAT;
+    public static final TimestampFormat PG_TIMESTAMP_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
-    public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
-    private static final DateFormat HTTP_FORMAT;
+    public static final TimestampLocale defaultLocale = TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale();
+    private static final TimestampFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -101,12 +101,12 @@ public class DateFormatUtils {
 
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
-        int m = Dates.getMonthOfYear(millis, y, l);
+        int y = Timestamps.getYear(millis);
+        boolean l = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(millis, y, l);
         Numbers.append(sink, y);
         append0(sink.put('-'), m);
-        append0(sink.put('-'), Dates.getDayOfMonth(millis, y, m, l));
+        append0(sink.put('-'), Timestamps.getDayOfMonth(millis, y, m, l));
     }
 
     public static void formatHTTP(CharSink sink, long millis) {
@@ -115,20 +115,20 @@ public class DateFormatUtils {
 
     // YYYY-MM
     public static void formatYYYYMM(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        int m = Dates.getMonthOfYear(millis, y, Dates.isLeapYear(y));
+        int y = Timestamps.getYear(millis);
+        int m = Timestamps.getMonthOfYear(millis, y, Timestamps.isLeapYear(y));
         Numbers.append(sink, y);
         append0(sink.put('-'), m);
     }
 
     // YYYYMMDD
     public static void formatYYYYMMDD(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
-        int m = Dates.getMonthOfYear(millis, y, l);
+        int y = Timestamps.getYear(millis);
+        boolean l = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(millis, y, l);
         Numbers.append(sink, y);
         append0(sink, m);
-        append0(sink, Dates.getDayOfMonth(millis, y, m, l));
+        append0(sink, Timestamps.getDayOfMonth(millis, y, m, l));
     }
 
     public static long getReferenceYear() {
@@ -165,7 +165,7 @@ public class DateFormatUtils {
     public static void updateReferenceYear(long micros) {
         referenceYear = micros;
 
-        int referenceYear = Dates.getYear(micros);
+        int referenceYear = Timestamps.getYear(micros);
         int centuryOffset = referenceYear % 100;
         thisCenturyLimit = centuryOffset + 20;
         if (thisCenturyLimit > 100) {
@@ -175,10 +175,10 @@ public class DateFormatUtils {
             thisCenturyLow = referenceYear - centuryOffset;
         }
         prevCenturyLow = thisCenturyLow - 100;
-        newYear = Dates.endOfYear(referenceYear);
+        newYear = Timestamps.endOfYear(referenceYear);
     }
 
-    static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
+    static void appendAmPm(CharSink sink, int hour, TimestampLocale locale) {
         if (hour < 12) {
             sink.put(locale.getAMPM(0));
         } else {
@@ -223,7 +223,7 @@ public class DateFormatUtils {
     }
 
     static long compute(
-            DateLocale locale,
+            TimestampLocale locale,
             int era,
             int year,
             int month,
@@ -241,7 +241,7 @@ public class DateFormatUtils {
             year = -(year - 1);
         }
 
-        boolean leap = Dates.isLeapYear(year);
+        boolean leap = Timestamps.isLeapYear(year);
 
         // wrong month
         if (month < 1 || month > 12) {
@@ -265,7 +265,7 @@ public class DateFormatUtils {
         }
 
         // wrong day of month
-        if (day < 1 || day > Dates.getDaysPerMonth(month, leap)) {
+        if (day < 1 || day > Timestamps.getDaysPerMonth(month, leap)) {
             throw NumericException.INSTANCE;
         }
 
@@ -277,13 +277,13 @@ public class DateFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime = Dates.yearMicros(year, leap)
-                + Dates.monthOfYearMicros(month, leap)
-                + (day - 1) * Dates.DAY_MICROS
-                + hour * Dates.HOUR_MICROS
-                + minute * Dates.MINUTE_MICROS
-                + second * Dates.SECOND_MICROS
-                + millis * Dates.MILLI_MICROS
+        long datetime = Timestamps.yearMicros(year, leap)
+                + Timestamps.monthOfYearMicros(month, leap)
+                + (day - 1) * Timestamps.DAY_MICROS
+                + hour * Timestamps.HOUR_MICROS
+                + minute * Timestamps.MINUTE_MICROS
+                + second * Timestamps.SECOND_MICROS
+                + millis * Timestamps.MILLI_MICROS
                 + micros;
 
         if (timezone > -1) {
@@ -344,7 +344,7 @@ public class DateFormatUtils {
         }
     }
 
-    static void appendEra(CharSink sink, int year, DateLocale locale) {
+    static void appendEra(CharSink sink, int year, TimestampLocale locale) {
         if (year < 0) {
             sink.put(locale.getEra(0));
         } else {

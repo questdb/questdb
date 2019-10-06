@@ -30,6 +30,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocale;
@@ -52,23 +56,23 @@ public class InputFormatConfiguration {
     private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
     private final ObjList<DateFormat> dateFormats = new ObjList<>();
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
-    private final ObjList<io.questdb.std.microtime.DateFormat> timestampFormats = new ObjList<>();
-    private final ObjList<io.questdb.std.microtime.DateLocale> timestampLocales = new ObjList<>();
+    private final ObjList<TimestampFormat> timestampFormats = new ObjList<>();
+    private final ObjList<TimestampLocale> timestampLocales = new ObjList<>();
     private final DateFormatFactory dateFormatFactory;
     private final DateLocaleFactory dateLocaleFactory;
-    private final io.questdb.std.microtime.DateFormatFactory timestampFormatFactory;
-    private final io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory;
+    private final TimestampFormatFactory timestampFormatFactory;
+    private final TimestampLocaleFactory timestampLocaleFactory;
     private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
-    private io.questdb.std.microtime.DateFormat jsonTimestampFormat;
-    private io.questdb.std.microtime.DateLocale jsonTimestampLocale;
+    private TimestampFormat jsonTimestampFormat;
+    private TimestampLocale jsonTimestampLocale;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
             DateLocaleFactory dateLocaleFactory,
-            io.questdb.std.microtime.DateFormatFactory timestampFormatFactory,
-            io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory
+            TimestampFormatFactory timestampFormatFactory,
+            TimestampLocaleFactory timestampLocaleFactory
     ) {
         this.dateFormatFactory = dateFormatFactory;
         this.dateLocaleFactory = dateLocaleFactory;
@@ -104,19 +108,19 @@ public class InputFormatConfiguration {
         return dateLocales;
     }
 
-    public io.questdb.std.microtime.DateFormatFactory getTimestampFormatFactory() {
+    public TimestampFormatFactory getTimestampFormatFactory() {
         return timestampFormatFactory;
     }
 
-    public ObjList<io.questdb.std.microtime.DateFormat> getTimestampFormats() {
+    public ObjList<TimestampFormat> getTimestampFormats() {
         return timestampFormats;
     }
 
-    public io.questdb.std.microtime.DateLocaleFactory getTimestampLocaleFactory() {
+    public TimestampLocaleFactory getTimestampLocaleFactory() {
         return timestampLocaleFactory;
     }
 
-    public ObjList<io.questdb.std.microtime.DateLocale> getTimestampLocales() {
+    public ObjList<TimestampLocale> getTimestampLocales() {
         return timestampLocales;
     }
 
@@ -195,7 +199,7 @@ public class InputFormatConfiguration {
                         }
 
                         timestampFormats.add(jsonTimestampFormat);
-                        timestampLocales.add(jsonTimestampLocale == null ? io.questdb.std.microtime.DateLocaleFactory.INSTANCE.getDefaultDateLocale() : jsonTimestampLocale);
+                        timestampLocales.add(jsonTimestampLocale == null ? TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale() : jsonTimestampLocale);
                         break;
                     default:
                         // the only time we get here would be when

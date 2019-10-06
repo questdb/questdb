@@ -29,6 +29,8 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateLocale;
@@ -59,8 +61,8 @@ public class TypeManager implements Mutable {
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             probes.add(new DateAdapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
         }
-        final ObjList<io.questdb.std.microtime.DateFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
-        final ObjList<io.questdb.std.microtime.DateLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
+        final ObjList<TimestampFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
+        final ObjList<TimestampLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             probes.add(new TimestampAdapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
         }

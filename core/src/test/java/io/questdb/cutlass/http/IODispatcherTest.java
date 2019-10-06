@@ -39,6 +39,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.DateFormatFactory;
@@ -59,8 +61,8 @@ public class IODispatcherTest {
     private static final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
             new DateFormatFactory(),
             DateLocaleFactory.INSTANCE,
-            new io.questdb.std.microtime.DateFormatFactory(),
-            io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+            new TimestampFormatFactory(),
+            TimestampLocaleFactory.INSTANCE
     );
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();

@@ -23,7 +23,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 
 class MonthTimestampSampler implements TimestampSampler {
     private final int bucket;
@@ -34,22 +34,22 @@ class MonthTimestampSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return Dates.addMonths(timestamp, bucket);
+        return Timestamps.addMonths(timestamp, bucket);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return Dates.addMonths(timestamp, -bucket);
+        return Timestamps.addMonths(timestamp, -bucket);
     }
 
     @Override
     public long round(long value) {
-        int y = Dates.getYear(value);
-        boolean l = Dates.isLeapYear(y);
-        int m = Dates.getMonthOfYear(value, y, l);
+        int y = Timestamps.getYear(value);
+        boolean l = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(value, y, l);
         // target month
         int n = ((m - 1) / bucket) * bucket + 1;
-        return Dates.yearMicros(y, l) +
-                Dates.monthOfYearMicros(n, l);
+        return Timestamps.yearMicros(y, l) +
+                Timestamps.monthOfYearMicros(n, l);
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -39,6 +40,8 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.Nullable;
@@ -104,12 +107,12 @@ public class HttpServer implements Closeable {
     ) throws JsonException {
         if (configuration.isEnabled()) {
             final DateFormatFactory dateFormatFactory = new DateFormatFactory();
-            final io.questdb.std.microtime.DateFormatFactory timestampFormatFactory = new io.questdb.std.microtime.DateFormatFactory();
+            final TimestampFormatFactory timestampFormatFactory = new TimestampFormatFactory();
             final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
                     dateFormatFactory,
                     DateLocaleFactory.INSTANCE,
                     timestampFormatFactory,
-                    io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+                    TimestampLocaleFactory.INSTANCE
             );
 
             try (JsonLexer jsonLexer = new JsonLexer(configuration.getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheSize(), configuration.getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheLimit())) {
@@ -266,7 +269,7 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable {
+    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
 
@@ -294,6 +297,11 @@ public class HttpServer implements Closeable {
                 contextPool.get().push(context);
                 LOG.info().$("pushed").$();
             }
+        }
+
+        @Override
+        public void setup() {
+            contextPool.get();
         }
 
         private void closeContextPool() {

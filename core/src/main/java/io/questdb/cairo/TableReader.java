@@ -27,8 +27,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateLocaleFactory;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -101,23 +101,23 @@ public class TableReader implements Closeable {
                 case PartitionBy.DAY:
                     partitionPathGenerator = DAY_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Dates::floorDD;
-                    intervalLengthMethod = Dates::getDaysBetween;
-                    partitionTimestampCalculatorMethod = Dates::addDays;
+                    timestampFloorMethod = Timestamps::floorDD;
+                    intervalLengthMethod = Timestamps::getDaysBetween;
+                    partitionTimestampCalculatorMethod = Timestamps::addDays;
                     break;
                 case PartitionBy.MONTH:
                     partitionPathGenerator = MONTH_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Dates::floorMM;
-                    intervalLengthMethod = Dates::getMonthsBetween;
-                    partitionTimestampCalculatorMethod = Dates::addMonths;
+                    timestampFloorMethod = Timestamps::floorMM;
+                    intervalLengthMethod = Timestamps::getMonthsBetween;
+                    partitionTimestampCalculatorMethod = Timestamps::addMonths;
                     break;
                 case PartitionBy.YEAR:
                     partitionPathGenerator = YEAR_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Dates::floorYYYY;
-                    intervalLengthMethod = Dates::getYearsBetween;
-                    partitionTimestampCalculatorMethod = Dates::addYear;
+                    timestampFloorMethod = Timestamps::floorYYYY;
+                    intervalLengthMethod = Timestamps::getYearsBetween;
+                    partitionTimestampCalculatorMethod = Timestamps::addYear;
                     break;
                 default:
                     partitionPathGenerator = DEFAULT_GEN;
@@ -748,8 +748,8 @@ public class TableReader implements Closeable {
 
     private Path pathGenDay(int partitionIndex) {
         TableUtils.fmtDay.format(
-                Dates.addDays(minTimestamp, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                Timestamps.addDays(minTimestamp, partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
                 null,
                 path.put(Files.SEPARATOR)
         );
@@ -762,8 +762,8 @@ public class TableReader implements Closeable {
 
     private Path pathGenMonth(int partitionIndex) {
         TableUtils.fmtMonth.format(
-                Dates.addMonths(minTimestamp, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                Timestamps.addMonths(minTimestamp, partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
                 null,
                 path.put(Files.SEPARATOR)
         );
@@ -772,8 +772,8 @@ public class TableReader implements Closeable {
 
     private Path pathGenYear(int partitionIndex) {
         TableUtils.fmtYear.format(
-                Dates.addYear(minTimestamp, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                Timestamps.addYear(minTimestamp, partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
                 null,
                 path.put(Files.SEPARATOR)
         );

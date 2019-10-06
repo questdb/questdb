@@ -25,10 +25,10 @@ package io.questdb.std.microtime;
 
 import io.questdb.std.NumericException;
 
-public abstract class AbstractDateFormat implements DateFormat {
+public abstract class AbstractTimestampFormat implements TimestampFormat {
 
     @Override
-    public long parse(CharSequence in, DateLocale locale) throws NumericException {
+    public long parse(CharSequence in, TimestampLocale locale) throws NumericException {
         return parse(in, 0, in.length(), locale);
     }
 }

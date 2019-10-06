@@ -21,8 +21,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.std.microtime;
 
-public interface Job {
-    boolean run();
+
+import io.questdb.std.ConcurrentHashMap;
+
+public class TimestampFormatFactory {
+    private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private final ConcurrentHashMap<TimestampFormat> cache = new ConcurrentHashMap<>();
+
+    /**
+     * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
+     * backed by ConcurrentHashMap, making method calls thread-safe and largely non-blocking.
+     * <p>
+     * Input pattern does not have to be a string, but it does have to implement hashCode/equals methods
+     * correctly. No new objects created when pattern already exists.
+     *
+     * @param pattern can be mutable and is not stored if same pattern already in cache.
+     * @return compiled implementation of DateFormat
+     */
+    public TimestampFormat get(CharSequence pattern) {
+        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p));
+    }
 }

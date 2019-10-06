@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -58,13 +58,13 @@ public class TimestampSamplerFactoryTest {
             TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 120);
             Assert.assertNotNull(sampler);
 
-            final long n = Dates.MINUTE_MICROS * (k == 0 ? 1 : k);
+            final long n = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
             long timestamp = DateFormatUtils.parseTimestamp("2018-04-15T10:23:00.000000Z");
             timestamp = timestamp - timestamp % n;
             for (int i = 0; i < 60; i++) {
-                long actual = sampler.round(timestamp + i * Dates.SECOND_MICROS);
+                long actual = sampler.round(timestamp + i * Timestamps.SECOND_MICROS);
                 if (timestamp != actual) {
-                    Assert.fail("Failed at: " + sink + ". Expected: " + Dates.toString(timestamp) + ", actual: " + Dates.toString(actual));
+                    Assert.fail("Failed at: " + sink + ". Expected: " + Timestamps.toString(timestamp) + ", actual: " + Timestamps.toString(actual));
                 }
             }
         }
@@ -93,13 +93,13 @@ public class TimestampSamplerFactoryTest {
             TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 120);
             Assert.assertNotNull(sampler);
 
-            final long n = Dates.SECOND_MICROS * (k == 0 ? 1 : k);
+            final long n = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
             long timestamp = DateFormatUtils.parseTimestamp("2018-04-15T10:23:00.000000Z");
             timestamp = timestamp - timestamp % n;
             for (int i = 0; i < n; i += 4) {
                 long actual = sampler.round(timestamp + i);
                 if (timestamp != actual) {
-                    Assert.fail("Failed at: " + sink + ". Expected: " + Dates.toString(timestamp) + ", actual: " + Dates.toString(actual));
+                    Assert.fail("Failed at: " + sink + ". Expected: " + Timestamps.toString(timestamp) + ", actual: " + Timestamps.toString(actual));
                 }
             }
         }

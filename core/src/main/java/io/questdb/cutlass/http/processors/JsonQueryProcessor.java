@@ -255,7 +255,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // todo: configure the following
             //   - when happens when data row errors out, max errors may be?
             //   - we should be able to skip X rows from top, dodgy headers etc.
-            textLoader.configureDestination(model.getTableName().token, true, false, Atomicity.SKIP_ROW);
+            textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW);
             int len = configuration.getCopyBufferSize();
             long buf = Unsafe.malloc(len);
             try {

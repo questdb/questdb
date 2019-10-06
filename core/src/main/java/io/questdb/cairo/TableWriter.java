@@ -31,10 +31,10 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormat;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.microtime.DateLocaleFactory;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -82,7 +82,7 @@ public class TableWriter implements Closeable {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
-    private final DateFormat partitionDirFmt;
+    private final TimestampFormat partitionDirFmt;
     private final AppendMemory ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
@@ -193,19 +193,19 @@ public class TableWriter implements Closeable {
             this.columnTops = new LongList(columnCount);
             switch (partitionBy) {
                 case PartitionBy.DAY:
-                    timestampFloorMethod = Dates::floorDD;
-                    nextTimestampMethod = Dates::addDays;
+                    timestampFloorMethod = Timestamps::floorDD;
+                    nextTimestampMethod = Timestamps::addDays;
                     partitionDirFmt = fmtDay;
                     break;
                 case PartitionBy.MONTH:
-                    timestampFloorMethod = Dates::floorMM;
-                    nextTimestampMethod = Dates::addMonths;
+                    timestampFloorMethod = Timestamps::floorMM;
+                    nextTimestampMethod = Timestamps::addMonths;
                     partitionDirFmt = fmtMonth;
                     break;
                 case PartitionBy.YEAR:
                     // year
-                    timestampFloorMethod = Dates::floorYYYY;
-                    nextTimestampMethod = Dates::addYear;
+                    timestampFloorMethod = Timestamps::floorYYYY;
+                    nextTimestampMethod = Timestamps::addYear;
                     partitionDirFmt = fmtYear;
                     break;
                 default:
@@ -227,7 +227,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public static DateFormat selectPartitionDirFmt(int partitionBy) {
+    public static TimestampFormat selectPartitionDirFmt(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
                 return fmtDay;
@@ -1660,7 +1660,7 @@ public class TableWriter implements Closeable {
                 nativeLPSZ.of(pName);
                 if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR) {
                     try {
-                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
                         if (dirTimestamp <= timestamp) {
                             return;
                         }
@@ -1873,10 +1873,10 @@ public class TableWriter implements Closeable {
         path.put(Files.SEPARATOR);
         switch (partitionBy) {
             case PartitionBy.DAY:
-                y = Dates.getYear(timestamp);
-                leap = Dates.isLeapYear(y);
-                m = Dates.getMonthOfYear(timestamp, y, leap);
-                d = Dates.getDayOfMonth(timestamp, y, m, leap);
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
+                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
                 DateFormatUtils.append000(path, y);
                 path.put('-');
                 DateFormatUtils.append0(path, m);
@@ -1885,32 +1885,32 @@ public class TableWriter implements Closeable {
 
                 if (updatePartitionInterval) {
                     partitionHi =
-                            Dates.yearMicros(y, leap)
-                                    + Dates.monthOfYearMicros(m, leap)
-                                    + (d - 1) * Dates.DAY_MICROS + 24 * Dates.HOUR_MICROS;
+                            Timestamps.yearMicros(y, leap)
+                                    + Timestamps.monthOfYearMicros(m, leap)
+                                    + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.MONTH:
-                y = Dates.getYear(timestamp);
-                leap = Dates.isLeapYear(y);
-                m = Dates.getMonthOfYear(timestamp, y, leap);
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
                 DateFormatUtils.append000(path, y);
                 path.put('-');
                 DateFormatUtils.append0(path, m);
 
                 if (updatePartitionInterval) {
                     partitionHi =
-                            Dates.yearMicros(y, leap)
-                                    + Dates.monthOfYearMicros(m, leap)
-                                    + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MICROS;
+                            Timestamps.yearMicros(y, leap)
+                                    + Timestamps.monthOfYearMicros(m, leap)
+                                    + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.YEAR:
-                y = Dates.getYear(timestamp);
-                leap = Dates.isLeapYear(y);
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
-                    partitionHi = Dates.addYear(Dates.yearMicros(y, leap), 1);
+                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1);
                 }
                 break;
             default:

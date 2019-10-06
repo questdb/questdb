@@ -34,10 +34,10 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormat;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.DateLocale;
-import io.questdb.std.microtime.DateLocaleFactory;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -60,7 +60,7 @@ public class ToCharTimestampFunctionFactory implements FunctionFactory {
             throw SqlException.$(fmt.getPosition(), "format must not be null");
         }
 
-        DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
+        TimestampFormat timestampFormat = tlCompiler.get().compile(fmt.getStr(null));
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getTimestamp(null);
@@ -70,25 +70,25 @@ public class ToCharTimestampFunctionFactory implements FunctionFactory {
 
             StringSink sink = tlSink.get();
             sink.clear();
-            dateFormat.format(value, DateLocaleFactory.INSTANCE.getDefaultDateLocale(), "Z", sink);
+            timestampFormat.format(value, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), "Z", sink);
             return new StrConstant(position, sink);
         }
 
-        return new ToCharDateFFunc(position, args.getQuick(0), dateFormat);
+        return new ToCharDateFFunc(position, args.getQuick(0), timestampFormat);
     }
 
     private static class ToCharDateFFunc extends StrFunction implements UnaryFunction {
         final Function arg;
-        final DateFormat format;
-        final DateLocale locale;
+        final TimestampFormat format;
+        final TimestampLocale locale;
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateFFunc(int position, Function arg, DateFormat format) {
+        public ToCharDateFFunc(int position, Function arg, TimestampFormat format) {
             super(position);
             this.arg = arg;
             this.format = format;
-            locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+            locale = TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale();
             sink1 = new StringSink();
             sink2 = new StringSink();
         }

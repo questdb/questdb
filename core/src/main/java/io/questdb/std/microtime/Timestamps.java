@@ -28,7 +28,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 
-final public class Dates {
+final public class Timestamps {
 
     public static final long DAY_MICROS = 86400000000L;
     public static final long HOUR_MICROS = 3600000000L;
@@ -73,7 +73,7 @@ final public class Dates {
         }
     }
 
-    private Dates() {
+    private Timestamps() {
     }
 
     public static long addDays(long micros, int days) {
@@ -88,8 +88,8 @@ final public class Dates {
         if (months == 0) {
             return micros;
         }
-        int y = Dates.getYear(micros);
-        boolean l = Dates.isLeapYear(y);
+        int y = Timestamps.getYear(micros);
+        boolean l = Timestamps.isLeapYear(y);
         int m = getMonthOfYear(micros, y, l);
         int _y;
         int _m = m - 1 + months;
@@ -118,17 +118,17 @@ final public class Dates {
     public static long addPeriod(long lo, char type, int period) throws NumericException {
         switch (type) {
             case 's':
-                return lo + period * Dates.SECOND_MICROS;
+                return lo + period * Timestamps.SECOND_MICROS;
             case 'm':
-                return lo + period * Dates.MINUTE_MICROS;
+                return lo + period * Timestamps.MINUTE_MICROS;
             case 'h':
-                return Dates.addHours(lo, period);
+                return Timestamps.addHours(lo, period);
             case 'd':
-                return Dates.addDays(lo, period);
+                return Timestamps.addDays(lo, period);
             case 'M':
-                return Dates.addMonths(lo, period);
+                return Timestamps.addMonths(lo, period);
             case 'y':
-                return Dates.addYear(lo, period);
+                return Timestamps.addYear(lo, period);
             default:
                 throw NumericException.INSTANCE;
         }

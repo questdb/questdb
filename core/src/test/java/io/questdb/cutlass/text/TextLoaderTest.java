@@ -35,6 +35,8 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocale;
@@ -54,8 +56,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private static final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
             new DateFormatFactory(),
             DateLocaleFactory.INSTANCE,
-            new io.questdb.std.microtime.DateFormatFactory(),
-            io.questdb.std.microtime.DateLocaleFactory.INSTANCE
+            new TimestampFormatFactory(),
+            TimestampLocaleFactory.INSTANCE
     );
 
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);

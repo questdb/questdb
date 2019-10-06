@@ -55,7 +55,7 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
 
         if (savingsInstantTransition.length == 0) {
             ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS);
-            standardOffset = standardOffsets[0].getTotalSeconds() * Dates.SECOND_MICROS;
+            standardOffset = standardOffsets[0].getTotalSeconds() * Timestamps.SECOND_MICROS;
         } else {
             standardOffset = Long.MIN_VALUE;
         }
@@ -64,8 +64,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
             LocalDateTime dt = savingsLocalTransitions[i];
 
-            historicTransitions.add(Dates.toMicros(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
-                    dt.getSecond() * Dates.SECOND_MICROS + dt.getNano() / 1000);
+            historicTransitions.add(Timestamps.toMicros(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
+                    dt.getSecond() * Timestamps.SECOND_MICROS + dt.getNano() / 1000);
         }
         cutoffTransition = historicTransitions.getLast();
         historyOverlapCheckCutoff = historicTransitions.size() - 1;
@@ -107,8 +107,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
         }
-        this.firstWall = this.wallOffsets[0] * Dates.SECOND_MICROS;
-        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MICROS;
+        this.firstWall = this.wallOffsets[0] * Timestamps.SECOND_MICROS;
+        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Timestamps.SECOND_MICROS;
     }
 
     @Override
@@ -135,8 +135,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
 
     @Override
     public long getOffset(long micros) {
-        int y = Dates.getYear(micros);
-        return getOffset(micros, y, Dates.isLeapYear(y));
+        int y = Timestamps.getYear(micros);
+        return getOffset(micros, y, Timestamps.isLeapYear(y));
     }
 
     private long fromHistory(long micros) {
@@ -158,12 +158,12 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             int delta = offsetAfter - offsetBefore;
             if (delta > 0) {
                 // engage 0 transition logic
-                return (delta + offsetAfter) * Dates.SECOND_MICROS;
+                return (delta + offsetAfter) * Timestamps.SECOND_MICROS;
             } else {
-                return offsetBefore * Dates.SECOND_MICROS;
+                return offsetBefore * Timestamps.SECOND_MICROS;
             }
         } else {
-            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MICROS;
+            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Timestamps.SECOND_MICROS;
         }
     }
 
@@ -182,27 +182,27 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             int dow = zr.dow;
             long date;
             if (dom < 0) {
-                date = Dates.toMicros(year, leap, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MICROS;
+                date = Timestamps.toMicros(year, leap, month, Timestamps.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Timestamps.SECOND_MICROS;
                 if (dow > -1) {
-                    date = Dates.previousOrSameDayOfWeek(date, dow);
+                    date = Timestamps.previousOrSameDayOfWeek(date, dow);
                 }
             } else {
-                date = Dates.toMicros(year, leap, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MICROS;
+                date = Timestamps.toMicros(year, leap, month, dom, zr.hour, zr.minute) + zr.second * Timestamps.SECOND_MICROS;
                 if (dow > -1) {
-                    date = Dates.nextOrSameDayOfWeek(date, dow);
+                    date = Timestamps.nextOrSameDayOfWeek(date, dow);
                 }
             }
 
             if (zr.midnightEOD) {
-                date = Dates.addDays(date, 1);
+                date = Timestamps.addDays(date, 1);
             }
 
             switch (zr.timeDef) {
                 case TransitionRule.UTC:
-                    date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MICROS;
+                    date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Timestamps.SECOND_MICROS;
                     break;
                 case TransitionRule.STANDARD:
-                    date += (offset - zr.standardOffset) * Dates.SECOND_MICROS;
+                    date += (offset - zr.standardOffset) * Timestamps.SECOND_MICROS;
                     break;
                 default:  // WALL
                     break;
@@ -212,24 +212,24 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
 
             if (delta > 0) {
                 if (micros < date) {
-                    return offset * Dates.SECOND_MICROS;
+                    return offset * Timestamps.SECOND_MICROS;
                 }
 
                 if (micros < date + delta) {
-                    return (offsetAfter + delta) * Dates.SECOND_MICROS;
+                    return (offsetAfter + delta) * Timestamps.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;
                 }
             } else {
                 if (micros < date) {
-                    return offset * Dates.SECOND_MICROS;
+                    return offset * Timestamps.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;
                 }
             }
         }
 
-        return offset * Dates.SECOND_MICROS;
+        return offset * Timestamps.SECOND_MICROS;
     }
 
     private static class TransitionRule {

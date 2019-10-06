@@ -3204,8 +3204,8 @@ public class TableWriterTest extends AbstractCairoTest {
     void verifyTimestampPartitions(VirtualMemory vmem) {
         int i;
         DateFormatCompiler compiler = new DateFormatCompiler();
-        DateFormat fmt = compiler.compile("yyyy-MM-dd");
-        DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
+        TimestampFormat fmt = compiler.compile("yyyy-MM-dd");
+        TimestampLocale enGb = TimestampLocaleFactory.INSTANCE.getDateLocale("en-gb");
 
         try (Path vp = new Path()) {
             for (i = 0; i < 10000; i++) {

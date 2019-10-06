@@ -31,7 +31,7 @@ import io.questdb.std.time.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
+public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int M_TIMESTAMP = 0;
     protected static final int M_FD = 1;
     protected final Log LOG;
@@ -93,6 +93,13 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             nf.listen(this.serverFd, configuration.getListenBacklog());
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket();
+        }
+    }
+
+    @Override
+    public void setup() {
+        if (ioContextFactory instanceof EagerThreadSetup) {
+            ((EagerThreadSetup) ioContextFactory).setup();
         }
     }
 
@@ -205,7 +212,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         pending.set(r, M_FD, fd);
         pending.set(r, ioContextFactory.newInstance(fd));
         pendingAdded(r);
-
     }
 
     private void disconnectContext(IOEvent<C> event) {

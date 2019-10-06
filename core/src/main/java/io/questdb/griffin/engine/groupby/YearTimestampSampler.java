@@ -23,7 +23,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 
 class YearTimestampSampler implements TimestampSampler {
 
@@ -35,18 +35,18 @@ class YearTimestampSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return Dates.addYear(timestamp, bucket);
+        return Timestamps.addYear(timestamp, bucket);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return Dates.addYear(timestamp, -bucket);
+        return Timestamps.addYear(timestamp, -bucket);
     }
 
     @Override
     public long round(long value) {
-        int y = Dates.getYear(value);
+        int y = Timestamps.getYear(value);
         y = y - y % bucket;
-        return Dates.yearMicros(y, Dates.isLeapYear(y));
+        return Timestamps.yearMicros(y, Timestamps.isLeapYear(y));
     }
 }

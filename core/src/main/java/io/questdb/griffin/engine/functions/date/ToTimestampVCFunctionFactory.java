@@ -33,10 +33,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormat;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.DateLocale;
-import io.questdb.std.microtime.DateLocaleFactory;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
@@ -53,19 +53,19 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
         }
-        return new Func(position, arg, tlCompiler.get().compile(pattern), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+        return new Func(position, arg, tlCompiler.get().compile(pattern), TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
     }
 
     private static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
-        private final DateFormat dateFormat;
-        private final DateLocale locale;
+        private final TimestampFormat timestampFormat;
+        private final TimestampLocale locale;
 
-        public Func(int position, Function arg, DateFormat dateFormat, DateLocale locale) {
+        public Func(int position, Function arg, TimestampFormat timestampFormat, TimestampLocale locale) {
             super(position);
             this.arg = arg;
-            this.dateFormat = dateFormat;
+            this.timestampFormat = timestampFormat;
             this.locale = locale;
         }
 
@@ -79,7 +79,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
-                    return dateFormat.parse(value, locale);
+                    return timestampFormat.parse(value, locale);
                 }
             } catch (NumericException ignore) {
             }

@@ -79,7 +79,6 @@ public class Worker extends Thread {
         Throwable ex = null;
         try {
             if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
-                setupJobs();
                 if (affinity > -1) {
                     if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
                         if (log != null) {
@@ -95,6 +94,7 @@ public class Worker extends Thread {
                         log.info().$("os scheduled [name=").$(getName()).$(']').$();
                     }
                 }
+                setupJobs();
                 int n = jobs.size();
                 long uselessCounter = 0;
                 while (running == 1) {
@@ -163,7 +163,10 @@ public class Worker extends Thread {
             for (int i = 0; i < jobs.size(); i++) {
                 loadFence();
                 try {
-                    jobs.get(i).setupThread();
+                    Job job = jobs.get(i);
+                    if (job instanceof EagerThreadSetup) {
+                        ((EagerThreadSetup) job).setup();
+                    }
                 } finally {
                     storeFence();
                 }

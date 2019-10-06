@@ -28,9 +28,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormat;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -47,9 +47,9 @@ public final class TableUtils {
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
-    static final DateFormat fmtDay;
-    static final DateFormat fmtMonth;
-    static final DateFormat fmtYear;
+    static final TimestampFormat fmtDay;
+    static final TimestampFormat fmtMonth;
+    static final TimestampFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
@@ -433,11 +433,11 @@ public final class TableUtils {
             case PartitionBy.NONE:
                 return true;
             case PartitionBy.DAY:
-                return Dates.floorDD(timestampA) == Dates.floorDD(timestampB);
+                return Timestamps.floorDD(timestampA) == Timestamps.floorDD(timestampB);
             case PartitionBy.MONTH:
-                return Dates.floorMM(timestampA) == Dates.floorMM(timestampB);
+                return Timestamps.floorMM(timestampA) == Timestamps.floorMM(timestampB);
             case PartitionBy.YEAR:
-                return Dates.floorYYYY(timestampA) == Dates.floorYYYY(timestampB);
+                return Timestamps.floorYYYY(timestampA) == Timestamps.floorYYYY(timestampB);
             default:
                 throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
         }

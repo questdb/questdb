@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 
 public final class TimestampSamplerFactory {
 
@@ -79,16 +79,16 @@ public final class TimestampSamplerFactory {
             switch (cs.charAt(k)) {
                 case 's':
                     // seconds
-                    return new MicroTimestampSampler(Dates.SECOND_MICROS * n);
+                    return new MicroTimestampSampler(Timestamps.SECOND_MICROS * n);
                 case 'm':
                     // minutes
-                    return new MicroTimestampSampler(Dates.MINUTE_MICROS * n);
+                    return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * n);
                 case 'h':
                     // hours
-                    return new MicroTimestampSampler(Dates.HOUR_MICROS * n);
+                    return new MicroTimestampSampler(Timestamps.HOUR_MICROS * n);
                 case 'd':
                     // days
-                    return new MicroTimestampSampler(Dates.DAY_MICROS * n);
+                    return new MicroTimestampSampler(Timestamps.DAY_MICROS * n);
                 case 'M':
                     // months
                     return new MonthTimestampSampler(n);

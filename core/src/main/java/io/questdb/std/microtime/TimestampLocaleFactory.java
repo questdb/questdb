@@ -29,34 +29,34 @@ import io.questdb.std.CharSequenceObjHashMap;
 import java.text.DateFormatSymbols;
 import java.util.Locale;
 
-public class DateLocaleFactory {
-    public static final DateLocaleFactory INSTANCE = new DateLocaleFactory(TimeZoneRuleFactory.INSTANCE);
+public class TimestampLocaleFactory {
+    public static final TimestampLocaleFactory INSTANCE = new TimestampLocaleFactory(TimeZoneRuleFactory.INSTANCE);
 
-    private final CharSequenceObjHashMap<DateLocale> dateLocales = new CharSequenceObjHashMap<>();
-    private final DateLocale defaultDateLocale;
+    private final CharSequenceObjHashMap<TimestampLocale> dateLocales = new CharSequenceObjHashMap<>();
+    private final TimestampLocale defaultTimestampLocale;
 
-    public DateLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {
+    public TimestampLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {
         CharSequenceHashSet cache = new CharSequenceHashSet();
         for (Locale l : Locale.getAvailableLocales()) {
             String tag = l.toLanguageTag();
             if ("und".equals(tag)) {
                 tag = "";
             }
-            dateLocales.put(tag, new DateLocale(tag, new DateFormatSymbols(l), timeZoneRuleFactory, cache));
+            dateLocales.put(tag, new TimestampLocale(tag, new DateFormatSymbols(l), timeZoneRuleFactory, cache));
             cache.clear();
         }
-        defaultDateLocale = dateLocales.get(Locale.getDefault().toLanguageTag());
+        defaultTimestampLocale = dateLocales.get(Locale.getDefault().toLanguageTag());
     }
 
-    public CharSequenceObjHashMap<DateLocale> getAll() {
+    public CharSequenceObjHashMap<TimestampLocale> getAll() {
         return dateLocales;
     }
 
-    public DateLocale getDateLocale(CharSequence id) {
+    public TimestampLocale getDateLocale(CharSequence id) {
         return dateLocales.get(id);
     }
 
-    public DateLocale getDefaultDateLocale() {
-        return defaultDateLocale;
+    public TimestampLocale getDefaultTimestampLocale() {
+        return defaultTimestampLocale;
     }
 }

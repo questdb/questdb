@@ -27,7 +27,7 @@ import io.questdb.std.*;
 
 import java.text.DateFormatSymbols;
 
-public class DateLocale {
+public class TimestampLocale {
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
@@ -42,7 +42,7 @@ public class DateLocale {
     private final TimeZoneRuleFactory factory;
     private final String id;
 
-    DateLocale(String id, DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
+    TimestampLocale(String id, DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
         this.id = id;
         this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);

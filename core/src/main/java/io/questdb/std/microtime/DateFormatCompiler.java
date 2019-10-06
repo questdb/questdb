@@ -174,15 +174,15 @@ public class DateFormatCompiler {
         opList.add(op);
     }
 
-    public DateFormat compile(CharSequence pattern) {
+    public TimestampFormat compile(CharSequence pattern) {
         return compile(pattern, false);
     }
 
-    public DateFormat compile(CharSequence pattern, boolean generic) {
+    public TimestampFormat compile(CharSequence pattern, boolean generic) {
         return compile(pattern, 0, pattern.length(), generic);
     }
 
-    public DateFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
+    public TimestampFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
         this.lexer.of(pattern, lo, hi);
 
         IntList ops;
@@ -215,7 +215,7 @@ public class DateFormatCompiler {
 
         // make last operation "greedy"
         makeLastOpGreedy(ops);
-        return generic ? new GenericDateFormat(ops, delimiters) : compile(ops, delimiters);
+        return generic ? new GenericTimestampFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private void addTempToPos(int decodeLenIndex) {
@@ -1333,27 +1333,27 @@ public class DateFormatCompiler {
      * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
      * it isn't present in the pattern and does not have to be defaulted at all when it is.
      */
-    private DateFormat compile(IntList ops, ObjList<String> delimiters) {
-        asm.init(DateFormat.class);
+    private TimestampFormat compile(IntList ops, ObjList<String> delimiters) {
+        asm.init(TimestampFormat.class);
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/std/microtime/DateFormatAsm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/std/microtime/TimestampFormatAsm"));
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
-        int superclassIndex = asm.poolClass(AbstractDateFormat.class);
-        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
+        int superclassIndex = asm.poolClass(AbstractTimestampFormat.class);
+        int dateLocaleClassIndex = asm.poolClass(TimestampLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MICROS);
+        int minMillisIndex = asm.poolLongConst(Timestamps.MINUTE_MICROS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
-        int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
-        int matchMonthIndex = asm.poolMethod(DateLocale.class, "matchMonth", "(Ljava/lang/CharSequence;II)J");
-        int matchZoneIndex = asm.poolMethod(DateLocale.class, "matchZone", "(Ljava/lang/CharSequence;II)J");
-        int matchAMPMIndex = asm.poolMethod(DateLocale.class, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
-        int matchEraIndex = asm.poolMethod(DateLocale.class, "matchEra", "(Ljava/lang/CharSequence;II)J");
-        int getWeekdayIndex = asm.poolMethod(DateLocale.class, "getWeekday", "(I)Ljava/lang/String;");
-        int getShortWeekdayIndex = asm.poolMethod(DateLocale.class, "getShortWeekday", "(I)Ljava/lang/String;");
-        int getMonthIndex = asm.poolMethod(DateLocale.class, "getMonth", "(I)Ljava/lang/String;");
-        int getShortMonthIndex = asm.poolMethod(DateLocale.class, "getShortMonth", "(I)Ljava/lang/String;");
+        int matchWeekdayIndex = asm.poolMethod(TimestampLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
+        int matchMonthIndex = asm.poolMethod(TimestampLocale.class, "matchMonth", "(Ljava/lang/CharSequence;II)J");
+        int matchZoneIndex = asm.poolMethod(TimestampLocale.class, "matchZone", "(Ljava/lang/CharSequence;II)J");
+        int matchAMPMIndex = asm.poolMethod(TimestampLocale.class, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
+        int matchEraIndex = asm.poolMethod(TimestampLocale.class, "matchEra", "(Ljava/lang/CharSequence;II)J");
+        int getWeekdayIndex = asm.poolMethod(TimestampLocale.class, "getWeekday", "(I)Ljava/lang/String;");
+        int getShortWeekdayIndex = asm.poolMethod(TimestampLocale.class, "getShortWeekday", "(I)Ljava/lang/String;");
+        int getMonthIndex = asm.poolMethod(TimestampLocale.class, "getMonth", "(I)Ljava/lang/String;");
+        int getShortMonthIndex = asm.poolMethod(TimestampLocale.class, "getShortMonth", "(I)Ljava/lang/String;");
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
@@ -1364,11 +1364,11 @@ public class DateFormatCompiler {
         int assertNoTailIndex = asm.poolMethod(DateFormatUtils.class, "assertNoTail", "(II)V");
         int assertStringIndex = asm.poolMethod(DateFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lio/questdb/std/microtime/DateLocale;IIIIIIIIIIJI)J");
+        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lio/questdb/std/microtime/TimestampLocale;IIIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/DateLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/DateLocale;)V");
+        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
         int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
@@ -1377,17 +1377,17 @@ public class DateFormatCompiler {
         int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
 
-        int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
-        int getYearIndex = asm.poolMethod(Dates.class, "getYear", "(J)I");
-        int isLeapYearIndex = asm.poolMethod(Dates.class, "isLeapYear", "(I)Z");
-        int getMonthOfYearIndex = asm.poolMethod(Dates.class, "getMonthOfYear", "(JIZ)I");
-        int getDayOfMonthIndex = asm.poolMethod(Dates.class, "getDayOfMonth", "(JIIZ)I");
-        int getHourOfDayIndex = asm.poolMethod(Dates.class, "getHourOfDay", "(J)I");
-        int getMinuteOfHourIndex = asm.poolMethod(Dates.class, "getMinuteOfHour", "(J)I");
-        int getSecondOfMinuteIndex = asm.poolMethod(Dates.class, "getSecondOfMinute", "(J)I");
-        int getMillisOfSecondIndex = asm.poolMethod(Dates.class, "getMillisOfSecond", "(J)I");
-        int getMicrosOfSecondIndex = asm.poolMethod(Dates.class, "getMicrosOfSecond", "(J)I");
-        int getDayOfWeekIndex = asm.poolMethod(Dates.class, "getDayOfWeekSundayFirst", "(J)I");
+        int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
+        int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
+        int isLeapYearIndex = asm.poolMethod(Timestamps.class, "isLeapYear", "(I)Z");
+        int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, "getMonthOfYear", "(JIZ)I");
+        int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, "getDayOfMonth", "(JIIZ)I");
+        int getHourOfDayIndex = asm.poolMethod(Timestamps.class, "getHourOfDay", "(J)I");
+        int getMinuteOfHourIndex = asm.poolMethod(Timestamps.class, "getMinuteOfHour", "(J)I");
+        int getSecondOfMinuteIndex = asm.poolMethod(Timestamps.class, "getSecondOfMinute", "(J)I");
+        int getMillisOfSecondIndex = asm.poolMethod(Timestamps.class, "getMillisOfSecond", "(J)I");
+        int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, "getMicrosOfSecond", "(J)I");
+        int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, "getDayOfWeekSundayFirst", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
@@ -1396,9 +1396,9 @@ public class DateFormatCompiler {
         int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
         int parseNameIndex = asm.poolUtf8("parse");
-        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILio/questdb/std/microtime/DateLocale;)J");
+        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILio/questdb/std/microtime/TimestampLocale;)J");
         int formatNameIndex = asm.poolUtf8("format");
-        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/microtime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
+        int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/microtime/TimestampLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
 
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path

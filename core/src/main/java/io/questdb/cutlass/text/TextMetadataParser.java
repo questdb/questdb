@@ -32,6 +32,9 @@ import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocale;
@@ -51,10 +54,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_LOCALE = 4;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
-    private final io.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory;
+    private final TimestampLocaleFactory timestampLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
-    private final io.questdb.std.microtime.DateFormatFactory timestampFormatFactory;
+    private final TimestampFormatFactory timestampFormatFactory;
     private final ObjList<CharSequence> columnNames;
     private final ObjList<TypeAdapter> columnTypes;
     private final TypeManager typeManager;
@@ -217,9 +220,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
                 break;
             case ColumnType.TIMESTAMP:
-                io.questdb.std.microtime.DateLocale timestampLocale =
+                TimestampLocale timestampLocale =
                         locale == null ?
-                                timestampLocaleFactory.getDefaultDateLocale()
+                                timestampLocaleFactory.getDefaultTimestampLocale()
                                 : timestampLocaleFactory.getDateLocale(locale);
                 if (timestampLocale == null) {
                     throw JsonException.$(localePosition, "Invalid timestamp locale");

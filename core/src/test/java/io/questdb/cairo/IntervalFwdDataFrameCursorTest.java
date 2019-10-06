@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -419,7 +419,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.reload());
                         assertEquals(expected1, record, cursor);
 
-                        timestamp = Dates.addYear(timestamp, 3);
+                        timestamp = Timestamps.addYear(timestamp, 3);
 
                         for (int i = 0; i < rowCount; i++) {
                             TableWriter.Row row = writer.newRow(timestamp);
@@ -586,7 +586,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                timestamp = Dates.addYear(timestamp, 3);
+                timestamp = Timestamps.addYear(timestamp, 3);
 
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);

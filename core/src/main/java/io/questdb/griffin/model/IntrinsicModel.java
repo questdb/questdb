@@ -26,7 +26,7 @@ package io.questdb.griffin.model;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.microtime.Dates;
+import io.questdb.std.microtime.Timestamps;
 
 public class IntrinsicModel implements Mutable {
     public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
@@ -184,16 +184,16 @@ public class IntrinsicModel implements Mutable {
                         addMonthInterval(period, count, out);
                         break;
                     case 'h':
-                        addMillisInterval(period * Dates.HOUR_MICROS, count, out);
+                        addMillisInterval(period * Timestamps.HOUR_MICROS, count, out);
                         break;
                     case 'm':
-                        addMillisInterval(period * Dates.MINUTE_MICROS, count, out);
+                        addMillisInterval(period * Timestamps.MINUTE_MICROS, count, out);
                         break;
                     case 's':
-                        addMillisInterval(period * Dates.SECOND_MICROS, count, out);
+                        addMillisInterval(period * Timestamps.SECOND_MICROS, count, out);
                         break;
                     case 'd':
-                        addMillisInterval(period * Dates.DAY_MICROS, count, out);
+                        addMillisInterval(period * Timestamps.DAY_MICROS, count, out);
                         break;
                     default:
                         throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
@@ -210,7 +210,7 @@ public class IntrinsicModel implements Mutable {
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Dates.isLeapYear(year);
+        boolean l = Timestamps.isLeapYear(year);
         if (checkLen(p, lim)) {
             checkChar(seq, p++, lim, '-');
             int month = Numbers.parseInt(seq, p, p += 2);
@@ -218,7 +218,7 @@ public class IntrinsicModel implements Mutable {
             if (checkLen(p, lim)) {
                 checkChar(seq, p++, lim, '-');
                 int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Dates.getDaysPerMonth(month, l));
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
                     checkChar(seq, p++, lim, 'T');
                     int hour = Numbers.parseInt(seq, p, p += 2);
@@ -235,82 +235,82 @@ public class IntrinsicModel implements Mutable {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                out.add(Dates.yearMicros(year, l)
-                                        + Dates.monthOfYearMicros(month, l)
-                                        + (day - 1) * Dates.DAY_MICROS
-                                        + hour * Dates.HOUR_MICROS
-                                        + min * Dates.MINUTE_MICROS
-                                        + sec * Dates.SECOND_MICROS);
-                                out.add(Dates.yearMicros(year, l)
-                                        + Dates.monthOfYearMicros(month, l)
-                                        + (day - 1) * Dates.DAY_MICROS
-                                        + hour * Dates.HOUR_MICROS
-                                        + min * Dates.MINUTE_MICROS
-                                        + sec * Dates.SECOND_MICROS
+                                out.add(Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS);
+                                out.add(Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
                                         + 999999);
                             }
                         } else {
                             // minute
-                            out.add(Dates.yearMicros(year, l)
-                                    + Dates.monthOfYearMicros(month, l)
-                                    + (day - 1) * Dates.DAY_MICROS
-                                    + hour * Dates.HOUR_MICROS
-                                    + min * Dates.MINUTE_MICROS);
-                            out.add(Dates.yearMicros(year, l)
-                                    + Dates.monthOfYearMicros(month, l)
-                                    + (day - 1) * Dates.DAY_MICROS
-                                    + hour * Dates.HOUR_MICROS
-                                    + min * Dates.MINUTE_MICROS
-                                    + 59 * Dates.SECOND_MICROS
+                            out.add(Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS);
+                            out.add(Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS
+                                    + 59 * Timestamps.SECOND_MICROS
                                     + 999999);
                         }
                     } else {
                         // year + month + day + hour
-                        out.add(Dates.yearMicros(year, l)
-                                + Dates.monthOfYearMicros(month, l)
-                                + (day - 1) * Dates.DAY_MICROS
-                                + hour * Dates.HOUR_MICROS);
-                        out.add(Dates.yearMicros(year, l)
-                                + Dates.monthOfYearMicros(month, l)
-                                + (day - 1) * Dates.DAY_MICROS
-                                + hour * Dates.HOUR_MICROS
-                                + 59 * Dates.MINUTE_MICROS
-                                + 59 * Dates.SECOND_MICROS
+                        out.add(Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS);
+                        out.add(Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS
+                                + 59 * Timestamps.MINUTE_MICROS
+                                + 59 * Timestamps.SECOND_MICROS
                                 + 999999);
                     }
                 } else {
                     // year + month + day
-                    out.add(Dates.yearMicros(year, l)
-                            + Dates.monthOfYearMicros(month, l)
-                            + (day - 1) * Dates.DAY_MICROS);
-                    out.add(Dates.yearMicros(year, l)
-                            + Dates.monthOfYearMicros(month, l)
-                            + +(day - 1) * Dates.DAY_MICROS
-                            + 23 * Dates.HOUR_MICROS
-                            + 59 * Dates.MINUTE_MICROS
-                            + 59 * Dates.SECOND_MICROS
+                    out.add(Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS);
+                    out.add(Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + +(day - 1) * Timestamps.DAY_MICROS
+                            + 23 * Timestamps.HOUR_MICROS
+                            + 59 * Timestamps.MINUTE_MICROS
+                            + 59 * Timestamps.SECOND_MICROS
                             + 999999);
                 }
             } else {
                 // year + month
-                out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(month, l));
-                out.add(Dates.yearMicros(year, l)
-                        + Dates.monthOfYearMicros(month, l)
-                        + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MICROS
-                        + 23 * Dates.HOUR_MICROS
-                        + 59 * Dates.MINUTE_MICROS
-                        + 59 * Dates.SECOND_MICROS
+                out.add(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+                out.add(Timestamps.yearMicros(year, l)
+                        + Timestamps.monthOfYearMicros(month, l)
+                        + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
+                        + 23 * Timestamps.HOUR_MICROS
+                        + 59 * Timestamps.MINUTE_MICROS
+                        + 59 * Timestamps.SECOND_MICROS
                         + 999999);
             }
         } else {
             // year
-            out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(1, l));
-            out.add(Dates.yearMicros(year, l)
-                    + Dates.monthOfYearMicros(12, l)
-                    + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MICROS
-                    + 23 * Dates.HOUR_MICROS
-                    + 59 * Dates.MINUTE_MICROS
-                    + 59 * Dates.SECOND_MICROS
+            out.add(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+            out.add(Timestamps.yearMicros(year, l)
+                    + Timestamps.monthOfYearMicros(12, l)
+                    + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
+                    + 23 * Timestamps.HOUR_MICROS
+                    + 59 * Timestamps.MINUTE_MICROS
+                    + 59 * Timestamps.SECOND_MICROS
                     + 999999);
         }
     }
@@ -340,14 +340,14 @@ public class IntrinsicModel implements Mutable {
         try {
             parseInterval(seq, lo, p, out);
             int n = out.size();
-            out.setQuick(n - 1, Dates.addPeriod(out.getQuick(n - 1), type, period));
+            out.setQuick(n - 1, Timestamps.addPeriod(out.getQuick(n - 1), type, period));
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMillis = DateFormatUtils.tryParse(seq, lo, p);
-            append(out, loMillis, Dates.addPeriod(loMillis, type, period));
+            append(out, loMillis, Timestamps.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
@@ -371,8 +371,8 @@ public class IntrinsicModel implements Mutable {
         long hi = out.getQuick(k - 1);
 
         for (int i = 0, n = count - 1; i < n; i++) {
-            lo = Dates.addMonths(lo, period);
-            hi = Dates.addMonths(hi, period);
+            lo = Timestamps.addMonths(lo, period);
+            hi = Timestamps.addMonths(hi, period);
             append(out, lo, hi);
         }
     }
@@ -383,8 +383,8 @@ public class IntrinsicModel implements Mutable {
         long hi = out.getQuick(k - 1);
 
         for (int i = 0, n = count - 1; i < n; i++) {
-            lo = Dates.addYear(lo, period);
-            hi = Dates.addYear(hi, period);
+            lo = Timestamps.addYear(lo, period);
+            hi = Timestamps.addYear(hi, period);
             append(out, lo, hi);
         }
     }
