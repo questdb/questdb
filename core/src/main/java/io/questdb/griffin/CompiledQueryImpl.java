@@ -25,12 +25,12 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.cutlass.text.TextLoader;
 
 public class CompiledQueryImpl implements CompiledQuery {
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
-    private CopyModel copyModel;
+    private TextLoader textLoader;
     private int type;
 
     @Override
@@ -44,8 +44,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public CopyModel getCopyModel() {
-        return copyModel;
+    public TextLoader getTextLoader() {
+        return textLoader;
     }
 
     @Override
@@ -64,9 +64,14 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofCopy(CopyModel copyModel) {
-        this.copyModel = copyModel;
-        this.type = COPY;
+    CompiledQuery ofCopyLocal() {
+        this.type = COPY_LOCAL;
+        return this;
+    }
+
+    CompiledQuery ofCopyRemote(TextLoader textLoader) {
+        this.textLoader = textLoader;
+        this.type = COPY_REMOTE;
         return this;
     }
 

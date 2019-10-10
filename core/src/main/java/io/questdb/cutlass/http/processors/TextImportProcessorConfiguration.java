@@ -23,10 +23,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.text.TextConfiguration;
-
 public interface TextImportProcessorConfiguration {
     boolean abortBrokenUploads();
-
-    TextConfiguration getTextConfiguration();
 }

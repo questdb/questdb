@@ -25,6 +25,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
@@ -4807,7 +4808,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableNameCannotOpen() {
+    public void testTableNameCannotOpen() throws JsonException {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -4817,6 +4818,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                 return super.openRO(name);
             }
         };
+
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {

@@ -23,19 +23,9 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.text.DefaultTextConfiguration;
-import io.questdb.cutlass.text.TextConfiguration;
-
 public class DefaultTextImportProcessorConfiguration implements TextImportProcessorConfiguration {
-    private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
-
     @Override
     public boolean abortBrokenUploads() {
         return true;
-    }
-
-    @Override
-    public TextConfiguration getTextConfiguration() {
-        return textConfiguration;
     }
 }

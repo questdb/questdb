@@ -23,6 +23,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.text.DefaultTextConfiguration;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -35,8 +38,9 @@ import io.questdb.std.time.MillisecondClockImpl;
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
+    private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
 
-    public DefaultCairoConfiguration(CharSequence root) {
+    public DefaultCairoConfiguration(CharSequence root) throws JsonException {
         this.root = Chars.stringOf(root);
     }
 
@@ -275,5 +279,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getCopyPoolCapacity() {
         return 16;
+    }
+
+    @Override
+    public int getSqlCopyBufferSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
+    public TextConfiguration getTextConfiguration() {
+        return textConfiguration;
     }
 }

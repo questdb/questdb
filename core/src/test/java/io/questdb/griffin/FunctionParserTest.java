@@ -26,6 +26,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -925,7 +926,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNoArgFunction() throws SqlException {
+    public void testNoArgFunction() throws SqlException, JsonException {
         functions.add(new SysdateFunctionFactory());
         functions.add(new ToCharDateFunctionFactory());
         FunctionParser functionParser = new FunctionParser(

@@ -25,9 +25,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.cutlass.json.JsonException;
-import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -40,10 +37,6 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -104,24 +97,8 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine
-    ) throws JsonException {
+    ) {
         if (configuration.isEnabled()) {
-            final DateFormatFactory dateFormatFactory = new DateFormatFactory();
-            final TimestampFormatFactory timestampFormatFactory = new TimestampFormatFactory();
-            final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-                    dateFormatFactory,
-                    DateLocaleFactory.INSTANCE,
-                    timestampFormatFactory,
-                    TimestampLocaleFactory.INSTANCE
-            );
-
-            try (JsonLexer jsonLexer = new JsonLexer(configuration.getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheSize(), configuration.getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheLimit())) {
-                inputFormatConfiguration.parseConfiguration(
-                        jsonLexer,
-                        configuration.getTextImportProcessorConfiguration().getTextConfiguration().getAdapterSetConfigurationFileName()
-                );
-            }
-
             final WorkerPool localPool;
             if (configuration.getWorkerCount() > 0) {
                 localPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -155,8 +132,7 @@ public class HttpServer implements Closeable {
                 public HttpRequestProcessor newInstance() {
                     return new JsonQueryProcessor(
                             configuration.getJsonQueryProcessorConfiguration(),
-                            cairoEngine,
-                            inputFormatConfiguration
+                            cairoEngine
                     );
                 }
             });
@@ -169,11 +145,7 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new TextImportProcessor(
-                            configuration.getTextImportProcessorConfiguration(),
-                            cairoEngine,
-                            inputFormatConfiguration
-                    );
+                    return new TextImportProcessor(configuration.getTextImportProcessorConfiguration(), cairoEngine);
                 }
             });
 

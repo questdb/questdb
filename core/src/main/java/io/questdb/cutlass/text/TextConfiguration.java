@@ -23,8 +23,9 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
+
 public interface TextConfiguration {
-    String getAdapterSetConfigurationFileName();
 
     int getDateAdapterPoolCapacity();
 
@@ -47,4 +48,6 @@ public interface TextConfiguration {
     int getTimestampAdapterPoolCapacity();
 
     int getUtf8SinkSize();
+
+    InputFormatConfiguration getInputFormatConfiguration();
 }

@@ -146,14 +146,14 @@ public final class Files {
     public static long mmap(long fd, long len, long offset, int flags) {
         long address = mmap0(fd, len, offset, flags);
         if (address != -1) {
-            Unsafe.MEM_USED.addAndGet(len);
+            Unsafe.recordMemAlloc(len);
         }
         return address;
     }
 
     public static void munmap(long address, long len) {
         if (address != 0 && munmap0(address, len) != -1) {
-            Unsafe.MEM_USED.addAndGet(-len);
+            Unsafe.recordMemAlloc(-len);
         }
     }
 

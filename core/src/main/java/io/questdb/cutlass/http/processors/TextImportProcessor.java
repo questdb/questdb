@@ -31,7 +31,6 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -63,19 +62,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
     private final TextImportProcessorConfiguration configuration;
     private final CairoEngine engine;
-    private final InputFormatConfiguration inputFormatConfiguration;
     private HttpConnectionContext transientContext;
     private IODispatcher<HttpConnectionContext> transientDispatcher;
     private TextImportProcessorState transientState;
 
     public TextImportProcessor(
             TextImportProcessorConfiguration configuration,
-            CairoEngine cairoEngine,
-            InputFormatConfiguration inputFormatConfiguration
+            CairoEngine cairoEngine
     ) {
         this.configuration = configuration;
         this.engine = cairoEngine;
-        this.inputFormatConfiguration = inputFormatConfiguration;
     }
 
     @Override
@@ -176,12 +172,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         this.transientState = LV.get(context);
         if (this.transientState == null) {
             LOG.debug().$("new text state").$();
-            LV.set(context, this.transientState = new TextImportProcessorState(
-                            configuration.getTextConfiguration(),
-                            engine,
-                            inputFormatConfiguration
-                    )
-            );
+            LV.set(context, this.transientState = new TextImportProcessorState(engine));
         }
     }
 

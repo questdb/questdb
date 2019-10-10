@@ -209,34 +209,12 @@ public class TypeManagerTest {
         );
 
         inputFormatConfiguration.parseConfiguration(jsonLexer, fileResource);
-        return new TypeManager(
-                new DefaultTextConfiguration() {
-                    @Override
-                    public String getAdapterSetConfigurationFileName() {
-                        return fileResource;
-                    }
-                },
-                utf8Sink,
-                inputFormatConfiguration
-        );
+        return new TypeManager(new DefaultTextConfiguration(fileResource), utf8Sink);
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) throws JsonException {
-
         TextConfiguration textConfiguration = new DefaultTextConfiguration();
-        InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-                new DateFormatFactory(),
-                DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE
-        );
-
-        inputFormatConfiguration.parseConfiguration(jsonLexer, textConfiguration.getAdapterSetConfigurationFileName());
-        TypeManager typeManager = new TypeManager(
-                textConfiguration,
-                utf8Sink,
-                inputFormatConfiguration
-        );
+        TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
         try {
             typeManager.getTypeAdapter(columnType);
             Assert.fail();

@@ -25,6 +25,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,6 +68,8 @@ public class SqlCompiler implements Closeable {
     private final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
+    private final TextLoader textLoader;
+    private final FilesFacade ff;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -73,6 +78,7 @@ public class SqlCompiler implements Closeable {
     public SqlCompiler(CairoEngine engine, @Nullable CairoWorkScheduler workScheduler) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.ff = configuration.getFilesFacade();
         this.workScheduler = workScheduler;
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
@@ -123,6 +129,8 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo
         );
+
+        this.textLoader = new TextLoader(engine);
     }
 
     public static void configureLexer(GenericLexer lexer) {
@@ -140,6 +148,7 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         Misc.free(path);
+        Misc.free(textLoader);
     }
 
     public CompiledQuery compile(CharSequence query) throws SqlException {
@@ -159,6 +168,10 @@ public class SqlCompiler implements Closeable {
             return compileUsingModel(executionContext);
         }
         return executor.execute(executionContext);
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
     }
 
     // Creates data type converter.
@@ -851,7 +864,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);
             case ExecutionModel.COPY:
-                return compiledQuery.ofCopy((CopyModel) executionModel);
+                return executeCopy(executionContext, (CopyModel) executionModel);
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
@@ -874,6 +887,42 @@ public class SqlCompiler implements Closeable {
             row.append();
         }
         writer.commit();
+    }
+
+    private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+        try {
+            int len = configuration.getSqlCopyBufferSize();
+            long buf = Unsafe.malloc(len);
+            try {
+                path.of(GenericLexer.unquote(model.getFileName().token)).$();
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(']');
+                }
+                long fileLen = ff.length(fd);
+                long n = ff.read(fd, buf, len, 0);
+                if (n > 0) {
+                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
+                    textLoader.setState(TextLoader.LOAD_DATA);
+                    int read;
+                    while (n < fileLen) {
+                        read = (int) ff.read(fd, buf, len, n);
+                        if (read < 1) {
+                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
+                        }
+                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
+                        n += read;
+                    }
+                    textLoader.wrapUp();
+                }
+            } finally {
+                Unsafe.free(buf, len);
+            }
+        } catch (JsonException e) {
+            // we do not expect JSON exception here
+        } finally {
+            LOG.info().$("copied").$();
+        }
     }
 
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
@@ -1009,6 +1058,16 @@ public class SqlCompiler implements Closeable {
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
 
         return compiledQuery.ofDrop();
+    }
+
+    @Nullable
+    private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
+        setupTextLoaderFromModel(executionModel);
+        if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            return compiledQuery.ofCopyRemote(textLoader);
+        }
+        copyTable(executionContext, executionModel);
+        return compiledQuery.ofCopyLocal();
     }
 
     private CompiledQuery executeWithRetries(
@@ -1258,6 +1317,15 @@ public class SqlCompiler implements Closeable {
 
     void setFullSatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    private void setupTextLoaderFromModel(CopyModel model) {
+        textLoader.clear();
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        // todo: configure the following
+        //   - when happens when data row errors out, max errors may be?
+        //   - we should be able to skip X rows from top, dodgy headers etc.
+        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW);
     }
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {

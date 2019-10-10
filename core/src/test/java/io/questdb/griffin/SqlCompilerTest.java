@@ -27,6 +27,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -95,7 +96,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCannotCreateTable() {
+    public void testCannotCreateTable() throws JsonException {
 
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
@@ -1807,7 +1808,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
-            public void run() {
+            public void run() throws JsonException {
                 String sql = "create table y as (" +
                         "select * from random_cursor(" +
                         " 10000," + // record count
@@ -1864,7 +1865,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
-            public void run() {
+            public void run() throws JsonException {
                 String sql = "create table y as (" +
                         "select * from random_cursor(" +
                         " 10000," + // record count
@@ -3348,7 +3349,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws SqlException {
+    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws SqlException, JsonException {
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {

@@ -101,6 +101,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         compiler.close();
     }
 
+    @After
+    public void tearDownAfterTest() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+    }
+
     protected static void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             if (expected == null) {
@@ -393,12 +399,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory);
         }
-    }
-
-    @After
-    public void tearDownAfterTest() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
     }
 
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {

@@ -23,22 +23,17 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocale;
 import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.test.tools.TestUtils;
@@ -53,19 +48,11 @@ import java.nio.charset.StandardCharsets;
 public class TextLoaderTest extends AbstractGriffinTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
-    private static final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-            new DateFormatFactory(),
-            DateLocaleFactory.INSTANCE,
-            new TimestampFormatFactory(),
-            TimestampLocaleFactory.INSTANCE
-    );
 
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
     public static void tearDownClass() {
-        compiler.close();
-        engine.close();
         jsonLexer.close();
     }
 
@@ -228,7 +215,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected, (index, len, b) -> {
+            playText(engine, textLoader, csv, 1024, expected, (index, len, b) -> {
                         switch (index) {
                             case 1560:
                             case 1561:
@@ -331,7 +318,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 2048, expected, (index, len, b) -> {
+            playText(engine, textLoader, csv, 2048, expected, (index, len, b) -> {
                         switch (index) {
                             case 256:
                             case 257:
@@ -431,7 +418,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected, (index, len, b) -> {
+            playText(engine, textLoader, csv, 1024, expected, (index, len, b) -> {
                         switch (index) {
                             case 1560:
                             case 1561:
@@ -840,18 +827,20 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            inputFormatConfiguration.parseConfiguration(
-                    jsonLexer,
-                    textConfiguration.getAdapterSetConfigurationFileName()
-            );
+            CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
+                @Override
+                public TextConfiguration getTextConfiguration() {
+                    return textConfiguration;
+                }
+            };
 
-            try (TextLoader loader = new TextLoader(
-                    textConfiguration,
-                    engine,
-                    inputFormatConfiguration
-            )) {
+            try (
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    TextLoader loader = new TextLoader(engine)
+            ) {
                 configureLoaderDefaults(loader, (byte) ',');
                 playText(
+                        engine,
                         loader,
                         csv,
                         240,
@@ -964,40 +953,52 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testImportTimestamp() throws Exception {
-        assertNoLeak(new DefaultTextConfiguration() {
-                         @Override
-                         public int getTextAnalysisMaxLines() {
-                             return 3;
-                         }
-                     },
-                textLoader -> {
-                    String expected = "StrSym\tts\n" +
-                            "CMP1\t2015-01-13T19:15:09.000000Z\n" +
-                            "CMP2\t2015-01-13T19:15:09.000234Z\n" +
-                            "CMP1\t2015-01-13T19:15:09.000455Z\n" +
-                            "CMP2\t2015-01-13T19:15:09.000754Z\n" +
-                            "CMP1\t2015-01-13T19:15:09.000903Z\n";
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tts\n" +
+                                "CMP1\t2015-01-13T19:15:09.000000Z\n" +
+                                "CMP2\t2015-01-13T19:15:09.000234Z\n" +
+                                "CMP1\t2015-01-13T19:15:09.000455Z\n" +
+                                "CMP2\t2015-01-13T19:15:09.000754Z\n" +
+                                "CMP1\t2015-01-13T19:15:09.000903Z\n";
 
 
-                    String csv = "StrSym,ts\n" +
-                            "CMP1,2015-01-13T19:15:09.000000Z\n" +
-                            "CMP2,2015-01-13T19:15:09.000234Z\n" +
-                            "CMP1,2015-01-13T19:15:09.000455Z\n" +
-                            "CMP2,2015-01-13T19:15:09.000754Z\n" +
-                            "CMP1,2015-01-13T19:15:09.000903Z\n";
+                        String csv = "StrSym,ts\n" +
+                                "CMP1,2015-01-13T19:15:09.000000Z\n" +
+                                "CMP2,2015-01-13T19:15:09.000234Z\n" +
+                                "CMP1,2015-01-13T19:15:09.000455Z\n" +
+                                "CMP2,2015-01-13T19:15:09.000754Z\n" +
+                                "CMP1,2015-01-13T19:15:09.000903Z\n";
 
-                    configureLoaderDefaults(textLoader, (byte) ',');
-                    textLoader.setForceHeaders(false);
-                    playText(
-                            textLoader,
-                            csv,
-                            1024,
-                            expected,
-                            "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
-                            5,
-                            5
-                    );
-                });
+                        configureLoaderDefaults(textLoader, (byte) ',');
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                                5,
+                                5
+                        );
+                    });
+        }
     }
 
     @Test
@@ -1042,26 +1043,27 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            inputFormatConfiguration.parseConfiguration(
-                    jsonLexer,
-                    textConfiguration.getAdapterSetConfigurationFileName()
-            );
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public TextConfiguration getTextConfiguration() {
+                    return textConfiguration;
+                }
+            };
 
-            try (TextLoader loader = new TextLoader(
-                    textConfiguration,
-                    engine,
-                    inputFormatConfiguration
-            )) {
-                configureLoaderDefaults(loader, (byte) ',');
-                playText(
-                        loader,
-                        csv,
-                        1024,
-                        expected,
-                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                        12,
-                        12
-                );
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (TextLoader loader = new TextLoader(engine)) {
+                    configureLoaderDefaults(loader, (byte) ',');
+                    playText(
+                            engine,
+                            loader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                            12,
+                            12
+                    );
+                }
             }
         });
     }
@@ -1538,39 +1540,52 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testReduceLinesForStats() throws Exception {
-        assertNoLeak(new DefaultTextConfiguration() {
-                         @Override
-                         public int getTextAnalysisMaxLines() {
-                             return 3;
-                         }
-                     },
-                textLoader -> {
-                    String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
-                            "CMP1\t7\t8284\t3.204578876030\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
-                            "CMP2\t3\t1066\t7.518668337725\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
-                            "CMP1\t4\t6938\t5.114077122416\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
-                            "CMP1\t7\t6460\t6.399102432188\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
+            }
+        };
+
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+                                "CMP1\t7\t8284\t3.204578876030\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
+                                "CMP2\t3\t1066\t7.518668337725\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
+                                "CMP1\t4\t6938\t5.114077122416\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
+                                "CMP1\t7\t6460\t6.399102432188\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
 
 
-                    String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
-                            "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
-                            "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
-                            "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
-                            ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
-                            "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
+                        String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
+                                "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
+                                "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
+                                "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
+                                ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
+                                "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
 
-                    configureLoaderDefaults(textLoader, (byte) ',');
-                    textLoader.setForceHeaders(false);
-                    playText(
-                            textLoader,
-                            csv,
-                            1024,
-                            expected,
-                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
-                            5,
-                            4
-                    );
-                });
+                        configureLoaderDefaults(textLoader, (byte) ',');
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                                5,
+                                4
+                        );
+                    });
+        }
     }
 
     @Test
@@ -2187,27 +2202,21 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void assertNoLeak(TestCode code) throws Exception {
-        assertNoLeak(new DefaultTextConfiguration(), code);
+        assertNoLeak(engine, code);
     }
 
-    private void assertNoLeak(TextConfiguration textConfiguration, TestCode code) throws Exception {
+    private void assertNoLeak(CairoEngine engine, TestCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            inputFormatConfiguration.parseConfiguration(
-                    jsonLexer,
-                    textConfiguration.getAdapterSetConfigurationFileName()
-            );
-
-            try (TextLoader loader = new TextLoader(
-                    textConfiguration,
-                    engine,
-                    inputFormatConfiguration
-            )) {
+            try (TextLoader loader = new TextLoader(engine)) {
                 code.run(loader);
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
             engine.releaseAllWriters();
             engine.releaseAllReaders();
+
+            AbstractGriffinTest.engine.releaseAllReaders();
+            AbstractGriffinTest.engine.releaseAllWriters();
         });
     }
 
@@ -2274,7 +2283,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
             long expectedParsedLineCount,
             long expectedWrittenLineCount
     ) throws Exception {
+        playText(engine,
+                textLoader,
+                text,
+                firstBufSize,
+                expected,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount
+        );
+    }
+
+    private void playText(
+            CairoEngine engine,
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount
+    ) throws Exception {
         playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,
@@ -2287,6 +2318,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void playText(
+            CairoEngine engine,
             TextLoader textLoader,
             String text,
             final int firstBufSize,

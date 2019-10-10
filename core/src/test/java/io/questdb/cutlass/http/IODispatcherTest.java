@@ -31,20 +31,13 @@ import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.json.JsonException;
-import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.text.DefaultTextConfiguration;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -58,21 +51,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
-    private static final InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-            new DateFormatFactory(),
-            DateLocaleFactory.INSTANCE,
-            new TimestampFormatFactory(),
-            TimestampLocaleFactory.INSTANCE
-    );
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
-
-    @Before
-    public void beforeClass() throws Exception {
-        try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-            inputFormatConfiguration.parseConfiguration(lexer, new DefaultTextConfiguration().getAdapterSetConfigurationFileName());
-        }
-    }
 
     @Before
     public void setUp() throws Exception {
@@ -371,8 +351,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(
                                 httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -554,8 +533,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(
                                 httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -716,8 +694,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(
                                 httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -888,8 +865,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -1309,8 +1285,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -2628,8 +2603,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(
                                 httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -2644,8 +2618,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });
@@ -2898,8 +2871,7 @@ public class IODispatcherTest {
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                inputFormatConfiguration
+                                engine
                         );
                     }
                 });

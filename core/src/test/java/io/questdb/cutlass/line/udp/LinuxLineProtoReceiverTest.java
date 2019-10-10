@@ -25,6 +25,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Worker;
@@ -202,7 +203,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         assertReceive(configuration, factory);
     }
 
-    private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
+    private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws JsonException {
         try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
             try {
                 factory.createReceiver(receiverCfg, engine, AllowAllCairoSecurityContext.INSTANCE);

@@ -24,9 +24,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 
@@ -46,8 +44,8 @@ class TextImportProcessorState implements Mutable, Closeable {
     int state;
     boolean json = false;
 
-    TextImportProcessorState(TextConfiguration configuration, CairoEngine engine, InputFormatConfiguration inputFormatConfiguration) {
-        this.textLoader = new TextLoader(configuration, engine, inputFormatConfiguration);
+    TextImportProcessorState(CairoEngine engine) {
+        this.textLoader = new TextLoader(engine);
     }
 
     @Override

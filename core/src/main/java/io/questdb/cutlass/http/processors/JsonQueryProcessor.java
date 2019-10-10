@@ -33,12 +33,10 @@ import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.json.JsonException;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextLoader;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.*;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -62,26 +60,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final ObjList<ValueWriter> valueWriters = new ObjList<>();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final TextLoader textLoader;
     private final Path path = new Path();
-    private final FilesFacade ff;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            InputFormatConfiguration inputFormatConfiguration
+            CairoEngine engine
     ) {
         // todo: add scheduler
         this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.doubleScale = configuration.getDoubleScale();
-        this.textLoader = new TextLoader(
-                configuration.getTextConfiguration(),
-                engine,
-                inputFormatConfiguration
-        );
         this.valueWriters.extendAndSet(ColumnType.BOOLEAN, this::putBooleanValue);
         this.valueWriters.extendAndSet(ColumnType.BYTE, this::putByteValue);
         this.valueWriters.extendAndSet(ColumnType.DOUBLE, this::putDoubleValue);
@@ -111,7 +100,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public void close() {
         Misc.free(compiler);
         Misc.free(path);
-        Misc.free(textLoader);
     }
 
     public void execute(
@@ -129,8 +117,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
-                    } else if (cc.getType() == CompiledQuery.COPY) {
-                        copyTable(sqlExecutionContext, cc.getCopyModel());
+                    } else if (cc.getType() == CompiledQuery.COPY_REMOTE) {
+                        throw SqlException.$(0, "copy from STDIN is not supported over REST");
                     }
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
@@ -245,48 +233,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             r.put("null");
         } else {
             r.encodeUtf8AndQuote(str);
-        }
-    }
-
-    private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
-        try {
-            textLoader.clear();
-            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            // todo: configure the following
-            //   - when happens when data row errors out, max errors may be?
-            //   - we should be able to skip X rows from top, dodgy headers etc.
-            textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW);
-            int len = configuration.getCopyBufferSize();
-            long buf = Unsafe.malloc(len);
-            try {
-                path.of(GenericLexer.unquote(model.getFileName().token)).$();
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(']');
-                }
-                long fileLen = ff.length(fd);
-                long n = ff.read(fd, buf, len, 0);
-                if (n > 0) {
-                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                    textLoader.setState(TextLoader.LOAD_DATA);
-                    int read;
-                    while (n < fileLen) {
-                        read = (int) ff.read(fd, buf, len, n);
-                        if (read < 1) {
-                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
-                        }
-                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                        n += read;
-                    }
-                    textLoader.wrapUp();
-                }
-            } finally {
-                Unsafe.free(buf, len);
-            }
-        } catch (JsonException e) {
-            // we do not expect JSON exception here
-        } finally {
-            LOG.info().$("copied").$();
         }
     }
 

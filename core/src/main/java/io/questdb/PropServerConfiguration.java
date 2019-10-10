@@ -29,16 +29,23 @@ import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
 
@@ -109,6 +116,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return 0;
         }
     };
+    private final InputFormatConfiguration inputFormatConfiguration;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -132,7 +140,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int listenBacklog;
     private int sndBufSize;
     private int rcvBufSize;
-    private String adapterSetConfigurationFileName;
     private int dateAdapterPoolCapacity;
     private int jsonCacheLimit;
     private int jsonCacheSize;
@@ -153,7 +160,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpPort;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
-    private int jsonQueryCopyBufferSize;
+    private int sqlCopyBufferSize;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
     private int sqlAnalyticColumnPoolCapacity;
@@ -163,7 +170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
 
-    public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
+    public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
         this.shareWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
@@ -217,7 +224,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.listenBacklog = getInt(properties, "http.net.listen.backlog", 256);
             this.sndBufSize = getIntSize(properties, "http.net.snd.buf.size", 2 * 1024 * 1024);
             this.rcvBufSize = getIntSize(properties, "http.net.rcv.buf.size", 2 * 1024 * 1024);
-            this.adapterSetConfigurationFileName = getString(properties, "http.text.adapter.set.config", "/text_loader.json");
             this.dateAdapterPoolCapacity = getInt(properties, "http.text.date.adapter.pool.capacity", 16);
             this.jsonCacheLimit = getIntSize(properties, "http.text.json.cache.limit", 16384);
             this.jsonCacheSize = getIntSize(properties, "http.text.json.cache.size", 8192);
@@ -235,7 +241,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
-            this.jsonQueryCopyBufferSize = getIntSize(properties, "http.json.query.copy.buffer.size", 2 * 1024 * 1024);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -291,6 +296,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlWithClauseModelPoolCapacity = getInt(properties, "cairo.sql.with.clause.model.pool.capacity", 128);
         this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
         this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.copy.model.pool.capacity", 32);
+        this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+        String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
+
+        this.inputFormatConfiguration = new InputFormatConfiguration(
+                new DateFormatFactory(),
+                DateLocaleFactory.INSTANCE,
+                new TimestampFormatFactory(),
+                TimestampLocaleFactory.INSTANCE
+        );
+
+        try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
+            inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
+        }
 
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -485,11 +503,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean abortBrokenUploads() {
             return abortBrokenUploads;
         }
-
-        @Override
-        public TextConfiguration getTextConfiguration() {
-            return textConfiguration;
-        }
     }
 
     private class HttpIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -575,9 +588,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTextConfiguration implements TextConfiguration {
+
         @Override
-        public String getAdapterSetConfigurationFileName() {
-            return adapterSetConfigurationFileName;
+        public InputFormatConfiguration getInputFormatConfiguration() {
+            return inputFormatConfiguration;
         }
 
         @Override
@@ -735,6 +749,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+        @Override
+        public int getSqlCopyBufferSize() {
+            return sqlCopyBufferSize;
+        }
+
         @Override
         public int getCopyPoolCapacity() {
             return sqlCopyModelPoolCapacity;
@@ -926,6 +945,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public TextConfiguration getTextConfiguration() {
+            return textConfiguration;
+        }
+
+        @Override
         public long getWorkStealTimeoutNanos() {
             return workStealTimeoutNanos;
         }
@@ -1030,6 +1054,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getFloatScale() {
             return jsonQueryFloatScale;
         }
@@ -1037,21 +1066,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getKeepAliveHeader() {
             return keepAliveHeader;
-        }
-
-        @Override
-        public TextConfiguration getTextConfiguration() {
-            return textConfiguration;
-        }
-
-        @Override
-        public int getCopyBufferSize() {
-            return jsonQueryCopyBufferSize;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
         }
     }
 

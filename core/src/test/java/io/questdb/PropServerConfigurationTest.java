@@ -23,6 +23,7 @@
 
 package io.questdb;
 
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
@@ -67,7 +68,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testAllDefaults() throws ServerConfigurationException, IOException {
+    public void testAllDefaults() throws ServerConfigurationException, IOException, JsonException {
         Properties properties = new Properties();
         File root = new File(temp.getRoot(), "root");
         copyMimeTypes(root.getAbsolutePath());
@@ -99,25 +100,24 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
-        Assert.assertEquals("/text_loader.json", configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getAdapterSetConfigurationFileName());
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
-        Assert.assertEquals(16384, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheLimit());
-        Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheSize());
-        Assert.assertEquals(0.1222d, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
-        Assert.assertEquals(128, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
-        Assert.assertEquals(1024 * 4096, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferLimit());
-        Assert.assertEquals(1024, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferSize());
-        Assert.assertEquals(1000, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextAnalysisMaxLines());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
-        Assert.assertEquals(4096, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getUtf8SinkSize());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
+        Assert.assertEquals(16384, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
+        Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
+        Assert.assertEquals(0.1222d, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
+        Assert.assertEquals(1024 * 4096, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferLimit());
+        Assert.assertEquals(1024, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferSize());
+        Assert.assertEquals(1000, configuration.getCairoConfiguration().getTextConfiguration().getTextAnalysisMaxLines());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
 
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
-        Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCopyBufferSize());
+        Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
 
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals("fast", configuration.getCairoConfiguration().getDefaultMapType());
@@ -191,35 +191,35 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidBindToAddress() throws ServerConfigurationException {
+    public void testInvalidBindToAddress() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6:8990");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidBindToMissingColon() throws ServerConfigurationException {
+    public void testInvalidBindToMissingColon() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidBindToPort() throws ServerConfigurationException {
+    public void testInvalidBindToPort() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1:");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidDouble() throws ServerConfigurationException {
+    public void testInvalidDouble() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.text.max.required.delimiter.stddev", "abc");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidIPv4Address() throws ServerConfigurationException, IOException {
+    public void testInvalidIPv4Address() throws ServerConfigurationException, IOException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("line.udp.join", "12a.990.00");
         File root = new File(temp.getRoot(), "data");
@@ -228,21 +228,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidInt() throws ServerConfigurationException {
+    public void testInvalidInt() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.connection.string.pool.capacity", "1234a");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidIntSize() throws ServerConfigurationException {
+    public void testInvalidIntSize() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.request.header.buffer.size", "22g");
         new PropServerConfiguration("root", properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidLong() throws ServerConfigurationException, IOException {
+    public void testInvalidLong() throws ServerConfigurationException, IOException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         File root = new File(temp.getRoot(), "data");
@@ -251,7 +251,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testSetAllFromFile() throws IOException, ServerConfigurationException {
+    public void testSetAllFromFile() throws IOException, ServerConfigurationException, JsonException {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
             properties.load(is);
@@ -284,25 +284,24 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
             Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
             Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
-            Assert.assertEquals("/loader.json", configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getAdapterSetConfigurationFileName());
-            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
-            Assert.assertEquals(65536, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheLimit());
-            Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getJsonCacheSize());
-            Assert.assertEquals(0.3d, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
-            Assert.assertEquals(512, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
-            Assert.assertEquals(6144, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferLimit());
-            Assert.assertEquals(3072, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getRollBufferSize());
-            Assert.assertEquals(400, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextAnalysisMaxLines());
-            Assert.assertEquals(128, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
-            Assert.assertEquals(512, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
-            Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getUtf8SinkSize());
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
+            Assert.assertEquals(65536, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
+            Assert.assertEquals(8388608, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
+            Assert.assertEquals(0.3d, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
+            Assert.assertEquals(6144, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferLimit());
+            Assert.assertEquals(3072, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferSize());
+            Assert.assertEquals(400, configuration.getCairoConfiguration().getTextConfiguration().getTextAnalysisMaxLines());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
+            Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
 
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
             Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
-            Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCopyBufferSize());
+            Assert.assertEquals(4194304, configuration.getCairoConfiguration().getSqlCopyBufferSize());
             Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
 
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());

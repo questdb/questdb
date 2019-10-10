@@ -25,14 +25,9 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -45,19 +40,9 @@ public class TextMetadataParserTest {
     @BeforeClass
     public static void setUpClass() throws JsonException {
         utf8Sink = new DirectCharSink(1024);
-        InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-                new DateFormatFactory(),
-                DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE
-        );
-        try (JsonLexer jsonLexer = new JsonLexer(1024, 1024)) {
-            inputFormatConfiguration.parseConfiguration(jsonLexer, new DefaultTextConfiguration().getAdapterSetConfigurationFileName());
-        }
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
-                utf8Sink,
-                inputFormatConfiguration
+                utf8Sink
         );
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),

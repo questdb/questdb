@@ -23,11 +23,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.time.MillisecondClock;
 
 public interface CairoConfiguration {
+
+    int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
 
@@ -104,6 +107,8 @@ public interface CairoConfiguration {
     int getSqlHashJoinLightValuePageSize();
 
     int getSqlSortValuePageSize();
+
+    TextConfiguration getTextConfiguration();
 
     long getWorkStealTimeoutNanos();
 

@@ -25,7 +25,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.cutlass.text.TextLoader;
 
 public interface CompiledQuery {
     int SELECT = 0;
@@ -35,15 +35,16 @@ public interface CompiledQuery {
     int REPAIR = 4;
     int SET = 5;
     int DROP = 6;
-    int COPY = 7;
+    int COPY_LOCAL = 7;
     int CREATE_TABLE = 8;
     int INSERT_AS_SELECT = 9;
+    int COPY_REMOTE = 10;
 
     RecordCursorFactory getRecordCursorFactory();
 
     InsertStatement getInsertStatement();
 
-    CopyModel getCopyModel();
+    TextLoader getTextLoader();
 
     int getType();
 }

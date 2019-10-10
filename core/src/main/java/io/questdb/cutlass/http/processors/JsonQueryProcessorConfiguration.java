@@ -23,7 +23,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.time.MillisecondClock;
 
@@ -35,13 +34,9 @@ public interface JsonQueryProcessorConfiguration {
 
     int getDoubleScale();
 
+    FilesFacade getFilesFacade();
+
     int getFloatScale();
 
     CharSequence getKeepAliveHeader();
-
-    TextConfiguration getTextConfiguration();
-
-    int getCopyBufferSize();
-
-    FilesFacade getFilesFacade();
 }

@@ -27,7 +27,6 @@ import io.questdb.cutlass.http.processors.DefaultTextImportProcessorConfiguratio
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
-import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -84,6 +83,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getFloatScale() {
             return 10;
         }
@@ -91,21 +95,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public CharSequence getKeepAliveHeader() {
             return "Keep-Alive: timeout=5, max=10000\r\n";
-        }
-
-        @Override
-        public TextConfiguration getTextConfiguration() {
-            return textImportProcessorConfiguration.getTextConfiguration();
-        }
-
-        @Override
-        public int getCopyBufferSize() {
-            return 2 * 1024 * 1024;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
         }
     };
 

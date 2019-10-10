@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -63,13 +62,14 @@ public class TextLoader implements Closeable, Mutable {
     /**
      *
      */
-    public TextLoader(TextConfiguration textConfiguration, CairoEngine engine, InputFormatConfiguration inputFormatConfiguration) {
+    public TextLoader(CairoEngine engine) {
+        final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         jsonLexer = new JsonLexer(
                 textConfiguration.getJsonCacheSize(),
                 textConfiguration.getJsonCacheLimit()
         );
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink, inputFormatConfiguration);
+        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         textLexer = new TextLexer(textConfiguration, typeManager);
         textWriter = new CairoTextWriter(engine, path, textConfiguration, typeManager);
         textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
@@ -210,6 +210,7 @@ public class TextLoader implements Closeable, Mutable {
         );
         textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+        state = LOAD_DATA;
     }
 
     @FunctionalInterface

@@ -157,7 +157,7 @@ public final class Unsafe {
     public static void free(long ptr, long size) {
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();
-        MEM_USED.addAndGet(-size);
+        recordMemAlloc(-size);
     }
 
     public static boolean getBool(long address) {
@@ -192,15 +192,19 @@ public final class Unsafe {
 
     public static long malloc(long size) {
         long ptr = getUnsafe().allocateMemory(size);
-        MEM_USED.addAndGet(size);
+        recordMemAlloc(size);
         MALLOC_COUNT.incrementAndGet();
         return ptr;
     }
 
     public static long realloc(long address, long oldSize, long newSize) {
         long ptr = getUnsafe().reallocateMemory(address, newSize);
-        MEM_USED.addAndGet(-oldSize + newSize);
+        recordMemAlloc(-oldSize + newSize);
         return ptr;
+    }
+
+    static void recordMemAlloc(long size) {
+        MEM_USED.addAndGet(size);
     }
 
     public static long calloc(long size) {

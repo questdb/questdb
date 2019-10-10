@@ -27,6 +27,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
@@ -44,7 +45,15 @@ import java.util.concurrent.locks.LockSupport;
 
 public class WriterPoolTest extends AbstractCairoTest {
 
-    private static final DefaultCairoConfiguration CONFIGURATION = new DefaultCairoConfiguration(root);
+    private static final DefaultCairoConfiguration CONFIGURATION;
+
+    static {
+        try {
+            CONFIGURATION = new DefaultCairoConfiguration(root);
+        } catch (JsonException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     @Before
     public void setUpInstance() {

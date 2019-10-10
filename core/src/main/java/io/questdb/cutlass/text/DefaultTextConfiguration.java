@@ -23,10 +23,32 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocaleFactory;
+
 public class DefaultTextConfiguration implements TextConfiguration {
-    @Override
-    public String getAdapterSetConfigurationFileName() {
-        return "/text_loader.json";
+    private final InputFormatConfiguration inputFormatConfiguration;
+
+    public DefaultTextConfiguration() throws JsonException {
+        this("/text_loader.json");
+    }
+
+    public DefaultTextConfiguration(String resourceName) throws JsonException {
+        this.inputFormatConfiguration = new InputFormatConfiguration(
+                new DateFormatFactory(),
+                DateLocaleFactory.INSTANCE,
+                new TimestampFormatFactory(),
+                TimestampLocaleFactory.INSTANCE
+        );
+
+        try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
+            inputFormatConfiguration.parseConfiguration(lexer, resourceName);
+        }
     }
 
     @Override
@@ -82,5 +104,10 @@ public class DefaultTextConfiguration implements TextConfiguration {
     @Override
     public int getUtf8SinkSize() {
         return 4096;
+    }
+
+    @Override
+    public InputFormatConfiguration getInputFormatConfiguration() {
+        return inputFormatConfiguration;
     }
 }
