@@ -66,35 +66,36 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
 
         try {
             // when listening for multicast packets bind address must be 0
-            if (!nf.bindUdp(fd, 0, receiverCfg.getPort())) {
-                int errno = nf.errno();
-                LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
-                throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());
-            }
+            if (nf.bindUdp(fd, 0, receiverCfg.getPort())) {
+                if (nf.join(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getGroupIPv4Address())) {
+                    this.commitRate = receiverCfg.getCommitRate();
+                    this.msgCount = receiverCfg.getMsgCount();
 
-            if (!nf.join(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getGroupIPv4Address())) {
+                    if (receiverCfg.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, receiverCfg.getReceiveBufferSize()) != 0) {
+                        LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(receiverCfg.getReceiveBufferSize()).$(']').$();
+                    }
+
+                    msgVec = nf.msgHeaders(receiverCfg.getMsgBufferSize(), msgCount);
+                    lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
+                    parser = new CairoLineProtoParser(engine, cairoSecurityContext);
+                    lexer.withParser(parser);
+
+                    LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", batch=").$(msgCount).$(", commitRate=").$(commitRate).$(']').$();
+
+                    return;
+                }
                 int errno = nf.errno();
                 LOG.error().$("cannot join group [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(']').$();
                 throw CairoException.instance(nf.errno()).put("Cannot join group ").put(receiverCfg.getGroupIPv4Address()).put(" [bindTo=").put(receiverCfg.getBindIPv4Address()).put(']');
             }
+            int errno = nf.errno();
+            LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
+            throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());
+
         } catch (CairoException e) {
             close();
             throw e;
         }
-
-        this.commitRate = receiverCfg.getCommitRate();
-        this.msgCount = receiverCfg.getMsgCount();
-
-        if (receiverCfg.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, receiverCfg.getReceiveBufferSize()) != 0) {
-            LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(receiverCfg.getReceiveBufferSize()).$(']').$();
-        }
-
-        msgVec = nf.msgHeaders(receiverCfg.getMsgBufferSize(), msgCount);
-        lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
-        parser = new CairoLineProtoParser(engine, cairoSecurityContext);
-        lexer.withParser(parser);
-
-        LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", batch=").$(msgCount).$(", commitRate=").$(commitRate).$(']').$();
     }
 
     @Override

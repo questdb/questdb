@@ -65,7 +65,6 @@ public interface NetworkFacade {
 
     long socketUdp();
 
-    // todo: un-tangle
     boolean bindUdp(long fd, int ipv4Address, int port);
 
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);

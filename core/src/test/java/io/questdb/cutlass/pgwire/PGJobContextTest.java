@@ -1746,8 +1746,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
         new Thread(() -> {
             long fd = Net.socketTcp(true);
             try {
-
-                nf.setReusePort(fd);
+                Assert.assertEquals(0, nf.setReusePort(fd));
                 nf.configureNoLinger(fd);
 
                 Assert.assertTrue(nf.bindTcp(fd, 0, 9120));

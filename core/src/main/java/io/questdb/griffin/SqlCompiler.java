@@ -1050,7 +1050,7 @@ public class SqlCompiler implements Closeable {
 
         final int tableNamePosition = lexer.getPosition();
 
-        tok = expectToken(lexer, "table name");
+        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
 
         tableExistsOrFail(tableNamePosition, tok, executionContext);
 
