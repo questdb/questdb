@@ -32,11 +32,11 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
 
-    public MaxDoubleGroupByFunction(int position, @NotNull Function value) {
+    public MinDoubleGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }
@@ -48,9 +48,9 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        double max = mapValue.getDouble(valueIndex);
+        double min = mapValue.getDouble(valueIndex);
         double next = value.getDouble(record);
-        if (next > max || Double.isNaN(max)) {
+        if (next < min || Double.isNaN(min)) {
             mapValue.putDouble(valueIndex, next);
         }
     }

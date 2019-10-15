@@ -21,6 +21,29 @@
 #
 ################################################################################
 
+################################################################################
+#    ___                  _   ____  ____
+#   / _ \ _   _  ___  ___| |_|  _ \| __ )
+#  | | | | | | |/ _ \/ __| __| | | |  _ \
+#  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#   \__\_\\__,_|\___||___/\__|____/|____/
+#
+# Copyright (C) 2014-2019 Appsicle
+#
+# This program is free software: you can redistribute it and/or  modify
+# it under the terms of the GNU Affero General Public License, version 3,
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+################################################################################
+
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
 io.questdb.griffin.engine.functions.bool.AndFunctionFactory
@@ -151,6 +174,16 @@ io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory
 
 # 'max' group
 io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory
+
+# 'min' group
+io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinShortGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinByteGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunctionFactory
+
 
 # 'count' group by function
 io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory

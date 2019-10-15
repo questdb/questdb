@@ -28,51 +28,51 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class MinShortGroupByFunction extends ShortFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
 
-    public MaxDoubleGroupByFunction(int position, @NotNull Function value) {
+    public MinShortGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putShort(valueIndex, value.getShort(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        double max = mapValue.getDouble(valueIndex);
-        double next = value.getDouble(record);
-        if (next > max || Double.isNaN(max)) {
-            mapValue.putDouble(valueIndex, next);
+        short min = mapValue.getShort(valueIndex);
+        short next = value.getShort(record);
+        if (next < min) {
+            mapValue.putShort(valueIndex, next);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.SHORT);
     }
 
     @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
+    public void setShort(MapValue mapValue, short value) {
+        mapValue.putShort(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putShort(valueIndex, (short) 0);
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public short getShort(Record rec) {
+        return rec.getShort(valueIndex);
     }
 }

@@ -28,51 +28,52 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class MinIntGroupByFunction extends IntFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
 
-    public MaxDoubleGroupByFunction(int position, @NotNull Function value) {
+    public MinIntGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putInt(valueIndex, value.getInt(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        double max = mapValue.getDouble(valueIndex);
-        double next = value.getDouble(record);
-        if (next > max || Double.isNaN(max)) {
-            mapValue.putDouble(valueIndex, next);
+        int min = mapValue.getInt(valueIndex);
+        int next = value.getInt(record);
+        if (next != Numbers.INT_NaN && next < min || min == Numbers.INT_NaN) {
+            mapValue.putInt(valueIndex, next);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
+    public void setInt(MapValue mapValue, int value) {
+        mapValue.putInt(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putInt(valueIndex, Numbers.INT_NaN);
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
     }
 }

@@ -176,11 +176,6 @@ public class GroupByFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testSetDate() {
-        function.setDate(null, 0);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testSetDouble() {
         function.setDouble(null, 0);
     }
@@ -203,10 +198,5 @@ public class GroupByFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testSetShort() {
         function.setShort(null, (short) 0);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testSetTimestamp() {
-        function.setTimestamp(null, 0);
     }
 }

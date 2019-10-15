@@ -69,6 +69,155 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
 
+    static {
+        // todo: this should be sparse array
+        //   change after we have good test coverage
+        typeOidMap.put(ColumnType.STRING, PG_VARCHAR); // VARCHAR
+        typeOidMap.put(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMPZ
+        typeOidMap.put(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
+        typeOidMap.put(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
+        typeOidMap.put(ColumnType.INT, PG_INT4); // INT4
+        typeOidMap.put(ColumnType.SHORT, PG_INT2); // INT2
+        typeOidMap.put(ColumnType.CHAR, PG_CHAR);
+        typeOidMap.put(ColumnType.SYMBOL, PG_VARCHAR); // NAME
+        typeOidMap.put(ColumnType.LONG, PG_INT8); // INT8
+        typeOidMap.put(ColumnType.BYTE, PG_INT2); // INT2
+        typeOidMap.put(ColumnType.BOOLEAN, PG_BOOL); // BOOL
+        typeOidMap.put(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        typeOidMap.put(ColumnType.BINARY, PG_BYTEA); // BYTEA
+    }
+
+    private final long recvBuffer;
+    private final long sendBuffer;
+    private final int recvBufferSize;
+    private final CharacterStore connectionCharacterStore;
+    private final CharacterStore queryCharacterStore;
+    private final BindVariableService bindVariableService = new BindVariableService();
+    private final long sendBufferLimit;
+    private final int sendBufferSize;
+    private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final int maxBlobSizeOnQuery;
+    private final NetworkFacade nf;
+    private final boolean dumpNetworkTraffic;
+    private final int idleSendCountBeforeGivingUp;
+    private final int idleRecvCountBeforeGivingUp;
+    private final String serverVersion;
+    private final PGAuthenticator authenticator;
+    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private int sendCurrentCursorTail = TAIL_NONE;
+    private long sendBufferPtr;
+    private boolean requireInitalMessage = false;
+    private long recvBufferWriteOffset = 0;
+    private long recvBufferReadOffset = 0;
+    private int bufferRemainingOffset = 0;
+    private int bufferRemainingSize = 0;
+    private RecordCursor currentCursor = null;
+    private RecordCursorFactory currentFactory = null;
+    private long fd;
+    private CharSequence queryText;
+    private CharSequence username;
+    private boolean authenticationRequired = true;
+    private long transientCopyBuffer = 0;
+
+    public PGConnectionContext(PGWireConfiguration configuration) {
+        this.nf = configuration.getNetworkFacade();
+        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+        this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
+        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
+        this.sendBufferPtr = sendBuffer;
+        this.sendBufferLimit = sendBuffer + sendBufferSize;
+        this.queryCharacterStore = new CharacterStore(
+                configuration.getCharacterStoreCapacity(),
+                configuration.getCharacterStorePoolCapacity()
+        );
+        this.connectionCharacterStore = new CharacterStore(256, 2);
+        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
+        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
+        this.serverVersion = configuration.getServerVersion();
+        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
+    }
+
+    public static int getInt(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+    }
+
+    public static long getLong(long address) {
+        long b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 4) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 5) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 6) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 7) & 0xff;
+    }
+
+    public static short getShort(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
+    }
+
+    public static long getStringLength(long x, long limit) {
+        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    }
+
+    public static long getStringLengthTedious(long x, long limit) {
+        // calculate length
+        for (long i = x; i < limit; i++) {
+            if (Unsafe.getUnsafe().getByte(i) == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static void putInt(long address, int value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
+        Unsafe.getUnsafe().putByte(address + 2, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 3, (byte) (value));
+    }
+
+    public static void putShort(long address, short value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
+    }
+
+    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
+        if (required != valueLen) {
+            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
+        if (lo + required > msgLimit) {
+            LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
+        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
+        final long addr = sink.skip();
+        sink.encodeUtf8Z(name);
+        sink.encodeUtf8Z(value);
+        sink.putLen(addr);
+    }
+
+    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        responseAsciiSink.put('I');
+    }
+
     /**
      * returns address of where parsing stopped. If there are remaining bytes left
      * int the buffer they need to be passed again in parse function along with
@@ -301,136 +450,6 @@ public class PGConnectionContext implements IOContext, Mutable {
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
                 throw BadProtocolException.INSTANCE;
         }
-    }
-
-    private final long recvBuffer;
-    private final long sendBuffer;
-    private final int recvBufferSize;
-    private final CharacterStore connectionCharacterStore;
-    private final CharacterStore queryCharacterStore;
-    private final BindVariableService bindVariableService = new BindVariableService();
-    private final long sendBufferLimit;
-    private final int sendBufferSize;
-    private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final int maxBlobSizeOnQuery;
-    private final NetworkFacade nf;
-    private final boolean dumpNetworkTraffic;
-    private final int idleSendCountBeforeGivingUp;
-    private final int idleRecvCountBeforeGivingUp;
-    private final String serverVersion;
-    private final PGAuthenticator authenticator;
-    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
-    private int sendCurrentCursorTail = TAIL_NONE;
-    private long sendBufferPtr;
-    private boolean requireInitalMessage = false;
-    private long recvBufferWriteOffset = 0;
-    private long recvBufferReadOffset = 0;
-    private int bufferRemainingOffset = 0;
-    private int bufferRemainingSize = 0;
-    private RecordCursor currentCursor = null;
-    private RecordCursorFactory currentFactory = null;
-    private long fd;
-    private CharSequence queryText;
-    private CharSequence username;
-    private boolean authenticationRequired = true;
-
-    public PGConnectionContext(PGWireConfiguration configuration) {
-        this.nf = configuration.getNetworkFacade();
-        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
-        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
-        this.sendBufferPtr = sendBuffer;
-        this.sendBufferLimit = sendBuffer + sendBufferSize;
-        this.queryCharacterStore = new CharacterStore(
-                configuration.getCharacterStoreCapacity(),
-                configuration.getCharacterStorePoolCapacity()
-        );
-        this.connectionCharacterStore = new CharacterStore(256, 2);
-        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
-        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
-        this.serverVersion = configuration.getServerVersion();
-        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
-    }
-
-    public static int getInt(long address) {
-        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
-        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
-    }
-
-    public static long getLong(long address) {
-        long b = Unsafe.getUnsafe().getByte(address) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 4) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 5) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 6) & 0xff;
-        return (b << 8) | Unsafe.getUnsafe().getByte(address + 7) & 0xff;
-    }
-
-    public static short getShort(long address) {
-        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
-        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
-    }
-
-    public static long getStringLength(long x, long limit) {
-        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
-    }
-
-    public static long getStringLengthTedious(long x, long limit) {
-        // calculate length
-        for (long i = x; i < limit; i++) {
-            if (Unsafe.getUnsafe().getByte(i) == 0) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    public static void putInt(long address, int value) {
-        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
-        Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
-        Unsafe.getUnsafe().putByte(address + 2, (byte) (value >>> 8));
-        Unsafe.getUnsafe().putByte(address + 3, (byte) (value));
-    }
-
-    public static void putShort(long address, short value) {
-        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 8));
-        Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
-    }
-
-    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required != valueLen) {
-            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
-        if (lo + required > msgLimit) {
-            LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
-        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = sink.skip();
-        sink.encodeUtf8Z(name);
-        sink.encodeUtf8Z(value);
-        sink.putLen(addr);
-    }
-
-    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        responseAsciiSink.put('I');
     }
 
     @Override
@@ -946,25 +965,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
         }
         responseAsciiSink.putLen(addr);
+        transientCopyBuffer = Unsafe.malloc(1024 * 1024);
         send();
-    }
-
-    static {
-        // todo: this should be sparse array
-        //   change after we have good test coverage
-        typeOidMap.put(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOidMap.put(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMPZ
-        typeOidMap.put(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        typeOidMap.put(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        typeOidMap.put(ColumnType.INT, PG_INT4); // INT4
-        typeOidMap.put(ColumnType.SHORT, PG_INT2); // INT2
-        typeOidMap.put(ColumnType.CHAR, PG_CHAR);
-        typeOidMap.put(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        typeOidMap.put(ColumnType.LONG, PG_INT8); // INT8
-        typeOidMap.put(ColumnType.BYTE, PG_INT2); // INT2
-        typeOidMap.put(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOidMap.put(ColumnType.DATE, PG_TIMESTAMP); // DATE
-        typeOidMap.put(ColumnType.BINARY, PG_BYTEA); // BYTEA
     }
 
     private void parseQuery(

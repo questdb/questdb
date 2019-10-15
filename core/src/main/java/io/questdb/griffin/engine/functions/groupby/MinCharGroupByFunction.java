@@ -28,51 +28,46 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class MinCharGroupByFunction extends CharFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
 
-    public MaxDoubleGroupByFunction(int position, @NotNull Function value) {
+    public MinCharGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putChar(valueIndex, value.getChar(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        double max = mapValue.getDouble(valueIndex);
-        double next = value.getDouble(record);
-        if (next > max || Double.isNaN(max)) {
-            mapValue.putDouble(valueIndex, next);
+        char min = mapValue.getChar(valueIndex);
+        char next = value.getChar(record);
+        if (next > 0 && next < min) {
+            mapValue.putChar(valueIndex, next);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
+        columnTypes.add(ColumnType.CHAR);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putChar(valueIndex, (char) 0);
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public char getChar(Record rec) {
+        return rec.getChar(valueIndex);
     }
 }

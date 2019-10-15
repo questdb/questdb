@@ -39,10 +39,6 @@ public interface GroupByFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
-    default void setDate(MapValue mapValue, long value) {
-        throw new UnsupportedOperationException();
-    }
-
     default void setDouble(MapValue mapValue, double value) {
         throw new UnsupportedOperationException();
     }
@@ -62,10 +58,6 @@ public interface GroupByFunction extends Function {
     void setNull(MapValue mapValue);
 
     default void setShort(MapValue mapValue, short value) {
-        throw new UnsupportedOperationException();
-    }
-
-    default void setTimestamp(MapValue mapValue, long value) {
         throw new UnsupportedOperationException();
     }
 }
