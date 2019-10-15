@@ -23,6 +23,10 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -71,6 +75,40 @@ public class DropTableTest extends AbstractGriffinTest {
 
             cc = compiler.compile("drop table 'large table'");
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
+
+    @Test
+    public void testDropBusyReader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'large table' (a int)");
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            try (RecordCursorFactory factory = compiler.compile("'large table'").getRecordCursorFactory()) {
+                try (RecordCursor ignored = factory.getCursor()) {
+                    compiler.compile("drop table 'large table'");
+                }
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+            } finally {
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testDropBusyWriter() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'large table' (a int)");
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "large table")) {
+                compiler.compile("drop table 'large table'");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+            } finally {
+                engine.releaseAllWriters();
+            }
         });
     }
 

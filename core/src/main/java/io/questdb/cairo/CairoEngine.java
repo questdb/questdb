@@ -196,7 +196,7 @@ public class CairoEngine implements Closeable {
                 unlock(securityContext, tableName, null);
             }
         }
-        throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
+        throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put('\'');
     }
 
     public boolean removeDirectory(@Transient Path path, CharSequence dir) {
