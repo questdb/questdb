@@ -49,7 +49,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, mapValue.getLong(valueIndex) + value.getLong(record));
+        mapValue.addLong(valueIndex, value.getLong(record));
     }
 
     @Override

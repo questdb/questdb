@@ -193,7 +193,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlMapPageSize() {
-        return 4 * Numbers.SIZE_1MB;
+        return 16 * Numbers.SIZE_1MB;
     }
 
     @Override

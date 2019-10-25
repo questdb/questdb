@@ -131,6 +131,12 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public void addLong(int index, long value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
+    }
+
+    @Override
     public void putShort(int index, short value) {
         Unsafe.getUnsafe().putShort(address0(index), value);
     }

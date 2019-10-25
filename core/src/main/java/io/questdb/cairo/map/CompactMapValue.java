@@ -80,6 +80,12 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void addLong(int index, long value) {
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, entries.getLong(o) + value);
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
     }
