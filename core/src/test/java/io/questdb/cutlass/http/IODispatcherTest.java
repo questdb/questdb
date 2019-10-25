@@ -54,6 +54,48 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
     @Before
     public void setUp() throws Exception {
         temp.create();
@@ -307,9 +349,102 @@ public class IODispatcherTest {
 
     @Test
     public void testImportMultipleOnSameConnection() throws Exception {
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "05d7\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                ,
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--"
+                , NetworkFacadeImpl.INSTANCE
+                , false
+                , 150
+        );
+    }
+
+    public void testImport(
+            String expected,
+            String request,
+            NetworkFacade nf,
+            boolean expectDisconnect,
+            int requestCount
+    ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
+                    false,
+                    false
+            );
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -358,125 +493,16 @@ public class IODispatcherTest {
 
                 workerPool.start(LOG);
 
-                // send multipart request to server
-                final String request = "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--";
-
-                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n").getBytes();
-
                 long fd = Net.socketTcp(true);
                 try {
-                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                    try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
-                        Net.setTcpNoDelay(fd, true);
-
-                        final int len = request.length();
-                        long ptr = Unsafe.malloc(expectedResponse.length);
-                        try {
-                            for (int j = 0; j < 150; j++) {
-                                int sent = 0;
-                                Chars.strcpy(request, ((CharSequence) request).length(), ptr);
-                                while (sent < len) {
-                                    int n = Net.send(fd, ptr + sent, len - sent);
-                                    Assert.assertTrue(n > -1);
-                                    sent += n;
-                                }
-
-                                // receive response
-                                final int expectedToReceive = expectedResponse.length;
-                                int received = 0;
-                                while (received < expectedToReceive) {
-                                    int n = Net.recv(fd, ptr + received, expectedToReceive - received);
-                                    Assert.assertTrue(n > -1);
-                                    // compare bytes
-                                    for (int i = 0; i < n; i++) {
-                                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                                            Assert.fail("Error at: " + (received + i) + ", local=" + i + ", excpected=" + ((char) expectedResponse[received + i]) + ", received=" + (char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                                        }
-                                    }
-                                    received += n;
-                                }
-                            }
-                        } finally {
-                            Unsafe.free(ptr, expectedResponse.length);
-                        }
-                    } finally {
-                        Net.freeSockAddr(sockAddr);
-                    }
+                    sendAndReceive(
+                            nf,
+                            request,
+                            expected.getBytes(),
+                            requestCount,
+                            0,
+                            false,
+                            expectDisconnect);
                 } finally {
                     Net.close(fd);
                     workerPool.halt();
@@ -486,62 +512,237 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportEmptyData() throws Exception {
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "0398\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                 0  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                 0  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                120
+        );
+    }
+
+    @Test
+    public void testImportForceUnknownDate() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2c\r\n" +
+                        "{\"status\":\"DATE format pattern is required\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:04,103\r\n" +
+                        "27/05/2018 00:00:05,104\r\n" +
+                        "27/05/2018 00:00:06,105\r\n" +
+                        "27/05/2018 00:00:07,106\r\n" +
+                        "27/05/2018 00:00:08,107\r\n" +
+                        "27/05/2018 00:00:09,108\r\n" +
+                        "27/05/2018 00:00:10,109\r\n" +
+                        "27/05/2018 00:00:11,110\r\n" +
+                        "27/05/2018 00:00:12,111\r\n" +
+                        "27/05/2018 00:00:13,112\r\n" +
+                        "27/05/2018 00:00:14,113\r\n" +
+                        "27/05/2018 00:00:15,114\r\n" +
+                        "27/05/2018 00:00:16,115\r\n" +
+                        "27/05/2018 00:00:17,116\r\n" +
+                        "27/05/2018 00:00:18,117\r\n" +
+                        "27/05/2018 00:00:19,118\r\n" +
+                        "27/05/2018 00:00:20,119\r\n" +
+                        "27/05/2018 00:00:21,120\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testImportForceUnknownTimestamp() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2c\r\n" +
+                        "{\"status\":\"DATE format pattern is required\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:04,103\r\n" +
+                        "27/05/2018 00:00:05,104\r\n" +
+                        "27/05/2018 00:00:06,105\r\n" +
+                        "27/05/2018 00:00:07,106\r\n" +
+                        "27/05/2018 00:00:08,107\r\n" +
+                        "27/05/2018 00:00:09,108\r\n" +
+                        "27/05/2018 00:00:10,109\r\n" +
+                        "27/05/2018 00:00:11,110\r\n" +
+                        "27/05/2018 00:00:12,111\r\n" +
+                        "27/05/2018 00:00:13,112\r\n" +
+                        "27/05/2018 00:00:14,113\r\n" +
+                        "27/05/2018 00:00:15,114\r\n" +
+                        "27/05/2018 00:00:16,115\r\n" +
+                        "27/05/2018 00:00:17,116\r\n" +
+                        "27/05/2018 00:00:18,117\r\n" +
+                        "27/05/2018 00:00:19,118\r\n" +
+                        "27/05/2018 00:00:20,119\r\n" +
+                        "27/05/2018 00:00:21,120\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testImportDelimiterNotDetected() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "31\r\n" +
+                        "not enough lines [table=fhv_tripdata_2017-02.csv]\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "9988" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(
-                                httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine
-                        );
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                // send multipart request to server
-                final String request = "POST /upload HTTP/1.1\r\n" +
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "05d7\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
                         "Accept: */*\r\n" +
@@ -592,34 +793,8 @@ public class IODispatcherTest {
                         "B00014,2017-02-01 00:33:00,,,\r\n" +
                         "B00014,2017-02-01 00:45:00,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--";
-
-                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n").getBytes();
-
-
-                final NetworkFacade nf = new NetworkFacadeImpl() {
+                        "--------------------------27d997ca93d2689d--",
+                new NetworkFacadeImpl() {
                     @Override
                     public int send(long fd, long buffer, int bufferLen) {
                         // ensure we do not send more than one byte at a time
@@ -628,27 +803,110 @@ public class IODispatcherTest {
                         }
                         return 0;
                     }
-                };
-
-                try {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            expectedResponse,
-                            5,
-                            0,
-                            false
-                    );
-
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
+                },
+                false,
+                150
+        );
     }
 
     @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
+//        testImport(
+//                "HTTP/1.1 200 OK\r\n" +
+//                        "Server: questDB/1.0\r\n" +
+//                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+//                        "Transfer-Encoding: chunked\r\n" +
+//                        "Content-Type: text/plain; charset=utf-8\r\n" +
+//                        "\r\n" +
+//                        "05d7\r\n" +
+//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+//                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+//                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+//                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+//                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+//                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+//                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+//                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+//                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+//                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+//                        "\r\n" +
+//                        "00\r\n" +
+//                        "\r\n",
+//                "POST /upload HTTP/1.1\r\n" +
+//                        "Host: localhost:9001\r\n" +
+//                        "User-Agent: curl/7.64.0\r\n" +
+//                        "Accept: */*\r\n" +
+//                        "Content-Length: 437760673\r\n" +
+//                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+//                        "Expect: 100-continue\r\n" +
+//                        "\r\n" +
+//                        "--------------------------27d997ca93d2689d\r\n" +
+//                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+//                        "Content-Type: application/octet-stream\r\n" +
+//                        "\r\n" +
+//                        "[\r\n" +
+//                        "  {\r\n" +
+//                        "    \"name\": \"date\",\r\n" +
+//                        "    \"type\": \"DATE\",\r\n" +
+//                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+//                        "    \"locale\": \"ru-RU\"\r\n" +
+//                        "  }\r\n" +
+//                        "]\r\n" +
+//                        "\r\n" +
+//                        "--------------------------27d997ca93d2689d\r\n" +
+//                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+//                        "Content-Type: application/octet-stream\r\n" +
+//                        "\r\n" +
+//                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+//                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+//                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+//                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+//                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+//                        "\r\n" +
+//                        "--------------------------27d997ca93d2689d--",
+//                new NetworkFacadeImpl() {
+//                    int totalSent = 0;
+//
+//                    @Override
+//                    public int send(long fd, long buffer, int bufferLen) {
+//                        if (bufferLen > 0) {
+//                            int result = super.send(fd, buffer, 1);
+//                            totalSent += result;
+//
+//                            // start delaying after 800 bytes
+//
+//                            if (totalSent > 800) {
+//                                LockSupport.parkNanos(10000);
+//                            }
+//                            return result;
+//                        }
+//                        return 0;
+//                    }
+//                }
+//        );
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
@@ -807,6 +1065,7 @@ public class IODispatcherTest {
                             expectedResponse,
                             1,
                             0,
+                            false,
                             false
                     );
                 } finally {
@@ -976,7 +1235,7 @@ public class IODispatcherTest {
                             "00\r\n" +
                             "\r\n").getBytes();
 
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false, false);
                 } finally {
                     workerPool.halt();
                 }
@@ -1329,6 +1588,7 @@ public class IODispatcherTest {
                         expectedResponse,
                         10,
                         0,
+                        false,
                         false
                 );
 
@@ -2631,51 +2891,19 @@ public class IODispatcherTest {
         });
     }
 
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
-
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(String baseDir, boolean dumpTraffic, boolean allowDeflateBeforeSend) {
-        return createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 1024 * 1024, dumpTraffic, allowDeflateBeforeSend);
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            String baseDir,
+            boolean dumpTraffic,
+            boolean allowDeflateBeforeSend
+    ) {
+        return createHttpServerConfiguration(
+                NetworkFacadeImpl.INSTANCE,
+                baseDir,
+                1024 * 1024,
+                dumpTraffic,
+                allowDeflateBeforeSend
+        );
     }
 
     @NotNull
@@ -2759,7 +2987,8 @@ public class IODispatcherTest {
             byte[] expectedResponse,
             int requestCount,
             long pauseBetweenSendAndReceive,
-            boolean print
+            boolean print,
+            boolean expectDisconnect
     ) throws InterruptedException {
         long fd = nf.socketTcp(true);
         try {
@@ -2792,6 +3021,7 @@ public class IODispatcherTest {
                             System.out.println("expected");
                             System.out.println(new String(expectedResponse));
                         }
+                        boolean disconnected = false;
                         while (received < expectedToReceive) {
                             int n = nf.recv(fd, ptr + received, len - received);
                             if (n > 0) {
@@ -2808,9 +3038,13 @@ public class IODispatcherTest {
                                 }
                                 received += n;
                             } else if (n < 0) {
-                                LOG.error().$("disconnected? n=").$(n).$();
-                                Assert.fail();
+                                disconnected = true;
+                                break;
                             }
+                        }
+                        if (disconnected && !expectDisconnect) {
+                            LOG.error().$("disconnected?").$();
+                            Assert.fail();
                         }
                     }
                 } finally {
@@ -2894,6 +3128,7 @@ public class IODispatcherTest {
                             expectedResponse2,
                             requestCount,
                             0,
+                            false,
                             false
                     );
                 } finally {

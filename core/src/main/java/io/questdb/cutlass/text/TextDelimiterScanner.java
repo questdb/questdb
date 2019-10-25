@@ -72,7 +72,7 @@ public class TextDelimiterScanner implements Closeable {
         Unsafe.free(matrix, matrixSize);
     }
 
-    byte scan(long address, long hi) {
+    byte scan(long address, long hi) throws TextException {
         int lineCount = 0;
         boolean quotes = false;
         long cursor = address;
@@ -144,7 +144,7 @@ public class TextDelimiterScanner implements Closeable {
 
         if (lineCount < 2) {
             LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
-            throw UnknownDelimiterException.INSTANCE;
+            throw TextException.$("not enough lines [table=").put(tableName).put(']');
         }
 
         double lastStdDev = Double.MAX_VALUE;
@@ -220,7 +220,11 @@ public class TextDelimiterScanner implements Closeable {
                 .$("min deviation is too high [stddev=").$(lastStdDev)
                 .$(", max=").$(maxRequiredDelimiterStdDev)
                 .$(']').$();
-        throw UnknownDelimiterException.INSTANCE;
+
+        throw TextException.$("min deviation is too high [stddev=")
+                .put(lastStdDev)
+                .put(", max=").put(maxRequiredDelimiterStdDev)
+                .put(']');
     }
 
     void setTableName(CharSequence tableName) {

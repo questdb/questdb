@@ -25,8 +25,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -44,6 +44,31 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.CHAR, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
+    }
+
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -143,35 +168,6 @@ public class SqlCompiler implements Closeable {
                 lexer.defineSymbol(op.token);
             }
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.free(path);
-        Misc.free(textLoader);
-    }
-
-    public CompiledQuery compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        //
-        // these are quick executions that do not require building of a model
-        //
-        lexer.of(query);
-
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
-        }
-        return executor.execute(executionContext);
-    }
-
-    public CairoEngine getEngine() {
-        return engine;
     }
 
     // Creates data type converter.
@@ -635,13 +631,42 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
+    @Override
+    public void close() {
+        Misc.free(path);
+        Misc.free(textLoader);
+    }
+
+    public CompiledQuery compile(CharSequence query) throws SqlException {
+        return compile(query, DefaultSqlExecutionContext.INSTANCE);
+    }
+
+    public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        //
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        if (executor == null) {
+            return compileUsingModel(executionContext);
+        }
+        return executor.execute(executionContext);
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
     private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         expectKeyword(lexer, "table");
 
         final int tableNamePosition = lexer.getPosition();
 
-        tok = expectToken(lexer, "table name");
+        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
 
         tableExistsOrFail(tableNamePosition, tok, executionContext);
 
@@ -654,6 +679,8 @@ public class SqlCompiler implements Closeable {
                 alterTableAddColumn(tableNamePosition, writer);
             } else if (Chars.equalsLowerCaseAscii("drop", tok)) {
                 alterTableDropColumn(tableNamePosition, writer);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token: ").put(tok);
             }
         } catch (CairoException e) {
             LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
@@ -918,7 +945,7 @@ public class SqlCompiler implements Closeable {
             } finally {
                 Unsafe.free(buf, len);
             }
-        } catch (JsonException e) {
+        } catch (TextException e) {
             // we do not expect JSON exception here
         } finally {
             LOG.info().$("copied").$();
@@ -1558,29 +1585,5 @@ public class SqlCompiler implements Closeable {
             this.typeCast = typeCast;
             return this;
         }
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(";");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
     }
 }

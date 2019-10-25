@@ -84,7 +84,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.typeManager = typeManager;
     }
 
-    public static void checkInputs(int position, CharSequence name, int type) throws JsonException {
+    private static void checkInputs(int position, CharSequence name, int type) throws JsonException {
         if (name == null) {
             throw JsonException.$(position, "Missing 'name' property");
         }
@@ -217,6 +217,11 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 if (dateLocale == null) {
                     throw JsonException.$(localePosition, "Invalid date locale");
                 }
+
+                // date pattern is required
+                if (pattern == null) {
+                    throw JsonException.$(0, "DATE format pattern is required");
+                }
                 columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
                 break;
             case ColumnType.TIMESTAMP:
@@ -226,6 +231,11 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                                 : timestampLocaleFactory.getDateLocale(locale);
                 if (timestampLocale == null) {
                     throw JsonException.$(localePosition, "Invalid timestamp locale");
+                }
+
+                // timestamp pattern is required
+                if (pattern == null) {
+                    throw JsonException.$(0, "DATE format pattern is required");
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter().of(timestampFormatFactory.get(pattern), timestampLocale));
                 break;

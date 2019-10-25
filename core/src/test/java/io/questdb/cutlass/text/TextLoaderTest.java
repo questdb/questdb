@@ -27,7 +27,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -1211,7 +1210,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-            } catch (UnknownDelimiterException ignore) {
+            } catch (TextException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "min deviation is too high");
             }
         });
     }
@@ -1223,7 +1223,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-            } catch (UnknownDelimiterException ignore) {
+            } catch (TextException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
             }
         });
     }
@@ -2251,7 +2252,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         configureLoaderDefaults(textLoader, columnSeparator, atomicity, false);
     }
 
-    private void playJson(TextLoader textLoader, String jsonStr) throws JsonException {
+    private void playJson(TextLoader textLoader, String jsonStr) throws TextException {
         byte[] json = jsonStr.getBytes(StandardCharsets.UTF_8);
         textLoader.setState(TextLoader.LOAD_JSON_METADATA);
 
@@ -2353,7 +2354,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.clear();
     }
 
-    private void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws JsonException {
+    private void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
         long buf = Unsafe.malloc(len);

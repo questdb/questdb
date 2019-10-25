@@ -23,10 +23,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,17 +37,14 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatUtils;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.*;
 import io.questdb.std.time.DateLocaleFactory;
 
 import static io.questdb.cutlass.pgwire.PGJobContext.*;
 import static io.questdb.std.time.DateFormatUtils.*;
 
 public class PGConnectionContext implements IOContext, Mutable {
-    static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -105,6 +99,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final String serverVersion;
     private final PGAuthenticator authenticator;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final Path path = new Path();
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitalMessage = false;
@@ -444,7 +439,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
                 break;
             case 'd':
+
                 System.out.println("data " + msgLen);
+                // msgLen includes 4 bytes of self
+
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -475,6 +473,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.fd = -1;
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
+        Misc.free(path);
     }
 
     @Override
@@ -954,19 +953,29 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-        try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
-            RecordMetadata metadata = writer.getMetadata();
-            responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                responseAsciiSink.putNetworkShort((short) typeOidMap.get(metadata.getColumnType(i)));
+        if (TableUtils.TABLE_EXISTS == engine.getStatus(
+                sqlExecutionContext.getCairoSecurityContext(),
+                path,
+                textLoader.getTableName()
+        )) {
+            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
+            long addr = responseAsciiSink.skip();
+            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
+                RecordMetadata metadata = writer.getMetadata();
+                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    responseAsciiSink.putNetworkShort((short) typeOidMap.get(metadata.getColumnType(i)));
+                }
             }
+            responseAsciiSink.putLen(addr);
+            transientCopyBuffer = Unsafe.malloc(1024 * 1024);
+            send();
+        } else {
+            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
+            prepareReadyForQuery(responseAsciiSink);
+            send();
         }
-        responseAsciiSink.putLen(addr);
-        transientCopyBuffer = Unsafe.malloc(1024 * 1024);
-        send();
     }
 
     private void parseQuery(

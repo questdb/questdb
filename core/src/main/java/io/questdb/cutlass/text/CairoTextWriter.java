@@ -102,11 +102,11 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     }
 
     public RecordMetadata getMetadata() {
-        return writer.getMetadata();
+        return writer == null ? null : writer.getMetadata();
     }
 
     public int getPartitionBy() {
-        return writer.getPartitionBy();
+        return writer == null ? PartitionBy.NONE : writer.getPartitionBy();
     }
 
     public CharSequence getTableName() {
@@ -114,7 +114,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     }
 
     public long getWrittenLineCount() {
-        return writer.size() - _size;
+        return writer == null ? 0 : writer.size() - _size;
     }
 
     public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity) {

@@ -161,7 +161,7 @@ public class TextLoader implements Closeable, Mutable {
         this.forceHeaders = forceHeaders;
     }
 
-    public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
+    public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
     }
 
@@ -171,10 +171,14 @@ public class TextLoader implements Closeable, Mutable {
         jsonLexer.clear();
     }
 
-    public void wrapUp() throws JsonException {
+    public void wrapUp() throws TextException {
         switch (state) {
             case LOAD_JSON_METADATA:
-                jsonLexer.parseLast();
+                try {
+                    jsonLexer.parseLast();
+                } catch (JsonException e) {
+                    throw TextException.$(e.getFlyweightMessage());
+                }
                 break;
             case ANALYZE_STRUCTURE:
             case LOAD_DATA:
@@ -190,11 +194,15 @@ public class TextLoader implements Closeable, Mutable {
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
     }
 
-    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException {
-        jsonLexer.parse(lo, hi, textMetadataParser);
+    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
+        try {
+            jsonLexer.parse(lo, hi, textMetadataParser);
+        } catch (JsonException e) {
+            throw TextException.$(e.getFlyweightMessage());
+        }
     }
 
-    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         if (columnDelimiter > 0) {
             textLexer.of(columnDelimiter);
         } else {
@@ -215,6 +223,6 @@ public class TextLoader implements Closeable, Mutable {
 
     @FunctionalInterface
     private interface ParserMethod {
-        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws JsonException;
+        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException;
     }
 }

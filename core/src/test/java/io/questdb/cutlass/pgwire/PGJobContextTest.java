@@ -37,7 +37,11 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.postgresql.copy.CopyIn;
+import org.postgresql.copy.CopyManager;
+import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
@@ -1894,4 +1898,41 @@ public class PGJobContextTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    @Ignore
+    public void testCopyIn() throws SQLException, BrokenBarrierException, InterruptedException {
+        final CountDownLatch haltLatch = new CountDownLatch(1);
+        final AtomicBoolean running = new AtomicBoolean(true);
+        try {
+            startBasicServer(
+                    NetworkFacadeImpl.INSTANCE,
+                    new DefaultPGWireConfiguration(),
+                    haltLatch,
+                    running
+            );
+
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+
+            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+
+            PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
+            stmt.execute();
+
+            CopyManager copyManager = new CopyManager((BaseConnection) connection);
+
+            CopyIn copyIn = copyManager.copyIn("copy tab from STDIN");
+
+            String text = "a,b\r\n" +
+                    "10,20";
+
+            byte[] bytes = text.getBytes();
+            copyIn.writeToCopy(bytes, 0, bytes.length);
+            copyIn.endCopy();
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
+    }
 }
