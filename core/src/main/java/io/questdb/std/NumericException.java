@@ -23,7 +23,6 @@
 
 package io.questdb.std;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
 public class NumericException extends Exception {
 
     public final static NumericException INSTANCE = new NumericException();

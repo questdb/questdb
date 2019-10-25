@@ -23,7 +23,6 @@
 
 package io.questdb.mp;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class TimeoutException extends RuntimeException {
     public final static TimeoutException INSTANCE = new TimeoutException();
 

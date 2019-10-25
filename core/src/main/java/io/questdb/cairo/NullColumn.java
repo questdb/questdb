@@ -121,7 +121,6 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public void getLong256(long offset, CharSink sink) {
-
     }
 
     @Override

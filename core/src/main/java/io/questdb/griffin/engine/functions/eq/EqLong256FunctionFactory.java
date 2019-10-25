@@ -27,7 +27,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Long256;
@@ -40,7 +39,7 @@ public class EqLong256FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 

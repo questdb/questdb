@@ -23,7 +23,6 @@
 
 package io.questdb.mp;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
 final class AlertedException extends RuntimeException {
     public final static AlertedException INSTANCE = new AlertedException();
 

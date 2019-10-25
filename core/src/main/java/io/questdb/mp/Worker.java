@@ -42,7 +42,6 @@ public class Worker extends Thread {
     private final Log log;
     private final WorkerCleaner cleaner;
     private final boolean haltOnError;
-    @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
     private volatile int fence;
 
