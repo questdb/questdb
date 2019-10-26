@@ -34,8 +34,6 @@ import io.questdb.std.Rnd;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.IOException;
-
 public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
@@ -51,7 +49,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testFixedLength() throws SqlException, IOException {
+    public void testFixedLength() throws SqlException {
         assertQuery("x\n" +
                         "00000000 ee 41 1d 15 55 8a\n" +
                         "\n" +
@@ -67,7 +65,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testFixedLengthNoNulls() throws SqlException, IOException {
+    public void testFixedLengthNoNulls() throws SqlException {
         assertQuery("x\n" +
                         "00000000 ee 41 1d 15 55\n" +
                         "00000000 17 fa d8 cc 14\n" +
@@ -93,7 +91,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testVarLength() throws SqlException, IOException {
+    public void testVarLength() throws SqlException {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +
                         "00000000 17 fa d8 cc 14\n" +
@@ -109,7 +107,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testVarLengthNoNulls() throws SqlException, IOException {
+    public void testVarLengthNoNulls() throws SqlException {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +
                         "00000000 17 fa d8 cc 14\n" +
@@ -134,7 +132,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
         return new RndBinFunctionFactory();
     }
 
-    private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException, IOException {
+    private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
         RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
         assertOnce(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
     }

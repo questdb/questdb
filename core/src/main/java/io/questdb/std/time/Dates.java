@@ -86,8 +86,8 @@ final public class Dates {
         if (months == 0) {
             return millis;
         }
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
+        int y = getYear(millis);
+        boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
         int _y;
         int _m = m - 1 + months;
@@ -111,25 +111,6 @@ final public class Dates {
             _d = maxDay;
         }
         return toMillis(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
-    }
-
-    public static long addPeriod(long lo, char type, int period) throws NumericException {
-        switch (type) {
-            case 's':
-                return lo + period * Dates.SECOND_MILLIS;
-            case 'm':
-                return lo + period * Dates.MINUTE_MILLIS;
-            case 'h':
-                return Dates.addHours(lo, period);
-            case 'd':
-                return Dates.addDays(lo, period);
-            case 'M':
-                return Dates.addMonths(lo, period);
-            case 'y':
-                return Dates.addYear(lo, period);
-            default:
-                throw NumericException.INSTANCE;
-        }
     }
 
     public static long addYear(long millis, int years) {

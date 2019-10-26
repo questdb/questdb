@@ -27,8 +27,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StdoutSink;
 
-import java.io.IOException;
-
 public final class Net {
 
     public static final long MMSGHDR_SIZE;
@@ -111,11 +109,7 @@ public final class Net {
                 Numbers.appendHex(StdoutSink.INSTANCE, Unsafe.getUnsafe().getByte(buffer + i) & 0xff);
             }
             StdoutSink.INSTANCE.put('\n');
-            try {
-                StdoutSink.INSTANCE.flush();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            StdoutSink.INSTANCE.flush();
         }
     }
 

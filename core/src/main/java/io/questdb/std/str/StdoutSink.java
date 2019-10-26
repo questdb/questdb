@@ -23,24 +23,55 @@
 
 package io.questdb.std.str;
 
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import io.questdb.std.Files;
+import io.questdb.std.Unsafe;
 
-public final class StdoutSink extends FlexBufferSink {
+import java.io.Closeable;
+
+public final class StdoutSink extends AbstractCharSink implements Closeable {
 
     public static final StdoutSink INSTANCE = new StdoutSink();
 
-    private final FileOutputStream out;
+    private final long stdout = Files.getStdOutFd();
+    private final int bufferCapacity = 1024;
+    private final long buffer = Unsafe.malloc(bufferCapacity);
+    private final long limit = buffer + bufferCapacity;
+    private long ptr = buffer;
 
-    public StdoutSink() {
-        this.out = new FileOutputStream(FileDescriptor.out);
-        this.channel = out.getChannel();
+    @Override
+    public void close() {
+        free();
     }
 
     @Override
-    public void close() throws IOException {
-        super.close();
-        out.close();
+    public void flush() {
+        int len = (int) (ptr - buffer);
+        if (len > 0) {
+            Files.append(stdout, buffer, len);
+            ptr = buffer;
+        }
+    }
+
+    @Override
+    public CharSink put(CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, len = cs.length(); i < len; i++) {
+                put(cs.charAt(i));
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        if (ptr == limit) {
+            flush();
+        }
+        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
+        return this;
+    }
+
+    private void free() {
+        Unsafe.free(buffer, bufferCapacity);
     }
 }

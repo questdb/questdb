@@ -36,7 +36,7 @@ interface ColumnIndexer {
 
     boolean isDistressed();
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
+    void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, long columnTop);
 
     void rollback(long maxRow);
 

@@ -35,7 +35,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public class CairoLineProtoParserTest extends AbstractCairoTest {
@@ -497,7 +496,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         assertTable(expected2, "y");
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) throws IOException {
+    private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
         }

@@ -123,10 +123,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         l.sort(COMPARATOR);
     }
 
-    public CharSequence getContent() {
-        return content;
-    }
-
     public int getPosition() {
         return _pos;
     }

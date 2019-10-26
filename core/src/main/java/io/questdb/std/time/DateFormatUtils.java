@@ -112,10 +112,6 @@ public class DateFormatUtils {
         FMT4.format(millis, defaultLocale, "Z", sink);
     }
 
-    // YYYY
-    public static void formatYYYY(CharSink sink, long millis) {
-        Numbers.append(sink, Dates.getYear(millis));
-    }
 
     // YYYY-MM
     public static void formatYYYYMM(CharSink sink, long millis) {
@@ -131,24 +127,7 @@ public class DateFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseDateTime(CharSequence seq) throws NumericException {
-        return parseDateTime(seq, 0, seq.length());
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTimeQuiet(CharSequence seq) {
-        try {
-            return parseDateTime(seq, 0, seq.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
-    public static long tryParse(CharSequence s) throws NumericException {
-        return tryParse(s, 0, s.length());
-    }
-
-    public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
-        return parseDateTime(s, lo, lim);
+        return UTC_FORMAT.parse(seq, 0, seq.length(), defaultLocale);
     }
 
     public static void updateReferenceYear(long millis) {
@@ -339,30 +318,4 @@ public class DateFormatUtils {
         }
     }
 
-    private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        return UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
-    }
-
-    private static boolean checkLen(int p, int lim) throws NumericException {
-        if (lim - p > 2) {
-            return true;
-        }
-        if (lim <= p) {
-            return false;
-        }
-
-        throw NumericException.INSTANCE;
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
-        if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkRange(int x, int min, int max) throws NumericException {
-        if (x < min || x > max) {
-            throw NumericException.INSTANCE;
-        }
-    }
 }

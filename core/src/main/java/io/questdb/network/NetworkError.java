@@ -53,10 +53,6 @@ public class NetworkError extends Error implements Sinkable {
         return this;
     }
 
-    public int getErrno() {
-        return errno;
-    }
-
     @Override
     public String getMessage() {
         return message.toString();
@@ -74,11 +70,6 @@ public class NetworkError extends Error implements Sinkable {
 
     public NetworkError put(int value) {
         message.put(value);
-        return this;
-    }
-
-    public NetworkError put(Throwable err) {
-        message.put(err);
         return this;
     }
 

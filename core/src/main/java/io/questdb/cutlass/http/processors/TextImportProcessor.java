@@ -257,7 +257,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onChunk(HttpRequestHeader partHeader, long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (hi > lo) {
             try {
                 transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
@@ -311,7 +311,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             LOG.debug().$("part end").$();
             transientState.textLoader.wrapUp();

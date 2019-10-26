@@ -41,7 +41,6 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public class TextLoaderTest extends AbstractGriffinTest {
@@ -2221,7 +2220,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertTable(String expected) throws IOException, SqlException {
+    private void assertTable(String expected) throws SqlException {
         try (
                 RecordCursorFactory factory = compiler.compile("test").getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)

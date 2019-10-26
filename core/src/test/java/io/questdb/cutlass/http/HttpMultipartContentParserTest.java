@@ -204,7 +204,7 @@ public class HttpMultipartContentParserTest {
 
     private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
         @Override
-        public void onChunk(HttpRequestHeader partHeader, long lo, long hi) {
+        public void onChunk(long lo, long hi) {
             for (long p = lo; p < hi; p++) {
                 sink.put((char) Unsafe.getUnsafe().getByte(p));
             }
@@ -238,7 +238,7 @@ public class HttpMultipartContentParserTest {
         }
 
         @Override
-        public void onPartEnd(HttpRequestHeader partHeader) {
+        public void onPartEnd() {
             sink.put("\r\n");
             sink.put("-----------------------------\r\n");
         }

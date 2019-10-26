@@ -79,7 +79,6 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         if (Unsafe.arrayGet(keys, index) == noEntryKey) {
             return index;
         }
-
         CharSequence cs = Unsafe.arrayGet(keys, index);
         if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
             return -index - 1;

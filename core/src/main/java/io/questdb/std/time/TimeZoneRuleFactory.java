@@ -67,14 +67,6 @@ public class TimeZoneRuleFactory {
         }
     }
 
-    public TimeZoneRules getTimeZoneRules(CharSequence id) {
-        int index = ruleMap.get(id);
-        if (index == -1) {
-            return null;
-        }
-        return ruleList.getQuick(index);
-    }
-
     public int getTimeZoneRulesIndex(CharSequence id) {
         return ruleMap.get(id);
     }

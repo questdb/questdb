@@ -31,8 +31,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.time.DateFormatUtils;
 
-import java.io.IOException;
-
 public class RecordCursorPrinter {
     private final CharSink sink;
     private final char delimiter;
@@ -42,7 +40,7 @@ public class RecordCursorPrinter {
         this.delimiter = '\t';
     }
 
-    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header) {
         if (header) {
             printHeader(metadata);
         }
@@ -53,7 +51,7 @@ public class RecordCursorPrinter {
         }
     }
 
-    public void print(Record r, RecordMetadata m) throws IOException {
+    public void print(Record r, RecordMetadata m) {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);

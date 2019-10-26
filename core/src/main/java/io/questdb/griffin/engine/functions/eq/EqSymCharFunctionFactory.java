@@ -140,17 +140,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B strings in case
-            // these are columns of the same record
-            // records have re-usable character sequences
-            final CharSequence a = symFunc.getSymbol(rec);
-            final char b = chrFunc.getChar(rec);
-
-            if (a == null || a.length() != 1) {
-                return false;
-            }
-
-            return a.charAt(0) == b;
+            return Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
     }
 }

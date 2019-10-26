@@ -32,7 +32,6 @@ public final class Unsafe {
     public static final long CHAR_OFFSET;
     public static final long CHAR_SCALE;
     public static final long BYTE_OFFSET;
-    public final static int CACHE_LINE_SIZE = 64;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
@@ -41,8 +40,6 @@ public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
     private static final long OBJ_OFFSET;
     private static final long OBJ_SCALE;
-    private static final long BOOL_OFFSET;
-    private static final long BOOL_SCALE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
 
@@ -64,9 +61,6 @@ public final class Unsafe {
             CHAR_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(char[].class));
 
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
-
-            BOOL_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(boolean[].class);
-            BOOL_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(boolean[].class));
         } catch (Exception e) {
             throw new FatalError(e);
         }
@@ -84,11 +78,6 @@ public final class Unsafe {
     public static int arrayGet(int[] array, int index) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index << INT_SCALE));
-    }
-
-    public static boolean arrayGet(boolean[] array, int index) {
-        assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().getBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE));
     }
 
     public static long arrayGet(long[] array, int index) {
@@ -116,11 +105,6 @@ public final class Unsafe {
         Unsafe.getUnsafe().putInt(array, INT_OFFSET + (index << INT_SCALE), value);
     }
 
-    public static void arrayPut(boolean[] array, int index, boolean value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE), value);
-    }
-
     public static void arrayPut(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
@@ -134,11 +118,6 @@ public final class Unsafe {
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
-    }
-
-    public static <T> void arrayPutOrdered(T[] array, int index, T value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putOrderedObject(array, OBJ_OFFSET + (index << OBJ_SCALE), value);
     }
 
     public static boolean cas(Object o, long offset, long expected, long value) {

@@ -70,10 +70,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         return valueAt(keyIndex(key));
     }
 
-    public Iterable<Entry<K>> immutableIterator() {
-        return new EntryIterator();
-    }
-
     @Override
     @NotNull
     public Iterator<Entry<K>> iterator() {

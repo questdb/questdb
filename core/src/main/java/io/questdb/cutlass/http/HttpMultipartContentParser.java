@@ -125,11 +125,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             ptr++;
                             break;
                         case '-':
-                            listener.onPartEnd(headerParser);
+                            listener.onPartEnd();
                             state = DONE;
                             return true;
                         default:
-                            listener.onChunk(headerParser, boundary.getLo(), boundary.getHi());
+                            listener.onChunk(boundary.getLo(), boundary.getHi());
                             _lo = ptr;
                             state = BODY;
                             break;
@@ -150,7 +150,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     }
                     break;
                 case HEADERS:
-                    listener.onPartEnd(headerParser);
+                    listener.onPartEnd();
                     // fall thru
                 case START_HEADERS:
                     headerParser.clear();
@@ -171,11 +171,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case BOUNDARY_INCOMPLETE:
-                                listener.onChunk(headerParser, _lo, ptr - 1);
+                                listener.onChunk(_lo, ptr - 1);
                                 state = POTENTIAL_BOUNDARY;
                                 return false;
                             case BOUNDARY_MATCH:
-                                listener.onChunk(headerParser, _lo, ptr - 1);
+                                listener.onChunk(_lo, ptr - 1);
                                 state = PRE_HEADERS;
                                 ptr += consumedBoundaryLen;
                                 break;
@@ -195,7 +195,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            listener.onChunk(headerParser, boundary.getLo(), boundary.getLo() + p);
+                            listener.onChunk(boundary.getLo(), boundary.getLo() + p);
                             state = BODY_BROKEN;
                             break;
                     }
@@ -207,7 +207,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         if (state == BODY) {
-            listener.onChunk(headerParser, _lo, ptr);
+            listener.onChunk(_lo, ptr);
             state = BODY_BROKEN;
         }
 

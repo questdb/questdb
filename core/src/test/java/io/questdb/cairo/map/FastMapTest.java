@@ -529,46 +529,8 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowIdStore() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 10000;
-            final Rnd rnd = new Rnd();
-            final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(N, rnd, binarySequence);
-
-            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
-
-            try (FastMap map = new FastMap(1024, types, types, N / 4, 0.5f)) {
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    RecordCursor cursor = reader.getCursor();
-                    final Record record = cursor.getRecord();
-                    long counter = 0;
-                    while (cursor.hasNext()) {
-                        MapKey key = map.withKeyAsLong(record.getRowId());
-                        MapValue values = key.createValue();
-                        Assert.assertTrue(values.isNew());
-                        values.putLong(0, ++counter);
-                    }
-
-                    cursor.toTop();
-                    counter = 0;
-                    while (cursor.hasNext()) {
-                        MapKey key = map.withKeyAsLong(record.getRowId());
-                        MapValue values = key.findValue();
-                        Assert.assertNotNull(values);
-                        Assert.assertEquals(++counter, values.getLong(0));
-                    }
-                }
-
-                Assert.assertEquals(N, map.size());
-            }
-        });
-    }
-
-    @Test
     public void testUnsupportedKeyValueBinary() throws Exception {
-        testUnsupportedValueType(ColumnType.BINARY);
+        testUnsupportedValueType();
     }
 
     @Test
@@ -1026,10 +988,10 @@ public class FastMapTest extends AbstractCairoTest {
         }
     }
 
-    private void testUnsupportedValueType(int columnType) throws Exception {
+    private void testUnsupportedValueType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new FastMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(columnType), 64, 0.5);
+                new FastMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.BINARY), 64, 0.5);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));

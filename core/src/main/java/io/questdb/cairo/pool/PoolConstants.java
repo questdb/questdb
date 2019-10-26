@@ -28,7 +28,6 @@ public final class PoolConstants {
     public static final int CR_NAME_LOCK = 2;
     public static final int CR_IDLE = 3;
     public static final int CR_REOPEN = 4;
-    public static final long UNALLOCATED = -1L;
 
     public static String closeReasonText(int reason) {
         switch (reason) {

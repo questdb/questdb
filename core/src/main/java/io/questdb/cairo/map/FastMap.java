@@ -228,20 +228,6 @@ public class FastMap implements Map {
         return key.init();
     }
 
-    @Override
-    public MapKey withKeyAsLong(long value) {
-        key.startAddress = kPos;
-        key.appendAddress = kPos + keyDataOffset;
-        // we need nextColOffset in case we need to resize
-        if (key.appendAddress + 8 > kLimit) {
-            key.nextColOffset = kPos + keyBlockOffset;
-            resize(8);
-        }
-        Unsafe.getUnsafe().putLong(key.appendAddress, value);
-        key.appendAddress += 8;
-        return key;
-    }
-
     private FastMapValue asNew(Key keyWriter, int index) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);

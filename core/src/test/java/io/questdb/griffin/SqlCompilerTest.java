@@ -42,7 +42,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -56,7 +55,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
 
     @Test
-    public void assertCastString() throws SqlException, IOException {
+    public void assertCastString() throws SqlException {
         final String expectedData = "a\n" +
                 "JWCPS\n" +
                 "\n" +
@@ -125,7 +124,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteDate() throws SqlException, IOException {
+    public void testCastByteDate() throws SqlException {
         assertCastByte("a\n" +
                         "1970-01-01T00:00:00.119Z\n" +
                         "1970-01-01T00:00:00.052Z\n" +
@@ -151,7 +150,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteDouble() throws SqlException, IOException {
+    public void testCastByteDouble() throws SqlException {
         assertCastByte("a\n" +
                         "119.000000000000\n" +
                         "52.000000000000\n" +
@@ -177,7 +176,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteFloat() throws SqlException, IOException {
+    public void testCastByteFloat() throws SqlException {
         assertCastByte("a\n" +
                         "119.0000\n" +
                         "52.0000\n" +
@@ -203,7 +202,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteInt() throws SqlException, IOException {
+    public void testCastByteInt() throws SqlException {
         assertCastByte("a\n" +
                         "119\n" +
                         "52\n" +
@@ -229,7 +228,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteLong() throws SqlException, IOException {
+    public void testCastByteLong() throws SqlException {
         assertCastByte("a\n" +
                         "119\n" +
                         "52\n" +
@@ -255,7 +254,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteShort() throws SqlException, IOException {
+    public void testCastByteShort() throws SqlException {
         assertCastByte("a\n" +
                         "119\n" +
                         "52\n" +
@@ -281,7 +280,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastByteTimestamp() throws SqlException, IOException {
+    public void testCastByteTimestamp() throws SqlException {
         assertCastByte("a\n" +
                         "1970-01-01T00:00:00.000119Z\n" +
                         "1970-01-01T00:00:00.000052Z\n" +
@@ -307,7 +306,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateByte() throws SqlException, IOException {
+    public void testCastDateByte() throws SqlException {
         assertCastDate("a\n" +
                         "11\n" +
                         "0\n" +
@@ -333,7 +332,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateDouble() throws SqlException, IOException {
+    public void testCastDateDouble() throws SqlException {
         assertCastDate("a\n" +
                         "1.426297242379E12\n" +
                         "-9.223372036854776E18\n" +
@@ -359,7 +358,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateFloat() throws SqlException, IOException {
+    public void testCastDateFloat() throws SqlException {
         assertCastDate("a\n" +
                         "1.42629719E12\n" +
                         "-9.223372E18\n" +
@@ -385,7 +384,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateInt() throws SqlException, IOException {
+    public void testCastDateInt() throws SqlException {
         assertCastDate("a\n" +
                         "368100107\n" +
                         "0\n" +
@@ -411,7 +410,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateLong() throws SqlException, IOException {
+    public void testCastDateLong() throws SqlException {
         assertCastDate("a\n" +
                         "1426297242379\n" +
                         "NaN\n" +
@@ -437,7 +436,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateShort() throws SqlException, IOException {
+    public void testCastDateShort() throws SqlException {
         assertCastDate("a\n" +
                         "-15605\n" +
                         "0\n" +
@@ -463,7 +462,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDateTimestamp() throws SqlException, IOException {
+    public void testCastDateTimestamp() throws SqlException {
         assertCastDate("a\n" +
                         "1970-01-17T12:11:37.242379Z\n" +
                         "\n" +
@@ -489,7 +488,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleByte() throws SqlException, IOException {
+    public void testCastDoubleByte() throws SqlException {
         assertCastDouble("a\n" +
                         "80\n" +
                         "8\n" +
@@ -515,7 +514,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleDate() throws SqlException, IOException {
+    public void testCastDoubleDate() throws SqlException {
         assertCastDouble("a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
                         "1970-01-01T00:00:00.008Z\n" +
@@ -541,7 +540,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleFloat() throws SqlException, IOException {
+    public void testCastDoubleFloat() throws SqlException {
         assertCastDouble("a\n" +
                         "80.4322\n" +
                         "8.4870\n" +
@@ -567,7 +566,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleInt() throws SqlException, IOException {
+    public void testCastDoubleInt() throws SqlException {
         assertCastDouble("a\n" +
                         "80\n" +
                         "8\n" +
@@ -593,7 +592,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleLong() throws SqlException, IOException {
+    public void testCastDoubleLong() throws SqlException {
         assertCastDouble("a\n" +
                         "80\n" +
                         "8\n" +
@@ -619,7 +618,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleShort() throws SqlException, IOException {
+    public void testCastDoubleShort() throws SqlException {
         assertCastDouble("a\n" +
                         "80\n" +
                         "8\n" +
@@ -645,7 +644,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastDoubleTimestamp() throws SqlException, IOException {
+    public void testCastDoubleTimestamp() throws SqlException {
         assertCastDouble("a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
@@ -671,7 +670,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatByte() throws SqlException, IOException {
+    public void testCastFloatByte() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
                         "0\n" +
@@ -697,7 +696,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatDate() throws SqlException, IOException {
+    public void testCastFloatDate() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
@@ -723,7 +722,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatDouble() throws SqlException, IOException {
+    public void testCastFloatDouble() throws SqlException {
         assertCastFloat("a\n" +
                         "80.432235717773\n" +
                         "NaN\n" +
@@ -749,7 +748,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatInt() throws SqlException, IOException {
+    public void testCastFloatInt() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
                         "0\n" +
@@ -775,7 +774,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatLong() throws SqlException, IOException {
+    public void testCastFloatLong() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
                         "0\n" +
@@ -801,7 +800,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatShort() throws SqlException, IOException {
+    public void testCastFloatShort() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
                         "0\n" +
@@ -827,7 +826,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatTimestamp() throws SqlException, IOException {
+    public void testCastFloatTimestamp() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
@@ -853,7 +852,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntByte() throws SqlException, IOException {
+    public void testCastIntByte() throws SqlException {
         assertCastInt("a\n" +
                 "1\n" +
                 "0\n" +
@@ -878,7 +877,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntDate() throws SqlException, IOException {
+    public void testCastIntDate() throws SqlException {
         assertCastInt("a\n" +
                         "1970-01-01T00:00:00.001Z\n" +
                         "1969-12-07T03:28:36.352Z\n" +
@@ -904,7 +903,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntDouble() throws SqlException, IOException {
+    public void testCastIntDouble() throws SqlException {
         assertCastInt("a\n" +
                         "1.000000000000\n" +
                         "-2.147483648E9\n" +
@@ -930,7 +929,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntFloat() throws SqlException, IOException {
+    public void testCastIntFloat() throws SqlException {
         assertCastInt("a\n" +
                         "1.0000\n" +
                         "-2.14748365E9\n" +
@@ -956,7 +955,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntLong() throws SqlException, IOException {
+    public void testCastIntLong() throws SqlException {
         assertCastInt("a\n" +
                 "1\n" +
                 "-2147483648\n" +
@@ -981,7 +980,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntShort() throws SqlException, IOException {
+    public void testCastIntShort() throws SqlException {
         assertCastInt("a\n" +
                         "1\n" +
                         "0\n" +
@@ -1007,7 +1006,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastIntTimestamp() throws SqlException, IOException {
+    public void testCastIntTimestamp() throws SqlException {
         String expectedData = "a\n" +
                 "1970-01-01T00:00:00.000001Z\n" +
                 "1969-12-31T23:24:12.516352Z\n" +
@@ -1033,7 +1032,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongByte() throws SqlException, IOException {
+    public void testCastLongByte() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
                         "0\n" +
@@ -1059,7 +1058,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongDate() throws SqlException, IOException {
+    public void testCastLongDate() throws SqlException {
         assertCastLong("a\n" +
                         "1970-01-01T00:00:00.022Z\n" +
                         "\n" +
@@ -1085,7 +1084,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongDouble() throws SqlException, IOException {
+    public void testCastLongDouble() throws SqlException {
         assertCastLong("a\n" +
                         "22.000000000000\n" +
                         "-9.223372036854776E18\n" +
@@ -1111,7 +1110,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongFloat() throws SqlException, IOException {
+    public void testCastLongFloat() throws SqlException {
         assertCastLong("a\n" +
                         "22.0000\n" +
                         "-9.223372E18\n" +
@@ -1137,7 +1136,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongInt() throws SqlException, IOException {
+    public void testCastLongInt() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
                         "0\n" +
@@ -1163,7 +1162,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongShort() throws SqlException, IOException {
+    public void testCastLongShort() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
                         "0\n" +
@@ -1189,7 +1188,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastLongTimestamp() throws SqlException, IOException {
+    public void testCastLongTimestamp() throws SqlException {
         assertCastLong("a\n" +
                         "1970-01-01T00:00:00.000022Z\n" +
                         "\n" +
@@ -1264,7 +1263,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortByte() throws SqlException, IOException {
+    public void testCastShortByte() throws SqlException {
         assertCastShort("a\n" +
                         "-106\n" +
                         "-42\n" +
@@ -1290,7 +1289,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortDate() throws SqlException, IOException {
+    public void testCastShortDate() throws SqlException {
         assertCastShort("a\n" +
                         "1970-01-01T00:00:01.430Z\n" +
                         "1970-01-01T00:00:01.238Z\n" +
@@ -1316,7 +1315,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortDouble() throws SqlException, IOException {
+    public void testCastShortDouble() throws SqlException {
         assertCastShort("a\n" +
                         "1430.000000000000\n" +
                         "1238.000000000000\n" +
@@ -1342,7 +1341,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortFloat() throws SqlException, IOException {
+    public void testCastShortFloat() throws SqlException {
         assertCastShort("a\n" +
                         "1430.0000\n" +
                         "1238.0000\n" +
@@ -1368,7 +1367,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortInt() throws SqlException, IOException {
+    public void testCastShortInt() throws SqlException {
         assertCastShort("a\n" +
                         "1430\n" +
                         "1238\n" +
@@ -1394,7 +1393,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortLong() throws SqlException, IOException {
+    public void testCastShortLong() throws SqlException {
         assertCastShort("a\n" +
                         "1430\n" +
                         "1238\n" +
@@ -1420,7 +1419,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastShortTimestamp() throws SqlException, IOException {
+    public void testCastShortTimestamp() throws SqlException {
         assertCastShort("a\n" +
                         "1970-01-01T00:00:00.001430Z\n" +
                         "1970-01-01T00:00:00.001238Z\n" +
@@ -1446,7 +1445,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampByte() throws SqlException, IOException {
+    public void testCastTimestampByte() throws SqlException {
         assertCastTimestamp("a\n" +
                         "89\n" +
                         "0\n" +
@@ -1472,7 +1471,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampDate() throws SqlException, IOException {
+    public void testCastTimestampDate() throws SqlException {
         assertCastTimestamp("a\n" +
                         "47956-10-13T01:43:12.217Z\n" +
                         "\n" +
@@ -1498,7 +1497,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampDouble() throws SqlException, IOException {
+    public void testCastTimestampDouble() throws SqlException {
         assertCastTimestamp("a\n" +
                         "1.451202658992217E15\n" +
                         "-9.223372036854776E18\n" +
@@ -1524,7 +1523,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampFloat() throws SqlException, IOException {
+    public void testCastTimestampFloat() throws SqlException {
         assertCastTimestamp("a\n" +
                         "1.45120261E15\n" +
                         "-9.223372E18\n" +
@@ -1550,7 +1549,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampInt() throws SqlException, IOException {
+    public void testCastTimestampInt() throws SqlException {
         assertCastTimestamp("a\n" +
                         "1929150553\n" +
                         "0\n" +
@@ -1576,7 +1575,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampLong() throws SqlException, IOException {
+    public void testCastTimestampLong() throws SqlException {
         assertCastTimestamp("a\n" +
                         "1451202658992217\n" +
                         "NaN\n" +
@@ -1602,7 +1601,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastTimestampShort() throws SqlException, IOException {
+    public void testCastTimestampShort() throws SqlException {
         assertCastTimestamp("a\n" +
                         "-32679\n" +
                         "0\n" +
@@ -1680,7 +1679,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelect() throws SqlException, IOException {
+    public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
                 "1253890363\t10\tfalse\tXYS\t0.191123461757\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5\n" +
@@ -1734,7 +1733,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelectCastSymbol() throws SqlException, IOException {
+    public void testCreateAsSelectCastSymbol() throws SqlException {
         final String expectedData = "a\n" +
                 "CPSW\n" +
                 "HYRX\n" +
@@ -2264,7 +2263,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableUtf8() throws SqlException, IOException {
+    public void testCreateTableUtf8() throws SqlException {
         compiler.compile("create table доходы(экспорт int)");
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "доходы")) {
@@ -3085,7 +3084,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
+    private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
@@ -3098,7 +3097,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastByte(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastByte(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3124,7 +3123,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastDate(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastDate(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3136,7 +3135,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCastDouble(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastDouble(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3162,7 +3161,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastFloat(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastFloat(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3188,7 +3187,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastInt(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastInt(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3214,7 +3213,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastLong(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastLong(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3240,7 +3239,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastShort(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastShort(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
@@ -3294,7 +3293,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertCastTimestamp(String expectedData, int castTo) throws SqlException, IOException {
+    private void assertCastTimestamp(String expectedData, int castTo) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +

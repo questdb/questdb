@@ -62,25 +62,6 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
         return (char) Unsafe.getUnsafe().getByte(ptr + index);
     }
 
-    public CharSequenceZ of(CharSequence str) {
-        return of(str, str.length());
-    }
-
-    public CharSequenceZ of(CharSequence str, int len) {
-        if (len >= capacity) {
-            close();
-            alloc(len);
-        }
-        cpyz(str, len);
-        return this;
-    }
-
-//    @NotNull
-//    @Override
-//    public String toString() {
-//        return Chars.toUtf8String(this);
-//    }
-
     private void alloc(int len) {
         this.capacity = len;
         this.ptr = Unsafe.malloc(capacity + 1);

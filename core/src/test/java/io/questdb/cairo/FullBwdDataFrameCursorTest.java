@@ -32,8 +32,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
-
 public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testReload() throws Exception {
@@ -124,7 +122,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
 
     }
 
-    private void printCursor(TableReaderRecord record, DataFrameCursor cursor) throws IOException {
+    private void printCursor(TableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         record.of(cursor.getTableReader());
         while (cursor.hasNext()) {

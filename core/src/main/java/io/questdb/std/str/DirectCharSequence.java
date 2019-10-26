@@ -46,14 +46,6 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
         hi = lo = 0;
     }
 
-    public long getHi() {
-        return hi;
-    }
-
-    public long getLo() {
-        return lo;
-    }
-
     @Override
     public int hashCode() {
         if (lo == hi) {

@@ -26,10 +26,8 @@ package io.questdb.cairo;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
 
 public class VirtualMemory implements Closeable {
     private static final int STRING_LENGTH_BYTES = 4;
@@ -64,6 +62,13 @@ public class VirtualMemory implements Closeable {
         }
 
         return STRING_LENGTH_BYTES + s.length() * 2;
+    }
+
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+        }
     }
 
     public long addressOf(long offset) {
@@ -259,17 +264,6 @@ public class VirtualMemory implements Closeable {
 
     public long pageRemaining(long offset) {
         return getPageSize(pageIndex(offset)) - offsetInPage(offset);
-    }
-
-    public final void putBin(ByteBuffer buf) {
-        if (buf instanceof DirectBuffer) {
-            int pos = buf.position();
-            int len = buf.remaining();
-            buf.position(pos + len);
-            putBin(ByteBuffers.getAddress(buf) + pos, len);
-            return;
-        }
-        putBin0(buf);
     }
 
     public final long putBin(BinarySequence value) {
@@ -599,13 +593,6 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
-        }
-    }
-
     private long addressOf0(long offset) {
         return computeHotPage(pageIndex(offset)) + offsetInPage(offset);
     }
@@ -639,13 +626,6 @@ public class VirtualMemory implements Closeable {
         roOffsetHi = roOffsetLo + getPageSize(page) + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
-    }
-
-    private void copyBufBytes(ByteBuffer buf, int pos, int len) {
-        for (int i = 0; i < len; i++) {
-            byte c = buf.get(pos + i);
-            Unsafe.getUnsafe().putByte(appendPointer + i, c);
-        }
     }
 
     protected void ensurePagesListCapacity(long size) {
@@ -889,26 +869,6 @@ public class VirtualMemory implements Closeable {
         } while (true);
     }
 
-    private void putBin0(ByteBuffer buf) {
-        if (buf == null) {
-            putLong(TableUtils.NULL_LEN);
-            return;
-        }
-
-        int pos = buf.position();
-        int len = buf.remaining();
-        buf.position(pos + len);
-
-        putLong(len);
-
-        if (len < pageHi - appendPointer) {
-            copyBufBytes(buf, pos, len);
-            appendPointer += len;
-        } else {
-            putBinSplit(buf, pos, len);
-        }
-    }
-
     private void putBinSequence(BinarySequence value, long pos, long len) {
         value.copyTo(appendPointer, pos, len);
     }
@@ -924,24 +884,6 @@ public class VirtualMemory implements Closeable {
 
             Unsafe.getUnsafe().copyMemory(start, appendPointer, half);
             pageAt(getAppendOffset() + half);  // +1?
-            len -= half;
-            start += half;
-        } while (true);
-    }
-
-    private void putBinSplit(ByteBuffer buf, int pos, int len) {
-        int start = pos;
-        do {
-            int half = (int) (pageHi - appendPointer);
-
-            if (len <= half) {
-                copyBufBytes(buf, start, len);
-                appendPointer += len;
-                break;
-            }
-
-            copyBufBytes(buf, start, half);
-            pageAt(getAppendOffset() + half); // +1?
             len -= half;
             start += half;
         } while (true);

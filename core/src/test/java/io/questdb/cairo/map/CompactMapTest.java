@@ -222,9 +222,9 @@ public class CompactMapTest extends AbstractCairoTest {
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
-                        assertMap2(N, rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
+                        assertMap2(rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
                         mapCursor.toTop();
-                        assertMap2(N, rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
+                        assertMap2(rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
                     }
                 }
             }
@@ -277,45 +277,6 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextInt(), rec.getInt(1));
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testRowIdStore() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 10000;
-            final Rnd rnd = new Rnd();
-            final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            CairoTestUtils.createTestTable(N, rnd, binarySequence);
-
-            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
-
-            try (CompactMap map = new CompactMap(1024, types, types, N / 4, 0.5f)) {
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    RecordCursor cursor = reader.getCursor();
-                    final Record record = cursor.getRecord();
-
-                    long counter = 0;
-                    while (cursor.hasNext()) {
-                        MapKey key = map.withKeyAsLong(record.getRowId());
-                        MapValue values = key.createValue();
-                        Assert.assertTrue(values.isNew());
-                        values.putLong(0, ++counter);
-                    }
-
-                    cursor.toTop();
-                    counter = 0;
-                    while (cursor.hasNext()) {
-                        MapKey key = map.withKeyAsLong(record.getRowId());
-                        MapValue values = key.findValue();
-                        Assert.assertNotNull(values);
-                        Assert.assertEquals(++counter, values.getLong(0));
-                    }
-                }
-
-                Assert.assertEquals(N, map.size());
             }
         });
     }
@@ -605,7 +566,7 @@ public class CompactMapTest extends AbstractCairoTest {
         }
     }
 
-    private void assertMap2(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {
+    private void assertMap2(Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {
         long c = 0;
         rnd.reset();
         rnd2.reset();
@@ -688,7 +649,7 @@ public class CompactMapTest extends AbstractCairoTest {
             }
 
         }
-        Assert.assertEquals(n, c);
+        Assert.assertEquals(5000, c);
     }
 
     private void populate(Rnd rnd, StringSink sink, CompactMap map, long lo, long hi, int prefixLen) {

@@ -208,13 +208,6 @@ public class CompactMap implements Map {
         return key;
     }
 
-    @Override
-    public MapKey withKeyAsLong(long value) {
-        withKey();
-        key.putLong(value);
-        return key;
-    }
-
     public long getKeyCapacity() {
         return keyCapacity;
     }

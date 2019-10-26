@@ -71,14 +71,6 @@ public class MemoryPages implements Closeable, Mutable {
         pages.clear();
     }
 
-    public int pageRemaining(long offset) {
-        return pageSize - (int) (offset & mask);
-    }
-
-    public int pageSize() {
-        return pageSize;
-    }
-
     public long size() {
         return cachePageLo;
     }

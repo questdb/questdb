@@ -48,10 +48,6 @@ public class DateLocaleFactory {
         defaultDateLocale = dateLocales.get(Locale.getDefault().toLanguageTag());
     }
 
-    public CharSequenceObjHashMap<DateLocale> getAll() {
-        return dateLocales;
-    }
-
     public DateLocale getDateLocale(CharSequence id) {
         return dateLocales.get(id);
     }

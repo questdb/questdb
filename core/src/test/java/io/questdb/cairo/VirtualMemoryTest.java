@@ -23,32 +23,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.ByteBuffer;
-
 import static org.junit.Assert.*;
 
 public class VirtualMemoryTest {
-
-    @Test
-    public void testBinBuf() {
-        assertBuf(ByteBuffer.allocate(1024 * 1024), 1024);
-    }
-
-    @Test
-    public void testBinBufDirect() {
-        ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
-        try {
-            assertBuf(buf, 1024);
-        } finally {
-            ByteBuffers.release(buf);
-        }
-    }
 
     @Test
     public void testBinSequence() {
@@ -719,21 +703,6 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testLargePageBinBuf() {
-        assertBuf(ByteBuffer.allocate(1024 * 1024), 4 * 1024 * 1024);
-    }
-
-    @Test
-    public void testLargePageBinBufDirect() {
-        ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
-        try {
-            assertBuf(buf, 4 * 1024 * 1024);
-        } finally {
-            ByteBuffers.release(buf);
-        }
-    }
-
-    @Test
     public void testLongCompatibility() {
         long pageSize = 64;
         try (VirtualMemory mem = new VirtualMemory(pageSize)) {
@@ -832,11 +801,12 @@ public class VirtualMemoryTest {
     @Test
     public void testNullBin() {
         try (VirtualMemory mem = new VirtualMemory(1024)) {
-            ByteBuffer buf = ByteBuffer.allocate(1024);
-            mem.putBin((ByteBuffer) null);
+            final TestBinarySequence binarySequence = new TestBinarySequence();
+            final byte[] buf = new byte[0];
+            binarySequence.of(buf);
+            mem.putBin(null);
             mem.putBin(0, 0);
-            buf.flip();
-            mem.putBin(buf);
+            mem.putBin(binarySequence);
             long o1 = mem.putNullBin();
 
             assertNull(mem.getBin(0));
@@ -983,41 +953,6 @@ public class VirtualMemoryTest {
         assertEquals(4, VirtualMemory.getStorageLength(null));
     }
 
-    private void assertBuf(ByteBuffer buf, int pageSize) {
-        Rnd rnd = new Rnd();
-        int n = 99;
-
-        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
-            for (int i = 0; i < n; i++) {
-                int sz = rnd.nextPositiveInt() % buf.capacity();
-                for (int j = 0; j < sz; j++) {
-                    buf.put(rnd.nextByte());
-                }
-                buf.flip();
-
-                mem.putBin(buf);
-                assertEquals(0, buf.remaining());
-                buf.clear();
-            }
-
-            rnd.reset();
-
-            long o = 0;
-            for (int i = 0; i < n; i++) {
-                long sz = rnd.nextPositiveInt() % buf.capacity();
-                BinarySequence bsview = mem.getBin(o);
-                assertNotNull(bsview);
-                assertEquals(sz, bsview.length());
-
-                o += sz + 8;
-
-                for (long j = 0; j < sz; j++) {
-                    assertEquals(rnd.nextByte(), bsview.byteAt(j));
-                }
-            }
-        }
-    }
-
     private void assertStrings(VirtualMemory mem, boolean b) {
         if (b) {
             mem.putByte((byte) 1);
@@ -1071,24 +1006,23 @@ public class VirtualMemoryTest {
         Rnd rnd = new Rnd();
         int n = 999;
 
-        ByteBuffer buf = ByteBuffer.allocate(600);
+        final TestBinarySequence binarySequence = new TestBinarySequence();
+        final byte[] buffer = new byte[600];
+        binarySequence.of(buffer);
 
         try (VirtualMemory mem = new VirtualMemory(mem1Size)) {
             for (int i = 0; i < n; i++) {
                 if (rnd.nextPositiveInt() % 16 == 0) {
-                    mem.putBin((ByteBuffer) null);
+                    mem.putBin(null);
                     continue;
                 }
 
-                int sz = buf.capacity();
+                int sz = buffer.length;
                 for (int j = 0; j < sz; j++) {
-                    buf.put(rnd.nextByte());
+                    buffer[j] = rnd.nextByte();
                 }
-                buf.flip();
 
-                mem.putBin(buf);
-                assertEquals(0, buf.remaining());
-                buf.clear();
+                mem.putBin(binarySequence);
             }
 
             try (VirtualMemory mem2 = new VirtualMemory(mem2Size)) {

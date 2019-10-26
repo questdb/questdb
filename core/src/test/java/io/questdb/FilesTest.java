@@ -24,7 +24,6 @@
 package io.questdb;
 
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.DateFormatUtils;
@@ -37,8 +36,6 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 public class FilesTest {
 
@@ -165,53 +162,6 @@ public class FilesTest {
             } finally {
                 Files.close(fd);
             }
-        }
-    }
-
-    @Test
-    public void testWrite() throws Exception {
-        try (Path path = new Path()) {
-            File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
-            try {
-                Assert.assertTrue(fd > 0);
-
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    ByteBuffers.putStr(buf, "hello from java");
-                    int len = buf.position();
-                    Assert.assertEquals(len, Files.write(fd, ByteBuffers.getAddress(buf), len, 0));
-
-                    buf.clear();
-
-                    ByteBuffers.putStr(buf, ", awesome");
-                    Files.write(fd, ByteBuffers.getAddress(buf), buf.position(), len);
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            } finally {
-                Files.close(fd);
-            }
-
-            fd = Files.openRO(path);
-            try {
-                Assert.assertTrue(fd > 0);
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    int len = (int) Files.length(path);
-                    long ptr = ByteBuffers.getAddress(buf);
-                    Assert.assertEquals(48, Files.read(fd, ptr, len, 0));
-                    DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
-                    TestUtils.assertEquals("hello from java, awesome", cs);
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            } finally {
-                Files.close(fd);
-            }
-
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
         }
     }
 }

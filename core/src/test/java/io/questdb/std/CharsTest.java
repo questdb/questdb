@@ -23,7 +23,10 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.FileNameExtractorCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -38,18 +41,6 @@ public class CharsTest {
     @BeforeClass
     public static void setUp() {
         separator = System.getProperty("file.separator").charAt(0);
-    }
-
-    @Test
-    public void testConcat() {
-        ConcatCharSequence concat = new ConcatCharSequence();
-        concat.add("this");
-        concat.add(" is ");
-        concat.add("");
-        concat.add("working");
-
-        TestUtils.assertEquals("this is working", concat);
-        Assert.assertEquals('w', concat.charAt(8));
     }
 
     @Test

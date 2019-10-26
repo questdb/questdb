@@ -1392,7 +1392,7 @@ public class TableWriter implements Closeable {
             if (indexFlag) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
-                indexers.getQuick(columnIndex).of(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), getSecondaryColumn(columnIndex), transientRowCount);
+                indexers.getQuick(columnIndex).of(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), transientRowCount);
             }
 
         } finally {
@@ -1429,7 +1429,7 @@ public class TableWriter implements Closeable {
                 if (indexed) {
                     ColumnIndexer indexer = indexers.getQuick(i);
                     assert indexer != null;
-                    indexer.of(configuration, path, name, getPrimaryColumn(i), getSecondaryColumn(i), columnTop);
+                    indexer.of(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();

@@ -41,6 +41,4 @@ public interface Map extends Mutable, Closeable {
     MapValue valueAt(long address);
 
     MapKey withKey();
-
-    MapKey withKeyAsLong(long value);
 }

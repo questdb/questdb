@@ -193,15 +193,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, from, to);
     }
 
-    public Path of(long lpsz) {
-        if (lpsz != ptr) {
-            this.wptr = ptr;
-            this.len = 0;
-            return concat(lpsz);
-        }
-        return this;
-    }
-
     @Override
     @NotNull
     public String toString() {

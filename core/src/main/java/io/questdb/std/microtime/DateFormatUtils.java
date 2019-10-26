@@ -140,22 +140,9 @@ public class DateFormatUtils {
         return parseDateTime(seq, 0, seq.length());
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTimeQuiet(CharSequence seq) {
-        try {
-            return parseDateTime(seq, 0, seq.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
     // YYYY-MM-DDThh:mm:ss.mmmnnn
     public static long parseTimestamp(CharSequence seq) throws NumericException {
-        return parseTimestamp(seq, 0, seq.length());
-    }
-
-    public static long tryParse(CharSequence s) throws NumericException {
-        return tryParse(s, 0, s.length());
+        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), defaultLocale);
     }
 
     public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
@@ -356,7 +343,4 @@ public class DateFormatUtils {
         return UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
     }
 
-    private static long parseTimestamp(CharSequence seq, int lo, int lim) throws NumericException {
-        return USEC_UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
-    }
 }

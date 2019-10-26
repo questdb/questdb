@@ -27,9 +27,9 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
 public interface HttpMultipartContentListener {
-    void onChunk(HttpRequestHeader partHeader, long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException;
 }

@@ -33,19 +33,6 @@ public final class ByteBuffers {
     private ByteBuffers() {
     }
 
-    public static void copy(ByteBuffer from, ByteBuffer to) {
-        int x = from.remaining();
-        int y = to.remaining();
-        int d = Math.min(x, y);
-        if ((from instanceof DirectBuffer) && (to instanceof DirectBuffer)) {
-            Unsafe.getUnsafe().copyMemory(getAddress(from) + from.position(), getAddress(to) + to.position(), d);
-            from.position(from.position() + d);
-            to.position(to.position() + d);
-        } else {
-            to.put(from);
-        }
-    }
-
     @SuppressWarnings("unused")
     public static void dump(ByteBuffer b) {
         int p = b.position();

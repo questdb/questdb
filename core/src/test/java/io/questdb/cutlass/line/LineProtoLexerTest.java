@@ -370,9 +370,6 @@ public class LineProtoLexerTest {
             Assert.assertNull(tokens.put(token.getCacheAddress(), token.toString()));
 
             switch (type) {
-                case EVT_MEASUREMENT:
-                    sink.put(token);
-                    break;
                 case EVT_TAG_NAME:
                     sink.put(',').put(token).put('=');
                     break;
@@ -380,17 +377,14 @@ public class LineProtoLexerTest {
                     if (fields) {
                         sink.put(',');
                     } else {
-                        try {
-                            fields = true;
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
+                        fields = true;
                         sink.put(' ');
                     }
                     sink.put(token).put('=');
                     break;
                 case EVT_TAG_VALUE:
                 case EVT_FIELD_VALUE:
+                case EVT_MEASUREMENT:
                     sink.put(token);
                     break;
                 case EVT_TIMESTAMP:

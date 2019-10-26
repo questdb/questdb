@@ -29,7 +29,6 @@ import org.junit.Assert;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.Iterator;
 
 public final class TestUtils {
 
@@ -41,20 +40,6 @@ public final class TestUtils {
             return;
         }
         Assert.fail("\'" + _this.toString() + "\' does not contain: " + that);
-    }
-
-    public static <T> void assertEquals(Iterator<T> expected, Iterator<T> actual) {
-        while (true) {
-            boolean expectedHasNext = expected.hasNext();
-            boolean actualHasNext = actual.hasNext();
-
-            Assert.assertEquals(expectedHasNext, actualHasNext);
-
-            if (!expectedHasNext) {
-                break;
-            }
-            Assert.assertEquals(expected.next(), actual.next());
-        }
     }
 
     public static void assertEquals(File a, File b) throws IOException {

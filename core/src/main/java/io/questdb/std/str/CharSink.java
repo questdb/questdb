@@ -25,8 +25,6 @@ package io.questdb.std.str;
 
 import io.questdb.std.Sinkable;
 
-import java.io.IOException;
-
 public interface CharSink {
 
     CharSink encodeUtf8(CharSequence cs);
@@ -35,7 +33,7 @@ public interface CharSink {
 
     CharSink encodeUtf8AndQuote(CharSequence cs);
 
-    default void flush() throws IOException {
+    default void flush() {
     }
 
     default CharSink put(CharSequence cs) {

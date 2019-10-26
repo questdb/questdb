@@ -24,7 +24,6 @@
 package io.questdb.std;
 
 import io.questdb.std.ex.FatalError;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -53,65 +52,6 @@ public final class Misc {
         StringSink b = tlBuilder.get();
         b.clear();
         return b;
-    }
-
-    public static int urlDecode(long lo, long hi, CharSequenceObjHashMap<CharSequence> map, ObjectPool<DirectByteCharSequence> pool) {
-        long _lo = lo;
-        long rp = lo;
-        long wp = lo;
-        final DirectByteCharSequence temp = pool.next();
-        int offset = 0;
-
-        CharSequence name = null;
-
-        while (rp < hi) {
-            char b = (char) Unsafe.getUnsafe().getByte(rp++);
-
-            switch (b) {
-                case '=':
-                    if (_lo < wp) {
-                        name = pool.next().of(_lo, wp);
-                    }
-                    _lo = rp - offset;
-                    break;
-                case '&':
-                    if (name != null) {
-                        map.put(name, pool.next().of(_lo, wp));
-                        name = null;
-                    } else if (_lo < wp) {
-                        map.put(pool.next().of(_lo, wp), "");
-                    }
-                    _lo = rp - offset;
-                    break;
-                case '+':
-                    Unsafe.getUnsafe().putByte(wp++, (byte) ' ');
-                    continue;
-                case '%':
-                    try {
-                        if (rp + 1 < hi) {
-                            Unsafe.getUnsafe().putByte(wp++, (byte) Numbers.parseHexInt(temp.of(rp, rp += 2)));
-                            offset += 2;
-                            continue;
-                        }
-                    } catch (NumericException ignore) {
-                    }
-                    name = null;
-                    break;
-                default:
-                    break;
-            }
-            Unsafe.getUnsafe().putByte(wp++, (byte) b);
-        }
-
-        if (_lo < wp) {
-            if (name != null) {
-                map.put(name, pool.next().of(_lo, wp));
-            } else {
-                map.put(pool.next().of(_lo, wp), "");
-            }
-        }
-
-        return offset;
     }
 
     public static <T> void freeObjList(ObjList<T> list) {

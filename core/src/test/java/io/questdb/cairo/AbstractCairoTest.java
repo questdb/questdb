@@ -38,8 +38,6 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.IOException;
-
 public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
@@ -78,13 +76,13 @@ public class AbstractCairoTest {
         }
     }
 
-    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         sink.clear();
         printer.print(cursor, metadata, header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         assertOnce(expected, cursor, metadata, header);
         cursor.toTop();
         assertOnce(expected, cursor, metadata, header);
