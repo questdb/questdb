@@ -48,7 +48,7 @@ public class SumShortGroupByFunction extends ShortFunction implements GroupByFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, (short) (mapValue.getShort(valueIndex) + value.getShort(record)));
+        mapValue.addShort(valueIndex, value.getShort(record));
     }
 
     @Override

@@ -55,19 +55,29 @@ public interface MapValue extends Record {
 
     void putByte(int index, byte value);
 
+    void addByte(int index, byte value);
+
     void putDate(int index, long value);
 
     void putDouble(int index, double value);
 
+    void addDouble(int index, double value);
+
     void putFloat(int index, float value);
 
+    void addFloat(int index, float value);
+
     void putInt(int index, int value);
+
+    void addInt(int index, int value);
 
     void putLong(int index, long value);
 
     void addLong(int index, long value);
 
     void putShort(int index, short value);
+
+    void addShort(int index, short value);
 
     void putChar(int index, char value);
 

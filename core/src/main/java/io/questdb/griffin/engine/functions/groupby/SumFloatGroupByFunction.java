@@ -48,7 +48,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putFloat(valueIndex, mapValue.getFloat(valueIndex) + value.getFloat(record));
+        mapValue.addFloat(valueIndex, value.getFloat(record));
     }
 
     @Override

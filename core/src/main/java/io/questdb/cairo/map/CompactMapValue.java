@@ -86,6 +86,36 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void addByte(int index, byte value) {
+        final long o = getValueColumnOffset(index);
+        entries.putByte(o, (byte) (entries.getByte(o) + value));
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long o = getValueColumnOffset(index);
+        entries.putShort(o, (short) (entries.getShort(o) + value));
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long o = getValueColumnOffset(index);
+        entries.putInt(o, entries.getInt(o) + value);
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long o = getValueColumnOffset(index);
+        entries.putDouble(o, entries.getDouble(o) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long o = getValueColumnOffset(index);
+        entries.putFloat(o, entries.getFloat(o) + value);
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
     }

@@ -168,6 +168,10 @@ public final class Chars {
         return l.length() == 1 && l.charAt(0) == r;
     }
 
+    public static boolean equalsNc(CharSequence l, char r) {
+        return l != null && equals(l, r);
+    }
+
     /**
      * Compares two char sequences on assumption and right value is always lower case.
      * Methods converts every char of right sequence before comparing to left sequence.

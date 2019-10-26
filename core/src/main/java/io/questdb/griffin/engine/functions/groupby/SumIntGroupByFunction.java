@@ -49,7 +49,7 @@ public class SumIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, mapValue.getInt(valueIndex) + value.getInt(record));
+        mapValue.addInt(valueIndex, value.getInt(record));
     }
 
     @Override

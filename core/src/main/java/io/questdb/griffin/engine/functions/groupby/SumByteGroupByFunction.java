@@ -48,7 +48,7 @@ public class SumByteGroupByFunction extends ByteFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putByte(valueIndex, (byte) (mapValue.getByte(valueIndex) + value.getByte(record)));
+        mapValue.addByte(valueIndex, value.getByte(record));
     }
 
     @Override

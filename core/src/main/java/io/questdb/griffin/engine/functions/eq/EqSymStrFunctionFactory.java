@@ -26,10 +26,14 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
@@ -46,28 +50,29 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         //    length of non-constant (must be -1)
         // 2. when one of arguments is constant, save method call and use a field
 
-        Function a = args.getQuick(0);
-        Function b = args.getQuick(1);
+        Function symFunc = args.getQuick(0);
+        Function strFunc = args.getQuick(1);
 
-        if (a.isConstant() && !b.isConstant()) {
-            return createHalfConstantFunc(position, a, b);
+        // SYMBOL cannot be constant
+        if (strFunc.isConstant()) {
+            return createHalfConstantFunc(position, strFunc, symFunc);
         }
-
-        if (!a.isConstant() && b.isConstant()) {
-            return createHalfConstantFunc(position, b, a);
-        }
-
-        return new Func(position, a, b);
+        return new Func(position, symFunc, strFunc);
     }
 
     private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
-
-        if (constValue == null) {
-            return new NullCheckFunc(position, varFunc);
+        if (varFunc instanceof SymbolColumn) {
+            if (constValue == null) {
+                return new NullCheckColumnFunc(position, varFunc);
+            }
+            return new ConstCheckColumnFunc(position, (SymbolColumn) varFunc, constValue);
+        } else {
+            if (constValue == null) {
+                return new NullCheckFunc(position, varFunc);
+            }
+            return new ConstCheckFunc(position, varFunc, constValue);
         }
-
-        return new ConstCheckFunc(position, varFunc, constValue);
     }
 
     private static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
@@ -89,6 +94,30 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class NullCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public NullCheckColumnFunc(int position, Function arg) {
+            super(position);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return arg.getInt(rec) == SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+
+        }
+    }
+
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
@@ -107,6 +136,36 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return Chars.equalsNc(constant, arg.getSymbol(rec));
+        }
+    }
+
+    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final SymbolColumn arg;
+        private final CharSequence constant;
+        private int valueIndex;
+
+        public ConstCheckColumnFunc(int position, SymbolColumn arg, CharSequence constant) {
+            super(position);
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (valueIndex == SymbolTable.VALUE_NOT_FOUND) {
+                return false;
+            }
+            return arg.getInt(rec) == valueIndex;
+        }
+
+        @Override
+        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+            valueIndex = recordCursor.getSymbolTable(arg.getColumnIndex()).getQuick(constant);
         }
     }
 
@@ -143,7 +202,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
                 return b == null;
             }
 
-            return b != null && Chars.equals(a, b);
+            return Chars.equalsNc(a, b);
         }
     }
 }

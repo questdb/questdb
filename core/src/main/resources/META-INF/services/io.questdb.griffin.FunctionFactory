@@ -21,7 +21,6 @@
 #
 ################################################################################
 
-
 ################################################################################
 #    ___                  _   ____  ____
 #   / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -57,6 +56,8 @@ io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory
 io.questdb.griffin.engine.functions.eq.EqStrCharFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 
 # '<>'
 io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory

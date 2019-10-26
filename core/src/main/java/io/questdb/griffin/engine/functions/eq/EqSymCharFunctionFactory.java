@@ -26,18 +26,22 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.SingleCharCharSequence;
 
-public class EqStrCharFunctionFactory implements FunctionFactory {
+public class EqSymCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(SA)";
+        return "=(KA)";
     }
 
     @Override
@@ -47,84 +51,86 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         //    length of non-constant (must be -1)
         // 2. when one of arguments is constant, save method call and use a field
 
-        Function strFunc = args.getQuick(0);
-        Function charFunc = args.getQuick(1);
+        Function symFunc = args.getQuick(0);
+        Function chrFunc = args.getQuick(1);
 
-        if (strFunc.isConstant() && !charFunc.isConstant()) {
-            CharSequence str = strFunc.getStr(null);
-            if (str == null || str.length() != 1) {
-                return new BooleanConstant(position, false);
+        if (chrFunc.isConstant()) {
+            final char constValue = chrFunc.getChar(null);
+            if (symFunc instanceof SymbolColumn) {
+                return new ConstCheckColumnFunc(position, (SymbolColumn) symFunc, constValue);
+            } else {
+                return new ConstCheckFunc(position, symFunc, constValue);
             }
-            return new ConstStrFunc(position, charFunc, str.charAt(0));
         }
 
-        if (!strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstChrFunc(position, strFunc, charFunc.getChar(null));
-        }
-
-        if (strFunc.isConstant() && charFunc.isConstant()) {
-            return new BooleanConstant(position, Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
-        }
-
-        return new Func(position, strFunc, charFunc);
+        return new Func(position, symFunc, chrFunc);
     }
 
-    private static class ConstChrFunc extends BooleanFunction implements UnaryFunction {
-        private final Function strFunc;
-        private final char chrConst;
+    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final Function symFunc;
+        private final char constant;
 
-        public ConstChrFunc(int position, Function strFunc, char chrConst) {
+        public ConstCheckFunc(int position, Function symFunc, char constant) {
             super(position);
-            this.strFunc = strFunc;
-            this.chrConst = chrConst;
+            this.symFunc = symFunc;
+            this.constant = constant;
         }
 
         @Override
         public Function getArg() {
-            return strFunc;
+            return symFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(strFunc.getStr(rec), chrConst);
+            return Chars.equalsNc(symFunc.getSymbol(rec), constant);
         }
     }
 
-    private static class ConstStrFunc extends BooleanFunction implements UnaryFunction {
-        private final Function chrFunc;
-        private final char chrConst;
+    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final SymbolColumn arg;
+        private final char constant;
+        private int valueIndex;
 
-        public ConstStrFunc(int position, Function chrFunc, char chrConst) {
+        public ConstCheckColumnFunc(int position, SymbolColumn arg, char constant) {
             super(position);
-            this.chrFunc = chrFunc;
-            this.chrConst = chrConst;
+            this.arg = arg;
+            this.constant = constant;
         }
 
         @Override
         public Function getArg() {
-            return chrFunc;
+            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return chrFunc.getChar(rec) == chrConst;
+            if (valueIndex == SymbolTable.VALUE_NOT_FOUND) {
+                return false;
+            }
+            return arg.getInt(rec) == valueIndex;
+        }
+
+        @Override
+        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+            valueIndex = recordCursor.getSymbolTable(arg.getColumnIndex()).getQuick(SingleCharCharSequence.get(constant));
         }
     }
 
     private static class Func extends BooleanFunction implements BinaryFunction {
 
-        private final Function strFunc;
+        private final Function symFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function strFunc, Function chrFunc) {
+        public Func(int position, Function symFunc, Function chrFunc) {
             super(position);
-            this.strFunc = strFunc;
+            this.symFunc = symFunc;
             this.chrFunc = chrFunc;
         }
 
         @Override
         public Function getLeft() {
-            return strFunc;
+            return symFunc;
         }
 
         @Override
@@ -134,7 +140,17 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec));
+            // important to compare A and B strings in case
+            // these are columns of the same record
+            // records have re-usable character sequences
+            final CharSequence a = symFunc.getSymbol(rec);
+            final char b = chrFunc.getChar(rec);
+
+            if (a == null || a.length() != 1) {
+                return false;
+            }
+
+            return a.charAt(0) == b;
         }
     }
 }

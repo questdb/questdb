@@ -48,7 +48,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value.getDouble(record));
+        mapValue.addDouble(valueIndex, value.getDouble(record));
     }
 
     @Override

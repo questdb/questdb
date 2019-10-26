@@ -137,6 +137,36 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public void addByte(int index, byte value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
+    }
+
+    @Override
     public void putShort(int index, short value) {
         Unsafe.getUnsafe().putShort(address0(index), value);
     }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
 public class AndFunctionFactory implements FunctionFactory {
@@ -39,7 +40,22 @@ public class AndFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
+        Function leftFunc = args.getQuick(0);
+        Function rightFunc = args.getQuick(1);
+        if (leftFunc.isConstant()) {
+            if (leftFunc.getBool(null)) {
+                return rightFunc;
+            }
+            return new BooleanConstant(position, false);
+        }
+
+        if (rightFunc.isConstant()) {
+            if (rightFunc.getBool(null)) {
+                return leftFunc;
+            }
+            return new BooleanConstant(position, false);
+        }
+        return new MyBooleanFunction(position, leftFunc, rightFunc);
     }
 
     private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
