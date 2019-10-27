@@ -46,44 +46,6 @@ public class DirectLongList implements Mutable, Closeable {
         this.onePow2 = (1 << 3);
     }
 
-    public void add(long x) {
-        ensureCapacity();
-        Unsafe.getUnsafe().putLong(pos, x);
-        pos += 8;
-    }
-
-    public final void add(DirectLongList that) {
-        int count = (int) (that.pos - that.start);
-        if (limit - pos < count) {
-            extend((int) (this.limit - this.start + count) >> 1);
-        }
-        Unsafe.getUnsafe().copyMemory(that.start, this.pos, count);
-        this.pos += count;
-    }
-
-    public int binarySearch(long v) {
-        int low = 0;
-        int high = (int) ((pos - start) >> 3) - 1;
-
-        while (low <= high) {
-
-            if (high - low < 65) {
-                return scanSearch(v);
-            }
-
-            int mid = (low + high) >>> 1;
-            long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
-
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
-                high = mid - 1;
-            else
-                return mid;
-        }
-        return -(low + 1);
-    }
-
     public void clear() {
         clear(0);
     }
@@ -105,20 +67,6 @@ public class DirectLongList implements Mutable, Closeable {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
 
-    public int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
-            long f = get(i);
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(sz + 1);
-    }
-
     public void set(long p, long v) {
         assert p >= 0 && p <= (limit - start) >> 3;
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
@@ -138,13 +86,6 @@ public class DirectLongList implements Mutable, Closeable {
         return (int) ((pos - start) >> pow2);
     }
 
-    public DirectLongList subset(int lo, int hi) {
-        DirectLongList that = new DirectLongList(hi - lo);
-        Unsafe.getUnsafe().copyMemory(start + (lo << 3), that.start, (hi - lo) << 3);
-        that.pos += (hi - lo) << 3;
-        return that;
-    }
-
     @Override
     public String toString() {
         CharSink sb = Misc.getThreadLocalBuilder();
@@ -161,12 +102,6 @@ public class DirectLongList implements Mutable, Closeable {
 
     public void zero(long v) {
         Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, (byte) v);
-    }
-
-    void ensureCapacity() {
-        if (this.pos > limit) {
-            extend((int) ((limit - start + onePow2) >> (pow2 - 1)));
-        }
     }
 
     private void extend(long capacity) {

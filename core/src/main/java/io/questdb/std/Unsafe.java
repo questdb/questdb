@@ -31,7 +31,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class Unsafe {
     public static final long CHAR_OFFSET;
     public static final long CHAR_SCALE;
-    public static final long BYTE_OFFSET;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
@@ -59,8 +58,6 @@ public final class Unsafe {
 
             CHAR_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(char[].class);
             CHAR_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(char[].class));
-
-            BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
         } catch (Exception e) {
             throw new FatalError(e);
         }

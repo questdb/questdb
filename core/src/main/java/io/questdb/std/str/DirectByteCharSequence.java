@@ -29,20 +29,11 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence, DirectBytes {
+public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();
     private long lo;
     private long hi;
 
-    @Override
-    public long address() {
-        return lo;
-    }
-
-    @Override
-    public int byteLength() {
-        return length();
-    }
 
     @Override
     public byte byteAt(int index) {

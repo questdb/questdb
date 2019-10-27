@@ -25,6 +25,7 @@ package io.questdb.std;
 
 public class Long256Util {
 
+    // this method is used by byte-code generator
     public static int compare(Long256 a, Long256 b) {
 
         if (a.getLong3() < b.getLong3()) {

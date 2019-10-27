@@ -42,7 +42,7 @@ public class DateLocaleFactory {
             if ("und".equals(tag)) {
                 tag = "";
             }
-            dateLocales.put(tag, new DateLocale(tag, new DateFormatSymbols(l), timeZoneRuleFactory, cache));
+            dateLocales.put(tag, new DateLocale(new DateFormatSymbols(l), timeZoneRuleFactory, cache));
             cache.clear();
         }
         defaultDateLocale = dateLocales.get(Locale.getDefault().toLanguageTag());

@@ -24,7 +24,6 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectBytes;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -266,20 +265,6 @@ public final class Chars {
         int h = 0;
         for (int p = 0; p < len; p++) {
             h = 31 * h + value.charAt(p);
-        }
-        return h;
-    }
-
-    public static int hashCode(DirectBytes value) {
-        int len = value.byteLength();
-        if (len == 0) {
-            return 0;
-        }
-
-        int h = 0;
-        long address = value.address();
-        for (int p = 0, n = len / 2; p < n; p++) {
-            h = 31 * h + Unsafe.getUnsafe().getChar(address + (p << 1));
         }
         return h;
     }

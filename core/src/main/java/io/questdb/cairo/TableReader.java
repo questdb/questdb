@@ -44,8 +44,8 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
-    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
+    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
@@ -169,36 +169,42 @@ public class TableReader implements Closeable {
     }
 
     private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
-        long offset;
-        long len;
         if (rowCount > 0) {
             // subtract column top
             switch (type) {
                 case ColumnType.BINARY:
-                    assert mem2 != null;
-                    mem2.grow(rowCount * 8);
-                    offset = mem2.getLong((rowCount - 1) * 8);
-                    // grow data column to value offset + length, so that we can read length
-                    mem1.grow(offset + 8);
-                    len = mem1.getLong(offset);
-                    if (len > 0) {
-                        mem1.grow(offset + len + 8);
-                    }
+                    growBin(mem1, mem2, rowCount);
                     break;
                 case ColumnType.STRING:
-                    assert mem2 != null;
-                    mem2.grow(rowCount * 8);
-                    offset = mem2.getLong((rowCount - 1) * 8);
-                    mem1.grow(offset + 4);
-                    len = mem1.getInt(offset);
-                    if (len > 0) {
-                        mem1.grow(offset + len * 2 + 4);
-                    }
+                    growStr(mem1, mem2, rowCount);
                     break;
                 default:
                     mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
                     break;
             }
+        }
+    }
+
+    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        mem1.grow(offset + 4);
+        final long len = mem1.getInt(offset);
+        if (len > 0) {
+            mem1.grow(offset + len * 2 + 4);
+        }
+    }
+
+    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        // grow data column to value offset + length, so that we can read length
+        mem1.grow(offset + 8);
+        final long len = mem1.getLong(offset);
+        if (len > 0) {
+            mem1.grow(offset + len + 8);
         }
     }
 
