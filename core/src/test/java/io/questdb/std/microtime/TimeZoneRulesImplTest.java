@@ -47,7 +47,7 @@ public class TimeZoneRulesImplTest {
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
             zones.add(zone);
-            zoneRules.add(new TimeZoneRulesImpl(z, zone.getRules()));
+            zoneRules.add(new TimeZoneRulesImpl(zone.getRules()));
         }
 
         long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
@@ -100,7 +100,7 @@ public class TimeZoneRulesImplTest {
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
             zones.add(zone);
-            zoneRules.add(new TimeZoneRulesImpl(z, zone.getRules()));
+            zoneRules.add(new TimeZoneRulesImpl(zone.getRules()));
         }
 
         long millis = Timestamps.toMicros(1900, 1, 1, 0, 0);
@@ -117,7 +117,7 @@ public class TimeZoneRulesImplTest {
     @Test
     public void testSingle() {
         ZoneId zone = ZoneId.of("GMT");
-        TimeZoneRulesImpl rules = new TimeZoneRulesImpl("GMT", zone.getRules());
+        TimeZoneRulesImpl rules = new TimeZoneRulesImpl(zone.getRules());
 
         int y = 2017;
         int m = 3;

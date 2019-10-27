@@ -38,34 +38,28 @@ import io.questdb.std.ObjList;
 public class TimestampSequenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "timestamp_sequence(nl)";
+        return "timestamp_sequence(nL)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         final long start = args.getQuick(0).getTimestamp(null);
-        final long increment = args.getQuick(1).getLong(null);
-        if (increment < 0) {
-            throw SqlException.$(args.getQuick(1).getPosition(), "positive increment expected");
-        }
-
         if (start == Numbers.LONG_NaN) {
             return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
         }
-
-        return new Func(position, start, increment);
+        return new TimestampSequenceFunction(position, start, args.getQuick(1));
     }
 
-    private static final class Func extends TimestampFunction {
-        private final long increment;
+    private static final class TimestampSequenceFunction extends TimestampFunction {
+        private final Function longIncrement;
         private final long start;
         private long next;
 
-        public Func(int position, long start, long increment) {
+        public TimestampSequenceFunction(int position, long start, Function longIncrement) {
             super(position);
             this.start = start;
             this.next = start;
-            this.increment = increment;
+            this.longIncrement = longIncrement;
         }
 
         @Override
@@ -75,7 +69,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long result = next;
-            next += increment;
+            next += longIncrement.getLong(rec);
             return result;
         }
 

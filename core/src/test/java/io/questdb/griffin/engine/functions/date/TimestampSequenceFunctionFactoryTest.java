@@ -35,11 +35,6 @@ import org.junit.Test;
 public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testIncrement1() throws SqlException {
-        assertFunction(call(0L, 1000L).getFunction1());
-    }
-
-    @Test
     public void testIncrement2() throws SqlException {
         assertFunction(call(0L, 1000L).getFunction2());
     }
@@ -47,11 +42,6 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
     @Test
     public void testNaN() throws SqlException {
         call(Numbers.LONG_NaN, 1000L).andAssertTimestamp(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testNegativeIncrement() {
-        assertFailure(35, "positive increment expected", 0L, -100L);
     }
 
     @Override

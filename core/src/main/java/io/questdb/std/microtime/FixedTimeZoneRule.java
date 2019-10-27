@@ -25,16 +25,9 @@ package io.questdb.std.microtime;
 
 public class FixedTimeZoneRule implements TimeZoneRules {
     private final long offset;
-    private final String id;
 
-    public FixedTimeZoneRule(String id, long offset) {
-        this.id = id;
+    public FixedTimeZoneRule(long offset) {
         this.offset = offset;
-    }
-
-    @Override
-    public String getId() {
-        return id;
     }
 
     @Override
