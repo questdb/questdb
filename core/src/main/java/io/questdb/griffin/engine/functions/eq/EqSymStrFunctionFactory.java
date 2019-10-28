@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -63,9 +63,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
         if (varFunc instanceof SymbolColumn) {
-            if (constValue == null) {
-                return new NullCheckColumnFunc(position, varFunc);
-            }
             return new ConstCheckColumnFunc(position, (SymbolColumn) varFunc, constValue);
         } else {
             if (constValue == null) {
@@ -91,30 +88,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return arg.getSymbol(rec) == null;
-        }
-    }
-
-    private static class NullCheckColumnFunc extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckColumnFunc(int position, Function arg) {
-            super(position);
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return arg.getInt(rec) == SymbolTable.VALUE_IS_NULL;
-        }
-
-        @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-
         }
     }
 
@@ -157,15 +130,17 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (valueIndex == SymbolTable.VALUE_NOT_FOUND) {
-                return false;
-            }
             return arg.getInt(rec) == valueIndex;
         }
 
         @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-            valueIndex = recordCursor.getSymbolTable(arg.getColumnIndex()).getQuick(constant);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            valueIndex = symbolTableSource.getSymbolTable(arg.getColumnIndex()).getQuick(constant);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return valueIndex == SymbolTable.VALUE_NOT_FOUND;
         }
     }
 

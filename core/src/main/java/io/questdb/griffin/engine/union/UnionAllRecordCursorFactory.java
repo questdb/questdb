@@ -35,11 +35,10 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     private final UnionAllRecordCursor cursor;
 
     public UnionAllRecordCursorFactory(
-            RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory
     ) {
-        this.metadata = metadata;
+        this.metadata = masterFactory.getMetadata();
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
 

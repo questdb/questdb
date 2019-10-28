@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -85,7 +85,7 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext sqlExecutionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
             openCounter.incrementAndGet();
         }
 

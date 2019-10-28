@@ -41,13 +41,12 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
 
     public UnionRecordCursorFactory(
             CairoConfiguration configuration,
-            RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,
             ColumnTypes valueTypes
     ) {
-        this.metadata = metadata;
+        this.metadata = masterFactory.getMetadata();
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
 

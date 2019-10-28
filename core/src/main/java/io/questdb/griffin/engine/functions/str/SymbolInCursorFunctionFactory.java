@@ -105,12 +105,12 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-            valueArg.init(recordCursor, executionContext);
-            cursorArg.init(recordCursor, executionContext);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            valueArg.init(symbolTableSource, executionContext);
+            cursorArg.init(symbolTableSource, executionContext);
             symbolKeys.clear();
 
-            SymbolTable symbolTable = recordCursor.getSymbolTable(columnIndex);
+            final SymbolTable symbolTable = symbolTableSource.getSymbolTable(columnIndex);
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -150,9 +150,9 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-            valueArg.init(recordCursor, executionContext);
-            cursorArg.init(recordCursor, executionContext);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            valueArg.init(symbolTableSource, executionContext);
+            cursorArg.init(symbolTableSource, executionContext);
 
             CharSequenceHashSet valueSet;
             if (this.valueSet == this.valueSetA) {

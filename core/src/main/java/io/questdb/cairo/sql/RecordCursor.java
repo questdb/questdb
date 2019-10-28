@@ -25,7 +25,7 @@ package io.questdb.cairo.sql;
 
 import java.io.Closeable;
 
-public interface RecordCursor extends Closeable {
+public interface RecordCursor extends Closeable, SymbolTableSource {
     @Override
     void close();
 

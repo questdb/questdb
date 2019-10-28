@@ -24,17 +24,11 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlExecutionContext;
 
 public interface StatelessFunction extends Function {
 
     @Override
     default void close() {
-    }
-
-    @Override
-    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
     }
 
     @Override

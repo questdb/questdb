@@ -26,10 +26,8 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Numbers;
@@ -71,11 +69,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             final long result = next;
             next += longIncrement.getLong(rec);
             return result;
-        }
-
-        @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-            toTop();
         }
 
         @Override

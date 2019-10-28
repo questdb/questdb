@@ -109,6 +109,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
+        cursor.of(baseCursor);
+        // init all record function for this cursor, in case functions require metadata and/or symbol tables
+        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
+            recordFunctions.getQuick(i).init(cursor, executionContext);
+        }
+
         try {
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
@@ -118,7 +124,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 MapValue value = key.createValue();
                 GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
             }
-            return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
+            cursor.setMapCursor(dataMap.getCursor());
+            return cursor;
         } catch (CairoException e) {
             baseCursor.close();
             throw e;
@@ -133,20 +140,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean isRandomAccessCursor() {
         return true;
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(
-            SqlExecutionContext executionContext,
-            RecordCursor mapCursor,
-            RecordCursor baseCursor
-    ) {
-        cursor.of(mapCursor, baseCursor);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, executionContext);
-        }
-        return cursor;
     }
 
     private static class GroupByRecordCursor implements RecordCursor {
@@ -209,9 +202,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             mapCursor.toTop();
         }
 
-        public void of(RecordCursor mapCursor, RecordCursor baseCursor) {
-            this.mapCursor = mapCursor;
+        public void of(RecordCursor baseCursor) {
             this.baseCursor = baseCursor;
+        }
+
+        private void setMapCursor(RecordCursor mapCursor) {
+            this.mapCursor = mapCursor;
             functionRecord.of(mapCursor.getRecord());
         }
     }

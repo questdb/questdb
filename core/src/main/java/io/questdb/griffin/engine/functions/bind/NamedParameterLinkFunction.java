@@ -169,13 +169,13 @@ public class NamedParameterLinkFunction implements Function {
     }
 
     @Override
-    public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         base = executionContext.getBindVariableService().getFunction(variableName);
         if (base == null) {
             throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
         }
         assert base.getType() == type;
-        base.init(recordCursor, executionContext);
+        base.init(symbolTableSource, executionContext);
     }
 
     private Function getBase() {

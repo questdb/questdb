@@ -23,22 +23,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.std.ImmutableIterator;
-
-import java.io.Closeable;
-
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, Closeable, SymbolTableSource {
-
-    @Override
-    void close(); // we don't throw IOException
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    boolean reload();
-
-    void toTop();
-
-    long size();
+@FunctionalInterface
+public interface SymbolTableSource {
+    SymbolTable getSymbolTable(int columnIndex);
 }

@@ -84,7 +84,7 @@ public interface Function extends Closeable {
 
     int getType();
 
-    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 
     default boolean isConstant() {

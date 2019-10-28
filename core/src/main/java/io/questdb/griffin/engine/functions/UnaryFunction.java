@@ -24,7 +24,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface UnaryFunction extends Function {
@@ -34,8 +34,8 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-        getArg().init(recordCursor, executionContext);
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        getArg().init(symbolTableSource, executionContext);
     }
 
     @Override

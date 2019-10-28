@@ -71,7 +71,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         rowCursor = null;
         if (filter != null) {
-            filter.init(this, executionContext);
+            filter.init(dataFrameCursor, executionContext);
         }
     }
 

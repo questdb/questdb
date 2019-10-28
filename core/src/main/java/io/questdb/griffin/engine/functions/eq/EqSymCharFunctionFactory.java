@@ -26,8 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -105,15 +104,12 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (valueIndex == SymbolTable.VALUE_NOT_FOUND) {
-                return false;
-            }
             return arg.getInt(rec) == valueIndex;
         }
 
         @Override
-        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
-            valueIndex = recordCursor.getSymbolTable(arg.getColumnIndex()).getQuick(SingleCharCharSequence.get(constant));
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            valueIndex = symbolTableSource.getSymbolTable(arg.getColumnIndex()).getQuick(SingleCharCharSequence.get(constant));
         }
     }
 
