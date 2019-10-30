@@ -34,9 +34,14 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
-import io.questdb.griffin.engine.functions.str.*;
+import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.SubStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.*;
 import io.questdb.std.time.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;
@@ -59,9 +64,9 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         bindVariableService.setDate("xyz", 0);
 
-        Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharDateFunctionFactory())
-                .withFunction(new ToCharTimestampFunctionFactory())
+        Function func = expr("to_str(:xyz, 'yyyy-MM')")
+                .withFunction(new ToStrDateFunctionFactory())
+                .withFunction(new ToStrTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -77,7 +82,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         Function func = expr("to_char(:x)")
                 .withFunction(new ToCharBinFunctionFactory())
-                .withFunction(new ToCharTimestampFunctionFactory())
+                .withFunction(new ToStrTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -133,7 +138,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         Function func = expr("to_char($1)")
                 .withFunction(new ToCharBinFunctionFactory())
-                .withFunction(new ToCharTimestampFunctionFactory())
+                .withFunction(new ToStrTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -242,8 +247,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testDate() throws SqlException, NumericException {
         bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
-        Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharDateFunctionFactory())
+        Function func = expr("to_str(:xyz, 'yyyy-MM')")
+                .withFunction(new ToStrDateFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -270,8 +275,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testDateIndexed() throws SqlException, NumericException {
         bindVariableService.setDate(1, 0);
         bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
-        Function func = expr("to_char($1, 'yyyy-MM')")
-                .withFunction(new ToCharDateFunctionFactory())
+        Function func = expr("to_str($1, 'yyyy-MM')")
+                .withFunction(new ToStrDateFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -657,8 +662,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testTimestamp() throws SqlException, NumericException {
         bindVariableService.setTimestamp("xyz", io.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
 
-        Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharTimestampFunctionFactory())
+        Function func = expr("to_str(:xyz, 'yyyy-MM')")
+                .withFunction(new ToStrTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -673,8 +678,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setTimestamp(1, 25);
         bindVariableService.setTimestamp(0, io.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
 
-        Function func = expr("to_char($1, 'yyyy-MM')")
-                .withFunction(new ToCharTimestampFunctionFactory())
+        Function func = expr("to_str($1, 'yyyy-MM')")
+                .withFunction(new ToStrTimestampFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -688,8 +693,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testUndefined() {
         try {
             expr("to_char(:xyz, 'yyyy-MM')")
-                    .withFunction(new ToCharDateFunctionFactory())
-                    .withFunction(new ToCharTimestampFunctionFactory())
+                    .withFunction(new ToStrDateFunctionFactory())
+                    .withFunction(new ToStrTimestampFunctionFactory())
                     .$();
         } catch (SqlException e) {
             Assert.assertEquals(8, e.getPosition());
@@ -701,8 +706,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testUndefinedIndexed() {
         try {
             expr("to_char($1, 'yyyy-MM')")
-                    .withFunction(new ToCharDateFunctionFactory())
-                    .withFunction(new ToCharTimestampFunctionFactory())
+                    .withFunction(new ToStrDateFunctionFactory())
+                    .withFunction(new ToStrTimestampFunctionFactory())
                     .$();
         } catch (SqlException e) {
             Assert.assertEquals(8, e.getPosition());

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.time.DateFormatUtils;
@@ -39,7 +40,7 @@ public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testNullFormat() {
-        assertFailure(11, "format must not be null", 0L, null);
+        assertFailure(10, "format must not be null", 0L, null);
     }
 
     @Test
@@ -50,6 +51,6 @@ public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToCharDateFunctionFactory();
+        return new ToStrDateFunctionFactory();
     }
 }

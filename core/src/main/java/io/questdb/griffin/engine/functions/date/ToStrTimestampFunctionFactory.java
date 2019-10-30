@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.str;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -34,22 +34,22 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateFormatCompiler;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.Nullable;
 
-public class ToCharDateFunctionFactory implements FunctionFactory {
+public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
 
     @Override
     public String getSignature() {
-        return "to_char(Ms)";
+        return "to_str(Ns)";
     }
 
     @Override
@@ -60,35 +60,35 @@ public class ToCharDateFunctionFactory implements FunctionFactory {
             throw SqlException.$(fmt.getPosition(), "format must not be null");
         }
 
-        DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
+        TimestampFormat timestampFormat = tlCompiler.get().compile(fmt.getStr(null));
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            long value = var.getDate(null);
+            long value = var.getTimestamp(null);
             if (value == Numbers.LONG_NaN) {
                 return new NullConstant(position);
             }
 
             StringSink sink = tlSink.get();
             sink.clear();
-            dateFormat.format(value, DateLocaleFactory.INSTANCE.getDefaultDateLocale(), "Z", sink);
+            timestampFormat.format(value, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), "Z", sink);
             return new StrConstant(position, sink);
         }
 
-        return new ToCharDateVCFFunc(position, args.getQuick(0), tlCompiler.get().compile(format));
+        return new ToCharDateFFunc(position, args.getQuick(0), timestampFormat);
     }
 
-    private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
+    private static class ToCharDateFFunc extends StrFunction implements UnaryFunction {
         final Function arg;
-        final DateFormat format;
-        final DateLocale locale;
+        final TimestampFormat format;
+        final TimestampLocale locale;
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(int position, Function arg, DateFormat format) {
+        public ToCharDateFFunc(int position, Function arg, TimestampFormat format) {
             super(position);
             this.arg = arg;
             this.format = format;
-            locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+            locale = TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale();
             sink1 = new StringSink();
             sink2 = new StringSink();
         }
@@ -110,7 +110,7 @@ public class ToCharDateFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            long value = arg.getDate(rec);
+            long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
@@ -119,7 +119,7 @@ public class ToCharDateFunctionFactory implements FunctionFactory {
 
         @Override
         public int getStrLen(Record rec) {
-            long value = arg.getDate(rec);
+            long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return -1;
             }
@@ -130,7 +130,7 @@ public class ToCharDateFunctionFactory implements FunctionFactory {
 
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
-            final long value = arg.getDate(rec);
+            final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;
             }

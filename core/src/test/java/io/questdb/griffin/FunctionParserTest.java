@@ -33,8 +33,12 @@ import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
-import io.questdb.griffin.engine.functions.str.*;
+import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -355,8 +359,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testFunctionOverload() throws SqlException {
-        functions.add(new ToCharDateFunctionFactory());
-        functions.add(new ToCharTimestampFunctionFactory());
+        functions.add(new ToStrDateFunctionFactory());
+        functions.add(new ToStrTimestampFunctionFactory());
         functions.add(new ToCharBinFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -367,11 +371,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new TestRecord();
 
-        Function function = parseFunction("to_char(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
+        Function function = parseFunction("to_str(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function.getType());
         TestUtils.assertEquals("Thursday, 03-Apr-150577 03:54:03", function.getStr(record));
 
-        Function function2 = parseFunction("to_char(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
+        Function function2 = parseFunction("to_str(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function2.getType());
         TestUtils.assertEquals("Tuesday, 21-Nov-2119 08:50:58", function2.getStr(record));
 
@@ -928,7 +932,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testNoArgFunction() throws SqlException, JsonException {
         functions.add(new SysdateFunctionFactory());
-        functions.add(new ToCharDateFunctionFactory());
+        functions.add(new ToStrDateFunctionFactory());
         FunctionParser functionParser = new FunctionParser(
                 new DefaultCairoConfiguration(root) {
                     @Override
@@ -945,7 +949,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 },
                 functions);
 
-        Function function = parseFunction("to_char(sysdate(), 'EE, dd-MMM-yyyy HH:mm:ss')",
+        Function function = parseFunction("to_str(sysdate(), 'EE, dd-MMM-yyyy HH:mm:ss')",
                 new GenericRecordMetadata(),
                 functionParser
         );
