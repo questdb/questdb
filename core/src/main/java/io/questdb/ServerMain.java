@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import sun.misc.Signal;
@@ -80,8 +81,24 @@ public class ServerMain {
             properties.load(is);
         }
 
-        // todo: load path to data directory from configuration
         final PropServerConfiguration configuration = new PropServerConfiguration(rootDirectory, properties);
+
+        // create database directory
+        try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
+            path.of(configuration.getCairoConfiguration().getRoot());
+            if (!Chars.endsWith(path, io.questdb.std.Files.SEPARATOR)) {
+                // this would end trailing path separator
+                path.concat("");
+            }
+            path.$();
+
+            if (io.questdb.std.Files.mkdirs(path, configuration.getCairoConfiguration().getMkDirMode()) != 0) {
+                System.err.println("Could not create database root directory: " + path.toString());
+                System.exit(30);
+            } else {
+                System.out.println("Database root is '" + path + "'");
+            }
+        }
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");
@@ -178,8 +195,7 @@ public class ServerMain {
                         skip = false;
                     } else {
                         try {
-                            Files.copy(dir, toDestination(dir), copyOptions);
-                            System.out.println("Extracted " + dir);
+                            doCopy(dir);
                         } catch (FileAlreadyExistsException ignore) {
                         } catch (IOException x) {
                             return FileVisitResult.SKIP_SUBTREE;
@@ -188,10 +204,15 @@ public class ServerMain {
                     return FileVisitResult.CONTINUE;
                 }
 
+                private void doCopy(Path dir) throws IOException {
+                    Path to = toDestination(dir);
+                    Files.copy(dir, to, copyOptions);
+                    System.out.println("Extracted " + dir + " -> " + to);
+                }
+
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.copy(file, toDestination(file), copyOptions);
-                    System.out.println("Extracted " + file);
+                    doCopy(file);
                     return FileVisitResult.CONTINUE;
                 }
 
