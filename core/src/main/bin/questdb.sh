@@ -66,6 +66,7 @@ function export_args {
 
     export QDB_OVERWRITE_PUBLIC=""
     export QDB_DISABLE_HUP_HANDLER=""
+    export QDB_CONTAINER_MODE=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
 
     while [[ $# -gt 0 ]]; do
@@ -77,6 +78,9 @@ function export_args {
                 ;;
             -n)
                 export QDB_DISABLE_HUP_HANDLER="-n"
+                ;;
+            -c)
+                export QDB_CONTAINER_MODE="-c"
                 ;;
             -d)
                 if [[ $# -eq 1 ]]; then
@@ -151,7 +155,9 @@ function start {
     JAVA_MAIN="io.questdb.ServerMain"
     DATE=`date +%Y-%m-%d:%H:%M:%S`
 
-    if [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
+    if [ "${QDB_CONTAINER_MODE}" != "" ]; then
+        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
+    elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
         ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
         sleep 0.5
     else

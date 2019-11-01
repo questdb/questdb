@@ -266,7 +266,7 @@ int qdbConsole(CONFIG *config) {
 
     // Start the child process.
     if (!CreateProcess(config->javaExec, config->javaArgs, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-        eprintf("CreateProcess failed (%lu).\n", GetLastError());
+        eprintf("CreateProcess failed [%s](%lu).\n", config->javaExec, GetLastError());
         return 1;
     }
 
