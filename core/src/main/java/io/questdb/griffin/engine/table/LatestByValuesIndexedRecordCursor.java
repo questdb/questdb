@@ -25,27 +25,36 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Rows;
 
-class LatestByValuesIndexedRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
     private final IntHashSet symbolKeys;
+    private final DirectLongList rows;
+    private long index = 0;
 
-    public LatestByValuesIndexedRecordCursor(int columnIndex, LongTreeSet treeSet, IntHashSet symbolKeys) {
-        super(treeSet);
+    public LatestByValuesIndexedRecordCursor(int columnIndex, IntHashSet symbolKeys, DirectLongList rows) {
+        this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    public void toTop() {
+        index = rows.size() - 1;
+    }
+
+    protected void buildTreeMap() {
         final int keyCount = symbolKeys.size();
         found.clear();
+        rows.setPos(0);
         while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {
             final DataFrame frame = this.dataFrameCursor.next();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
@@ -58,11 +67,35 @@ class LatestByValuesIndexedRecordCursor extends AbstractTreeSetRecordCursor {
                 if (index > -1) {
                     RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
                     if (cursor.hasNext()) {
-                        treeSet.put(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
+                        final long row = Rows.toRowID(frame.getPartitionIndex(), cursor.next());
+                        rows.add(row);
                         found.addAt(index, symbolKey);
                     }
                 }
             }
         }
+        index = rows.size() - 1;
+    }
+
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.record.of(dataFrameCursor.getTableReader());
+        buildTreeMap();
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (index > -1) {
+            final long rowid = rows.get(index);
+            record.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
+            index--;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public long size() {
+        return rows.size();
     }
 }

@@ -573,7 +573,8 @@ public class SqlCodeGenerator {
             String tableName,
             IntrinsicModel intrinsicModel,
             Function filter,
-            SqlExecutionContext executionContext) throws SqlException {
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.intervals != null) {
@@ -1305,7 +1306,8 @@ public class SqlCodeGenerator {
                             tableName,
                             intrinsicModel,
                             filter,
-                            executionContext);
+                            executionContext
+                    );
                 }
 
 
@@ -1385,7 +1387,8 @@ public class SqlCodeGenerator {
                         copyMetadata(metadata),
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                         latestByIndex,
-                        null);
+                        null
+                );
             }
 
             listColumnFilterA.clear();

@@ -95,7 +95,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlSortKeyPageSize;
     private final int sqlSortLightValuePageSize;
     private final int sqlHashJoinValuePageSize;
-    private final int sqlTreePageSize;
+    private final long sqlLatestByRowCount;
     private final int sqlHashJoinLightValuePageSize;
     private final int sqlSortValuePageSize;
     private final long workStealTimeoutNanos;
@@ -283,7 +283,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlSortKeyPageSize = getIntSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
         this.sqlSortLightValuePageSize = getIntSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
-        this.sqlTreePageSize = getIntSize(properties, "cairo.sql.tree.page.size", 4 * 1024 * 1024);
+        this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
         this.sqlHashJoinLightValuePageSize = getIntSize(properties, "cairo.sql.hash.join.light.value.page.size", 1048576);
         this.sqlSortValuePageSize = getIntSize(properties, "cairo.sql.sort.value.page.size", 16777216);
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
@@ -930,8 +930,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlTreePageSize() {
-            return sqlTreePageSize;
+        public long getSqlLatestByRowCount() {
+            return sqlLatestByRowCount;
         }
 
         @Override

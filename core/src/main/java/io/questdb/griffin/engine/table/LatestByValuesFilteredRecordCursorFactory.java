@@ -50,9 +50,9 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
         if (filter != null) {
-            this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+            this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);
         } else {
-            this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
+            this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys);
         }
         this.filter = filter;
     }

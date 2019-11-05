@@ -28,15 +28,16 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 
-class LatestByAllRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByAllRecordCursor extends AbstractRecordListCursor {
 
     private final Map map;
     private final RecordSink recordSink;
 
-    public LatestByAllRecordCursor(Map map, LongTreeSet treeSet, RecordSink recordSink) {
-        super(treeSet);
+    public LatestByAllRecordCursor(Map map, DirectLongList rows, RecordSink recordSink) {
+        super(rows);
         this.map = map;
         this.recordSink = recordSink;
     }
@@ -57,7 +58,7 @@ class LatestByAllRecordCursor extends AbstractTreeSetRecordCursor {
                 MapKey key = map.withKey();
                 key.put(record, recordSink);
                 if (key.create()) {
-                    treeSet.put(Rows.toRowID(partitionIndex, row));
+                    rows.add(Rows.toRowID(partitionIndex, row));
                 }
             }
         }

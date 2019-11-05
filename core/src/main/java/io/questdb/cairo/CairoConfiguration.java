@@ -102,7 +102,7 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
-    int getSqlTreePageSize();
+    long getSqlLatestByRowCount();
 
     int getSqlHashJoinLightValuePageSize();
 

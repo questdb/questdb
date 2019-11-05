@@ -48,9 +48,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         super(metadata, dataFrameCursorFactory, configuration);
         this.map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
-            this.cursor = new LatestByAllRecordCursor(map, treeSet, recordSink);
+            this.cursor = new LatestByAllRecordCursor(map, rows, recordSink);
         } else {
-            this.cursor = new LatestByAllFilteredRecordCursor(map, treeSet, recordSink, filter);
+            this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter);
         }
     }
 

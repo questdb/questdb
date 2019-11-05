@@ -29,10 +29,11 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByAllFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final Map map;
     private final RecordSink recordSink;
@@ -40,10 +41,10 @@ class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
 
     public LatestByAllFilteredRecordCursor(
             @NotNull Map map,
-            @NotNull LongTreeSet treeSet,
+            @NotNull DirectLongList rows,
             @NotNull RecordSink recordSink,
             @NotNull Function filter) {
-        super(treeSet);
+        super(rows);
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter;
@@ -73,7 +74,7 @@ class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
                     MapKey key = map.withKey();
                     key.put(record, recordSink);
                     if (key.create()) {
-                        treeSet.put(Rows.toRowID(partitionIndex, row));
+                        rows.add(Rows.toRowID(partitionIndex, row));
                     }
                 }
             }

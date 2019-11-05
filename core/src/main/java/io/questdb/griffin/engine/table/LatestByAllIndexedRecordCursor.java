@@ -27,16 +27,17 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Rows;
 
-class LatestByAllIndexedRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
 
-    public LatestByAllIndexedRecordCursor(int columnIndex, LongTreeSet treeSet) {
-        super(treeSet);
+    public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows) {
+        super(rows);
         this.columnIndex = columnIndex;
     }
 
@@ -62,7 +63,7 @@ class LatestByAllIndexedRecordCursor extends AbstractTreeSetRecordCursor {
                 if (index > -1) {
                     RowCursor cursor = indexReader.getCursor(false, i, rowLo, rowHi);
                     if (cursor.hasNext()) {
-                        treeSet.put(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
+                        rows.add(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
                         found.addAt(index, i);
                     } else {
                         // adjust range

@@ -217,8 +217,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlTreePageSize() {
-        return Numbers.SIZE_1MB;
+    public long getSqlLatestByRowCount() {
+        return 1000;
     }
 
     @Override

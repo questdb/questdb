@@ -26,19 +26,16 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 
-class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByValuesRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
 
-    public LatestByValuesRecordCursor(int columnIndex, LongTreeSet treeSet, IntHashSet symbolKeys) {
-        super(treeSet);
+    public LatestByValuesRecordCursor(int columnIndex, DirectLongList rows, IntHashSet symbolKeys) {
+        super(rows);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
@@ -60,7 +57,7 @@ class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
                 int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                 int index = map.keyIndex(key);
                 if (index < 0 && map.valueAt(index) == 0) {
-                    treeSet.put(Rows.toRowID(partitionIndex, row));
+                    rows.add(Rows.toRowID(partitionIndex, row));
                     map.putAt(index, key, 1);
                 }
             }

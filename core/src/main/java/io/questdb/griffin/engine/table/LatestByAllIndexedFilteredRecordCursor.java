@@ -28,11 +28,12 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedFilteredRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
@@ -40,9 +41,10 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractTreeSetRecordCursor
 
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
-            @NotNull LongTreeSet treeSet,
-            @NotNull Function filter) {
-        super(treeSet);
+            @NotNull DirectLongList rows,
+            @NotNull Function filter
+    ) {
+        super(rows);
         this.columnIndex = columnIndex;
         this.filter = filter;
     }
@@ -81,7 +83,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractTreeSetRecordCursor
                         long row = cursor.next();
                         record.setRecordIndex(row);
                         if (filter.getBool(record)) {
-                            treeSet.put(Rows.toRowID(partitionIndex, row));
+                            rows.add(Rows.toRowID(partitionIndex, row));
                             found.addAt(index, i);
                         }
                     } else {

@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +40,7 @@ import org.jetbrains.annotations.Nullable;
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
     private final Function filter;
+    private final DirectLongList rowidList = new DirectLongList(1024 * 1024);
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -49,9 +52,9 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             @Nullable Function filter) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
         if (filter != null) {
-            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);
         } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, treeSet, symbolKeys);
+            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rowidList);
         }
         this.filter = filter;
     }
@@ -63,6 +66,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
         if (filter != null) {
             filter.close();
         }
+        Misc.free(rowidList);
     }
 
     @Override

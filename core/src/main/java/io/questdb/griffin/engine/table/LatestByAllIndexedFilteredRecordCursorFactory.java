@@ -39,9 +39,9 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             @Nullable Function filter) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, treeSet);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, treeSet, filter);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter);
         }
     }
 

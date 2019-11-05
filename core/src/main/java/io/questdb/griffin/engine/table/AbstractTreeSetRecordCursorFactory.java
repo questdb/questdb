@@ -28,22 +28,24 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    protected final LongTreeSet treeSet;
-    protected AbstractTreeSetRecordCursor cursor;
+    final DirectLongList rows;
+    protected AbstractDataFrameRecordCursor cursor;
 
     public AbstractTreeSetRecordCursorFactory(
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
-            CairoConfiguration configuration) {
+            CairoConfiguration configuration
+    ) {
         super(metadata, dataFrameCursorFactory);
-        this.treeSet = new LongTreeSet(configuration.getSqlTreePageSize());
+        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount());
     }
 
     @Override
     public void close() {
-        treeSet.close();
+        rows.close();
         if (cursor != null) {
             cursor.close();
             cursor = null;

@@ -25,34 +25,34 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 
-abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor {
+abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
 
-    protected final LongTreeSet treeSet;
-    private LongTreeSet.TreeCursor treeCursor;
+    protected final DirectLongList rows;
+    private long index;
 
-    public AbstractTreeSetRecordCursor(LongTreeSet treeSet) {
-        this.treeSet = treeSet;
+    public AbstractRecordListCursor(DirectLongList rows) {
+        this.rows = rows;
     }
 
     @Override
     public void close() {
         super.close();
-        treeCursor = null;
     }
 
     @Override
     public long size() {
-        return treeSet.size();
+        return rows.size();
     }
 
     abstract protected void buildTreeMap(SqlExecutionContext executionContext);
 
     @Override
-    public final boolean hasNext() {
-        if (treeCursor.hasNext()) {
-            long row = treeCursor.next();
+    public boolean hasNext() {
+        if (index > -1) {
+            long row = rows.get(index--);
             record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
             return true;
         }
@@ -61,15 +61,15 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
 
     @Override
     public void toTop() {
-        treeCursor.toTop();
+        index = rows.size() - 1;
     }
 
     @Override
-    final void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
-        treeSet.clear();
+        rows.clear();
         buildTreeMap(executionContext);
-        treeCursor = treeSet.getCursor();
+        index = rows.size() - 1;
     }
 }

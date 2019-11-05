@@ -27,13 +27,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
+class LatestByValuesFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntIntHashMap map;
@@ -42,10 +39,10 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
 
     public LatestByValuesFilteredRecordCursor(
             int columnIndex,
-            @NotNull LongTreeSet treeSet,
+            @NotNull DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @NotNull Function filter) {
-        super(treeSet);
+        super(rows);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
@@ -75,7 +72,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
                     int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                     int index = map.keyIndex(key);
                     if (index < 0 && map.valueAt(index) == 0) {
-                        treeSet.put(Rows.toRowID(partitionIndex, row));
+                        rows.add(Rows.toRowID(partitionIndex, row));
                         map.putAt(index, key, 1);
                     }
                 }
