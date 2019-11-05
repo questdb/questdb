@@ -72,7 +72,7 @@ public class SqlCodeGenerator {
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
     }
 
-    private RecordMetadata copyMetadata(RecordMetadata that) {
+    private GenericRecordMetadata copyMetadata(RecordMetadata that) {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
     }
@@ -1238,7 +1238,16 @@ public class SqlCodeGenerator {
                 model.getTableName().token,
                 model.getTableVersion())
         ) {
-            final RecordMetadata metadata = reader.getMetadata();
+            final GenericRecordMetadata metadata = copyMetadata(reader.getMetadata());
+            final int timestampIndex;
+
+            final ExpressionNode timestamp = model.getTimestamp();
+            if (timestamp != null) {
+                timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+                metadata.setTimestampIndex(timestampIndex);
+            } else {
+                timestampIndex = -1;
+            }
 
             final int latestByIndex;
             if (latestBy != null) {
@@ -1256,19 +1265,11 @@ public class SqlCodeGenerator {
 
             if (whereClause != null) {
 
-                final int timestampIndex;
-
-                final ExpressionNode timestamp = model.getTimestamp();
-                if (timestamp != null) {
-                    timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-                } else {
-                    timestampIndex = -1;
-                }
 
                 final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                    return new EmptyTableRecordCursorFactory(copyMetadata(metadata));
+                    return new EmptyTableRecordCursorFactory(metadata);
                 }
 
                 Function filter;
@@ -1286,7 +1287,7 @@ public class SqlCodeGenerator {
                             // filter is constant "true", do not evaluate for every row
                             filter = null;
                         } else {
-                            return new EmptyTableRecordCursorFactory(copyMetadata(metadata));
+                            return new EmptyTableRecordCursorFactory(metadata);
                         }
                     }
                 } else {
@@ -1353,7 +1354,7 @@ public class SqlCodeGenerator {
                                 rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf, filter);
+                        return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf, filter);
                     }
 
                     return new FilterOnValuesRecordCursorFactory(
@@ -1368,9 +1369,9 @@ public class SqlCodeGenerator {
 
                 if (filter != null) {
                     // filter lifecycle is managed by top level
-                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory(), null), filter);
+                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), null), filter);
                 }
-                return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory(), filter);
+                return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), filter);
             }
 
             // no where clause

@@ -1115,7 +1115,7 @@ public final class SqlParser {
         if (Chars.equalsLowerCaseAsciiNc(tok, "timestamp")) {
             expectTok(lexer, '(');
             final ExpressionNode result = expectLiteral(lexer);
-            expectTok(lexer, ')');
+            expectTok(SqlUtil.fetchNext(lexer), lexer.lastTokenPosition(), ')');
             return result;
         }
         return null;

@@ -135,9 +135,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             try {
                 types.getQuick(i).write(w, i, dbcs);
             } catch (Exception ignore) {
-                LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-                logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
-                columnErrorCounts.increment(i);
+                logError(line, i, dbcs);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
                         writer.rollback();
@@ -152,6 +150,12 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             }
         }
         w.append();
+    }
+
+    private void logError(long line, int i, DirectByteCharSequence dbcs) {
+        LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
+        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        columnErrorCounts.increment(i);
     }
 
     private void createTable(

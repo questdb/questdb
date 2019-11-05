@@ -41,18 +41,9 @@ public class TextLexer implements Closeable, Mutable {
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final TextMetadataDetector metadataDetector;
+    private CharSequence tableName;
     private final int lineRollBufLimit;
     private boolean ignoreEolOnce;
-    private byte columnDelimiter;
-    private boolean inQuote;
-    private boolean delayedOutQuote;
-    private boolean eol;
-    private int fieldIndex;
-    private int fieldMax = -1;
-    private long fieldLo;
-    private long fieldHi;
-    private long lineCount;
-    private boolean useLineRollBuf = false;
     private long lineRollBufCur;
     private Listener textLexerListener;
     private long lastLineStart;
@@ -61,9 +52,18 @@ public class TextLexer implements Closeable, Mutable {
     private boolean header;
     private long lastQuotePos = -1;
     private long errorCount = 0;
-    private boolean rollBufferUnusable = false;
-    private CharSequence tableName;
     private int lineCountLimit;
+    private int fieldMax = -1;
+    private int fieldIndex;
+    private long lineCount;
+    private boolean eol;
+    private boolean useLineRollBuf = false;
+    private boolean rollBufferUnusable = false;
+    private byte columnDelimiter;
+    private boolean inQuote;
+    private boolean delayedOutQuote;
+    private long fieldLo;
+    private long fieldHi;
 
     public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
