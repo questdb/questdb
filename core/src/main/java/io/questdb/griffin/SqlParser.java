@@ -913,7 +913,15 @@ public final class SqlParser {
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
         expectTok(lexer, "by");
-        model.setLatestBy(expr(lexer, model));
+        CharSequence tok;
+        do {
+            model.addLatestBy(expectLiteral(lexer));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        if (tok != null) {
+            lexer.unparse();
+        }
     }
 
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {

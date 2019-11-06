@@ -3339,6 +3339,33 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestBySyntax2() {
+        assertSyntaxError(
+                "select * from tab latest by x, ",
+                30,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax3() {
+        assertSyntaxError(
+                "select * from tab latest by",
+                27,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax4() {
+        assertSyntaxError(
+                "select * from tab latest by x+1",
+                29,
+                "unexpected token: +"
+        );
+    }
+
+    @Test
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {

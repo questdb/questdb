@@ -1105,6 +1105,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByMultipleColumns() throws Exception {
+        assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
+                "select * from balances latest by cust_id, balance_ccy",
+                "create table balances (\n" +
+                        "\tcust_id int, \n" +
+                        "\tbalance_ccy symbol, \n" +
+                        "\tbalance double, \n" +
+                        "\tstatus byte, \n" +
+                        "\ttimestamp timestamp\n" +
+                        ") timestamp(timestamp)",
+                "timestamp",
+                "insert into balances select * from (" +
+                        " select" +
+                        " abs(rnd_int()) % 4," +
+                        " rnd_str('USD', 'GBP', 'EUR')," +
+                        " rnd_double()," +
+                        " rnd_byte(0,1)," +
+                        " to_timestamp(0) timestamp" +
+                        " from long_sequence(150)" +
+                        ") timestamp (timestamp)",
+                "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
+                        "3\tUSD\t0.879641346857\t0\t1970-01-01T00:00:00.000000Z\n" +
+                        "3\tEUR\t0.011099265672\t0\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\tEUR\t0.107475118336\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\tGBP\t0.152748580781\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "0\tGBP\t0.073834641749\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\tEUR\t0.300620110525\t0\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\tUSD\t0.124540547653\t0\t1970-01-01T00:00:00.000000Z\n" +
+                        "0\tUSD\t0.312445801061\t0\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\tUSD\t0.794318576750\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\tGBP\t0.438886409177\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "0\tEUR\t0.592145777030\t1\t1970-01-01T00:00:00.000000Z\n" +
+                        "3\tGBP\t0.318618433941\t1\t1970-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testLatestByAllConstantFilter() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +

@@ -92,7 +92,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private long tableVersion;
     private Function tableNameFunction;
     private ExpressionNode alias;
-    private ExpressionNode latestBy;
+    private ObjList<ExpressionNode> latestBy = new ObjList<>();
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
     private JoinContext context;
@@ -225,7 +225,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         nestedModel = null;
         tableName = null;
         alias = null;
-        latestBy = null;
+        latestBy.clear();
         joinCriteria = null;
         joinType = JOIN_INNER;
         joinKeywordPosition = 0;
@@ -388,12 +388,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinKeywordPosition = position;
     }
 
-    public ExpressionNode getLatestBy() {
+    public ObjList<ExpressionNode> getLatestBy() {
         return latestBy;
     }
 
-    public void setLatestBy(ExpressionNode latestBy) {
-        this.latestBy = latestBy;
+    public void addLatestBy(ExpressionNode latestBy) {
+        this.latestBy.add(latestBy);
     }
 
     public ExpressionNode getLimitHi() {
@@ -685,9 +685,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.put(')');
         }
 
-        if (getLatestBy() != null) {
+        if (getLatestBy().size() > 0) {
             sink.put(" latest by ");
-            getLatestBy().toSink(sink);
+            for (int i = 0, n = getLatestBy().size(); i < n; i++) {
+                getLatestBy().getQuick(i).toSink(sink);
+            }
         }
 
         if (orderedJoinModels.size() > 1) {

@@ -46,6 +46,14 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 
 public class SqlCodeGenerator {
     private static final IntHashSet limitTypes = new IntHashSet();
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
+    }
+
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -53,7 +61,6 @@ public class SqlCodeGenerator {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    private final SingleColumnType singleColumnType = new SingleColumnType();
     private final CairoConfiguration configuration;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntHashSet intHashSet = new IntHashSet();
@@ -61,6 +68,7 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private boolean fullFatJoins = false;
+
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
@@ -569,13 +577,11 @@ public class SqlCodeGenerator {
             QueryModel model,
             TableReader reader,
             RecordMetadata metadata,
-            int latestByIndex,
             String tableName,
             IntrinsicModel intrinsicModel,
             Function filter,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final boolean indexed = metadata.isColumnIndexed(latestByIndex);
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.intervals != null) {
             dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals);
@@ -583,130 +589,133 @@ public class SqlCodeGenerator {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
 
-        if (intrinsicModel.keyColumn != null) {
-            // key column must always be the same as latest by column
-            assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+        if (listColumnFilterA.size() == 1) {
+            final int latestByIndex = listColumnFilterA.getColumnIndex(0);
+            final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
-            if (intrinsicModel.keySubQuery != null) {
+            if (intrinsicModel.keyColumn != null) {
+                // key column must always be the same as latest by column
+                assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
 
-                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+                if (intrinsicModel.keySubQuery != null) {
 
-                return new LatestBySubQueryRecordCursorFactory(
-                        configuration,
-                        metadata,
-                        dataFrameCursorFactory,
-                        latestByIndex,
-                        rcf,
-                        filter,
-                        indexed,
-                        firstColumnType
-                );
-            }
+                    final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                    final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
-            final int nKeyValues = intrinsicModel.keyValues.size();
-            if (indexed) {
+                    return new LatestBySubQueryRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            dataFrameCursorFactory,
+                            latestByIndex,
+                            rcf,
+                            filter,
+                            indexed,
+                            firstColumnType
+                    );
+                }
 
-                assert nKeyValues > 0;
-                // deal with key values as a list
-                // 1. resolve each value of the list to "int"
-                // 2. get first row in index for each value (stream)
+                final int nKeyValues = intrinsicModel.keyValues.size();
+                if (indexed) {
 
-                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
-                final RowCursorFactory rcf;
-                if (nKeyValues == 1) {
-                    final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
-                    final int symbol = symbolMapReader.getQuick(symbolValue);
+                    assert nKeyValues > 0;
+                    // deal with key values as a list
+                    // 1. resolve each value of the list to "int"
+                    // 2. get first row in index for each value (stream)
 
-                    if (filter == null) {
-                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, Chars.toString(symbolValue), false);
-                        } else {
-                            rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
+                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+                    final RowCursorFactory rcf;
+                    if (nKeyValues == 1) {
+                        final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
+                        final int symbol = symbolMapReader.getQuick(symbolValue);
+
+                        if (filter == null) {
+                            if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                                rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, Chars.toString(symbolValue), false);
+                            } else {
+                                rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
+                            }
+                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, null);
                         }
-                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, null);
-                    }
 
-                    if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                        return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                            return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                                    copyMetadata(metadata),
+                                    dataFrameCursorFactory,
+                                    latestByIndex,
+                                    Chars.toString(symbolValue),
+                                    filter);
+                        }
+                        return new LatestByValueIndexedFilteredRecordCursorFactory(
                                 copyMetadata(metadata),
                                 dataFrameCursorFactory,
                                 latestByIndex,
-                                Chars.toString(symbolValue),
+                                symbol,
                                 filter);
                     }
-                    return new LatestByValueIndexedFilteredRecordCursorFactory(
+
+                    return new LatestByValuesIndexedFilteredRecordCursorFactory(
+                            configuration,
                             copyMetadata(metadata),
                             dataFrameCursorFactory,
                             latestByIndex,
-                            symbol,
-                            filter);
+                            intrinsicModel.keyValues,
+                            symbolMapReader,
+                            filter
+                    );
                 }
 
-                return new LatestByValuesIndexedFilteredRecordCursorFactory(
+                assert nKeyValues > 0;
+
+                // we have "latest by" column values, but no index
+                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+
+                if (nKeyValues > 1) {
+                    return new LatestByValuesFilteredRecordCursorFactory(
+                            configuration,
+                            copyMetadata(metadata),
+                            dataFrameCursorFactory,
+                            latestByIndex,
+                            intrinsicModel.keyValues,
+                            symbolMapReader,
+                            filter
+                    );
+                }
+
+                // we have a single symbol key
+                int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(0));
+                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    return new LatestByValueDeferredFilteredRecordCursorFactory(
+                            copyMetadata(metadata),
+                            dataFrameCursorFactory,
+                            latestByIndex,
+                            Chars.toString(intrinsicModel.keyValues.get(0)),
+                            filter
+                    );
+                }
+
+                return new LatestByValueFilteredRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, latestByIndex, symbolKey, filter);
+            }
+            // we select all values of "latest by" column
+
+            assert intrinsicModel.keyValues.size() == 0;
+            // get latest rows for all values of "latest by" column
+
+            if (indexed) {
+                return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         copyMetadata(metadata),
                         dataFrameCursorFactory,
                         latestByIndex,
-                        intrinsicModel.keyValues,
-                        symbolMapReader,
-                        filter
-                );
+                        filter);
             }
-
-            assert nKeyValues > 0;
-
-            // we have "latest by" column values, but no index
-            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
-
-            if (nKeyValues > 1) {
-                return new LatestByValuesFilteredRecordCursorFactory(
-                        configuration,
-                        copyMetadata(metadata),
-                        dataFrameCursorFactory,
-                        latestByIndex,
-                        intrinsicModel.keyValues,
-                        symbolMapReader,
-                        filter
-                );
-            }
-
-            // we have a single symbol key
-            int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(0));
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                return new LatestByValueDeferredFilteredRecordCursorFactory(
-                        copyMetadata(metadata),
-                        dataFrameCursorFactory,
-                        latestByIndex,
-                        Chars.toString(intrinsicModel.keyValues.get(0)),
-                        filter
-                );
-            }
-
-            return new LatestByValueFilteredRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, latestByIndex, symbolKey, filter);
-        }
-        // we select all values of "latest by" column
-
-        assert intrinsicModel.keyValues.size() == 0;
-        // get latest rows for all values of "latest by" column
-
-        if (indexed) {
-            return new LatestByAllIndexedFilteredRecordCursorFactory(
-                    configuration,
-                    copyMetadata(metadata),
-                    dataFrameCursorFactory,
-                    latestByIndex,
-                    filter);
         }
 
-        listColumnFilterA.clear();
-        listColumnFilterA.add(latestByIndex);
         return new LatestByAllFilteredRecordCursorFactory(
                 copyMetadata(metadata),
                 configuration,
                 dataFrameCursorFactory,
                 RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                singleColumnType.of(metadata.getColumnType(latestByIndex)),
+                keyTypes,
                 filter
         );
     }
@@ -1231,7 +1240,7 @@ public class SqlCodeGenerator {
             QueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final ExpressionNode latestBy = model.getLatestBy();
+        final ObjList<ExpressionNode> latestBy = model.getLatestBy();
         final ExpressionNode whereClause = model.getWhereClause();
 
         try (TableReader reader = engine.getReader(
@@ -1250,24 +1259,31 @@ public class SqlCodeGenerator {
                 timestampIndex = -1;
             }
 
-            final int latestByIndex;
-            if (latestBy != null) {
+            listColumnFilterA.clear();
+            final int latestByColumnCount = latestBy.size();
+
+            if (latestBy.size() > 0) {
                 // validate latest by against current reader
                 // first check if column is valid
-                latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
-                if (latestByIndex == -1) {
-                    throw SqlException.invalidColumn(latestBy.position, latestBy.token);
+                for (int i = 0; i < latestByColumnCount; i++) {
+                    final int index = metadata.getColumnIndexQuiet(latestBy.getQuick(i).token);
+                    if (index == -1) {
+                        throw SqlException.invalidColumn(latestBy.getQuick(i).position, latestBy.getQuick(i).token);
+                    }
+
+                    // we are reusing collections which leads to confusing naming for this method
+                    // keyTypes are types of columns we collect 'latest by' for
+                    keyTypes.add(metadata.getColumnType(index));
+                    // columnFilterA are indexes of columns we collect 'latest by' for
+                    listColumnFilterA.add(index);
                 }
-            } else {
-                latestByIndex = -1;
             }
 
             final String tableName = Chars.toString(model.getTableName().token);
 
             if (whereClause != null) {
 
-
-                final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
+                final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestByColumnCount > 0 ? latestBy.getQuick(0).token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                     return new EmptyTableRecordCursorFactory(metadata);
@@ -1297,12 +1313,11 @@ public class SqlCodeGenerator {
 
                 DataFrameCursorFactory dfcFactory;
 
-                if (latestByIndex > -1) {
+                if (latestByColumnCount > 0) {
                     return generateLatestByQuery(
                             model,
                             reader,
                             metadata,
-                            latestByIndex,
                             tableName,
                             intrinsicModel,
                             filter,
@@ -1377,28 +1392,26 @@ public class SqlCodeGenerator {
             }
 
             // no where clause
-            if (latestByIndex == -1) {
+            if (latestByColumnCount == 0) {
                 return new TableReaderRecordCursorFactory(copyMetadata(metadata), engine, tableName, model.getTableVersion());
             }
 
-            if (metadata.isColumnIndexed(latestByIndex)) {
+            if (latestByColumnCount == 1 && metadata.isColumnIndexed(listColumnFilterA.getQuick(0))) {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         copyMetadata(metadata),
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                        latestByIndex,
+                        listColumnFilterA.getQuick(0),
                         null
                 );
             }
 
-            listColumnFilterA.clear();
-            listColumnFilterA.add(latestByIndex);
             return new LatestByAllFilteredRecordCursorFactory(
                     copyMetadata(metadata),
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                    singleColumnType.of(metadata.getColumnType(latestByIndex)),
+                    keyTypes,
                     null
             );
         }
@@ -1516,13 +1529,6 @@ public class SqlCodeGenerator {
                     .put(ColumnType.nameOf(firstColumnType));
         }
         return firstColumnType;
-    }
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
     }
 
 }
