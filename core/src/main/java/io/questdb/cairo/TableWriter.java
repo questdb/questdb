@@ -105,7 +105,7 @@ public class TableWriter implements Closeable {
     private ObjList<Runnable> nullers;
     private long fixedRowCount = 0;
     private long txn;
-    private long structVersion;
+    private long structureVersion;
     private long dataVersion;
     private RowFunction rowFunction = openPartitionFunction;
     private long prevMaxTimestamp;
@@ -339,6 +339,10 @@ public class TableWriter implements Closeable {
         } finally {
             latch.countDown();
         }
+    }
+
+    public long getStructureVersion() {
+        return structureVersion;
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -864,7 +868,7 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, ++structVersion);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION, ++structureVersion);
 
         final int count = denseSymbolMapWriters.size();
         final int oldCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
@@ -1007,7 +1011,7 @@ public class TableWriter implements Closeable {
         this.minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
         this.maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         this.dataVersion = txMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structVersion = txMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        this.structureVersion = txMem.getLong(TX_OFFSET_STRUCT_VERSION);
         this.prevMaxTimestamp = this.maxTimestamp;
         this.prevMinTimestamp = this.minTimestamp;
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {

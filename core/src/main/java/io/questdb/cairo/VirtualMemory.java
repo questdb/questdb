@@ -1112,22 +1112,18 @@ public class VirtualMemory implements Closeable {
         private long offset;
         private long len = -1;
         private long lastIndex = -1;
-        private int page;
-        private long pageAddress;
-        private long pageOffset;
-        private long pageSize;
+        private long readAddress;
+        private long readLimit;
 
         public byte byteAt(long index) {
-            byte c;
-
-            if (index == lastIndex + 1 && pageOffset < pageSize) {
-                c = Unsafe.getUnsafe().getByte(pageAddress + pageOffset);
-                pageOffset++;
-            } else {
-                c = updatePosAndGet(index);
+            try {
+                if (index == lastIndex + 1 && readAddress < readLimit) {
+                    return Unsafe.getUnsafe().getByte(readAddress++);
+                }
+                return updatePosAndGet(index);
+            } finally {
+                lastIndex = index;
             }
-            lastIndex = index;
-            return c;
         }
 
         @Override
@@ -1155,23 +1151,20 @@ public class VirtualMemory implements Closeable {
             this.offset = offset;
             this.len = len;
             this.lastIndex = -1;
-            this.page = pageIndex(offset);
-            this.pageSize = getPageSize(page);
-            this.pageAddress = getPageAddress(page);
-            this.pageOffset = offsetInPage(offset);
+            calculateBlobAddress(offset);
             return this;
         }
 
+        private void calculateBlobAddress(long offset) {
+            final int page = pageIndex(offset);
+            final long pa = getPageAddress(page);
+            this.readAddress = pa + offsetInPage(offset);
+            this.readLimit = pa + getPageSize(page);
+        }
+
         private byte updatePosAndGet(long index) {
-            byte c;
-            long offset = this.offset + index;
-            page = pageIndex(offset);
-            pageSize = getPageSize(page);
-            pageAddress = getPageAddress(page);
-            pageOffset = offsetInPage(offset);
-            c = Unsafe.getUnsafe().getByte(pageAddress + pageOffset);
-            pageOffset++;
-            return c;
+            calculateBlobAddress(this.offset + index);
+            return Unsafe.getUnsafe().getByte(readAddress++);
         }
     }
 }

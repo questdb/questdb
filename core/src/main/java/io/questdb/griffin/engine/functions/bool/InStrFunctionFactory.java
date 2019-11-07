@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
 public class InStrFunctionFactory implements FunctionFactory {
@@ -59,7 +60,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                     if (value == null) {
                         throw SqlException.$(func.getPosition(), "NULL is not allowed");
                     }
-                    set.add(value.toString());
+                    set.add(Chars.toString(value));
                     break;
                 case ColumnType.CHAR:
                     set.add(new String(new char[]{func.getChar(null)}));

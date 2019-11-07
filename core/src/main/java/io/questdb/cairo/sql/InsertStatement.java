@@ -28,4 +28,8 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public interface InsertStatement {
     void execute(TableWriter tableWriter, SqlExecutionContext executionContext);
+
+    CharSequence getTableName();
+
+    long getStructureVersion();
 }

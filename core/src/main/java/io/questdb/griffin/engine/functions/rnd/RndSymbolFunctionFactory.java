@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -90,7 +91,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         private void seedFixed() {
             for (int i = 0; i < count; i++) {
-                symbols.add(rnd.nextChars(lo).toString());
+                symbols.add(Chars.toString(rnd.nextChars(lo)));
             }
         }
 

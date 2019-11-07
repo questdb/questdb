@@ -96,6 +96,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         resumeActions.extendAndSet(AbstractQueryContext.QUERY_SUFFIX, this::doQuerySuffix);
     }
 
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str == null) {
+            r.put("null");
+        } else {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(compiler);
@@ -226,14 +234,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context, dispatcher);
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str == null) {
-            r.put("null");
-        } else {
-            r.encodeUtf8AndQuote(str);
-        }
     }
 
     private void doFirstRecordLoop(JsonQueryProcessorState state, HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {

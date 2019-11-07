@@ -35,15 +35,18 @@ public class InsertStatementImpl implements InsertStatement {
     private final Function timestampFunction;
     private final RowFactory rowFactory;
     private final long structureVersion;
+    private final String tableName;
     private SqlExecutionContext lastUsedContext;
 
     // todo: recycle these
     public InsertStatementImpl(
+            String tableName,
             VirtualRecord virtualRecord,
             SqlCompiler.RecordToRowCopier copier,
             Function timestampFunction,
             long structureVersion
     ) {
+        this.tableName = tableName;
         this.virtualRecord = virtualRecord;
         this.copier = copier;
         this.timestampFunction = timestampFunction;
@@ -53,6 +56,16 @@ public class InsertStatementImpl implements InsertStatement {
             rowFactory = this::getRowWithoutTimestamp;
         }
         this.structureVersion = structureVersion;
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
     }
 
     @Override

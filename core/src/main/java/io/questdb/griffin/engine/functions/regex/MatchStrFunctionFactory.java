@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.regex.impl.Matcher;
 import io.questdb.griffin.engine.functions.regex.impl.Pattern;
 import io.questdb.griffin.engine.functions.regex.impl.PatternSyntaxException;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
 public class MatchStrFunctionFactory implements FunctionFactory {
@@ -51,7 +52,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         try {
-            Matcher matcher = Pattern.compile(regex.toString()).matcher("");
+            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
             return new MatchFunction(position, value, matcher);
         } catch (PatternSyntaxException e) {
             throw SqlException.$(args.getQuick(1).getPosition() + e.getIndex() + 1, e.getMessage());
