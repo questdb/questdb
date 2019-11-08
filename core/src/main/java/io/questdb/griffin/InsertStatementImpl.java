@@ -37,16 +37,19 @@ public class InsertStatementImpl implements InsertStatement {
     private final long structureVersion;
     private final String tableName;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
+    private final CairoEngine engine;
     private SqlExecutionContext lastUsedContext;
 
     // todo: recycle these
     public InsertStatementImpl(
+            CairoEngine engine,
             String tableName,
             VirtualRecord virtualRecord,
             SqlCompiler.RecordToRowCopier copier,
             Function timestampFunction,
             long structureVersion
     ) {
+        this.engine = engine;
         this.tableName = tableName;
         this.virtualRecord = virtualRecord;
         this.copier = copier;
@@ -89,7 +92,7 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public InsertMethod createMethod(CairoEngine engine, SqlExecutionContext executionContext) {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         if (lastUsedContext != executionContext) {
             initContext(executionContext);
         }

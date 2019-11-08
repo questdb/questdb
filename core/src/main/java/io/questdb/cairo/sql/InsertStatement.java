@@ -23,7 +23,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface InsertStatement {
@@ -31,5 +30,5 @@ public interface InsertStatement {
 
     long getStructureVersion();
 
-    InsertMethod createMethod(CairoEngine engine, SqlExecutionContext executionContext);
+    InsertMethod createMethod(SqlExecutionContext executionContext);
 }

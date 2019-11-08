@@ -1183,7 +1183,7 @@ public class SqlCompiler implements Closeable {
 
             VirtualRecord record = new VirtualRecord(valueFunctions);
             RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, columnFilter);
-            return compiledQuery.ofInsert(new InsertStatementImpl(Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
+            return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
             throw e;

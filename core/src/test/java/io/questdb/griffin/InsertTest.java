@@ -115,7 +115,7 @@ public class InsertTest extends AbstractGriffinTest {
 
                 compiler.compile("alter table balances drop column ccy");
 
-                insertStatement.createMethod(engine, sqlExecutionContext);
+                insertStatement.createMethod(sqlExecutionContext);
             } catch (WriterOutOfDateException ignored) {
             }
 
@@ -135,7 +135,7 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insertStatement = cq.getInsertStatement();
 
-                try (InsertMethod method = insertStatement.createMethod(engine, sqlExecutionContext)) {
+                try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
                     method.execute();
                     method.commit();
                 }
@@ -145,11 +145,12 @@ public class InsertTest extends AbstractGriffinTest {
 
                 bindVariableService.setDouble("bal", 56.4);
 
-                try (InsertMethod method = insertStatement.createMethod(engine, sqlExecutionContext)) {
+                try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
                     method.execute();
                     method.commit();
                 }
 
+                sink.clear();
                 try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
                     printer.print(reader.getCursor(), reader.getMetadata(), true);
                 }
@@ -175,7 +176,7 @@ public class InsertTest extends AbstractGriffinTest {
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)");
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
-            try (InsertMethod method = insert.createMethod(engine, sqlExecutionContext)) {
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
@@ -183,6 +184,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.120000000000\n";
 
+            sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
                 printer.print(reader.getCursor(), reader.getMetadata(), true);
                 TestUtils.assertEquals(expected, sink);
@@ -258,7 +260,7 @@ public class InsertTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insert = cq.getInsertStatement();
-                try (InsertMethod method = insert.createMethod(engine, sqlExecutionContext)) {
+                try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
 //                    Assert.assertEquals(writer.getStructureVersion(), insert.getStructureVersion());
                     for (int i = 0; i < 1_000_000; i++) {
                         bindVariableService.setInt(0, rnd.nextInt());
