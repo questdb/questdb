@@ -26,6 +26,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;

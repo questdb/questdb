@@ -23,13 +23,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.SqlExecutionContext;
-
-public interface InsertStatement {
-    CharSequence getTableName();
-
-    long getStructureVersion();
-
-    InsertMethod createMethod(CairoEngine engine, SqlExecutionContext executionContext);
+public class WriterOutOfDateException extends RuntimeException {
+    public static WriterOutOfDateException INSTANCE = new WriterOutOfDateException();
 }

@@ -23,13 +23,10 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.SqlExecutionContext;
+import java.io.Closeable;
 
-public interface InsertStatement {
-    CharSequence getTableName();
+public interface InsertMethod extends Closeable {
+    void execute();
 
-    long getStructureVersion();
-
-    InsertMethod createMethod(CairoEngine engine, SqlExecutionContext executionContext);
+    void commit();
 }

@@ -23,10 +23,17 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.engine.TestBinarySequence;
+import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
@@ -82,16 +89,95 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertValueCannotReferenceTableColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                compiler.compile("insert into balances values (1, ccy, 356.12)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(32, e.getPosition());
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
+    }
+
+    @Test
+    public void testInsertExecutionAfterStructureChange() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)");
+                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+                InsertStatement insertStatement = cq.getInsertStatement();
+
+                compiler.compile("alter table balances drop column ccy");
+
+                insertStatement.createMethod(engine, sqlExecutionContext);
+            } catch (WriterOutOfDateException ignored) {
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
+    }
+
+    @Test
+    public void testInsertContextSwitch() throws Exception {
+
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
+                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
+                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+                InsertStatement insertStatement = cq.getInsertStatement();
+
+                try (InsertMethod method = insertStatement.createMethod(engine, sqlExecutionContext)) {
+                    method.execute();
+                    method.commit();
+                }
+
+                BindVariableService bindVariableService = new BindVariableService();
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+
+                bindVariableService.setDouble("bal", 56.4);
+
+                try (InsertMethod method = insertStatement.createMethod(engine, sqlExecutionContext)) {
+                    method.execute();
+                    method.commit();
+                }
+
+                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
+                    printer.print(reader.getCursor(), reader.getMetadata(), true);
+                }
+
+                TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
+                                "1\tGBP\t150.400000000000\n" +
+                                "1\tGBP\t56.400000000000\n",
+                        sink
+                );
+            } catch (WriterOutOfDateException ignored) {
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
+
+    }
+
+    @Test
     public void testInsertNoTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)");
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                insert.execute(writer, sqlExecutionContext);
-                Assert.assertTrue(writer.inTransaction());
-                writer.commit();
+            try (InsertMethod method = insert.createMethod(engine, sqlExecutionContext)) {
+                method.execute();
+                method.commit();
             }
 
             String expected = "cust_id\tccy\tbalance\n" +
@@ -172,8 +258,8 @@ public class InsertTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insert = cq.getInsertStatement();
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                    Assert.assertEquals(writer.getStructureVersion(), insert.getStructureVersion());
+                try (InsertMethod method = insert.createMethod(engine, sqlExecutionContext)) {
+//                    Assert.assertEquals(writer.getStructureVersion(), insert.getStructureVersion());
                     for (int i = 0; i < 1_000_000; i++) {
                         bindVariableService.setInt(0, rnd.nextInt());
                         bindVariableService.setShort(1, rnd.nextShort());
@@ -190,9 +276,9 @@ public class InsertTest extends AbstractGriffinTest {
                         bindVariableService.setLong256(11, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                         bindVariableService.setChar(12, rnd.nextChar());
                         bindVariableService.setTimestamp(13, timestampFunction.getTimestamp());
-                        cq.getInsertStatement().execute(writer, sqlExecutionContext);
+                        method.execute();
                     }
-                    writer.commit();
+                    method.commit();
                 }
 
                 rnd.reset();

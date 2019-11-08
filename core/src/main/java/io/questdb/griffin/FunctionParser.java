@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -37,6 +38,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
@@ -200,7 +202,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
-        Function function = sqlExecutionContext.getBindVariableService().getFunction(variableIndex);
+        Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
             throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
         }
@@ -208,11 +210,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public Function createNamedParameter(ExpressionNode node) throws SqlException {
-        Function function = sqlExecutionContext.getBindVariableService().getFunction(node.token);
+        Function function = getBindVariableService().getFunction(node.token);
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
         }
         return new NamedParameterLinkFunction(Chars.toString(node.token), function.getType(), node.position);
+    }
+
+    @NotNull
+    private BindVariableService getBindVariableService() throws SqlException {
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        if (bindVariableService == null) {
+            throw SqlException.$(0, "bind variable service is not provided");
+        }
+        return bindVariableService;
     }
 
     public boolean isGroupBy(CharSequence name) {

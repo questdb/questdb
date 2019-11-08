@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.sql;
 
 public class ReaderOutOfDateException extends RuntimeException {
     public static final ReaderOutOfDateException INSTANCE = new ReaderOutOfDateException();

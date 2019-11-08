@@ -1127,6 +1127,7 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
+        ObjList<Function> valueFunctions = null;
         try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
@@ -1134,7 +1135,6 @@ public class SqlCompiler implements Closeable {
             final CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
             final ColumnFilter columnFilter;
-            final ObjList<Function> valueFunctions;
             Function timestampFunction = null;
             if (columnSetSize > 0) {
                 listColumnFilter.clear();
@@ -1164,7 +1164,7 @@ public class SqlCompiler implements Closeable {
                 columnFilter = entityColumnFilter;
                 valueFunctions = new ObjList<>(columnCount);
                 for (int i = 0; i < columnCount; i++) {
-                    Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), metadata, executionContext);
+                    Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(i), function.getType())) {
                         throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(i)));
                     }
@@ -1184,6 +1184,9 @@ public class SqlCompiler implements Closeable {
             VirtualRecord record = new VirtualRecord(valueFunctions);
             RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, columnFilter);
             return compiledQuery.ofInsert(new InsertStatementImpl(Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
+        } catch (SqlException e) {
+            Misc.freeObjList(valueFunctions);
+            throw e;
         }
     }
 

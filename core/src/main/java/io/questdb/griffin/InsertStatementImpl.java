@@ -23,10 +23,10 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.*;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertStatementImpl implements InsertStatement {
@@ -36,6 +36,7 @@ public class InsertStatementImpl implements InsertStatement {
     private final RowFactory rowFactory;
     private final long structureVersion;
     private final String tableName;
+    private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private SqlExecutionContext lastUsedContext;
 
     // todo: recycle these
@@ -68,17 +69,6 @@ public class InsertStatementImpl implements InsertStatement {
         return tableName;
     }
 
-    @Override
-    public void execute(TableWriter tableWriter, SqlExecutionContext executionContext) {
-        if (lastUsedContext != executionContext) {
-            initContext(executionContext);
-        }
-
-        final TableWriter.Row row = rowFactory.getRow(tableWriter);
-        copier.copy(virtualRecord, row);
-        row.append();
-    }
-
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
         return tableWriter.newRow(timestampFunction.getTimestamp(null));
     }
@@ -98,8 +88,44 @@ public class InsertStatementImpl implements InsertStatement {
         }
     }
 
+    @Override
+    public InsertMethod createMethod(CairoEngine engine, SqlExecutionContext executionContext) {
+        if (lastUsedContext != executionContext) {
+            initContext(executionContext);
+        }
+
+        final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
+        if (writer.getStructureVersion() != getStructureVersion()) {
+            writer.close();
+            throw WriterOutOfDateException.INSTANCE;
+        }
+        insertMethod.writer = writer;
+        return insertMethod;
+    }
+
     @FunctionalInterface
     private interface RowFactory {
         TableWriter.Row getRow(TableWriter tableWriter);
+    }
+
+    private class InsertMethodImpl implements InsertMethod {
+        private TableWriter writer = null;
+
+        @Override
+        public void execute() {
+            final TableWriter.Row row = rowFactory.getRow(writer);
+            copier.copy(virtualRecord, row);
+            row.append();
+        }
+
+        @Override
+        public void commit() {
+            writer.commit();
+        }
+
+        @Override
+        public void close() {
+            writer = Misc.free(writer);
+        }
     }
 }
