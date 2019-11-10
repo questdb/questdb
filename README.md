@@ -14,7 +14,7 @@ portable across architectures.
 
 We don't use third-party libraries, and our methods may seem...
  unorthodox. This is because we challenge performance across the full stack. 
- You may feel lost when first looking at the code. Persevere and 
+ So don't worry if you feel lost when you first look at the code. Persevere and 
 feel free to ask questions. You will learn new ways to do things, 
 at performance levels you didn't know were possible.
 
