@@ -1,44 +1,57 @@
+
 [![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
 [![CircleCI](https://circleci.com/gh/questdb/questdb.svg?style=svg&circle-token=14e189d901b13a8ddfc9e6da4c4d106dac6b0940)](https://circleci.com/gh/questdb/questdb)
 [![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
 
-QuestDB is a relational database that natively supports time series data. It is specifically designed for the single purpose of ensuring consistently low response times from both data input and query interfaces, without sacrificing functionality.
+### About QuestDB
 
-## UI Screenshots
+QuestDB is a relational database built to provide ultimate performance for time-series data.
+ 
+Our technology is born from low-latency trading and built around
+fully zero-GC java and off-heap data structures. 
+We provide the highest performance, use SQL,  offer one binary fully 
+portable across architectures.
 
+We don't use third-party libraries, and our methods may seem...
+ unorthodox. This is because we challenge performance across the full stack. 
+ So don't worry if you feel lost when you first look at the code. Persevere and 
+feel free to ask questions. You will learn new ways to do things, 
+at performance levels you didn't know were possible.
 
-Drag-Drop bulk import
-![Import Progress](https://cloud.githubusercontent.com/assets/7276403/16665958/70eecec8-447d-11e6-8e78-1437c9c15db5.png)
+All code is licensed under the Apache-2 open-source license.
 
+### Getting Started
 
-Automatic format recognition 
-![Data Import Summary](https://cloud.githubusercontent.com/assets/7276403/16666673/ae88722c-4480-11e6-96d3-cd309475ca9d.png)
+[Install](https://www.questdb.io/docs/install) and [run](https://www.questdb.io/docs/run) QuestDB.
+Then, the easiest way to get started is to play with our
+web [console](https://www.questdb.io/docs/console). This will allow you to import 
+and query data using an intuitive interface.
 
+You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In a nutshell,
+we are a column-oriented database that partitions data by time intervals.
 
-Query editor
-![Query Editor](https://cloud.githubusercontent.com/assets/7276403/16667611/5339f3fa-4485-11e6-89d3-e2c92c440bd6.png "Query Editor")
+You can find more documentation [here](https://www.questdb.io/docs/documentation)
 
-## License
+### Support / Contact
 
-QuestDB is licensed under GNU Affero General Public License (AGPLv3).
+- [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+- [Email](mailto:tanc@questdb.io)
 
-## Documentation
+### Roadmap
 
-Documentation is a work in progress: https://doc.questdb.org
+We have built the ultimate performance for read and write on a single-thread.
+But we still have some work.
+Elements on our roadmap include:
 
-## Releases
+- Query and aggregates optimisation. Currently, we run aggregates through linear scans. 
+While our scans are highly efficient, our current implementations of aggregates are naive.
+Further optimisation will take performance to new grounds.
+- Multithreading. Currently, we use one single thread. While this is good for certain use cases 
+(you can limit QuestDB to one thread and leave ressources for other programs), we will provide
+the ability to distribute load/query work over several cores to benefit on parallelisation.
+- High-availability. Working on providing out-of-the-box high-availability with extreme simplicity.
 
-Multi-platform archive can be downloaded from our web site https://www.questdb.org. Embedded database is available on maven central at these coordinates.
+### Contribution
 
-```xml
-<dependency>
-    <groupId>org.questdb</groupId>
-    <artifactId>questdb-core</artifactId>
-    <version>1.0.4</version>
-</dependency>
-```
-
-On MacOS run (via [Homebrew](https://brew.sh/)):
-```
-brew install questdb
-```
+Feel free to contribute to the project by forking the repository and submitting pull requests.
+Before you submit pull requests, you must sign the contributor license agreement.
