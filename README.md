@@ -3,14 +3,12 @@
 [![CircleCI](https://circleci.com/gh/questdb/questdb.svg?style=svg&circle-token=14e189d901b13a8ddfc9e6da4c4d106dac6b0940)](https://circleci.com/gh/questdb/questdb)
 [![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
 
-### About QuestDB
+## About QuestDB
 
 QuestDB is a relational database built to provide ultimate performance for time-series data.
  
-Our technology is born from low-latency trading and built around
-fully zero-GC java and off-heap data structures. 
-We provide the highest performance, use SQL,  offer one binary fully 
-portable across architectures.
+Our technology is born from low-latency trading and built around fully zero-GC java and off-heap data structures. 
+We provide the highest performance, use SQL and offer one binary fully portable across architectures.
 
 We don't use third-party libraries, and our methods may seem...
  unorthodox. This is because we challenge performance across the full stack. 
@@ -18,9 +16,34 @@ We don't use third-party libraries, and our methods may seem...
 feel free to ask questions. You will learn new ways to do things, 
 at performance levels you didn't know were possible.
 
-All code is licensed under the Apache-2 open-source license.
+All code is licensed under the Apache 2.0 Open Source license.
 
-### Getting Started
+## Building from source
+
+### Pre-requitites:
+
+- Java 8 64-bit. We recommend Oracle Java 8, but OpenJDK8 will also work although a little slower.
+- Maven 3
+- Compatible 64-bit Operating System: Windows, Linux, OSX or ARM Linux
+- Configure JAVA_HOME environment variable
+- Add Maven "bin" directory to PATH environment variable
+
+### Building
+
+```
+mvn clean package
+```
+
+
+### Running
+
+Main class: `io.questdb.ServerMain`
+
+Program arguments: `-d <home_directory>`
+
+QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `home_directory/db`
+
+## Getting Started
 
 [Install](https://www.questdb.io/docs/install) and [run](https://www.questdb.io/docs/run) QuestDB.
 Then, the easiest way to get started is to play with our
@@ -32,10 +55,9 @@ we are a column-oriented database that partitions data by time intervals.
 
 You can find more documentation [here](https://www.questdb.io/docs/documentation)
 
-### Support / Contact
+## Support / Contact
 
 - [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
-- [Email](mailto:tanc@questdb.io)
 
 ### Roadmap
 
