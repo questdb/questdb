@@ -44,7 +44,7 @@ __server__
 - [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
 - [ ] __authentication and authorization__
-- [ ] MySQL wire protocol implementation
+- [ ] PostgreSQL wire protocol implementation
 - [x] sql result export to delimited format
 
 __monitoring__
