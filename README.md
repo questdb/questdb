@@ -28,6 +28,10 @@ All code is licensed under the Apache 2.0 Open Source license.
 - Configure JAVA_HOME environment variable
 - Add Maven "bin" directory to PATH environment variable
 
+```
+Note: Java versions above 8 are not yet supported. It is possible to build QuestDB with Java 11, but requires backward incompatible source code changes.
+```
+
 ### Building
 
 ```
