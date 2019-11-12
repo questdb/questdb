@@ -641,6 +641,7 @@ public class SqlCompiler implements Closeable {
         return compile(query, DefaultSqlExecutionContext.INSTANCE);
     }
 
+    @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         //
@@ -872,7 +873,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofSet();
     }
 
-    @Nullable
+    @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non reentrant and once
@@ -1087,7 +1088,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofDrop();
     }
 
-    @Nullable
+    @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
         setupTextLoaderFromModel(executionModel);
         if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {

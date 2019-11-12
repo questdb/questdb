@@ -29,4 +29,7 @@ public interface InsertMethod extends Closeable {
     void execute();
 
     void commit();
+
+    @Override
+    void close();
 }

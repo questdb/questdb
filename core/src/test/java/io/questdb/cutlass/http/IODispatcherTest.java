@@ -433,7 +433,7 @@ public class IODispatcherTest {
     }
 
     public void testImport(
-            String expected,
+            String response,
             String request,
             NetworkFacade nf,
             boolean expectDisconnect,
@@ -498,7 +498,7 @@ public class IODispatcherTest {
                     sendAndReceive(
                             nf,
                             request,
-                            expected.getBytes(),
+                            response,
                             requestCount,
                             0,
                             false,
@@ -1013,7 +1013,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--";
 
-                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                String expectedResponse = "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1035,7 +1035,7 @@ public class IODispatcherTest {
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
                         "00\r\n" +
-                        "\r\n").getBytes();
+                        "\r\n";
 
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
@@ -1151,7 +1151,7 @@ public class IODispatcherTest {
                             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                             "\r\n";
 
-                    byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
                             "Server: questDB/1.0\r\n" +
                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                             "Transfer-Encoding: chunked\r\n" +
@@ -1233,7 +1233,7 @@ public class IODispatcherTest {
                             "25\r\n" +
                             ",\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n" +
                             "00\r\n" +
-                            "\r\n").getBytes();
+                            "\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false, false);
                 } finally {
@@ -1272,7 +1272,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryDDL() throws Exception {
+    public void testJsonQueryDropTable() throws Exception {
         testJsonQuery(
                 20,
                 "GET /query?query=drop%20table%20x HTTP/1.1\r\n" +
@@ -1282,6 +1282,37 @@ public class IODispatcherTest {
                         "Upgrade-Insecure-Requests: 1\r\n" +
                         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
                         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
+    }
+
+    @Test
+    public void testJsonQueryCreateTable() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
@@ -1326,6 +1357,172 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
+        testJsonQuery0(engine -> {
+
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // insert one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+to_timestamp(6000000001))&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // check if we have one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0155\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"USD\",1500.0000000000,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // truncate table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0Atruncate+table+balances_x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // select again expecting only metadata
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "011c\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[],\"count\":0}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+        });
     }
 
     @Test
@@ -1570,7 +1767,7 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n";
 
-                byte[] expectedResponse = ("HTTP/1.1 400 Bad request\r\n" +
+                String expectedResponse = "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1580,7 +1777,7 @@ public class IODispatcherTest {
                         "4d\r\n" +
                         "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
                         "00\r\n" +
-                        "\r\n").getBytes();
+                        "\r\n";
 
                 sendAndReceive(
                         NetworkFacadeImpl.INSTANCE,
@@ -2984,7 +3181,7 @@ public class IODispatcherTest {
     private void sendAndReceive(
             NetworkFacade nf,
             String request,
-            byte[] expectedResponse,
+            String response,
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
@@ -2998,6 +3195,7 @@ public class IODispatcherTest {
                 Assert.assertEquals(0, nf.connect(fd, sockAddr));
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
+                byte[] expectedResponse = response.getBytes();
                 final int len = Math.max(expectedResponse.length, request.length()) * 2;
                 long ptr = Unsafe.malloc(len);
                 try {
@@ -3059,6 +3257,27 @@ public class IODispatcherTest {
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+        testJsonQuery0(engine -> {
+            // create table with all column types
+            CairoTestUtils.createTestTable(
+                    engine.getConfiguration(),
+                    recordCount,
+                    new Rnd(),
+                    new TestRecord.ArrayBinarySequence());
+
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    request,
+                    expectedResponse,
+                    requestCount,
+                    0,
+                    false,
+                    false
+            );
+        });
+    }
+
+    private void testJsonQuery0(HttpClientCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
@@ -3112,25 +3331,8 @@ public class IODispatcherTest {
 
                 workerPool.start(LOG);
 
-                // create table with all column types
-                CairoTestUtils.createTestTable(
-                        engine.getConfiguration(),
-                        recordCount,
-                        new Rnd(),
-                        new TestRecord.ArrayBinarySequence());
-
-                byte[] expectedResponse2 = (expectedResponse).getBytes();
-
                 try {
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            request,
-                            expectedResponse2,
-                            requestCount,
-                            0,
-                            false,
-                            false
-                    );
+                    code.run(engine);
                 } finally {
                     workerPool.halt();
                 }
@@ -3160,6 +3362,11 @@ public class IODispatcherTest {
         Files.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
+    }
+
+    @FunctionalInterface
+    private interface HttpClientCode {
+        void run(CairoEngine engine) throws InterruptedException;
     }
 
     private static class HelloContext implements IOContext {
