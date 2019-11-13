@@ -459,8 +459,8 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
                         Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
                         Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextFloat(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble(), value.getDouble(5), 0.000000001);
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
@@ -516,8 +516,8 @@ public class CompactMapTest extends AbstractCairoTest {
                         key.put(record, sink);
                         MapValue value1 = key.createValue();
                         Assert.assertTrue(value1.isNew());
-                        value1.putFloat(4, rnd2.nextFloat2());
-                        value1.putDouble(5, rnd2.nextDouble2());
+                        value1.putFloat(4, rnd2.nextFloat());
+                        value1.putDouble(5, rnd2.nextDouble());
                         value1.putDate(6, rnd2.nextLong());
                         value1.putTimestamp(7, rnd2.nextLong());
                         value1.putBool(8, rnd2.nextBoolean());
@@ -537,8 +537,8 @@ public class CompactMapTest extends AbstractCairoTest {
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextFloat(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble(), value.getDouble(5), 0.000000001);
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
@@ -577,8 +577,8 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
             Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
             Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
-            Assert.assertEquals(rnd2.nextFloat2(), record.getFloat(4), 0.000001f);
-            Assert.assertEquals(rnd2.nextDouble2(), record.getDouble(5), 0.000000001);
+            Assert.assertEquals(rnd2.nextFloat(), record.getFloat(4), 0.000001f);
+            Assert.assertEquals(rnd2.nextDouble(), record.getDouble(5), 0.000000001);
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
@@ -612,13 +612,13 @@ public class CompactMapTest extends AbstractCairoTest {
             if (rnd.nextInt() % 4 == 0) {
                 Assert.assertTrue(Float.isNaN(record.getFloat(keyColumnOffset + 6)));
             } else {
-                Assert.assertEquals(rnd.nextFloat2(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
+                Assert.assertEquals(rnd.nextFloat(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
             }
 
             if (rnd.nextInt() % 4 == 0) {
                 Assert.assertTrue(Double.isNaN(record.getDouble(keyColumnOffset + 7)));
             } else {
-                Assert.assertEquals(rnd.nextDouble2(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
+                Assert.assertEquals(rnd.nextDouble(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
             }
 
             if (rnd.nextInt() % 4 == 0) {
@@ -677,8 +677,8 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putInt(1, rnd2.nextInt());
             value.putShort(2, rnd2.nextShort());
             value.putByte(3, rnd2.nextByte());
-            value.putFloat(4, rnd2.nextFloat2());
-            value.putDouble(5, rnd2.nextDouble2());
+            value.putFloat(4, rnd2.nextFloat());
+            value.putDouble(5, rnd2.nextDouble());
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());

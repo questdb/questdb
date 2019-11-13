@@ -71,8 +71,8 @@ public class PerformanceTest extends AbstractCairoTest {
                 for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
                     TableWriter.Row row = w.newRow(timestamp);
                     row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
-                    row.putDouble(2, Math.abs(r.nextDouble2()));
-                    row.putDouble(3, Math.abs(r.nextDouble2()));
+                    row.putDouble(2, Math.abs(r.nextDouble()));
+                    row.putDouble(3, Math.abs(r.nextDouble()));
                     row.putInt(4, Math.abs(r.nextInt()));
                     row.putInt(5, Math.abs(r.nextInt()));
                     row.putSym(6, "LXE");

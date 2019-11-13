@@ -87,11 +87,11 @@ public class Rnd {
         }
     }
 
-    public double nextDouble2() {
+    public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
 
-    public float nextFloat2() {
+    public float nextFloat() {
         return nextIntForDouble(24) * FLOAT_UNIT;
     }
 

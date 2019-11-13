@@ -43,19 +43,22 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonNull() throws SqlException {
+    public void testFirstNull() throws SqlException {
 
         compiler.compile("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            TableWriter.Row r = w.newRow();
+            r.append();
             for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.putFloat(0, rnd.nextFloat2());
+                r = w.newRow();
+                r.putFloat(0, rnd.nextFloat());
                 r.append();
             }
             w.commit();
         }
+
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
@@ -90,22 +93,19 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFirstNull() throws SqlException {
+    public void testNonNull() throws SqlException {
 
         compiler.compile("create table tab (f float)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
-            TableWriter.Row r = w.newRow();
-            r.append();
             for (int i = 100; i > 10; i--) {
-                r = w.newRow();
-                r.putFloat(0, rnd.nextFloat2());
+                TableWriter.Row r = w.newRow();
+                r.putFloat(0, rnd.nextFloat());
                 r.append();
             }
             w.commit();
         }
-
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();

@@ -106,13 +106,13 @@ public class CairoTestUtils {
                 if (rnd.nextInt() % 4 == 0) {
                     row.putFloat(6, Float.NaN);
                 } else {
-                    row.putFloat(6, rnd.nextFloat2());
+                    row.putFloat(6, rnd.nextFloat());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
                     row.putDouble(7, Double.NaN);
                 } else {
-                    row.putDouble(7, rnd.nextDouble2());
+                    row.putDouble(7, rnd.nextDouble());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {

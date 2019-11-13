@@ -220,7 +220,7 @@ public class VirtualMemoryTest {
             mem.putByte((byte) 1);
 
             for (int i = 0; i < n; i++) {
-                mem.putDouble(rnd.nextDouble2());
+                mem.putDouble(rnd.nextDouble());
             }
 
             assertEquals(7993, mem.getAppendOffset());
@@ -229,7 +229,7 @@ public class VirtualMemoryTest {
             long o = 1;
             assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextDouble2(), mem.getDouble(o), 0.00001);
+                assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
                 o += 8;
             }
         }
@@ -463,7 +463,7 @@ public class VirtualMemoryTest {
             mem.putByte((byte) 1);
 
             for (int i = 0; i < n; i++) {
-                mem.putDouble(o, rnd.nextDouble2());
+                mem.putDouble(o, rnd.nextDouble());
                 o += 8;
             }
 
@@ -471,7 +471,7 @@ public class VirtualMemoryTest {
             o = 1;
             assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextDouble2(), mem.getDouble(o), 0.00001);
+                assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
                 o += 8;
             }
         }
@@ -506,14 +506,14 @@ public class VirtualMemoryTest {
             mem.putByte((byte) 1);
 
             for (int i = 0; i < n; i++) {
-                mem.putFloat(rnd.nextFloat2());
+                mem.putFloat(rnd.nextFloat());
             }
 
             rnd.reset();
             long o = 1;
             assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextFloat2(), mem.getFloat(o), 0.00001f);
+                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
                 o += 4;
             }
         }
@@ -540,7 +540,7 @@ public class VirtualMemoryTest {
             mem.putByte((byte) 1);
 
             for (int i = 0; i < n; i++) {
-                mem.putFloat(o, rnd.nextFloat2());
+                mem.putFloat(o, rnd.nextFloat());
                 o += 4;
             }
 
@@ -548,7 +548,7 @@ public class VirtualMemoryTest {
             o = 1;
             assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextFloat2(), mem.getFloat(o), 0.00001f);
+                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
                 o += 4;
             }
         }

@@ -683,7 +683,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
                     r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
                     r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble2());
+                    r.putDouble(3, rnd.nextDouble());
                     r.append();
                 }
                 writer.commit();
@@ -923,7 +923,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
                 TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
                 TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
-                Assert.assertEquals(rnd.nextDouble2(), record.getDouble(3), 0.0000001d);
+                Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
                 record.setRecordIndex(recordIndex + 1);
                 rowCount++;
             }
@@ -1080,7 +1080,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
                     r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
                     r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
-                    r.putDouble(3, rnd.nextDouble2());
+                    r.putDouble(3, rnd.nextDouble());
                     r.append();
                 }
                 writer.commit();
@@ -1181,7 +1181,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
-                        r.putDouble(3, rnd.nextDouble2());
+                        r.putDouble(3, rnd.nextDouble());
                         r.append();
                     }
                     writer.commit();
@@ -1401,7 +1401,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
                     r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
                     r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble2());
+                    r.putDouble(3, rnd.nextDouble());
                     r.append();
                 }
                 writer.commit();
@@ -1500,7 +1500,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
-                        r.putDouble(3, rnd.nextDouble2());
+                        r.putDouble(3, rnd.nextDouble());
                         r.append();
                     }
                     writer.commit();
@@ -2217,7 +2217,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.putSym(0, symA[rnd.nextPositiveInt() % S]);
                     r.putSym(1, symB[rnd.nextPositiveInt() % S]);
                     r.putSym(2, symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble2());
+                    r.putDouble(3, rnd.nextDouble());
                     r.append();
                 }
                 writer.commit();

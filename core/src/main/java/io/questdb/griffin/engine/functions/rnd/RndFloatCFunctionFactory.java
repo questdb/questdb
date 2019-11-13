@@ -65,7 +65,7 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
             if ((rnd.nextInt() % nanRate) == 1) {
                 return Float.NaN;
             }
-            return rnd.nextFloat2();
+            return rnd.nextFloat();
         }
     }
 }

@@ -59,12 +59,12 @@ public class TestRecord implements Record {
 
     @Override
     public double getDouble(int col) {
-        return rnd.nextDouble2();
+        return rnd.nextDouble();
     }
 
     @Override
     public float getFloat(int col) {
-        return rnd.nextFloat2();
+        return rnd.nextFloat();
     }
 
     @Override

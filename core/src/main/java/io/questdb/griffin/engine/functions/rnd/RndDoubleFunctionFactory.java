@@ -55,7 +55,7 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return rnd.nextDouble2();
+            return rnd.nextDouble();
         }
     }
 }

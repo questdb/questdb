@@ -68,8 +68,8 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putShort(rnd.nextShort());
                 key.putInt(rnd.nextInt());
                 key.putLong(rnd.nextLong());
-                key.putFloat(rnd.nextFloat2());
-                key.putDouble(rnd.nextDouble2());
+                key.putFloat(rnd.nextFloat());
+                key.putDouble(rnd.nextDouble());
                 if ((rnd.nextPositiveInt() % 4) == 0) {
                     key.putStr(null);
                 } else {
@@ -86,8 +86,8 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putShort(1, rnd.nextShort());
                 value.putInt(2, rnd.nextInt());
                 value.putLong(3, rnd.nextLong());
-                value.putFloat(4, rnd.nextFloat2());
-                value.putDouble(5, rnd.nextDouble2());
+                value.putFloat(4, rnd.nextFloat());
+                value.putDouble(5, rnd.nextDouble());
                 value.putBool(6, rnd.nextBoolean());
                 value.putDate(7, rnd.nextLong());
             }
@@ -102,8 +102,8 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putShort(rnd.nextShort());
                 key.putInt(rnd.nextInt());
                 key.putLong(rnd.nextLong());
-                key.putFloat(rnd.nextFloat2());
-                key.putDouble(rnd.nextDouble2());
+                key.putFloat(rnd.nextFloat());
+                key.putDouble(rnd.nextDouble());
                 if ((rnd.nextPositiveInt() % 4) == 0) {
                     key.putStr(null);
                 } else {
@@ -120,8 +120,8 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextShort(), value.getShort(1));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(2));
                 Assert.assertEquals(rnd.nextLong(), value.getLong(3));
-                Assert.assertEquals(rnd.nextFloat2(), value.getFloat(4), 0.000000001f);
-                Assert.assertEquals(rnd.nextDouble2(), value.getDouble(5), 0.000000001d);
+                Assert.assertEquals(rnd.nextFloat(), value.getFloat(4), 0.000000001f);
+                Assert.assertEquals(rnd.nextDouble(), value.getDouble(5), 0.000000001d);
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
             }
@@ -168,7 +168,7 @@ public class FastMapTest extends AbstractCairoTest {
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
 
-                value.putDouble(0, rnd.nextDouble2());
+                value.putDouble(0, rnd.nextDouble());
             }
 
 
@@ -188,7 +188,7 @@ public class FastMapTest extends AbstractCairoTest {
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
-                Assert.assertEquals(rnd.nextDouble2(), value.getDouble(0), 0.000000001d);
+                Assert.assertEquals(rnd.nextDouble(), value.getDouble(0), 0.000000001d);
             }
 
 
@@ -603,8 +603,8 @@ public class FastMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
                         Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
                         Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextFloat(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble(), value.getDouble(5), 0.000000001);
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
@@ -662,8 +662,8 @@ public class FastMapTest extends AbstractCairoTest {
                         key.put(record, sink);
                         MapValue value = key.createValue();
                         Assert.assertTrue(value.isNew());
-                        value.putFloat(4, rnd2.nextFloat2());
-                        value.putDouble(5, rnd2.nextDouble2());
+                        value.putFloat(4, rnd2.nextFloat());
+                        value.putDouble(5, rnd2.nextDouble());
                         value.putDate(6, rnd2.nextLong());
                         value.putTimestamp(7, rnd2.nextLong());
                         value.putBool(8, rnd2.nextBoolean());
@@ -683,8 +683,8 @@ public class FastMapTest extends AbstractCairoTest {
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextFloat(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble(), value.getDouble(5), 0.000000001);
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
@@ -706,8 +706,8 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextShort(), record.getShort(9));
             Assert.assertEquals(rnd.nextInt(), record.getInt(10));
             Assert.assertEquals(rnd.nextLong(), record.getLong(11));
-            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(12), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(13), 0.000000001d);
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(12), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(13), 0.000000001d);
 
 
             if ((rnd.nextPositiveInt() % 4) == 0) {
@@ -728,40 +728,10 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextShort(), record.getShort(1));
             Assert.assertEquals(rnd.nextInt(), record.getInt(2));
             Assert.assertEquals(rnd.nextLong(), record.getLong(3));
-            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(4), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(5), 0.000000001d);
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(5), 0.000000001d);
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(6));
             Assert.assertEquals(rnd.nextLong(), record.getDate(7));
-        }
-    }
-
-    private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            long256.setLong0(rnd.nextLong());
-            long256.setLong1(rnd.nextLong());
-            long256.setLong2(rnd.nextLong());
-            long256.setLong3(rnd.nextLong());
-
-            Long256 long256a = record.getLong256A(1);
-            Long256 long256b = record.getLong256B(1);
-
-            Assert.assertEquals(long256a.getLong0(), long256.getLong0());
-            Assert.assertEquals(long256a.getLong1(), long256.getLong1());
-            Assert.assertEquals(long256a.getLong2(), long256.getLong2());
-            Assert.assertEquals(long256a.getLong3(), long256.getLong3());
-
-            Assert.assertEquals(long256b.getLong0(), long256.getLong0());
-            Assert.assertEquals(long256b.getLong1(), long256.getLong1());
-            Assert.assertEquals(long256b.getLong2(), long256.getLong2());
-            Assert.assertEquals(long256b.getLong3(), long256.getLong3());
-
-            Assert.assertEquals(rnd.nextChar(), record.getChar(2));
-
-
-            // value part, it comes first in record
-
-            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(0), 0.000000001d);
         }
     }
 
@@ -776,8 +746,8 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
             Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
             Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
-            Assert.assertEquals(rnd2.nextFloat2(), record.getFloat(4), 0.000001f);
-            Assert.assertEquals(rnd2.nextDouble2(), record.getDouble(5), 0.000000001);
+            Assert.assertEquals(rnd2.nextFloat(), record.getFloat(4), 0.000001f);
+            Assert.assertEquals(rnd2.nextDouble(), record.getDouble(5), 0.000000001);
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
@@ -811,13 +781,13 @@ public class FastMapTest extends AbstractCairoTest {
             if (rnd.nextInt() % 4 == 0) {
                 Assert.assertTrue(Float.isNaN(record.getFloat(keyColumnOffset + 6)));
             } else {
-                Assert.assertEquals(rnd.nextFloat2(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
+                Assert.assertEquals(rnd.nextFloat(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
             }
 
             if (rnd.nextInt() % 4 == 0) {
                 Assert.assertTrue(Double.isNaN(record.getDouble(keyColumnOffset + 7)));
             } else {
-                Assert.assertEquals(rnd.nextDouble2(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
+                Assert.assertEquals(rnd.nextDouble(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
             }
 
             if (rnd.nextInt() % 4 == 0) {
@@ -855,6 +825,36 @@ public class FastMapTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(5000, c);
+    }
+
+    private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            long256.setLong0(rnd.nextLong());
+            long256.setLong1(rnd.nextLong());
+            long256.setLong2(rnd.nextLong());
+            long256.setLong3(rnd.nextLong());
+
+            Long256 long256a = record.getLong256A(1);
+            Long256 long256b = record.getLong256B(1);
+
+            Assert.assertEquals(long256a.getLong0(), long256.getLong0());
+            Assert.assertEquals(long256a.getLong1(), long256.getLong1());
+            Assert.assertEquals(long256a.getLong2(), long256.getLong2());
+            Assert.assertEquals(long256a.getLong3(), long256.getLong3());
+
+            Assert.assertEquals(long256b.getLong0(), long256.getLong0());
+            Assert.assertEquals(long256b.getLong1(), long256.getLong1());
+            Assert.assertEquals(long256b.getLong2(), long256.getLong2());
+            Assert.assertEquals(long256b.getLong3(), long256.getLong3());
+
+            Assert.assertEquals(rnd.nextChar(), record.getChar(2));
+
+
+            // value part, it comes first in record
+
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(0), 0.000000001d);
+        }
     }
 
     private void assertDupes(FastMap map, Rnd rnd, int n) {
@@ -933,13 +933,13 @@ public class FastMapTest extends AbstractCairoTest {
                 if (rnd.nextInt() % 4 == 0) {
                     row.putFloat(6, Float.NaN);
                 } else {
-                    row.putFloat(6, rnd.nextFloat2());
+                    row.putFloat(6, rnd.nextFloat());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
                     row.putDouble(7, Double.NaN);
                 } else {
-                    row.putDouble(7, rnd.nextDouble2());
+                    row.putDouble(7, rnd.nextDouble());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
@@ -980,8 +980,8 @@ public class FastMapTest extends AbstractCairoTest {
             value.putInt(1, rnd2.nextInt());
             value.putShort(2, rnd2.nextShort());
             value.putByte(3, rnd2.nextByte());
-            value.putFloat(4, rnd2.nextFloat2());
-            value.putDouble(5, rnd2.nextDouble2());
+            value.putFloat(4, rnd2.nextFloat());
+            value.putDouble(5, rnd2.nextDouble());
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());

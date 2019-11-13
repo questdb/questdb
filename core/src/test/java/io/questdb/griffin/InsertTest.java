@@ -266,8 +266,8 @@ public class InsertTest extends AbstractGriffinTest {
                         bindVariableService.setInt(0, rnd.nextInt());
                         bindVariableService.setShort(1, rnd.nextShort());
                         bindVariableService.setByte(2, rnd.nextByte());
-                        bindVariableService.setDouble(3, rnd.nextDouble2());
-                        bindVariableService.setFloat(4, rnd.nextFloat2());
+                        bindVariableService.setDouble(3, rnd.nextDouble());
+                        bindVariableService.setFloat(4, rnd.nextFloat());
                         bindVariableService.setLong(5, rnd.nextLong());
                         bindVariableService.setStr(6, rnd.nextChars(6));
                         bindVariableService.setStr(7, rnd.nextChars(1));
@@ -292,8 +292,8 @@ public class InsertTest extends AbstractGriffinTest {
                         Assert.assertEquals(rnd.nextInt(), record.getInt(0));
                         Assert.assertEquals(rnd.nextShort(), record.getShort(1));
                         Assert.assertEquals(rnd.nextByte(), record.getByte(2));
-                        Assert.assertEquals(rnd.nextDouble2(), record.getDouble(3), 0.0001);
-                        Assert.assertEquals(rnd.nextFloat2(), record.getFloat(4), 0.000001);
+                        Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0001);
+                        Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.000001);
                         Assert.assertEquals(rnd.nextLong(), record.getLong(5));
                         TestUtils.assertEquals(rnd.nextChars(6), record.getStr(6));
                         TestUtils.assertEquals(rnd.nextChars(1), record.getSym(7));

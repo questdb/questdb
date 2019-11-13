@@ -56,7 +56,7 @@ public class RndFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return rnd.nextFloat2();
+            return rnd.nextFloat();
         }
     }
 }

@@ -59,8 +59,8 @@ public class TableReaderReloadTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextInt(), record.getInt(0));
             Assert.assertEquals(rnd.nextShort(), record.getShort(1));
             Assert.assertEquals(rnd.nextByte(), record.getByte(2));
-            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(3), 0.00001);
-            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(4), 0.00001);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.00001);
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.00001);
             Assert.assertEquals(rnd.nextLong(), record.getLong(5));
             TestUtils.assertEquals(rnd.nextChars(3), record.getStr(6));
             TestUtils.assertEquals(rnd.nextChars(2), record.getSym(7));
@@ -77,8 +77,8 @@ public class TableReaderReloadTest extends AbstractCairoTest {
             row.putInt(0, rnd.nextInt());
             row.putShort(1, rnd.nextShort());
             row.putByte(2, rnd.nextByte());
-            row.putDouble(3, rnd.nextDouble2());
-            row.putFloat(4, rnd.nextFloat2());
+            row.putDouble(3, rnd.nextDouble());
+            row.putFloat(4, rnd.nextFloat());
             row.putLong(5, rnd.nextLong());
             row.putStr(6, rnd.nextChars(3));
             row.putSym(7, rnd.nextChars(2));

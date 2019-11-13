@@ -61,8 +61,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putInt(0, rnd.nextInt());
                 row.putShort(1, rnd.nextShort());
                 row.putByte(2, rnd.nextByte());
-                row.putDouble(3, rnd.nextDouble2());
-                row.putFloat(4, rnd.nextFloat2());
+                row.putDouble(3, rnd.nextDouble());
+                row.putFloat(4, rnd.nextFloat());
                 row.putLong(5, rnd.nextLong());
                 row.putSym(6, rnd.nextChars(10));
                 row.putBool(7, rnd.nextBoolean());
@@ -106,8 +106,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextInt(), value.getInt(0));
                     Assert.assertEquals(rnd.nextShort(), value.getShort(1));
                     Assert.assertEquals(rnd.nextByte(), value.getByte(2));
-                    Assert.assertEquals(rnd.nextDouble2(), value.getDouble(3), 0.000001);
-                    Assert.assertEquals(rnd.nextFloat2(), value.getFloat(4), 0.000001f);
+                    Assert.assertEquals(rnd.nextDouble(), value.getDouble(3), 0.000001);
+                    Assert.assertEquals(rnd.nextFloat(), value.getFloat(4), 0.000001f);
                     Assert.assertEquals(rnd.nextLong(), value.getLong(5));
                     Assert.assertEquals(symbolTable.getQuick(rnd.nextChars(10)), value.getInt(6));
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
@@ -145,8 +145,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putInt(0, rnd.nextInt());
                 row.putShort(1, rnd.nextShort());
                 row.putByte(2, rnd.nextByte());
-                row.putDouble(3, rnd.nextDouble2());
-                row.putFloat(4, rnd.nextFloat2());
+                row.putDouble(3, rnd.nextDouble());
+                row.putFloat(4, rnd.nextFloat());
                 row.putLong(5, rnd.nextLong());
                 row.putSym(6, rnd.nextChars(10));
                 row.putBool(7, rnd.nextBoolean());
@@ -197,8 +197,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     rnd.nextInt(); // 0
                     rnd.nextShort(); // 1
                     rnd.nextByte(); // 2
-                    rnd.nextDouble2(); // 3
-                    rnd.nextFloat2(); // 4
+                    rnd.nextDouble(); // 3
+                    rnd.nextFloat(); // 4
                     rnd.nextLong(); // 5
                     Assert.assertEquals(symbolTable.getQuick(rnd.nextChars(10)), value.getInt(2)); // 6
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(0)); // 7

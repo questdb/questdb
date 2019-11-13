@@ -65,7 +65,7 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
             if ((rnd.nextInt() % nanRate) == 1) {
                 return Double.NaN;
             }
-            return rnd.nextDouble2();
+            return rnd.nextDouble();
         }
     }
 }
