@@ -28,37 +28,44 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndDateFunctionFactory implements FunctionFactory {
+public class RndByteFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "rnd_date()";
+        return "rnd_byte()";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        return new Func(position, configuration);
+
+        return new RndFunction(position, configuration);
+
     }
 
-    private static class Func extends DateFunction implements StatelessFunction {
-        private final long lo;
-        private final long range;
+    private static class RndFunction extends ByteFunction implements StatelessFunction {
+        private final byte lo;
+        private final byte range;
         private final Rnd rnd;
 
-        public Func(int position, CairoConfiguration configuration) {
+        public RndFunction(int position, CairoConfiguration configuration) {
             super(position);
-            this.lo = 0;
-            this.range = 10_000_000;
+            this.lo = 20;
+            this.range = (byte) (127 - lo + 1);
             this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
-        public long getDate(Record rec) {
-            return lo + rnd.nextPositiveLong() % range;
+        public byte getByte(Record rec) {
+            short s = rnd.nextShort();
+            if (s < 0) {
+                return (byte) (lo - s % range);
+            }
+            return (byte) (lo + s % range);
         }
     }
 }

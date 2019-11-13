@@ -34,7 +34,7 @@ import io.questdb.std.Rnd;
 import org.junit.Before;
 import org.junit.Test;
 
-public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
 
@@ -129,7 +129,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RndBinFunctionFactory();
+        return new RndBinCCCFunctionFactory();
     }
 
     private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {

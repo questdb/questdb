@@ -37,34 +37,25 @@ public class RndFloatFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "rnd_float(i)";
+        return "rnd_float()";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        int nanRate = args.getQuick(0).getInt(null);
-        if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
-        }
-        return new RndFunction(position, nanRate, configuration);
+        return new RndFunction(position, configuration);
     }
 
     private static class RndFunction extends FloatFunction implements StatelessFunction {
 
-        private final int nanRate;
         private final Rnd rnd;
 
-        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
+        public RndFunction(int position, CairoConfiguration configuration) {
             super(position);
-            this.nanRate = nanRate + 1;
             this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public float getFloat(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Float.NaN;
-            }
             return rnd.nextFloat2();
         }
     }

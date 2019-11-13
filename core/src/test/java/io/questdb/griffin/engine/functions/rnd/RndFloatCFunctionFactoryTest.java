@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RndFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndFloatCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNaNRate() {
         assertFailure(10, "invalid NaN rate", -1);
@@ -55,7 +55,7 @@ public class RndFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RndFloatFunctionFactory();
+        return new RndFloatCFunctionFactory();
     }
 
     private void assertFunction(Invocation invocation, boolean expectNaN) {

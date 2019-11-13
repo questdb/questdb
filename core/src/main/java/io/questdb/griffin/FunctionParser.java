@@ -335,7 +335,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private Function checkAndCreateFunction(FunctionFactory factory, ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    private Function checkAndCreateFunction(FunctionFactory factory, @Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         Function function;
         try {
             function = factory.newInstance(args, position, configuration);
@@ -447,7 +447,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         );
     }
 
-    private Function createFunction(ExpressionNode node, ObjList<Function> args) throws SqlException {
+    private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);

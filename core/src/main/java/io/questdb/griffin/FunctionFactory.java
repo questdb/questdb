@@ -26,6 +26,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public interface FunctionFactory {
 
@@ -63,5 +64,5 @@ public interface FunctionFactory {
         return false;
     }
 
-    Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
+    Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
 }

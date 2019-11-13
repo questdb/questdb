@@ -28,37 +28,44 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndDateFunctionFactory implements FunctionFactory {
+public class RndFloatCFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "rnd_date()";
+        return "rnd_float(i)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        return new Func(position, configuration);
+        int nanRate = args.getQuick(0).getInt(null);
+        if (nanRate < 0) {
+            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
+        }
+        return new RndFunction(position, nanRate, configuration);
     }
 
-    private static class Func extends DateFunction implements StatelessFunction {
-        private final long lo;
-        private final long range;
+    private static class RndFunction extends FloatFunction implements StatelessFunction {
+
+        private final int nanRate;
         private final Rnd rnd;
 
-        public Func(int position, CairoConfiguration configuration) {
+        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
             super(position);
-            this.lo = 0;
-            this.range = 10_000_000;
+            this.nanRate = nanRate + 1;
             this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
-        public long getDate(Record rec) {
-            return lo + rnd.nextPositiveLong() % range;
+        public float getFloat(Record rec) {
+            if ((rnd.nextInt() % nanRate) == 1) {
+                return Float.NaN;
+            }
+            return rnd.nextFloat2();
         }
     }
 }

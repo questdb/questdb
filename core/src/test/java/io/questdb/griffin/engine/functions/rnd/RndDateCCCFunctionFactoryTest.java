@@ -32,7 +32,7 @@ import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RndDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndDateCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testInvalidNaNRate() {
         assertFailure(35, "invalid NaN rate", 0L, 10000L, -2);
@@ -78,6 +78,6 @@ public class RndDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RndDateFunctionFactory();
+        return new RndDateCCCFunctionFactory();
     }
 }
