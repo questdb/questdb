@@ -312,7 +312,7 @@ public final class SqlParser {
             model.setFileName(expectExpr(lexer));
             return model;
         }
-        return null;
+        throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
     }
 
     private ExecutionModel parseCreateStatement(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {

@@ -197,13 +197,21 @@ class GroupByUtils {
 
     static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         if (value.isNew()) {
-            for (int i = 0; i < n; i++) {
-                groupByFunctions.getQuick(i).computeFirst(value, record);
-            }
+            updateNew(groupByFunctions, n, value, record);
         } else {
-            for (int i = 0; i < n; i++) {
-                groupByFunctions.getQuick(i).computeNext(value, record);
-            }
+            updateExisting(groupByFunctions, n, value, record);
+        }
+    }
+
+    private static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+        for (int i = 0; i < n; i++) {
+            groupByFunctions.getQuick(i).computeNext(value, record);
+        }
+    }
+
+    private static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+        for (int i = 0; i < n; i++) {
+            groupByFunctions.getQuick(i).computeFirst(value, record);
         }
     }
 

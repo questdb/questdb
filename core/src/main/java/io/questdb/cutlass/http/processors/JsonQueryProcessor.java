@@ -137,6 +137,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 executeCachedSelect(context, dispatcher, state, socket, factory);
             } else {
                 // new query
+                LOG.info().$("exec [q='").$(state.query).$("']").$();
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 queryExecutors.getQuick(cc.getType()).execute(
                         context,
