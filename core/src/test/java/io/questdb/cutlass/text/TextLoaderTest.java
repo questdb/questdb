@@ -1735,7 +1735,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "    \"name\": \"date\",\n" +
                     "    \"type\": \"TIMESTAMP\",\n" +
                     "    \"pattern\": \"d MMMM y г.\",\n" +
-                    "    \"locale\": \"ru-RU\"\n" +
+                    "    \"locale\": \"ru-RU\",\n" +
+                    "    \"utf8\": \"true\"\n" +
                     "  }\n" +
                     "]"));
 
@@ -1770,7 +1771,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "  {\n" +
                     "    \"name\": \"date\",\n" +
                     "    \"type\": \"TIMESTAMP\",\n" +
-                    "    \"pattern\": \"d MMMM y г.\"\n" +
+                    "    \"pattern\": \"d MMMM y г.\",\n" +
+                    "    \"utf8\": true\n" +
                     "  }\n" +
                     "]"));
 

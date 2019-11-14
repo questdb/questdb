@@ -8,7 +8,8 @@
     },
     {
       "format": "yyyy-MM-ddTHH:mm:ss.SSSz",
-      "locale": "en-US"
+      "locale": "en-US",
+      "utf8": false
     },
     {
       "format": "MM/dd/y"
@@ -16,7 +17,8 @@
   ],
   "timestamp": [
     {
-      "format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz"
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz",
+      "utf8": false
     }
   ]
 }

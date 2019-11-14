@@ -25,22 +25,15 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateLocale;
 
 public class DateAdapter extends AbstractTypeAdapter implements Mutable {
-    private final DirectCharSink utf8Sink;
     private DateLocale locale;
     private DateFormat format;
-
-    public DateAdapter(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
-    }
 
     @Override
     public void clear() {
@@ -65,9 +58,7 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
-        row.putDate(column, format.parse(utf8Sink, locale));
+        row.putDate(column, format.parse(value, locale));
     }
 
     public DateAdapter of(DateFormat format, DateLocale locale) {

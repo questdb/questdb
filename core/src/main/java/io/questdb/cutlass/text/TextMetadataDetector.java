@@ -29,7 +29,6 @@ import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.StringSink;
@@ -57,25 +56,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     ) {
         this.typeManager = typeManager;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
-    }
-
-    public static boolean utf8Decode(long lo, long hi, CharSink sink) {
-        long p = lo;
-        while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
-            if (b < 0) {
-                int n = Chars.utf8DecodeMultiByte(p, hi, b, sink);
-                if (n == -1) {
-                    // UTF8 error
-                    return false;
-                }
-                p += n;
-            } else {
-                sink.put((char) b);
-                ++p;
-            }
-        }
-        return true;
     }
 
     @Override
@@ -280,7 +260,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         for (int i = 0; i < hi; i++) {
             DirectByteCharSequence value = values.getQuick(i);
             utf8Sink.clear();
-            if (utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
+            if (Chars.utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();

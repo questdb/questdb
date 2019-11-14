@@ -52,6 +52,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_TYPE = 2;
     private static final int P_PATTERN = 3;
     private static final int P_LOCALE = 4;
+    private static final int P_UTF8 = 5;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
     private final TimestampLocaleFactory timestampLocaleFactory;
@@ -72,6 +73,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private int bufSize = 0;
     private CharSequence tableName;
     private int localePosition;
+    private boolean utf8 = false;
 
     public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.columnNames = new ObjList<>();
@@ -82,16 +84,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.timestampLocaleFactory = typeManager.getInputFormatConfiguration().getTimestampLocaleFactory();
         this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
         this.typeManager = typeManager;
-    }
-
-    private static void checkInputs(int position, CharSequence name, int type) throws JsonException {
-        if (name == null) {
-            throw JsonException.$(position, "Missing 'name' property");
-        }
-
-        if (type == -1) {
-            throw JsonException.$(position, "Missing 'type' property");
-        }
     }
 
     @Override
@@ -160,6 +152,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         locale = copy(tag);
                         localePosition = position;
                         break;
+                    case P_UTF8:
+                        utf8 = Chars.equalsLowerCaseAscii("true", tag);
+                        break;
                     default:
                         LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
                         break;
@@ -176,12 +171,23 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         }
     }
 
+    private static void checkInputs(int position, CharSequence name, int type) throws JsonException {
+        if (name == null) {
+            throw JsonException.$(position, "Missing 'name' property");
+        }
+
+        if (type == -1) {
+            throw JsonException.$(position, "Missing 'type' property");
+        }
+    }
+
     private void clearStage() {
         name = null;
         type = -1;
         pattern = null;
         locale = null;
         localePosition = 0;
+        utf8 = false;
     }
 
     private CharSequence copy(CharSequence tag) {
@@ -237,7 +243,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 if (pattern == null) {
                     throw JsonException.$(0, "DATE format pattern is required");
                 }
-                columnTypes.add(typeManager.nextTimestampAdapter().of(timestampFormatFactory.get(pattern), timestampLocale));
+                columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
                 break;
             default:
                 columnTypes.add(typeManager.getTypeAdapter(type));
@@ -282,5 +288,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         propertyNameMap.put("type", P_TYPE);
         propertyNameMap.put("pattern", P_PATTERN);
         propertyNameMap.put("locale", P_LOCALE);
+        propertyNameMap.put("utf8", P_UTF8);
     }
 }

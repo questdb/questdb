@@ -25,9 +25,11 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.json.JsonParser;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.TimestampFormat;
@@ -50,14 +52,18 @@ public class InputFormatConfiguration {
     private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
     private static final int STATE_EXPECT_DATE_FORMAT_VALUE = 4;
     private static final int STATE_EXPECT_DATE_LOCALE_VALUE = 5;
+    private static final int STATE_EXPECT_DATE_UTF8_VALUE = 10;
     private static final int STATE_EXPECT_TIMESTAMP_FORMAT_VALUE = 6;
     private static final int STATE_EXPECT_TIMESTAMP_LOCALE_VALUE = 7;
     private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
     private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
+    private static final int STATE_EXPECT_TIMESTAMP_UTF8_VALUE = 11;
     private final ObjList<DateFormat> dateFormats = new ObjList<>();
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
+    private final IntList dateUtf8Flags = new IntList();
     private final ObjList<TimestampFormat> timestampFormats = new ObjList<>();
     private final ObjList<TimestampLocale> timestampLocales = new ObjList<>();
+    private final IntList timestampUtf8Flags = new IntList();
     private final DateFormatFactory dateFormatFactory;
     private final DateLocaleFactory dateLocaleFactory;
     private final TimestampFormatFactory timestampFormatFactory;
@@ -65,8 +71,10 @@ public class InputFormatConfiguration {
     private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
+    private boolean jsonDateUtf8;
     private TimestampFormat jsonTimestampFormat;
     private TimestampLocale jsonTimestampLocale;
+    private boolean jsonTimestampUtf8;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
@@ -83,13 +91,17 @@ public class InputFormatConfiguration {
     public void clear() {
         dateFormats.clear();
         dateLocales.clear();
+        dateUtf8Flags.clear();
         timestampFormats.clear();
         timestampLocales.clear();
+        timestampUtf8Flags.clear();
         jsonState = STATE_EXPECT_TOP;
         jsonDateFormat = null;
         jsonDateLocale = null;
+        jsonDateUtf8 = false;
         jsonTimestampFormat = null;
         jsonTimestampLocale = null;
+        jsonTimestampUtf8 = false;
     }
 
     public DateFormatFactory getDateFormatFactory() {
@@ -108,6 +120,10 @@ public class InputFormatConfiguration {
         return dateLocales;
     }
 
+    public IntList getDateUtf8Flags() {
+        return dateUtf8Flags;
+    }
+
     public TimestampFormatFactory getTimestampFormatFactory() {
         return timestampFormatFactory;
     }
@@ -124,10 +140,16 @@ public class InputFormatConfiguration {
         return timestampLocales;
     }
 
+    public IntList getTimestampUtf8Flags() {
+        return timestampUtf8Flags;
+    }
+
     public void parseConfiguration(JsonLexer jsonLexer, String adapterSetConfigurationFileName) throws JsonException {
 
         this.clear();
         jsonLexer.clear();
+
+        final JsonParser parser = this::onJsonEvent;
 
         LOG.info().$("loading [from=").$(adapterSetConfigurationFileName).$(']').$();
         try (InputStream stream = this.getClass().getResourceAsStream(adapterSetConfigurationFileName)) {
@@ -146,7 +168,7 @@ public class InputFormatConfiguration {
                     for (int i = 0; i < len; i++) {
                         Unsafe.getUnsafe().putByte(memBuffer + i, heapBuffer[i]);
                     }
-                    jsonLexer.parse(memBuffer, memBuffer + len, this::onJsonEvent);
+                    jsonLexer.parse(memBuffer, memBuffer + len, parser);
                 }
                 jsonLexer.clear();
             } finally {
@@ -192,6 +214,7 @@ public class InputFormatConfiguration {
                         }
                         dateFormats.add(jsonDateFormat);
                         dateLocales.add(jsonDateLocale == null ? DateLocaleFactory.INSTANCE.getDefaultDateLocale() : jsonDateLocale);
+                        dateUtf8Flags.add(jsonDateUtf8 ? 1 : 0);
                         break;
                     case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
                         if (jsonTimestampFormat == null) {
@@ -200,6 +223,7 @@ public class InputFormatConfiguration {
 
                         timestampFormats.add(jsonTimestampFormat);
                         timestampLocales.add(jsonTimestampLocale == null ? TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale() : jsonTimestampLocale);
+                        timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);
                         break;
                     default:
                         // the only time we get here would be when
@@ -225,10 +249,10 @@ public class InputFormatConfiguration {
                         }
                         break;
                     case STATE_EXPECT_DATE_FORMAT_ENTRY:
-                        processEntry(tag, position, STATE_EXPECT_DATE_FORMAT_VALUE, STATE_EXPECT_DATE_LOCALE_VALUE);
+                        processEntry(tag, position, STATE_EXPECT_DATE_FORMAT_VALUE, STATE_EXPECT_DATE_LOCALE_VALUE, STATE_EXPECT_DATE_UTF8_VALUE);
                         break;
                     default:
-                        processEntry(tag, position, STATE_EXPECT_TIMESTAMP_FORMAT_VALUE, STATE_EXPECT_TIMESTAMP_LOCALE_VALUE);
+                        processEntry(tag, position, STATE_EXPECT_TIMESTAMP_FORMAT_VALUE, STATE_EXPECT_TIMESTAMP_LOCALE_VALUE, STATE_EXPECT_TIMESTAMP_UTF8_VALUE);
                         break;
                 }
                 break;
@@ -267,6 +291,14 @@ public class InputFormatConfiguration {
                         }
                         jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
                         break;
+                    case STATE_EXPECT_TIMESTAMP_UTF8_VALUE:
+                        jsonTimestampUtf8 = Chars.equalsLowerCaseAscii(tag, "true");
+                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
+                        break;
+                    case STATE_EXPECT_DATE_UTF8_VALUE:
+                        jsonDateUtf8 = Chars.equalsLowerCaseAscii(tag, "true");
+                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;
+                        break;
                     default:
                         // we are picking up values from attributes we don't expect
                         throw JsonException.$(position, "array expected (value)");
@@ -292,11 +324,13 @@ public class InputFormatConfiguration {
         }
     }
 
-    private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue) throws JsonException {
+    private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue, int stateExpectUtf8Value) throws JsonException {
         if (Chars.equals(tag, "format")) {
             jsonState = stateExpectFormatValue; // expect date format
         } else if (Chars.equals(tag, "locale")) {
             jsonState = stateExpectLocaleValue;
+        } else if (Chars.equals(tag, "utf8")) {
+            jsonState = stateExpectUtf8Value;
         } else {
             // unknown tag name?
             throw JsonException.$(position, "unknown [tag=").put(tag).put(']');

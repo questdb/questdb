@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -39,7 +40,8 @@ public class TypeManager implements Mutable {
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final int probeCount;
     private final StringAdapter stringAdapter;
-    private final ObjectPool<DateAdapter> dateAdapterPool;
+    private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
+    private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final SymbolAdapter symbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -48,8 +50,9 @@ public class TypeManager implements Mutable {
             TextConfiguration configuration,
             DirectCharSink utf8Sink
     ) {
-        this.dateAdapterPool = new ObjectPool<>(() -> new DateAdapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
-        this.timestampAdapterPool = new ObjectPool<>(() -> new TimestampAdapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
+        this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
+        this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
+        this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf8Sink);
         this.symbolAdapter = new SymbolAdapter(utf8Sink);
@@ -57,13 +60,23 @@ public class TypeManager implements Mutable {
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
         final ObjList<DateLocale> dateLocales = inputFormatConfiguration.getDateLocales();
+        final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
-            probes.add(new DateAdapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+            if (dateUtf8Flags.getQuick(i) == 1) {
+                probes.add(new DateUtf8Adapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+            } else {
+                probes.add(new DateAdapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+            }
         }
         final ObjList<TimestampFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
         final ObjList<TimestampLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
+        final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
-            probes.add(new TimestampAdapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+            if (timestampUtf8Flags.getQuick(i) == 1) {
+                probes.add(new TimestampUtf8Adapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+            } else {
+                probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+            }
         }
         this.probeCount = probes.size();
     }
@@ -71,6 +84,7 @@ public class TypeManager implements Mutable {
     @Override
     public void clear() {
         dateAdapterPool.clear();
+        timestampUtf8AdapterPool.clear();
         timestampAdapterPool.clear();
     }
 
@@ -115,12 +129,20 @@ public class TypeManager implements Mutable {
         }
     }
 
-    public DateAdapter nextDateAdapter() {
+    public DateUtf8Adapter nextDateAdapter() {
         return dateAdapterPool.next();
     }
 
-    public TimestampAdapter nextTimestampAdapter() {
-        return timestampAdapterPool.next();
+    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, TimestampFormat format, TimestampLocale locale) {
+        if (decodeUtf8) {
+            TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
+            adapter.of(format, locale);
+            return adapter;
+        }
+
+        TimestampAdapter adapter = timestampAdapterPool.next();
+        adapter.of(format, locale);
+        return adapter;
     }
 
     private void addDefaultProbes() {

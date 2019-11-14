@@ -25,15 +25,22 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.time.DateFormat;
+import io.questdb.std.time.DateLocale;
 
-public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
-    private TimestampLocale locale;
-    private TimestampFormat format;
+public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
+    private final DirectCharSink utf8Sink;
+    private DateLocale locale;
+    private DateFormat format;
+
+    public DateUtf8Adapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
 
     @Override
     public void clear() {
@@ -43,7 +50,7 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public int getType() {
-        return ColumnType.TIMESTAMP;
+        return ColumnType.DATE;
     }
 
     @Override
@@ -58,10 +65,12 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, format.parse(value, locale));
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
     }
 
-    public TimestampAdapter of(TimestampFormat format, TimestampLocale locale) {
+    public DateUtf8Adapter of(DateFormat format, DateLocale locale) {
         this.format = format;
         this.locale = locale;
         return this;

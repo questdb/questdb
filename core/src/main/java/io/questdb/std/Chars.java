@@ -530,7 +530,6 @@ public final class Chars {
 
     public static boolean utf8Decode(long lo, long hi, CharSink sink) {
         long p = lo;
-
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
