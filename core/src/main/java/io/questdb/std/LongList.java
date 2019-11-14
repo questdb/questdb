@@ -106,7 +106,7 @@ public class LongList implements Mutable {
             }
 
             int mid = (low + high - 1) >>> 1;
-            long midVal = Unsafe.arrayGet(buffer, mid);
+            long midVal = buffer[mid];
 
             if (midVal < v)
                 low = mid + 1;
@@ -155,7 +155,7 @@ public class LongList implements Mutable {
 
     public long get(int index) {
         if (index < pos) {
-            return Unsafe.arrayGet(buffer, index);
+            return buffer[index];
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
@@ -173,7 +173,7 @@ public class LongList implements Mutable {
      */
     public long getLast() {
         if (pos > 0) {
-            return Unsafe.arrayGet(buffer, pos - 1);
+            return buffer[pos - 1];
         }
         return noEntryValue;
     }
@@ -188,7 +188,7 @@ public class LongList implements Mutable {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
-        return Unsafe.arrayGet(buffer, index);
+        return buffer[index];
     }
 
     /**
@@ -231,7 +231,7 @@ public class LongList implements Mutable {
     }
 
     public void increment(int index) {
-        Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
+        Unsafe.arrayPut(buffer, index, buffer[index] + 1);
     }
 
     public void remove(long v) {
@@ -335,7 +335,7 @@ public class LongList implements Mutable {
     }
 
     private void let(int a, int b) {
-        Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
+        Unsafe.arrayPut(buffer, a, buffer[b]);
     }
 
     private int scanSearch(long v) {

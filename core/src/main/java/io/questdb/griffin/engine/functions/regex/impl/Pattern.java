@@ -5333,10 +5333,10 @@ public final class Pattern
                 // Loop over pattern from right to left
                 for (int j = patternLength - 1; j > -1; j--) {
                     int ch = seq.charAt(i + j);
-                    if (ch != Unsafe.arrayGet(src, j)) {
+                    if (ch != src[j]) {
                         // Shift search to the right by the maximum of the
                         // bad character shift and the good suffix shift
-                        i += Math.max(j + 1 - Unsafe.arrayGet(lastOcc, ch & 0x7F), Unsafe.arrayGet(optoSft, j));
+                        i += Math.max(j + 1 - lastOcc[ch & 0x7F], optoSft[j]);
                         continue NEXT;
                     }
                 }

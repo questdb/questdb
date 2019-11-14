@@ -482,8 +482,8 @@ public class VirtualMemory implements Closeable {
                 Unsafe.getUnsafe().putLong(appendPointer + 24, 0);
                 long o = 0;
                 for (int i = len / 2 - 1; i > 0; i--) {
-                    final int d1 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2));
-                    final int d2 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2 + 1));
+                    final int d1 = Numbers.hexNumbers[(int) hexString.charAt(i * 2)];
+                    final int d2 = Numbers.hexNumbers[(int) hexString.charAt(i * 2 + 1)];
                     Unsafe.getUnsafe().putByte(appendPointer + o++, (byte) ((d1 << 4) + d2));
                 }
             }
@@ -947,8 +947,8 @@ public class VirtualMemory implements Closeable {
             putLong(0);
             putLong(0);
             for (int i = len / 2 - 1; i > 0; i--) {
-                int d1 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2));
-                int d2 = Unsafe.arrayGet(Numbers.hexNumbers, hexString.charAt(i * 2 + 1));
+                int d1 = Numbers.hexNumbers[(int) hexString.charAt(i * 2)];
+                int d2 = Numbers.hexNumbers[(int) hexString.charAt(i * 2 + 1)];
                 putByte(offset++, (byte) ((d1 << 4) + d2));
             }
         }

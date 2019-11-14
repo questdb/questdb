@@ -187,7 +187,7 @@ final class FastMapValue implements MapValue {
     }
 
     private long address0(int index) {
-        return address + Unsafe.arrayGet(valueOffsets, index);
+        return address + valueOffsets[index];
     }
 
     void linkRecord(FastMapRecord record) {

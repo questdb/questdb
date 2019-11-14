@@ -123,7 +123,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
 
         @Override
         public char charAt(int index) {
-            return Unsafe.arrayGet(chars, lo + index);
+            return chars[lo + index];
         }
 
         @Override

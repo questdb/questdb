@@ -80,13 +80,13 @@ public class ObjList<T> implements Mutable, Sinkable {
      */
     public T get(int index) {
         if (index < pos) {
-            return Unsafe.arrayGet(buffer, index);
+            return buffer[index];
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
     public T getAndSetQuick(int index, T value) {
-        T v = Unsafe.arrayGet(buffer, index);
+        T v = buffer[index];
         Unsafe.arrayPut(buffer, index, value);
         return v;
     }
@@ -98,7 +98,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      */
     public T getLast() {
         if (pos > 0) {
-            return Unsafe.arrayGet(buffer, pos - 1);
+            return buffer[pos - 1];
         }
         return null;
     }
@@ -113,8 +113,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public T getQuick(int index) {
-        assert index < pos;
-        return Unsafe.arrayGet(buffer, index);
+        return buffer[index];
     }
 
     /**
@@ -127,7 +126,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      */
     public T getQuiet(int index) {
         if (index < pos) {
-            return Unsafe.arrayGet(buffer, index);
+            return buffer[index];
         }
         return null;
     }

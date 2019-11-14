@@ -443,7 +443,7 @@ public class LogFactory implements Closeable {
         public void bind(ObjHashSet<LogWriter> jobs, int queueDepth, int recordLength) {
             // create queues for processed channels
             for (int i = 0, n = channels.length; i < n; i++) {
-                int index = Unsafe.arrayGet(channels, i);
+                int index = channels[i];
                 if (index > 0) {
                     int keyIndex = holderMap.keyIndex(index);
                     if (keyIndex > -1) {
@@ -537,7 +537,7 @@ public class LogFactory implements Closeable {
 
             for (int i = 0, n = channels.length; i < n; i++) {
                 if (((mask >> i) & 1) == 1) {
-                    int that = Unsafe.arrayGet(channels, i);
+                    int that = channels[i];
                     if (that == 0) {
                         Unsafe.arrayPut(channels, i, q);
                     }

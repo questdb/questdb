@@ -85,11 +85,11 @@ public class LongMatrix<T> {
     }
 
     public long get(int r, int c) {
-        return Unsafe.arrayGet(data, offset(r, c));
+        return data[offset(r, c)];
     }
 
     public T get(int r) {
-        return Unsafe.arrayGet(payload, r);
+        return payload[r];
     }
 
     public void set(int r, T obj) {

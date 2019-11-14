@@ -52,10 +52,8 @@ public class TimestampLocale {
         indexZones(symbols.getZoneStrings(), timeZoneRuleFactory, cache);
     }
 
-    private static void index(String[] tokens, IntObjHashMap<ObjList<CharSequence>> map) {
-        for (int i = 0, n = tokens.length; i < n; i++) {
-            defineToken(Unsafe.arrayGet(tokens, i), i, map);
-        }
+    public String getAMPM(int index) {
+        return ampmArray[index];
     }
 
     private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
@@ -110,32 +108,34 @@ public class TimestampLocale {
         throw NumericException.INSTANCE;
     }
 
-    public String getAMPM(int index) {
-        return Unsafe.arrayGet(ampmArray, index);
-    }
-
     public String getEra(int index) {
-        return Unsafe.arrayGet(eraArray, index);
+        return eraArray[index];
     }
 
     public String getMonth(int index) {
-        return Unsafe.arrayGet(monthArray, index);
+        return monthArray[index];
+    }
+
+    public String getShortMonth(int index) {
+        return shortMonthArray[index];
     }
 
     public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
         return getZoneRules(Numbers.decodeLowInt(matchZone(timeZoneName, 0, timeZoneName.length())));
     }
 
-    public String getShortMonth(int index) {
-        return Unsafe.arrayGet(shortMonthArray, index);
-    }
-
     public String getShortWeekday(int index) {
-        return Unsafe.arrayGet(shortWeekdayArray, index);
+        return shortWeekdayArray[index];
     }
 
     public String getWeekday(int index) {
-        return Unsafe.arrayGet(weekdayArray, index);
+        return weekdayArray[index];
+    }
+
+    private static void index(String[] tokens, IntObjHashMap<ObjList<CharSequence>> map) {
+        for (int i = 0, n = tokens.length; i < n; i++) {
+            defineToken(tokens[i], i, map);
+        }
     }
 
     public TimeZoneRules getZoneRules(int index) {

@@ -227,7 +227,7 @@ final class FastMapRecord implements MapRecord {
     @Override
     public CharSequence getStr(int columnIndex) {
         assert columnIndex < csA.length;
-        return getStr0(columnIndex, Unsafe.arrayGet(csA, columnIndex));
+        return getStr0(columnIndex, csA[columnIndex]);
     }
 
     @Override
@@ -243,7 +243,7 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public CharSequence getStrB(int columnIndex) {
-        return getStr0(columnIndex, Unsafe.arrayGet(csB, columnIndex));
+        return getStr0(columnIndex, csB[columnIndex]);
     }
 
     @Override
@@ -270,7 +270,7 @@ final class FastMapRecord implements MapRecord {
     private long addressOfColumn(int index) {
 
         if (index < split) {
-            return address0 + Unsafe.arrayGet(valueOffsets, index);
+            return address0 + valueOffsets[index];
         }
 
         if (index == split) {
@@ -296,7 +296,7 @@ final class FastMapRecord implements MapRecord {
             csB = new DirectCharSequence[n];
 
             for (int i = 0; i < n; i++) {
-                if (Unsafe.arrayGet(this.csA, i) != null) {
+                if (this.csA[i] != null) {
                     Unsafe.arrayPut(csA, i, new DirectCharSequence());
                     Unsafe.arrayPut(csB, i, new DirectCharSequence());
                 }
@@ -310,7 +310,7 @@ final class FastMapRecord implements MapRecord {
             int n = this.bs.length;
             bs = new DirectBinarySequence[n];
             for (int i = 0; i < n; i++) {
-                if (Unsafe.arrayGet(this.bs, i) != null) {
+                if (this.bs[i] != null) {
                     Unsafe.arrayPut(bs, i, new DirectBinarySequence());
                 }
             }
@@ -324,7 +324,7 @@ final class FastMapRecord implements MapRecord {
             long256B = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (Unsafe.arrayGet(this.long256A, i) != null) {
+                if (this.long256A[i] != null) {
                     Unsafe.arrayPut(csA, i, new Long256Impl());
                     Unsafe.arrayPut(csB, i, new Long256Impl());
                 }

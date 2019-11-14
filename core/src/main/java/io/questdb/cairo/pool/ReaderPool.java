@@ -74,7 +74,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     // got lock, allocate if needed
-                    R r = Unsafe.arrayGet(e.readers, i);
+                    R r = e.readers[i];
                     if (r == null) {
 
                         try {
@@ -126,7 +126,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Entry e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && Unsafe.arrayGet(e.readers, i) != null) {
+                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.readers[i] != null) {
                         count++;
                     }
                 }
@@ -153,13 +153,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
                         // same thread, don't need to order reads
-                        if (Unsafe.arrayGet(e.readers, i) != null) {
+                        if (e.readers[i] != null) {
                             // this thread has busy reader, it should close first
                             e.lockOwner = -1L;
                             return false;
                         }
                     } else {
-                        LOG.info().$("could not lock, busy [table=`").utf8(name).$("`, at=").$(e.index).$(':').$(i).$(", owner=").$(Unsafe.arrayGet(e.allocations, i)).$(", thread=").$(thread).$(']').$();
+                        LOG.info().$("could not lock, busy [table=`").utf8(name).$("`, at=").$(e.index).$(':').$(i).$(", owner=").$(e.allocations[i]).$(", thread=").$(thread).$(']').$();
                         e.lockOwner = -1L;
                         return false;
                     }
@@ -216,6 +216,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         LOG.info().$("closed").$();
     }
 
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = entry.readers[index];
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            Unsafe.arrayPut(entry.readers, index, null);
+        }
+    }
+
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -230,10 +241,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     R r;
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = Unsafe.arrayGet(e.readers, i)) != null) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = e.readers[i]) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
-                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
+                            if (deadline > e.releaseTimes[i]) {
                                 removed = true;
                                 closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
@@ -258,17 +269,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return removed;
         } else {
             return casFailures == 0;
-        }
-    }
-
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = Unsafe.arrayGet(entry.readers, index);
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
         }
     }
 

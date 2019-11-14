@@ -107,12 +107,27 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return addAt(keyIndex(key), key);
     }
 
+    public int keyIndex(T key) {
+        int index = idx(key);
+
+        T kv = keys[index];
+        if (kv == noEntryKey) {
+            return index;
+        }
+
+        if (kv == key || key.equals(kv)) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public boolean remove(Object key) {
         int keyIndex = keyIndex((T) key);
         if (keyIndex < 0) {
-            list.remove(Unsafe.arrayGet(keys, -keyIndex - 1));
+            list.remove(keys[-keyIndex - 1]);
             removeAt(keyIndex);
             return true;
         }
@@ -128,20 +143,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     @Override
     public String toString() {
         return list.toString();
-    }
-
-    public int keyIndex(T key) {
-        int index = idx(key);
-
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            return index;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
     }
 
     private boolean addAt0(int index, T key) {
@@ -164,17 +165,18 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     private void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(keys, to, keys[from]);
         erase(from);
     }
 
     private int probe(T key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            final T kv = keys[index];
+            if (kv == noEntryKey) {
                 return index;
             }
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            if (kv == key || key.equals(kv)) {
                 return -index - 1;
             }
         } while (true);
@@ -191,8 +193,8 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         Arrays.fill(keys, noEntryKey);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {
-                T key = Unsafe.arrayGet(oldKeys, i);
+            T key = oldKeys[i];
+            if (key != noEntryKey) {
                 addAt0(keyIndex(key), key);
             }
         }
@@ -213,14 +215,14 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    T key = Unsafe.arrayGet(keys, from);
+                    T key = keys[from];
                     key != noEntryKey;
-                    from = (from + 1) & mask, key = Unsafe.arrayGet(keys, from)
+                    from = (from + 1) & mask, key = keys[from]
             ) {
                 int idealHit = key.hashCode() & mask;
                 if (idealHit != from) {
                     int to;
-                    if (Unsafe.arrayGet(keys, idealHit) != noEntryKey) {
+                    if (keys[idealHit] != noEntryKey) {
                         to = probe(key, idealHit);
                     } else {
                         to = idealHit;

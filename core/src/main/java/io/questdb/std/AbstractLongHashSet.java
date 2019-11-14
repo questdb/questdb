@@ -63,11 +63,11 @@ public abstract class AbstractLongHashSet implements Mutable {
     public int keyIndex(long key) {
         int index = (int) (key & mask);
 
-        if (Unsafe.arrayGet(keys, index) == noEntryKeyValue) {
+        if (keys[index] == noEntryKeyValue) {
             return index;
         }
 
-        if (key == Unsafe.arrayGet(keys, index)) {
+        if (key == keys[index]) {
             return -index - 1;
         }
 
@@ -98,14 +98,14 @@ public abstract class AbstractLongHashSet implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    long key = Unsafe.arrayGet(keys, from);
+                    long key = keys[from];
                     key != noEntryKeyValue;
-                    from = (from + 1) & mask, key = Unsafe.arrayGet(keys, from)
+                    from = (from + 1) & mask, key = keys[from]
             ) {
                 int idealHit = (int) (key & mask);
                 if (idealHit != from) {
                     int to;
-                    if (Unsafe.arrayGet(keys, idealHit) != noEntryKeyValue) {
+                    if (keys[idealHit] != noEntryKeyValue) {
                         to = probe(key, idealHit);
                     } else {
                         to = idealHit;
@@ -130,10 +130,10 @@ public abstract class AbstractLongHashSet implements Mutable {
     private int probe(long key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKeyValue) {
+            if (keys[index] == noEntryKeyValue) {
                 return index;
             }
-            if (key == Unsafe.arrayGet(keys, index)) {
+            if (key == keys[index]) {
                 return -index - 1;
             }
         } while (true);

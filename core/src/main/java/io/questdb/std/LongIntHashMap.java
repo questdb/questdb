@@ -64,8 +64,8 @@ public class LongIntHashMap implements Mutable {
 
     public int get(long key) {
         int index = (int) key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
-            return Unsafe.arrayGet(values, index);
+        if (values[index] == noEntryValue || keys[index] == key) {
+            return values[index];
         }
         return probe(key, index);
     }
@@ -79,14 +79,14 @@ public class LongIntHashMap implements Mutable {
 
     private void insertKey(long key, int value) {
         int index = (int) key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue) {
+        if (values[index] == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
             free--;
             return;
         }
 
-        if (Unsafe.arrayGet(keys, index) == key) {
+        if (keys[index] == key) {
             Unsafe.arrayPut(values, index, value);
             return;
         }
@@ -97,8 +97,8 @@ public class LongIntHashMap implements Mutable {
     private int probe(long key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
-                return Unsafe.arrayGet(values, index);
+            if (values[index] == noEntryValue || keys[index] == key) {
+                return values[index];
             }
         } while (true);
     }
@@ -106,14 +106,14 @@ public class LongIntHashMap implements Mutable {
     private void probeInsert(long key, int index, int value) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(values, index) == noEntryValue) {
+            if (values[index] == noEntryValue) {
                 Unsafe.arrayPut(keys, index, key);
                 Unsafe.arrayPut(values, index, value);
                 free--;
                 return;
             }
 
-            if (key == Unsafe.arrayGet(keys, index)) {
+            if (key == keys[index]) {
                 Unsafe.arrayPut(values, index, value);
                 return;
             }
@@ -121,12 +121,9 @@ public class LongIntHashMap implements Mutable {
     }
 
     private void rehash() {
-
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
-
         free = (int) (newCapacity * loadFactor);
-
         int[] oldValues = values;
         long[] oldKeys = keys;
         this.keys = new long[newCapacity];
@@ -134,8 +131,9 @@ public class LongIntHashMap implements Mutable {
         Arrays.fill(values, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            int val = oldValues[i];
+            if (val != noEntryValue) {
+                insertKey(oldKeys[i], val);
             }
         }
     }

@@ -26,7 +26,10 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -634,7 +637,7 @@ public class CompactMap implements Map {
         }
 
         private long nextSlot(long slot, int distance) {
-            return (slot + Unsafe.arrayGet(jumpDistances, distance)) & mask;
+            return (slot + jumpDistances[distance]) & mask;
         }
 
         private void putEntryAt(long entryOffset, long slot, byte flag) {

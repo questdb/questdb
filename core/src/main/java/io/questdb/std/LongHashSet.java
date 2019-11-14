@@ -92,7 +92,7 @@ public class LongHashSet extends AbstractLongHashSet {
 
     public void removeAt(int index) {
         if (index < 0) {
-            long key = Unsafe.arrayGet(keys, -index - 1);
+            long key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -105,7 +105,7 @@ public class LongHashSet extends AbstractLongHashSet {
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(keys, to, keys[from]);
         erase(from);
     }
 

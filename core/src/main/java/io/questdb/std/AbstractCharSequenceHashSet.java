@@ -62,11 +62,11 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     public int keyIndex(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+        if (keys[index] == noEntryKey) {
             return index;
         }
 
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+        if (Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
@@ -76,10 +76,10 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     public int keyIndex(CharSequence key, int lo, int hi) {
         int index = Chars.hashCode(key, lo, hi) & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+        if (keys[index] == noEntryKey) {
             return index;
         }
-        CharSequence cs = Unsafe.arrayGet(keys, index);
+        CharSequence cs = keys[index];
         if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
             return -index - 1;
         }
@@ -110,14 +110,14 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    CharSequence key = Unsafe.arrayGet(keys, from);
+                    CharSequence key = keys[from];
                     key != noEntryKey;
-                    from = (from + 1) & mask, key = Unsafe.arrayGet(keys, from)
+                    from = (from + 1) & mask, key = keys[from]
             ) {
                 int idealHit = Chars.hashCode(key) & mask;
                 if (idealHit != from) {
                     int to;
-                    if (Unsafe.arrayGet(keys, idealHit) != noEntryKey) {
+                    if (keys[idealHit] != noEntryKey) {
                         to = probe(key, idealHit);
                     } else {
                         to = idealHit;
@@ -147,10 +147,10 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            if (keys[index] == noEntryKey) {
                 return index;
             }
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            if (Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -159,10 +159,10 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     private int probe(CharSequence key, int lo, int hi, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            if (keys[index] == noEntryKey) {
                 return index;
             }
-            CharSequence cs = Unsafe.arrayGet(keys, index);
+            CharSequence cs = keys[index];
             if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
                 return -index - 1;
             }

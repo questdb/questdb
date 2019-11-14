@@ -28,7 +28,6 @@ import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
-import io.questdb.std.Unsafe;
 
 class CompactMapRecord implements MapRecord {
 
@@ -155,7 +154,7 @@ class CompactMapRecord implements MapRecord {
     }
 
     private long getColumnOffset(int columnIndex) {
-        return offset + Unsafe.arrayGet(columnOffsets, columnIndex);
+        return offset + columnOffsets[columnIndex];
     }
 
     long getNextRecordOffset() {

@@ -24,7 +24,6 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.VirtualMemory;
-import io.questdb.std.Unsafe;
 
 class CompactMapValue implements MapValue {
 
@@ -192,7 +191,7 @@ class CompactMapValue implements MapValue {
 
     private long getValueColumnOffset(int columnIndex) {
         assert currentValueOffset != -1;
-        return currentValueOffset + Unsafe.arrayGet(columnOffsets, columnIndex);
+        return currentValueOffset + columnOffsets[columnIndex];
     }
 
     void linkRecord(CompactMapRecord record) {

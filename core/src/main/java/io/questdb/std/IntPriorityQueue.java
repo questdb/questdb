@@ -45,7 +45,7 @@ public class IntPriorityQueue {
     }
 
     public int pop() {
-        int v = Unsafe.arrayGet(buffer, 0);
+        int v = buffer[0];
         if (--limit > 0) {
             System.arraycopy(buffer, 1, buffer, 0, limit);
         }
@@ -84,14 +84,14 @@ public class IntPriorityQueue {
             }
 
             int mid = (low + high - 1) >>> 1;
-            int midVal = Unsafe.arrayGet(buffer, mid);
+            int midVal = buffer[mid];
 
             if (midVal < v)
                 low = mid + 1;
             else if (midVal > v)
                 high = mid;
             else {
-                for (; ++mid < high && Unsafe.arrayGet(buffer, mid) == v; ) ;
+                for (; ++mid < high && buffer[mid] == v; ) ;
                 return mid;
             }
         }
@@ -106,7 +106,7 @@ public class IntPriorityQueue {
 
     private int scanSearch(int v) {
         for (int i = 0; i < limit; i++) {
-            if (Unsafe.arrayGet(buffer, i) > v) {
+            if (buffer[i] > v) {
                 return i;
             }
         }

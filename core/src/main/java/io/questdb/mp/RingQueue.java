@@ -24,7 +24,6 @@
 package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.Unsafe;
 
 public class RingQueue<T> {
     private final int mask;
@@ -41,7 +40,7 @@ public class RingQueue<T> {
     }
 
     public T get(long cursor) {
-        return Unsafe.arrayGet(buf, (int) (cursor & mask));
+        return buf[(int) (cursor & mask)];
     }
 
     public int getCapacity() {

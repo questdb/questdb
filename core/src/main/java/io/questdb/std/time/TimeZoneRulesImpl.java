@@ -145,8 +145,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         }
 
         if ((index & 1) == 0) {
-            int offsetBefore = Unsafe.arrayGet(wallOffsets, index / 2);
-            int offsetAfter = Unsafe.arrayGet(wallOffsets, index / 2 + 1);
+            int offsetBefore = wallOffsets[index / 2];
+            int offsetAfter = wallOffsets[index / 2 + 1];
 
             int delta = offsetAfter - offsetBefore;
             if (delta > 0) {
@@ -156,7 +156,7 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
                 return offsetBefore * Dates.SECOND_MILLIS;
             }
         } else {
-            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MILLIS;
+            return wallOffsets[index / 2 + 1] * Dates.SECOND_MILLIS;
         }
     }
 

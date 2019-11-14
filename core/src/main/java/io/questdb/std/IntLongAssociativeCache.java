@@ -57,7 +57,7 @@ public class IntLongAssociativeCache {
         if (index == NOT_FOUND) {
             return NO_VALUE;
         }
-        return Unsafe.arrayGet(values, index);
+        return values[index];
     }
 
     public long poll(int key) {
@@ -65,7 +65,7 @@ public class IntLongAssociativeCache {
         if (index == NOT_FOUND) {
             return NO_VALUE;
         }
-        long value = Unsafe.arrayGet(values, index);
+        long value = values[index];
 //        Unsafe.arrayPut(values, index, 0);
         Unsafe.arrayPut(keys, index, UNUSED_KEY);
         return value;
@@ -73,7 +73,7 @@ public class IntLongAssociativeCache {
 
     public int put(int key, long value) {
         int lo = lo(key);
-        int ok = Unsafe.arrayGet(keys, lo + bmask);
+        int ok = keys[lo + bmask];
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
         System.arraycopy(values, lo, values, lo + 1, bmask);
         Unsafe.arrayPut(keys, lo, key);
@@ -84,7 +84,7 @@ public class IntLongAssociativeCache {
     private int getIndex(int key) {
         int lo = lo(key);
         for (int i = lo, hi = lo + blocks; i < hi; i++) {
-            int k = Unsafe.arrayGet(keys, i);
+            int k = keys[i];
             if (k == UNUSED_KEY) {
                 return NOT_FOUND;
             }

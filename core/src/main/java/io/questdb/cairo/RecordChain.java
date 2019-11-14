@@ -25,7 +25,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Mutable;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -352,7 +355,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         private long fixedWithColumnOffset(int index) {
-            return fixedOffset + Unsafe.arrayGet(columnOffsets, index);
+            return fixedOffset + columnOffsets[index];
         }
 
         private void of(long offset) {
@@ -361,7 +364,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         private long varWidthColumnOffset(int index) {
-            return mem.getLong(baseOffset + Unsafe.arrayGet(columnOffsets, index));
+            return mem.getLong(baseOffset + columnOffsets[index]);
         }
     }
 }

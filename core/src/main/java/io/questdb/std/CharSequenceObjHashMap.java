@@ -53,11 +53,13 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         list.clear();
     }
 
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = Unsafe.arrayGet(keys, -index - 1);
-            super.removeAt(index);
-            list.remove(key);
+    public void putAll(CharSequenceObjHashMap<V> other) {
+        CharSequence[] otherKeys = other.keys;
+        V[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
         }
     }
 
@@ -67,11 +69,13 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         Unsafe.arrayPut(values, index, null);
     }
 
-    @Override
-    protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
-        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
-        erase(from);
+    public void removeAt(int index) {
+        if (index < 0) {
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
+        }
     }
 
     public V get(CharSequence key) {
@@ -86,14 +90,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return putAt(keyIndex(key), key, value);
     }
 
-    public void putAll(CharSequenceObjHashMap<V> other) {
-        CharSequence[] otherKeys = other.keys;
-        V[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (Unsafe.arrayGet(otherKeys, i) != noEntryKey) {
-                put(Unsafe.arrayGet(otherKeys, i), Unsafe.arrayGet(otherValues, i));
-            }
-        }
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, keys[from]);
+        Unsafe.arrayPut(values, to, values[from]);
+        erase(from);
     }
 
     public boolean putAt(int index, CharSequence key, V value) {
@@ -109,7 +110,8 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
     }
 
     public V valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : null;
     }
 
     public V valueQuick(int index) {
@@ -146,11 +148,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            CharSequence key = Unsafe.arrayGet(oldKeys, i);
+            CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
+                Unsafe.arrayPut(values, index, oldValues[i]);
             }
         }
     }

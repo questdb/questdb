@@ -80,11 +80,12 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public int keyIndex(K key) {
         int index = key.hashCode() & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+        final K kv = keys[index];
+        if (kv == noEntryValue) {
             return index;
         }
 
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+        if (kv == key || key.equals(kv)) {
             return -index - 1;
         }
 
@@ -117,16 +118,18 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     public int valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noKeyValue;
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noKeyValue;
     }
 
     private int probe(K key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            final K kv = keys[index];
+            if (kv == noEntryValue) {
                 return index;
             }
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            if (kv == key || key.equals(kv)) {
                 return -index - 1;
             }
         } while (true);
@@ -153,8 +156,8 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            if (oldKeys[i] != noEntryValue) {
+                put(oldKeys[i], oldValues[i]);
             }
         }
     }
@@ -171,20 +174,21 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (Unsafe.arrayGet(keys, index) != noEntryValue || scan());
+            return index < values.length && (keys[index] != noEntryValue || scan());
         }
 
         @Override
         public Entry<K> next() {
-            entry.key = Unsafe.arrayGet(keys, index);
-            entry.value = Unsafe.arrayGet(values, index++);
+            entry.key = keys[index];
+            int index1 = index++;
+            entry.value = values[index1];
             return entry;
         }
 
         private boolean scan() {
             do {
                 index++;
-            } while (index < values.length && Unsafe.arrayGet(keys, index) == noEntryValue);
+            } while (index < values.length && keys[index] == noEntryValue);
 
             return index < values.length;
         }

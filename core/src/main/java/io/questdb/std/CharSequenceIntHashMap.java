@@ -54,11 +54,13 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public void removeAt(int index) {
+    public void increment(CharSequence key) {
+        int index = keyIndex(key);
         if (index < 0) {
-            CharSequence key = Unsafe.arrayGet(keys, -index - 1);
-            super.removeAt(index);
-            list.remove(key);
+            int index1 = -index - 1;
+            Unsafe.arrayPut(values, -index - 1, values[index1] + 1);
+        } else {
+            putAt0(index, key.toString(), 0);
         }
     }
 
@@ -82,18 +84,18 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         CharSequence[] otherKeys = other.keys;
         int[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (Unsafe.arrayGet(otherKeys, i) != noEntryKey) {
-                put(Unsafe.arrayGet(otherKeys, i), Unsafe.arrayGet(otherValues, i));
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
             }
         }
     }
 
-    public void increment(CharSequence key) {
-        int index = keyIndex(key);
+    public void removeAt(int index) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
-        } else {
-            putAt0(index, key.toString(), 0);
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
         }
     }
 
@@ -105,8 +107,8 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
-        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
+        Unsafe.arrayPut(keys, to, keys[from]);
+        Unsafe.arrayPut(values, to, values[from]);
         erase(from);
     }
 
@@ -133,7 +135,8 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     }
 
     public int valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noEntryValue;
     }
 
     private void putAt0(int index, CharSequence key, int value) {
@@ -159,11 +162,11 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            CharSequence key = Unsafe.arrayGet(oldKeys, i);
+            CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
+                Unsafe.arrayPut(values, index, oldValues[i]);
             }
         }
     }

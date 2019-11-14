@@ -23,10 +23,12 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.Sinkable;
 import io.questdb.std.microtime.DateFormatUtils;
 
-import java.lang.ThreadLocal;
 import java.util.Set;
 
 public abstract class AbstractCharSink implements CharSink {
@@ -111,13 +113,13 @@ public abstract class AbstractCharSink implements CharSink {
 
         StackTraceElement[] trace = e.getStackTrace();
         for (int i = 0, n = trace.length; i < n; i++) {
-            put(Unsafe.arrayGet(trace, i));
+            put(trace[i]);
         }
 
         // Print suppressed exceptions, if any
         Throwable[] suppressed = e.getSuppressed();
         for (int i = 0, n = suppressed.length; i < n; i++) {
-            put(Unsafe.arrayGet(suppressed, i), trace, "Suppressed: ", "\t", dejaVu);
+            put(suppressed[i], trace, "Suppressed: ", "\t", dejaVu);
         }
 
         // Print cause, if any
@@ -224,7 +226,7 @@ public abstract class AbstractCharSink implements CharSink {
 
             for (int i = 0; i <= m; i++) {
                 put(prefix);
-                put(Unsafe.arrayGet(trace, i));
+                put(trace[i]);
             }
             if (framesInCommon != 0) {
                 put(prefix).put("\t...").put(framesInCommon).put(" more");
@@ -233,7 +235,7 @@ public abstract class AbstractCharSink implements CharSink {
             // Print suppressed exceptions, if any
             Throwable[] suppressed = throwable.getSuppressed();
             for (int i = 0, k = suppressed.length; i < k; i++) {
-                put(Unsafe.arrayGet(suppressed, i), trace, "Suppressed: ", prefix + '\t', dejaVu);
+                put(suppressed[i], trace, "Suppressed: ", prefix + '\t', dejaVu);
             }
 
             // Print cause, if any

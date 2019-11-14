@@ -27,7 +27,6 @@ import io.questdb.griffin.TypeEx;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
 public final class ColumnType {
@@ -135,13 +134,13 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        return Unsafe.arrayGet(TYPE_SIZE_POW2, columnType);
+        return TYPE_SIZE_POW2[columnType];
     }
 
     public static int sizeOf(int columnType) {
         if (columnType < 0 || columnType > ColumnType.PARAMETER) {
             return -1;
         }
-        return Unsafe.arrayGet(TYPE_SIZE, columnType);
+        return TYPE_SIZE[columnType];
     }
 }

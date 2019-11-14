@@ -50,12 +50,12 @@ public class IntStack implements Mutable {
     }
 
     public int peek() {
-        return Unsafe.arrayGet(elements, head);
+        return elements[head];
     }
 
     public int pop() {
         int h = head;
-        int result = Unsafe.arrayGet(elements, h);
+        int result = elements[h];
         if (result == noEntryValue) {
             return noEntryValue;
         }

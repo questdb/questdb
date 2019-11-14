@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions.regex.impl;
 
 
-import io.questdb.std.Unsafe;
-
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -630,11 +628,11 @@ public final class Matcher implements MatchResult {
     }
 
     public int firstEndQuick() {
-        return Unsafe.arrayGet(groups, 3);
+        return groups[3];
     }
 
     public int firstStartQuick() {
-        return Unsafe.arrayGet(groups, 2);
+        return groups[2];
     }
 
     /**
@@ -665,7 +663,7 @@ public final class Matcher implements MatchResult {
     }
 
     public int groupQuick(int index) {
-        return Unsafe.arrayGet(groups, index);
+        return groups[index];
     }
 
     /**

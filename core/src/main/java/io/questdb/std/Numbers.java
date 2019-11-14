@@ -305,11 +305,11 @@ public final class Numbers {
             d = -value;
         }
 
-        long factor = Unsafe.arrayGet(pow10, scale);
+        long factor = pow10[scale];
         long scaled = (long) (d * factor + 0.5);
         int targetScale = scale;
         //noinspection StatementWithEmptyBody
-        while (++targetScale < 20 && Unsafe.arrayGet(pow10, targetScale) <= scaled) {
+        while (++targetScale < 20 && pow10[targetScale] <= scaled) {
         }
 
         // factor overflow, fallback to slow method rather than throwing exception
@@ -318,7 +318,7 @@ public final class Numbers {
             return;
         }
 
-        factor = Unsafe.arrayGet(pow10, targetScale - 1);
+        factor = pow10[targetScale - 1];
         while (targetScale > 0) {
             if (targetScale-- == scale) {
                 sink.put('.');
@@ -526,7 +526,8 @@ public final class Numbers {
             return;
         }
         int bit = 64 - Long.numberOfLeadingZeros(value - 1);
-        Unsafe.arrayGet(pad ? longHexAppenderPad64 : longHexAppender, bit).append(sink, value);
+        LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
+        array[bit].append(sink, value);
     }
 
     private static void appendLongHex4(CharSink sink, long value) {
@@ -921,7 +922,7 @@ public final class Numbers {
     }
 
     public static int hexToDecimal(int c) throws NumericException {
-        int r = Unsafe.arrayGet(hexNumbers, c);
+        int r = hexNumbers[c];
         if (r == -1) {
             throw NumericException.INSTANCE;
         }
@@ -1568,19 +1569,19 @@ public final class Numbers {
     }
 
     private static double roundHalfUp0(double value, int scale) {
-        long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
+        long val = (long) (value * pow10[scale + 2] + TOLERANCE);
         return val % 100 < 50 ? roundDown0(value, scale) : roundUp0(value, scale);
     }
 
     private static double roundHalfEven0(double value, int scale) {
-        long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
+        long val = (long) (value * pow10[scale + 2] + TOLERANCE);
         long remainder = val % 100;
 
         if (remainder < 50) {
             return roundDown0(value, scale);
         }
 
-        if (remainder == 50 && ((long) (value * Unsafe.arrayGet(pow10, scale)) & 1) == 0) {
+        if (remainder == 50 && ((long) (value * pow10[scale]) & 1) == 0) {
             return roundDown0(value, scale);
         }
 
@@ -1588,7 +1589,7 @@ public final class Numbers {
     }
 
     private static double roundHalfDown0(double value, int scale) {
-        long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
+        long val = (long) (value * pow10[scale + 2] + TOLERANCE);
         return val % 100 > 50 ? roundUp0(value, scale) : roundDown0(value, scale);
     }
 
@@ -1601,7 +1602,7 @@ public final class Numbers {
     }
 
     private static double roundUp00(double value, int scale) {
-        long powten = Unsafe.arrayGet(pow10, scale);
+        long powten = pow10[scale];
         return ((double) (long) (value * powten + 1 - TOLERANCE)) / powten;
     }
 
@@ -1609,7 +1610,7 @@ public final class Numbers {
     //////////////////////
 
     private static double roundDown00(double value, int scale) {
-        long powten = Unsafe.arrayGet(pow10, scale);
+        long powten = pow10[scale];
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
     }
 

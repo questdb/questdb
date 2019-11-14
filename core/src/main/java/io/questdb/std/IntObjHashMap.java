@@ -56,11 +56,8 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         Unsafe.arrayPut(values, index, noEntryValue);
     }
 
-    @Override
-    protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
-        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
-        erase(from);
+    public V valueAt(int index) {
+        return index < 0 ? values[-index - 1] : null;
     }
 
     public V get(int key) {
@@ -83,8 +80,11 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         }
     }
 
-    public V valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, keys[from]);
+        Unsafe.arrayPut(values, to, values[from]);
+        erase(from);
     }
 
     @SuppressWarnings({"unchecked"})
@@ -103,11 +103,11 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            int key = Unsafe.arrayGet(oldKeys, i);
+            int key = oldKeys[i];
             if (key != noEntryKeyValue) {
                 final int index = keyIndex(key);
                 Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
+                Unsafe.arrayPut(values, index, oldValues[i]);
             }
         }
     }

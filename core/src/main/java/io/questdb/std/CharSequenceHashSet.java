@@ -121,12 +121,9 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return -1;
     }
 
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = Unsafe.arrayGet(keys, -index - 1);
-            super.removeAt(index);
-            list.remove(key);
-        }
+    public int getListIndexAt(int keyIndex) {
+        int index = -keyIndex - 1;
+        return list.indexOf(keys[index]);
     }
 
     @Override
@@ -134,10 +131,9 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         Unsafe.arrayPut(keys, index, noEntryKey);
     }
 
-    @Override
-    protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
-        erase(from);
+    public CharSequence keyAt(int index) {
+        int index1 = -index - 1;
+        return keys[index1];
     }
 
     public boolean contains(CharSequence key) {
@@ -152,12 +148,19 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return list.getLast();
     }
 
-    public int getListIndexAt(int keyIndex) {
-        return list.indexOf(Unsafe.arrayGet(keys, -keyIndex - 1));
+    public void removeAt(int index) {
+        if (index < 0) {
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
+        }
     }
 
-    public CharSequence keyAt(int index) {
-        return Unsafe.arrayGet(keys, -index - 1);
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, keys[from]);
+        erase(from);
     }
 
     public int removeNull() {

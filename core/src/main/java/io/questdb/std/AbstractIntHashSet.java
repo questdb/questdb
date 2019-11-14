@@ -63,11 +63,11 @@ public abstract class AbstractIntHashSet implements Mutable {
     public int keyIndex(int key) {
         int index = key & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryKeyValue) {
+        if (keys[index] == noEntryKeyValue) {
             return index;
         }
 
-        if (key == Unsafe.arrayGet(keys, index)) {
+        if (key == keys[index]) {
             return -index - 1;
         }
 
@@ -98,14 +98,14 @@ public abstract class AbstractIntHashSet implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    int key = Unsafe.arrayGet(keys, from);
+                    int key = keys[from];
                     key != noEntryKeyValue;
-                    from = (from + 1) & mask, key = Unsafe.arrayGet(keys, from)
+                    from = (from + 1) & mask, key = keys[from]
             ) {
                 int idealHit = key & mask;
                 if (idealHit != from) {
                     int to;
-                    if (Unsafe.arrayGet(keys, idealHit) != noEntryKeyValue) {
+                    if (keys[idealHit] != noEntryKeyValue) {
                         to = probe(key, idealHit);
                     } else {
                         to = idealHit;
@@ -130,10 +130,10 @@ public abstract class AbstractIntHashSet implements Mutable {
     private int probe(int key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKeyValue) {
+            if (keys[index] == noEntryKeyValue) {
                 return index;
             }
-            if (key == Unsafe.arrayGet(keys, index)) {
+            if (key == keys[index]) {
                 return -index - 1;
             }
         } while (true);

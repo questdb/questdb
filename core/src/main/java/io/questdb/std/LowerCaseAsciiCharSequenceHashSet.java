@@ -69,7 +69,7 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
     }
 
     public CharSequence keyAt(int index) {
-        return Unsafe.arrayGet(keys, -index - 1);
+        return keys[-index - 1];
     }
 
     @Override
@@ -79,7 +79,7 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(keys, to, keys[from]);
         erase(from);
     }
 
@@ -95,10 +95,9 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
         this.keys = newKeys;
         free -= size;
         for (int i = 0, n = oldKeys.length; i < n; i++) {
-            CharSequence key = Unsafe.arrayGet(oldKeys, i);
+            CharSequence key = oldKeys[i];
             if (key != null) {
-                int keyIndex = keyIndex(key);
-                Unsafe.arrayPut(keys, keyIndex, key);
+                Unsafe.arrayPut(keys, keyIndex(key), key);
             }
         }
     }

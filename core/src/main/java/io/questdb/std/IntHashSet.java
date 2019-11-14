@@ -103,7 +103,8 @@ public class IntHashSet extends AbstractIntHashSet {
 
     public void removeAt(int index) {
         if (index < 0) {
-            int key = Unsafe.arrayGet(keys, -index - 1);
+            int index1 = -index - 1;
+            int key = keys[index1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -116,7 +117,7 @@ public class IntHashSet extends AbstractIntHashSet {
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(keys, to, keys[from]);
         erase(from);
     }
 

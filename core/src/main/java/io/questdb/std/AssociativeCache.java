@@ -63,7 +63,7 @@ public class AssociativeCache<V> implements Closeable {
         if (index == NOT_FOUND) {
             return null;
         }
-        return Unsafe.arrayGet(values, index);
+        return values[index];
     }
 
     public V poll(CharSequence key) {
@@ -71,7 +71,7 @@ public class AssociativeCache<V> implements Closeable {
         if (index == NOT_FOUND) {
             return null;
         }
-        V value = Unsafe.arrayGet(values, index);
+        V value = values[index];
         Unsafe.arrayPut(values, index, null);
         Unsafe.arrayPut(keys, index, null);
         return value;
@@ -79,7 +79,7 @@ public class AssociativeCache<V> implements Closeable {
 
     public CharSequence put(CharSequence key, V value) {
         int lo = lo(key);
-        CharSequence ok = Unsafe.arrayGet(keys, lo + bmask);
+        CharSequence ok = keys[lo + bmask];
         if (ok != null) {
             free(lo + bmask);
         }
@@ -100,13 +100,13 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     private void free(int lo) {
-        Unsafe.arrayPut(values, lo, Misc.free(Unsafe.arrayGet(values, lo)));
+        Unsafe.arrayPut(values, lo, Misc.free(values[lo]));
     }
 
     private int getIndex(CharSequence key) {
         int lo = lo(key);
         for (int i = lo, hi = lo + blocks; i < hi; i++) {
-            CharSequence k = Unsafe.arrayGet(keys, i);
+            CharSequence k = keys[i];
             if (k == null) {
                 return NOT_FOUND;
             }
