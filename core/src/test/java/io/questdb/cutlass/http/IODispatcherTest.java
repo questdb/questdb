@@ -44,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1361,7 +1362,7 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
-        testJsonQuery0(engine -> {
+        testJsonQuery0(1, engine -> {
 
             // create table
             sendAndReceive(
@@ -3257,7 +3258,7 @@ public class IODispatcherTest {
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
-        testJsonQuery0(engine -> {
+        testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
                     engine.getConfiguration(),
@@ -3277,19 +3278,22 @@ public class IODispatcherTest {
         });
     }
 
-    private void testJsonQuery0(HttpClientCode code) throws Exception {
+    private void testJsonQuery0(int workerCount, HttpClientCode code) throws Exception {
+        final int[] workerAffinity = new int[workerCount];
+        Arrays.fill(workerAffinity, -1);
+
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return workerAffinity;
                 }
 
                 @Override
                 public int getWorkerCount() {
-                    return 2;
+                    return workerCount;
                 }
 
                 @Override
