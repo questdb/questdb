@@ -80,7 +80,9 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByRecordC
             int timestampIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @NotNull IntIntHashMap symbolTableIndex) {
+            @NotNull IntIntHashMap symbolTableIndex,
+            int keyCount
+    ) {
         return new SampleByFillPrevRecordCursor(
                 map,
                 sink,

@@ -106,7 +106,8 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
                     metadata.getTimestampIndex(),
                     groupByFunctions,
                     recordFunctions,
-                    symbolTableIndex
+                    symbolTableIndex,
+                    keyTypes.getColumnCount()
             );
         } catch (SqlException | CairoException e) {
             map.close();

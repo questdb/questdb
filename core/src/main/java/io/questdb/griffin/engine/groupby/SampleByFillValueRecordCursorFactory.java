@@ -67,7 +67,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecord
                         timestampIndex,
                         groupByFunctions,
                         recordFunctions,
-                        symbolTableIndex
+                        symbolTableIndex,
+                        keyCount
 
                 ) -> createCursor(
                         map,

@@ -75,7 +75,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByRecordC
             int timestampIndex,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntIntHashMap symbolTableIndex
+            IntIntHashMap symbolTableIndex,
+            int keyCount
     ) throws SqlException {
         try {
             return new SampleByFillValueRecordCursor(

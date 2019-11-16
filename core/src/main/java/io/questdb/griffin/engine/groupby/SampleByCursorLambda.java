@@ -43,6 +43,7 @@ public interface SampleByCursorLambda {
             int timestampIndex,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntIntHashMap symbolTableIndex
+            IntIntHashMap symbolTableIndex,
+            int keyCount
     ) throws SqlException;
 }

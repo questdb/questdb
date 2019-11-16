@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -73,27 +74,6 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         );
     }
 
-    @NotNull
-    private static SampleByFillNoneRecordCursor createCursor(
-            Map map,
-            RecordSink mapSink,
-            @NotNull TimestampSampler timestampSampler,
-            int timestampIndex,
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            IntIntHashMap symbolTableIndex
-    ) {
-        return new SampleByFillNoneRecordCursor(
-                map,
-                mapSink,
-                groupByFunctions,
-                recordFunctions,
-                timestampIndex,
-                timestampSampler,
-                symbolTableIndex
-        );
-    }
-
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -104,5 +84,37 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
         baseCursor.close();
         return EmptyTableRecordCursor.INSTANCE;
+    }
+
+    @NotNull
+    private static DelegatingRecordCursor createCursor(
+            Map map,
+            RecordSink mapSink,
+            @NotNull TimestampSampler timestampSampler,
+            int timestampIndex,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
+            IntIntHashMap symbolTableIndex,
+            int keyCount
+    ) {
+        if (keyCount == 0) {
+            return new SampleByFillNoneNKRecordCursor(
+                    map,
+                    groupByFunctions,
+                    recordFunctions,
+                    timestampIndex,
+                    timestampSampler,
+                    symbolTableIndex
+            );
+        }
+        return new SampleByFillNoneRecordCursor(
+                map,
+                mapSink,
+                groupByFunctions,
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                symbolTableIndex
+        );
     }
 }
