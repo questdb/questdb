@@ -23,7 +23,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Chars;
@@ -40,7 +39,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence root;
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
 
-    public DefaultCairoConfiguration(CharSequence root) throws JsonException {
+    public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.stringOf(root);
     }
 

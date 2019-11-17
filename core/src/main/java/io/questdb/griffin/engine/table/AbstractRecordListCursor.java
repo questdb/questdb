@@ -38,11 +38,6 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void close() {
-        super.close();
-    }
-
-    @Override
     public long size() {
         return rows.size();
     }

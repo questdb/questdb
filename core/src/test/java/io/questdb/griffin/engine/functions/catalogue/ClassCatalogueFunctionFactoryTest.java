@@ -81,7 +81,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
 
-                    compiler.compile("create table xyz (a int)");
+                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);

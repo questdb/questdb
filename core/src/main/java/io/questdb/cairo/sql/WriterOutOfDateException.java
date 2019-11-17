@@ -24,5 +24,5 @@
 package io.questdb.cairo.sql;
 
 public class WriterOutOfDateException extends RuntimeException {
-    public static WriterOutOfDateException INSTANCE = new WriterOutOfDateException();
+    public static final WriterOutOfDateException INSTANCE = new WriterOutOfDateException();
 }

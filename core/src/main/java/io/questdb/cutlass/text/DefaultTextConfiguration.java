@@ -23,6 +23,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -34,11 +35,11 @@ import io.questdb.std.time.DateLocaleFactory;
 public class DefaultTextConfiguration implements TextConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
 
-    public DefaultTextConfiguration() throws JsonException {
+    public DefaultTextConfiguration() {
         this("/text_loader.json");
     }
 
-    public DefaultTextConfiguration(String resourceName) throws JsonException {
+    public DefaultTextConfiguration(String resourceName) {
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
@@ -48,6 +49,8 @@ public class DefaultTextConfiguration implements TextConfiguration {
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(lexer, resourceName);
+        } catch (JsonException e) {
+            throw new CairoError(e);
         }
     }
 

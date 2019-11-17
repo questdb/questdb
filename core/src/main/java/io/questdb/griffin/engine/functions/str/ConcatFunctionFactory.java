@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -36,7 +35,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class ConcatFunctionFactory implements FunctionFactory {
-    private static ObjList<TypeAdapter> adapterReferences = new ObjList<>();
+    private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
 
     @Override
     public String getSignature() {
@@ -44,7 +43,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) {
         final ObjList<Function> functions = new ObjList<>(args.size());
         functions.addAll(args);
         return new ConcatFunction(position, functions);

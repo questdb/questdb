@@ -48,8 +48,8 @@ public final class ColumnType {
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
     private static final ThreadLocal<StringSink> caseConverterBuffer = ThreadLocal.withInitial(StringSink::new);
-    private static int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
-    private static int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
+    private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
+    private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
 
     static {
         typeNameMap.put(BOOLEAN, "BOOLEAN");

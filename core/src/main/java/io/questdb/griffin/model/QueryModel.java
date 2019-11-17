@@ -92,7 +92,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private long tableVersion;
     private Function tableNameFunction;
     private ExpressionNode alias;
-    private ObjList<ExpressionNode> latestBy = new ObjList<>();
+    private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
     private JoinContext context;
