@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -96,7 +95,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCannotCreateTable() throws JsonException {
+    public void testCannotCreateTable() {
 
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
@@ -1808,7 +1807,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
-            public void run() throws JsonException {
+            public void run() {
                 String sql = "create table y as (" +
                         "select * from random_cursor(" +
                         " 10000," + // record count
@@ -1865,7 +1864,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
-            public void run() throws JsonException {
+            public void run() {
                 String sql = "create table y as (" +
                         "select * from random_cursor(" +
                         " 10000," + // record count
@@ -3085,6 +3084,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testEmptyQuery() {
+        try {
+            compiler.compile("                        ");
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
+        }
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
@@ -3349,7 +3358,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws SqlException, JsonException {
+    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws SqlException {
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {

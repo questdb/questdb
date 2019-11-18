@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -2408,7 +2407,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void create(FilesFacade ff, int partitionBy, int N) throws JsonException {
+    private void create(FilesFacade ff, int partitionBy, int N) {
         try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -2484,11 +2483,11 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
-    long populateTable(FilesFacade ff) throws NumericException, JsonException {
+    long populateTable(FilesFacade ff) throws NumericException {
         return populateTable(ff, PartitionBy.DAY);
     }
 
-    long populateTable(FilesFacade ff, int partitionBy) throws NumericException, JsonException {
+    long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
         int N = 10000;
         long used = Unsafe.getMemUsed();
         long fileCount = ff.getOpenFileCount();
@@ -2499,7 +2498,7 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
-    private long populateTable0(FilesFacade ff, int N) throws NumericException, JsonException {
+    private long populateTable0(FilesFacade ff, int N) throws NumericException {
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -2675,7 +2674,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private long testAppendNulls(Rnd rnd, long ts) throws JsonException {
+    private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
         long blob = Unsafe.malloc(blobLen);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
@@ -3117,7 +3116,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException, JsonException {
+    private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException {
         final int N = 1000;
         create(ff, PartitionBy.DAY, N * 2);
         Rnd rnd = new Rnd();
