@@ -633,7 +633,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n" +
                         "44.804689668614\t\t\n");
 
-        // 5 opens is good because we check variable lengh column API sanity
+        // 5 opens is good because we check variable length column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
         Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
@@ -718,7 +718,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "75.881754034549\tHYRX\n" +
                         "57.789479151824\tHYRX\n");
 
-        // 5 opens is good because we check variable lengh column API sanity
+        // 5 opens is good because we check variable length column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
         Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());

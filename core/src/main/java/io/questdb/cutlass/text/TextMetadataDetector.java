@@ -157,7 +157,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
      * Histogram contains counts for every probe that validates field. It is possible for multiple probes to validate same field.
      * It can happen because of two reasons.
      * <p>
-     * probes are compatible, for example INT is compatible wth DOUBLE in a sense that DOUBLE probe will positively
+     * probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
      * validate every INT. If this the case we will use order of probes as priority. First probe wins
      * <p>
      * it is possible to have mixed types in same column, in which case column has to become string.

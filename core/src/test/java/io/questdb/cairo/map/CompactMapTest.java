@@ -302,7 +302,7 @@ public class CompactMapTest extends AbstractCairoTest {
         class MockHash implements CompactMap.HashFunction {
             @Override
             public long hash(VirtualMemory mem, long offset, long size) {
-                // we have singe key field, which is string
+                // we have single key field, which is string
                 // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
                 char c = mem.getChar(offset + 12);
                 return c - '0';

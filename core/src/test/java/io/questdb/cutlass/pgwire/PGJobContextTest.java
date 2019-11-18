@@ -1170,7 +1170,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 statement.setNull(19, Types.DATE);
                 statement.setNull(20, Types.TIMESTAMP);
 
-                // when someone uses postgress type extensions, which alter driver behaviour
+                // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
 
                 statement.setTimestamp(21, new PGTimestamp(300011));
@@ -1243,7 +1243,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 statement.setNull(19, Types.DATE);
                 statement.setNull(20, Types.TIMESTAMP);
 
-                // when someone uses postgress type extensions, which alter driver behaviour
+                // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
 
                 statement.setTimestamp(21, new PGTimestamp(300011));

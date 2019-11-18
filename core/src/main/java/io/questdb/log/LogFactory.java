@@ -477,7 +477,7 @@ public class LogFactory implements Closeable {
                 jobs.add(c.getFactory().createLogWriter(h.ring, h.wSeq, c.getLevel()));
             }
 
-            // and the last step is to link dependant sequences
+            // and the last step is to link dependent sequences
             for (int i = 0, n = holderList.size(); i < n; i++) {
                 Holder h = holderList.getQuick(i);
                 if (h.fanOut != null) {

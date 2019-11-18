@@ -1865,7 +1865,7 @@ public class TableWriter implements Closeable {
      * Partition directory name is ISO string of interval start.
      * <p>
      * Because this method modifies "path" member variable, be sure path is trimmed to original
-     * state withing try..finally block.
+     * state within try..finally block.
      *
      * @param timestamp               to determine interval for
      * @param updatePartitionInterval flag indicating that partition interval partitionLo and

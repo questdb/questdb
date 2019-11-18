@@ -218,7 +218,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // exact date match
         intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
-        // this one falls thru cracks
+        // this one falls through cracks
         intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
 
