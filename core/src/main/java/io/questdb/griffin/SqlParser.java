@@ -57,6 +57,7 @@ public final class SqlParser {
     private final CharacterStore characterStore;
     private final SqlOptimiser optimiser;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -185,7 +186,7 @@ public final class SqlParser {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder);
-            return rewriteCase(expressionTreeBuilder.poll());
+            return rewriteCase(rewriteCount(expressionTreeBuilder.poll()));
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
@@ -850,7 +851,7 @@ public final class SqlParser {
                                     joinModel.addJoinColumn(expr);
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                joinModel.setJoinCriteria(rewriteCase(expr));
+                                joinModel.setJoinCriteria(rewriteCase(rewriteCount(expr)));
                             }
                             break;
                         default:
@@ -1138,6 +1139,11 @@ public final class SqlParser {
         return parent;
     }
 
+    private ExpressionNode rewriteCount(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteCount0Ref);
+        return parent;
+    }
+
     private void rewriteCase0(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node.token, "case")) {
             tempExprNodes.clear();
@@ -1235,6 +1241,30 @@ public final class SqlParser {
             } else {
                 node.args.remove(paramCount - 1);
                 node.paramCount = paramCount - 1;
+            }
+        }
+    }
+
+    /**
+     * Rewrites count(*) expressions to count().
+     *
+     * @param node expression node, provided by tree walking algo
+     */
+    private void rewriteCount0(ExpressionNode node) {
+        if (node.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node.token, "count")) {
+            if (node.paramCount == 1) {
+                // special case, typically something like
+                // case value else expression end
+                // this can be simplified to "expression" only
+
+                ExpressionNode that = node.rhs;
+                if (Chars.equals(that.token, '*')) {
+                    if (that.rhs == null && node.lhs == null) {
+                        that.paramCount = 0;
+                        node.rhs = null;
+                        node.paramCount = 0;
+                    }
+                }
             }
         }
     }
