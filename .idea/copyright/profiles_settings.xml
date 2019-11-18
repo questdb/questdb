@@ -1,5 +1,5 @@
 <component name="CopyrightManager">
-  <settings default="AGPLv3">
+  <settings default="Apache 2.0">
     <LanguageOptions name="__TEMPLATE__">
       <option name="separateBefore" value="true" />
       <option name="separateAfter" value="true" />
