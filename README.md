@@ -6,14 +6,14 @@
 ## About QuestDB
 
 QuestDB is a relational database built to provide ultimate performance for time-series data.
- 
-Our technology is born from low-latency trading and built around fully zero-GC java and off-heap data structures. 
+
+Our technology is born from low-latency trading and built around fully zero-GC java and off-heap data structures.
 We provide the highest performance, use SQL and offer one binary fully portable across architectures.
 
 We don't use third-party libraries, and our methods may seem...
- unorthodox. This is because we challenge performance across the full stack. 
- So don't worry if you feel lost when you first look at the code. Persevere and 
-feel free to ask questions. You will learn new ways to do things, 
+ unorthodox. This is because we challenge performance across the full stack.
+ So don't worry if you feel lost when you first look at the code. Persevere and
+feel free to ask questions. You will learn new ways to do things,
 at performance levels you didn't know were possible.
 
 All code is licensed under the Apache 2.0 Open Source license.
@@ -52,7 +52,7 @@ QuestDB will start HTTP server on 0:9000, which you can visit from your browser:
 
 [Install](https://www.questdb.io/docs/install) and [run](https://www.questdb.io/docs/run) QuestDB.
 Then, the easiest way to get started is to play with our
-web [console](https://www.questdb.io/docs/console). This will allow you to import 
+web [console](https://www.questdb.io/docs/console). This will allow you to import
 and query data using an intuitive interface.
 
 You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In a nutshell,
@@ -70,11 +70,11 @@ We have built the ultimate performance for read and write on a single-thread.
 But we still have some work.
 Elements on our roadmap include:
 
-- Query and aggregates optimisation. Currently, we run aggregates through linear scans. 
+- Query and aggregates optimisation. Currently, we run aggregates through linear scans.
 While our scans are highly efficient, our current implementations of aggregates are naive.
 Further optimisation will take performance to new grounds.
-- Multithreading. Currently, we use one single thread. While this is good for certain use cases 
-(you can limit QuestDB to one thread and leave ressources for other programs), we will provide
+- Multithreading. Currently, we use one single thread. While this is good for certain use cases
+(you can limit QuestDB to one thread and leave resources for other programs), we will provide
 the ability to distribute load/query work over several cores to benefit on parallelisation.
 - High-availability. Working on providing out-of-the-box high-availability with extreme simplicity.
 

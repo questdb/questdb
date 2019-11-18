@@ -515,7 +515,7 @@ public class IntrinsicModel implements Mutable {
             if ((src1 == intervalsA && src2 == intervalsB) || (src1 == intervalsB && src2 == intervalsA)) {
                 return intervalsC;
             }
-            // this is the ony possibility because we never return 'intervalsA' for two args
+            // this is the only possibility because we never return 'intervalsA' for two args
             return intervalsB;
         }
 

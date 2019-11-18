@@ -49,25 +49,25 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         // functions for NaN checks.
 
         Function left = args.getQuick(0);
-        Function rigt = args.getQuick(1);
+        Function right = args.getQuick(1);
 
         if (left.isConstant() && left.getType() == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null))) {
-            switch (rigt.getType()) {
+            switch (right.getType()) {
                 case ColumnType.INT:
-                    return new FuncIntIsNaN(position, rigt);
+                    return new FuncIntIsNaN(position, right);
                 case ColumnType.LONG:
-                    return new FuncLongIsNaN(position, rigt);
+                    return new FuncLongIsNaN(position, right);
                 case ColumnType.DATE:
-                    return new FuncDateIsNaN(position, rigt);
+                    return new FuncDateIsNaN(position, right);
                 case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(position, rigt);
+                    return new FuncTimestampIsNaN(position, right);
                 case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(position, rigt);
+                    return new FuncFloatIsNaN(position, right);
                 default:
                     // double
-                    return new FuncDoubleIsNaN(position, rigt);
+                    return new FuncDoubleIsNaN(position, right);
             }
-        } else if (rigt.isConstant() && rigt.getType() == ColumnType.DOUBLE && Double.isNaN(rigt.getDouble(null))) {
+        } else if (right.isConstant() && right.getType() == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null))) {
             switch (left.getType()) {
                 case ColumnType.INT:
                     return new FuncIntIsNaN(position, left);

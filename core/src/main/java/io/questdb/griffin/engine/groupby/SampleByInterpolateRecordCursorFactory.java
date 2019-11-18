@@ -281,7 +281,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         while (true) {
                             // to timestamp after 'sample' to begin with
                             long x2 = sampler.nextTimestamp(current);
-                            // is this timestamp withing range?
+                            // is this timestamp within range?
                             if (x2 < hiSample) {
                                 value = findDataMapValue(mapRecord, x2);
                                 if (value.getByte(0) == 1) { // gap

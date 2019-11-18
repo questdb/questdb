@@ -400,7 +400,7 @@ public class LineProtoLexerTest {
 
         @Override
         public void onLineEnd(CharSequenceCache cache) {
-            sink.put('\n');
+           sink.put('\n');
 
             // assert that cached token match
             for (Map.Entry<Long, String> e : tokens.entrySet()) {
