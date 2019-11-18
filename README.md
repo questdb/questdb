@@ -80,5 +80,5 @@ the ability to distribute load/query work over several cores to benefit on paral
 
 ### Contribution
 
-Feel free to contribute to the project by forking the repository and submittin.g pull requests.
-Please make sure you have read our [contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.MD)
+Feel free to contribute to the project by forking the repository and submitting pull requests.
+Please make sure you have read our [contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
