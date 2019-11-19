@@ -60,9 +60,6 @@ public class TextLoader implements Closeable, Mutable {
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
 
-    /**
-     *
-     */
     public TextLoader(CairoEngine engine) {
         final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());

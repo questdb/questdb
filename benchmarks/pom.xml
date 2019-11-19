@@ -51,9 +51,9 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>io.questdb</groupId>
+            <groupId>org.questdb</groupId>
             <artifactId>core</artifactId>
-            <version>4.0.0-SNAPSHOT</version>
+            <version>4.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>

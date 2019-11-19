@@ -32,8 +32,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>4.0.0-SNAPSHOT</version>
-    <groupId>io.questdb</groupId>
+    <version>4.0.0</version>
+    <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
 
