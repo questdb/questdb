@@ -2,7 +2,7 @@
 [![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
 [![CircleCI](https://circleci.com/gh/questdb/questdb.svg?style=svg&circle-token=14e189d901b13a8ddfc9e6da4c4d106dac6b0940)](https://circleci.com/gh/questdb/questdb)
 [![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
-![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)
+[![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)](https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz)
 
 ## About QuestDB
 
