@@ -1,4 +1,4 @@
-
+[![License](https://img.shields.io/github/license/questdb/questdb)](https://github.com/questdb/questdb/blob/master/LICENSE.txt)
 [![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
 [![CircleCI](https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099)](https://circleci.com/gh/questdb/questdb)
 [![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
