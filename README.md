@@ -3,7 +3,7 @@
 [![CircleCI](https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099)](https://circleci.com/gh/questdb/questdb)
 [![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
 [![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)](https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz)
-![Maven Central](https://img.shields.io/maven-central/v/org.questdb/core)
+[![Maven Central](https://img.shields.io/maven-central/v/org.questdb/core)](https://search.maven.org/search?q=g:org.questdb)
 
 ## About QuestDB
 
