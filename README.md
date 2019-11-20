@@ -9,13 +9,19 @@
 
 QuestDB is a relational database built to provide ultimate performance for time-series data.
 
-Our technology is born from low-latency trading and built around fully zero-GC java and off-heap data structures.
-We provide the highest performance, use SQL and offer one binary, which is portable across architectures.
+## Project goals
 
-We don't use third-party libraries, and our design may seem unorthodox. This is because we challenge the status-quo across the full stack.
-Our approach is a different take on high performance databases and was born from low latency trading principles. We elevate database performance to new heights. 
+- Be relational database with timeseries as first class citizen
 
-All code is licensed under the Apache 2.0 Open Source license.
+- Be consistently economical and respectful of hardware resources. Don't waste CPU cycles, memory or storage.
+
+- Be reliable and trustworthy store of critical data
+
+- Low friction operation. Empower with SQL. Simplify every database interaction.
+
+- Operate efficiently at both extremes: allow user to prioritise performance over data loss or no loss over performance
+
+- Be both embedded and standalone.
 
 ![alt text](https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg)
 
