@@ -17,6 +17,8 @@ Our approach is a different take on high performance databases and was born from
 
 All code is licensed under the Apache 2.0 Open Source license.
 
+![alt text](https://raw.githubusercontent.com/questdb/questdb/master/core/src/main/resources/site/public/images/logo-readme.jpg)
+
 ## Building from source
 
 ### Pre-requitites:
