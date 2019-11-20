@@ -5,7 +5,12 @@
 [![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)](https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz)
 [![Maven Central](https://img.shields.io/maven-central/v/org.questdb/core)](https://search.maven.org/search?q=g:org.questdb)
 
-![alt text](https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg">
+</p>
+
+
+
 
 ## What is QuestDB
 
