@@ -49,7 +49,7 @@ You can find more documentation [here](https://www.questdb.io/docs/documentation
 
 - [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
 
-### Roadmap
+## Roadmap
 
 We have built the ultimate performance for read and write on a single-thread.
 But we still have some work to do.
@@ -95,7 +95,7 @@ Program arguments: `-d <home_directory>`
 QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `home_directory/db`
 
 
-### Contribution
+## Contribution
 
 Feel free to contribute to the project by forking the repository and submitting pull requests.
 Please make sure you have read our [contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
