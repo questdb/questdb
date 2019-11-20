@@ -5,9 +5,11 @@
 [![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)](https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz)
 [![Maven Central](https://img.shields.io/maven-central/v/org.questdb/core)](https://search.maven.org/search?q=g:org.questdb)
 
-## About QuestDB
+![alt text](https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg)
 
-QuestDB is a relational database built to provide ultimate performance for time-series data.
+## What is QuestDB
+
+QuestDB is a NewSQL database for Hybrid Transactional, Analytical and Time Series Processing workloads. QuestDB ingests data via HTTP, PostgresSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP, PostgreSQL wire protocol or via Java API. The whole database is 3.5Mb packages.
 
 ## Project goals
 
@@ -22,8 +24,6 @@ QuestDB is a relational database built to provide ultimate performance for time-
 - Operate efficiently at both extremes: allow users to prioritise performance over data loss, or no loss over performance.
 
 - Be both embedded and standalone.
-
-![alt text](https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg)
 
 ## Building from source
 
