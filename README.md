@@ -33,6 +33,37 @@ PostgreSQL wire protocol or via Java API. The whole database and console fits in
 
 - Be both embedded and standalone.
 
+## Getting Started
+
+[Install](https://www.questdb.io/docs/install) and [run](https://www.questdb.io/docs/run) QuestDB.
+Then, the easiest way to get started is to play with our
+web [console](https://www.questdb.io/docs/console). This will allow you to import
+and query data using an intuitive interface.
+
+You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In a nutshell,
+we are a column-oriented database, which partitions data by time intervals.
+
+You can find more documentation [here](https://www.questdb.io/docs/documentation)
+
+## Support / Contact
+
+- [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+
+### Roadmap
+
+We have built the ultimate performance for read and write on a single-thread.
+But we still have some work to do.
+Elements on our roadmap include:
+
+- Query and aggregates optimisation. Currently, we run aggregates through linear scans.
+While our scans are highly efficient, our current implementations of aggregates are somehow naive.
+Further optimisation will take performance to new levels.
+- Multithreading. Currently, we use one single thread. While this is good for certain use cases
+(you can limit QuestDB to one thread and leave resources for other programs), we will provide
+the ability to distribute load/query work over several cores to benefit from parallelisation.
+- High-availability. Working on providing out-of-the-box high-availability with extreme simplicity.
+
+
 ## Building from source
 
 ### Pre-requitites:
@@ -63,35 +94,6 @@ Program arguments: `-d <home_directory>`
 
 QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `home_directory/db`
 
-## Getting Started
-
-[Install](https://www.questdb.io/docs/install) and [run](https://www.questdb.io/docs/run) QuestDB.
-Then, the easiest way to get started is to play with our
-web [console](https://www.questdb.io/docs/console). This will allow you to import
-and query data using an intuitive interface.
-
-You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In a nutshell,
-we are a column-oriented database, which partitions data by time intervals.
-
-You can find more documentation [here](https://www.questdb.io/docs/documentation)
-
-## Support / Contact
-
-- [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
-
-### Roadmap
-
-We have built the ultimate performance for read and write on a single-thread.
-But we still have some work to do.
-Elements on our roadmap include:
-
-- Query and aggregates optimisation. Currently, we run aggregates through linear scans.
-While our scans are highly efficient, our current implementations of aggregates are somehow naive.
-Further optimisation will take performance to new levels.
-- Multithreading. Currently, we use one single thread. While this is good for certain use cases
-(you can limit QuestDB to one thread and leave resources for other programs), we will provide
-the ability to distribute load/query work over several cores to benefit from parallelisation.
-- High-availability. Working on providing out-of-the-box high-availability with extreme simplicity.
 
 ### Contribution
 
