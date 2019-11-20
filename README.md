@@ -1,16 +1,17 @@
-[![License](https://img.shields.io/github/license/questdb/questdb)](https://github.com/questdb/questdb/blob/master/LICENSE.txt)
-[![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
-[![CircleCI](https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099)](https://circleci.com/gh/questdb/questdb)
-[![Slack Status](https://serieux-saucisson-79115.herokuapp.com/badge.svg)](https://serieux-saucisson-79115.herokuapp.com/)
-[![Downloads](https://img.shields.io/github/downloads/questdb/questdb/total)](https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz)
-[![Maven Central](https://img.shields.io/maven-central/v/org.questdb/core)](https://search.maven.org/search?q=g:org.questdb)
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg"/>
+</h1>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg">
-</p>
-
-
-
+  <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt"><img src="https://img.shields.io/github/license/questdb/questdb"></a>
+  <a href="https://www.codacy.com/app/bluestreak/nfsdb"><img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754"></a>
+  <a href="https://circleci.com/gh/questdb/questdb"><img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099"></a>
+  <a href="https://serieux-saucisson-79115.herokuapp.com/"><img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg"></a>
+  <a href="https://github.com/questdb/questdb/releases/download/4.0.0/questdb-4.0.0-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
+  <a href="https://search.maven.org/search?q=g:org.questdb"><img src="https://img.shields.io/maven-central/v/org.questdb/core"></a>
+</p
+  
+<p/>
 
 ## What is QuestDB
 
