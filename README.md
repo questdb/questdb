@@ -1,6 +1,6 @@
-<h1 align="center">
+<h4 align="center">
   <img src="https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg"/>
-</h1>
+</h4>
 
 <p align="center">
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt"><img src="https://img.shields.io/github/license/questdb/questdb"></a>
