@@ -2,8 +2,7 @@
 
 ### Raise an Issue
 
-Raising issues on GitHub is super welcome. We aim to respond quickly and thoughtfully. This is a good
-place to start before deep diving into the code base.
+Raising **[issues](https://github.com/questdb/questdb/issues)** on GitHub is super welcome. We aim to respond quickly and thoughtfully. This is a good place to start before deep diving into the code base.
 
 ### Contribute a PR
 
@@ -62,16 +61,9 @@ make
 
 on Windows we use Intellij CLion, which can open cmake files.
 
-## Committing
-
-We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to auto-generate release notes. We require all commit comments
-to conform. To that end commits have to be granular enough to be successfuly described using this method.
-
 ## Testing
 
-We have a lot of unit tests, most of which are of "integration" type, e.g. test starts a server, interacts with it and asserts the outcome. We
-expect all contributors to submit PRs with tests. Please reach out to us via slack if you uncertain on how to test or you think existing test
-is inadequate and should be removed.
+We have a lot of unit tests, most of which are of "integration" type, e.g. test starts a server, interacts with it and asserts the outcome. We expect all contributors to submit PRs with tests. Please reach out to us via slack if you uncertain on how to test or you think existing test is inadequate and should be removed.
 
 ## Dependencies
 
@@ -82,3 +74,7 @@ implement best algorithms ourselves to ensure perfect fit with existing code. Wi
 
 QuestDB is zero-GC along data pipelines. We expect contributions not to allocate if possible. That said we would like to help you to
 contribute zero-GC code, do not hesitate to reach out!
+
+## Committing
+
+We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to auto-generate release notes. We require all commit comments to conform. To that end commits have to be granular enough to be successfuly described using this method.
