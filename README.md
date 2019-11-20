@@ -1,5 +1,5 @@
 <h4 align="center">
-  <img src="https://raw.githubusercontent.com/questdb/questdb/readme-improvements/core/src/main/resources/site/public/images/logo-readme.jpg"/>
+  <img src="https://raw.githubusercontent.com/questdb/questdb/master/core/src/main/resources/site/public/images/logo-readme.jpg"/>
 </h4>
 
 <p align="center">
