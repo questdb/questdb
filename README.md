@@ -11,15 +11,15 @@ QuestDB is a relational database built to provide ultimate performance for time-
 
 ## Project goals
 
-- Be relational database with timeseries as first class citizen
+- Treat time-series as first class citizen within a relational database.
 
 - Be consistently economical and respectful of hardware resources. Don't waste CPU cycles, memory or storage.
 
-- Be reliable and trustworthy store of critical data
+- Be a reliable and trustworthy store of critical data.
 
 - Low friction operation. Empower with SQL. Simplify every database interaction.
 
-- Operate efficiently at both extremes: allow user to prioritise performance over data loss or no loss over performance
+- Operate efficiently at both extremes: allow users to prioritise performance over data loss, or no loss over performance.
 
 - Be both embedded and standalone.
 
