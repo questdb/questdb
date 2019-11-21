@@ -21,15 +21,15 @@ PostgreSQL wire protocol or via Java API. The whole database and console fits in
 
 ## Project goals
 
-- Treat time-series as first class citizen within a relational database.
+- Treat time-series as first class citizen within a relational database framework.
 
-- Be consistently economical and respectful of hardware resources. Don't waste CPU cycles, memory or storage.
+- Minimise hardware resources through software optimisation. Don’t waste CPU cycles, memory nor storage.
 
 - Be a reliable and trustworthy store of critical data.
 
-- Low friction operation. Empower with SQL. Simplify every database interaction.
+- Low friction operation. Empower developers with SQL. Simplify every database interaction.
 
-- Operate efficiently at both extremes: allow users to prioritise performance over data loss, or no loss over performance.
+- Operate efficiently at both extremes: allow users to prioritise performance over data loss, and vice versa.
 
 - Be both embedded and standalone.
 
@@ -40,7 +40,7 @@ Then, the easiest way to get started is to play with our
 web [console](https://www.questdb.io/docs/console). This will allow you to import
 and query data using an intuitive interface.
 
-You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In a nutshell,
+You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In short,
 we are a column-oriented database, which partitions data by time intervals.
 
 You can find more documentation [here](https://www.questdb.io/docs/documentation)
@@ -81,26 +81,26 @@ cd questdb
 # Java(TM) SE Runtime Environment (build 1.8.0_212-b10)
 # Java HotSpot(TM) 64-Bit Server VM (build 25.212-b10, mixed mode)
 #
-# if you java version is above 8 you can download & install JDK8 and use absolute
+# if your java version is above 8 you can download & install JDK8 and use absolute
 # path to java executable instead of 'java'
 
 java -version
 
-# remove 'skipTests' if you would like to run all tests (3000+ unit tests, 3-5 mins)
+# remove 'skipTests' if you want to run all tests (3000+ unit tests, 3-5 mins)
 mvn clean package -DskipTests
 
-# check contents of 'core/target' directory to find out QuestDB current version number
+# check contents of 'core/target' directory to find QuestDB's current version number
 
-# create QuestDB root directory if one does not exist
+# create QuestDB root directory if one does not exist already
 # replace <root_dir> with actual directory name
 mkdir <root_dir>
 
-# <version> is current QuestDB version from pom.xml
-# <root_dir> is the root directory created at previous step
+# <version> is QuestDB's current version from pom.xml
+# <root_dir> is the root directory created at the previous step
 java -cp core/target/core-<version>.jar io.questdb.ServerMain -d <dir>
 ```
 
-QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `<root_directory>/db`
+QuestDB will start the HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL's server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `<root_directory>/db`
 
 
 ## Contribution
