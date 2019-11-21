@@ -87,6 +87,7 @@
                 <configuration>
                     <archive>
                         <manifest>
+                            <mainClass>io.questdb.ServerMain</mainClass>
                             <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
                         </manifest>
                     </archive>
