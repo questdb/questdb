@@ -79,20 +79,39 @@ Note: Java versions above 8 are not yet supported. It is possible to build Quest
 but this requires backward incompatible source code changes.
 ```
 
-### Building
+### Building & Running
 
 ```
-mvn clean package
+git clone https://github.com/questdb/questdb.git
+cd questdb
+
+# check java version
+# output should be similar to:
+#
+# java version "1.8.0_212"
+# Java(TM) SE Runtime Environment (build 1.8.0_212-b10)
+# Java HotSpot(TM) 64-Bit Server VM (build 25.212-b10, mixed mode)
+#
+# if you java version is above 8 you can download & install JDK8 and use absolute
+# path to java executable instead of 'java'
+
+java -version
+
+# remove 'skipTests' if you would like to run all tests (3000+ unit tests, 3-5 mins)
+mvn clean package -DskipTests
+
+# check contents of 'core/target' directory to find out QuestDB current version number
+
+# create QuestDB root directory if one does not exist
+# replace <root_dir> with actual directory name
+mkdir <root_dir>
+
+# <version> is current QuestDB version from pom.xml
+# <root_dir> is the root directory created at previous step
+java -cp core/target/core-<version>.jar io.questdb.ServerMain -d <dir>
 ```
 
-
-### Running
-
-Main class: `io.questdb.ServerMain`
-
-Program arguments: `-d <home_directory>`
-
-QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `home_directory/db`
+QuestDB will start HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `<root_directory>/db`
 
 
 ## Contribution
