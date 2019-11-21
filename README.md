@@ -51,18 +51,7 @@ You can find more documentation [here](https://www.questdb.io/docs/documentation
 
 ## Roadmap
 
-We have built the ultimate performance for read and write on a single-thread.
-But we still have some work to do.
-Elements on our roadmap include:
-
-- Query and aggregates optimisation. Currently, we run aggregates through linear scans.
-While our scans are highly efficient, our current implementations of aggregates are somehow naive.
-Further optimisation will take performance to new levels.
-- Multithreading. Currently, we use one single thread. While this is good for certain use cases
-(you can limit QuestDB to one thread and leave resources for other programs), we will provide
-the ability to distribute load/query work over several cores to benefit from parallelisation.
-- High-availability. Working on providing out-of-the-box high-availability with extreme simplicity.
-
+Our roadmap is [here](roadmap.md)
 
 ## Building from source
 
