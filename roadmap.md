@@ -1,4 +1,19 @@
-__SQL implementation__
+__SQL__
+
+- [ ] Authorization framework:
+        granular authorization framework to govern data access at table, column and SQL functional level
+- [ ] Analytic functions
+- [ ] Views
+- [ ] Incremental queries: reuse result of previously users secure queries to reduce calculation effort
+- [ ] true - parallel query execution
+- [ ] low latency RPC (remote async query execution)
+- [ ] column type change
+- [ ] drop table partition
+- [ ] replace table partition with aggregated data: downsample historical data to reduce data volume as significance of data diminishes
+- [ ] pivot table
+- [ ] parquet import
+- [ ] AVRO import
+- [ ] Cancel active query: lightweight method for cancelling loops that have negligeable impact on query performance
 
 - [x] subqueries
 - [x] support for NULL and NaN values in filters
@@ -8,28 +23,35 @@ __SQL implementation__
         equivalent to 'select x, sum(y) from A group by x')
 - [x] simple resampling (where aggregation function produces single row of values)
 - [x] classic sql joins (hash, nested loops)
-- [x] latest record by secondary entity attribute attribute
-    (e.g. select latest order for all customers in group X, where
-    orders is a time series and customers is dimension and "group" is a field of customer)
-- [ ] time joins (merge)
+- [x] Latest record by secondary entity attribute attribute: select latest order for all customers in group X, where
+    orders is a time series and customers is dimension and "group" is a field of customer
+- [x] time joins (merge)
 - [x] as of joins (trade asof join quote on trade.ccy = quote.ccy)
 - [x] ordering
 - [x] top x rows (select ... limit low,high can be used for paging)
-- [ ] bottom x rows
+- [x] bottom x rows
 - [x] query parameters
 - [x] support for comments (both block /* */ and line --)
 - [x] analytic functions
 - [x] subquery optimiser
 - [x] order by optimiser
-- [ ] NEW distributed queries
-- [ ] NEW pivot tables
-- [x] DDL - create journal
+- [x] DDL - create table
 - [x] DDL - copy journal (sample syntax: create table x as (y where a=1 order by b))
-- [ ] DDL - add/remove column
-- [ ] DDL - delete journal
+- [x] DDL - add/remove column
+- [x] DDL - drop table
+- [x] data generation functions
+- [x] COPY from implementation
 
-__server__
 
+__HTTP server__
+
+- [ ] authentication and authorization
+- [ ] queued DDL execution
+        whenever table writer is needed and not available due to normal race condition server should
+        queue the query and attempt to execute autonomously and periodcally
+- [ ] choice of export formats
+- [ ] query parameter support
+- [ ] grafana integration
 - [x] file upload handling (multipart form parsing)
 - [x] file upload handling from curl (100-continue recognition)
 - [x] query execution
@@ -43,9 +65,20 @@ __server__
 - [x] C layer for windows
 - [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
-- [ ] __authentication and authorization__
-- [ ] PostgreSQL wire protocol implementation
 - [x] sql result export to delimited format
+
+__PostgresSQL wire server__
+
+- [ ] insert execution with parameters 
+- [ ] psql: support metadata queries 
+- [x] query execution
+- [x] query parameters
+- [x] DDL execution
+
+__Influx wire server__
+- [ ] TCP server
+- [x] Protocol parser
+- [x] UDP server
 
 __monitoring__
 
@@ -53,38 +86,3 @@ __monitoring__
 - [ ] active queries
 - [ ] memory usage
 - [ ] open files
-
-__misc__
-
-- [ ] collectd protocol support and console administration
-- [ ] circular memory buffer for "bottom x rows"
-- [x] error handling (releasing resources allocated to partially constructed query plans)
-- [x] Linux/OSX start script
-- [x] Windows service
-
-__community__
-
-- [x] __project web site__
-- [x] example data set
-- [ ] __video tutorial (in progress)__
-- [ ] __demo server__
-- [ ] documentation template
-
-__clients__
-
-- [ ] grafana integration
-
-__Web UI__
-
-- [x] query execution and result display
-- [x] grid styling
-- [x] error reporting and interaction with query editor
-- [x] grid virtualisation
-- [x] file import UI
-- [x] copy SQL export url to clipboard for use in other applications
-- [ ] data visualisation
-
-__core__
-
-- [ ] ORM for query results
-- [x] cache for compiled queries
