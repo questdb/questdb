@@ -199,7 +199,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = new TableReader(configuration, "x");
             IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(intervals);
-            cursor.of(reader);
+            cursor.of(reader, reader.getMetadata().getTimestampIndex());
             cursor.close();
             Assert.assertFalse(reader.isOpen());
             cursor.close();
@@ -269,7 +269,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableReader reader = new TableReader(configuration, "x")) {
                 IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(new LongList());
                 try {
-                    cursor.of(reader);
+                    cursor.of(reader, reader.getMetadata().getTimestampIndex());
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "table 'x' has no timestamp");
@@ -395,9 +395,13 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                final int timestampIndex;
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                    timestampIndex = reader.getMetadata().getTimestampIndex();
+                }
                 final TableReaderRecord record = new TableReaderRecord();
                 final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, intervals);
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, timestampIndex)) {
 
                     // assert that there is nothing to start with
                     record.of(cursor.getTableReader());
@@ -444,7 +448,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
+                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, timestampIndex);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
@@ -600,7 +604,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
                 IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(IntervalFwdDataFrameCursorTest.intervals);
-                cursor.of(reader);
+                cursor.of(reader, reader.getMetadata().getTimestampIndex());
                 record.of(reader);
 
                 assertEquals(expected, record, cursor);

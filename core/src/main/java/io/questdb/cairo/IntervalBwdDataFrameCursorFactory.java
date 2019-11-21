@@ -36,8 +36,8 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
-        cursor.of(getReader(securityContext));
+    public DataFrameCursor getCursor(CairoSecurityContext securityContext, int timestampIndex) {
+        cursor.of(getReader(securityContext), timestampIndex);
         return cursor;
     }
 }

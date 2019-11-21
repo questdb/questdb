@@ -34,7 +34,7 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     }
 
     @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
+    public DataFrameCursor getCursor(CairoSecurityContext securityContext, int timestampIndex) {
         return cursor.of(getReader(securityContext));
     }
 }

@@ -27,5 +27,5 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoSecurityContext;
 
 public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext);
+    DataFrameCursor getCursor(CairoSecurityContext securityContext, int timestampIndex);
 }

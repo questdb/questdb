@@ -254,6 +254,27 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDynamicTimestamp() throws Exception {
+        TestMatchFunctionFactory.clear();
+        // no index
+        final String expected = "a\tb\tk\n" +
+                "21.583224269349\tYSBE\t1970-01-07T22:40:00.000000Z\n";
+
+        assertQuery(expected,
+                "select * from (x timestamp(k)) where k = '1970-01-07'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                "k");
+    }
+
+    @Test
     public void testFilterFunctionOnSubQuery() throws Exception {
         // no index
         final String expected = "a\tb\tk\n" +

@@ -106,8 +106,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return dataFrame;
     }
 
-    public void of(TableReader reader) {
-        this.timestampIndex = reader.getMetadata().getTimestampIndex();
+    public void of(TableReader reader, int timestampIndex) {
+        this.timestampIndex = timestampIndex;
         if (this.timestampIndex == -1) {
             throw CairoException.instance(0).put("table '").put(reader.getTableName()).put("' has no timestamp");
         }
