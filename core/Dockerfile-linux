@@ -41,9 +41,9 @@ WORKDIR /app/questdb
 # bash prompt
 RUN echo "PS1='🐳  \[\033[1;36m\]\h \[\033[1;34m\]\W\[\033[0;35m\] \[\033[1;36m\]# \[\033[0m\]'" > /root/.bashrc
 
-
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
+EXPOSE 8892/tcp
 
 # Run questdb when the container launches
 CMD ["/app/jre/bin/java", "-cp", "/app/questdb/questdb.jar", "io.questdb.ServerMain", "-d", "/root/.questdb"]

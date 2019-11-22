@@ -1,9 +1,10 @@
 FROM microsoft/nanoserver:1803
 
 ENV JRE jre-8u231-windows-x64.tar.gz
+ENV QUESTDB_VERSION 4.0.0
 
 # Copy the binary file into the container at /app
-COPY target/questdb-3.5.0-SNAPSHOT-bin.tar.gz /app/
+COPY target/questdb-${QUESTDB_VERSION}-bin.tar.gz /app/
 
 # Copy win64 JDK into the container at /app
 COPY dist/${JRE} /app/
@@ -11,7 +12,8 @@ COPY dist/${JRE} /app/
 WORKDIR /app
 
 # Install questdb
-RUN tar.exe xvfz questdb-3.5.0-SNAPSHOT-bin.tar.gz
+RUN tar.exe xvfz questdb-%QUESTDB_VERSION%-bin.tar.gz
+RUN del questdb-%QUESTDB_VERSION%-bin.tar.gz
 
 # install JRE8
 RUN tar xvfz %JRE%
@@ -20,10 +22,17 @@ RUN tar xvfz %JRE%
 RUN del %JRE%
 
 # Make working folder the quest db folder
-WORKDIR /app/questdb-3.5.0-SNAPSHOT
+WORKDIR /app/questdb-${QUESTDB_VERSION}
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
+EXPOSE 8892/tcp
+
+# create QuestDB root directory
+RUN mkdir C:\questdb
+
+VOLUME C:/questdb/db
 
 # Run questdb when the container launches
-CMD questdb.exe -j c:\app\jre1.8.0_231
+#CMD /app/questdb-%QUESTDB_VERSION%/questdb.exe -j c:\app\jre1.8.0_231 -d c:\questdb
+CMD ["/app/jre1.8.0_231/bin/java", "-cp", "./questdb.jar", "io.questdb.ServerMain", "-d", "c:/questdb"]
