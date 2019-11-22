@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -52,7 +53,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
     final long fd;
     RecordCursorFactory recordCursorFactory;
-    CharSequence query;
+    final StringSink query = new StringSink();
     RecordMetadata metadata;
     RecordCursor cursor;
     long count;
@@ -76,7 +77,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             FACTORY_CACHE.get().put(query.toString(), recordCursorFactory);
             recordCursorFactory = null;
         }
-        query = null;
+        query.clear();
         queryState = QUERY_PREFIX;
         columnIndex = 0;
     }

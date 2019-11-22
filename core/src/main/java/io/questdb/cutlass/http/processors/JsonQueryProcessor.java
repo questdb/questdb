@@ -33,6 +33,8 @@ import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.text.TextUtil;
+import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,6 +45,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -110,14 +113,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, this::cannotCopyRemote);
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str == null) {
-            r.put("null");
-        } else {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     @Override
     public void close() {
         Misc.free(compiler);
@@ -138,7 +133,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 executeCachedSelect(context, dispatcher, state, socket, factory);
             } else {
                 // new query
-                LOG.info().$("exec [q='").$(state.query).$("']").$();
+                info(state).$("exec [q='").utf8(state.query).$("']").$();
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 queryExecutors.getQuick(cc.getType()).execute(
                         context,
@@ -155,83 +150,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(socket, e, state);
             readyForNextRequest(context, dispatcher);
         }
-    }
-
-    private void cannotCopyRemote(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state,
-            HttpChunkedResponseSocket socket,
-            CompiledQuery cc
-
-    ) throws SqlException {
-        throw SqlException.$(0, "copy from STDIN is not supported over REST");
-    }
-
-    private void executeNewSelect(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state,
-            HttpChunkedResponseSocket socket,
-            CompiledQuery cc
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        cacheMisses.incrementAndGet();
-        info(state).$("execute-new [q=`").$(state.query).
-                $("`, skip: ").$(state.skip).
-                $(", stop: ").$(state.stop).
-                $(']').$();
-        executeSelect(context, dispatcher, state, socket, cc.getRecordCursorFactory());
-    }
-
-    private void executeCachedSelect(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, JsonQueryProcessorState state, HttpChunkedResponseSocket socket, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        cacheHits.incrementAndGet();
-        info(state).$("execute-cached [q=`").$(state.query).
-                $("`, skip: ").$(state.skip).
-                $(", stop: ").$(state.stop).
-                $(']').$();
-        executeSelect(context, dispatcher, state, socket, factory);
-    }
-
-    private void executeInsert(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state,
-            HttpChunkedResponseSocket socket,
-            CompiledQuery cc
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final InsertStatement insertStatement = cc.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-        sendConfirmation(context, dispatcher, state, socket, cc);
-    }
-
-    private void sendConfirmation(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state,
-            HttpChunkedResponseSocket socket,
-            CompiledQuery cq
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, 200);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
-        socket.sendChunk();
-        socket.done();
-        readyForNextRequest(context, dispatcher);
-    }
-
-    private void executeSelect(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state, HttpChunkedResponseSocket socket,
-            RecordCursorFactory factory
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.recordCursorFactory = factory;
-        state.cursor = factory.getCursor(sqlExecutionContext);
-        state.metadata = factory.getMetadata();
-        header(socket, 200);
-        resumeSend(context, dispatcher);
     }
 
     @Override
@@ -289,6 +207,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context, dispatcher);
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str == null) {
+            r.put("null");
+        } else {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
+    private void cannotCopyRemote(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            JsonQueryProcessorState state,
+            HttpChunkedResponseSocket socket,
+            CompiledQuery cc
+
+    ) throws SqlException {
+        throw SqlException.$(0, "copy from STDIN is not supported over REST");
     }
 
     private void doFirstRecordLoop(JsonQueryProcessorState state, HttpChunkedResponseSocket socket, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -413,6 +350,58 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.error().$('[').$(state.fd).$("] ");
     }
 
+    private void executeCachedSelect(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, JsonQueryProcessorState state, HttpChunkedResponseSocket socket, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        cacheHits.incrementAndGet();
+        info(state).$("execute-cached ").
+                $("[skip: ").$(state.skip).
+                $(", stop: ").$(state.stop).
+                $(']').$();
+        executeSelect(context, dispatcher, state, socket, factory);
+    }
+
+    private void executeInsert(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            JsonQueryProcessorState state,
+            HttpChunkedResponseSocket socket,
+            CompiledQuery cc
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final InsertStatement insertStatement = cc.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+        sendConfirmation(context, dispatcher, state, socket, cc);
+    }
+
+    private void executeNewSelect(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            JsonQueryProcessorState state,
+            HttpChunkedResponseSocket socket,
+            CompiledQuery cc
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        cacheMisses.incrementAndGet();
+        info(state).$("execute-new ").
+                $("[skip: ").$(state.skip).
+                $(", stop: ").$(state.stop).
+                $(']').$();
+        executeSelect(context, dispatcher, state, socket, cc.getRecordCursorFactory());
+    }
+
+    private void executeSelect(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            JsonQueryProcessorState state, HttpChunkedResponseSocket socket,
+            RecordCursorFactory factory
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        state.recordCursorFactory = factory;
+        state.cursor = factory.getCursor(sqlExecutionContext);
+        state.metadata = factory.getMetadata();
+        header(socket, 200);
+        resumeSend(context, dispatcher);
+    }
+
     protected void header(
             HttpChunkedResponseSocket socket,
             int status
@@ -431,7 +420,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").$(state.query).$(e).$();
+        error(state).$("Server error executing query ").utf8(state.query).$(e).$();
         sendException(socket, 0, e.getMessage(), 500, state.query);
     }
 
@@ -514,7 +503,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
-        final CharSequence query = request.getUrlParam("query");
+        final DirectByteCharSequence query = request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
             sendException(socket, 0, "No query text", 400, state.query);
@@ -549,7 +538,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             skip = 0;
         }
 
-        state.query = query;
+        state.query.clear();
+        try {
+            TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
+        } catch (Utf8Exception e) {
+            info(state).$("Bad UTF8 encoding").$();
+            sendException(socket, 0, "Bad UTF8 encoding in query text", 400, state.query);
+            return false;
+        }
+
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
@@ -648,6 +645,20 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         dispatcher.registerChannel(context, IOOperation.READ);
     }
 
+    private void sendConfirmation(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            JsonQueryProcessorState state,
+            HttpChunkedResponseSocket socket,
+            CompiledQuery cq
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(socket, 200);
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.sendChunk();
+        socket.done();
+        readyForNextRequest(context, dispatcher);
+    }
+
     private void sendException(
             HttpChunkedResponseSocket socket,
             int position,
@@ -671,7 +682,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
-                .$("syntax-error [q=`").$(state.query)
+                .$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(sqlException.getPosition())
                 .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();

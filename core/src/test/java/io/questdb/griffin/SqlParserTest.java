@@ -423,6 +423,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUtfStringConstants() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_str('Raphaël','Léo') rnd_str from (long_sequence(200))",
+                "SELECT rnd_str('Raphaël','Léo') FROM long_sequence(200);"
+        );
+    }
+
+    @Test
     public void testCountStarRewrite() throws SqlException {
         assertQuery(
                 "select-group-by count() count, x from (long_sequence(10))",

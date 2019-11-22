@@ -33,6 +33,8 @@ import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.text.TextUtil;
+import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,6 +45,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
@@ -73,12 +76,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     @Override
     public void close() {
         Misc.free(compiler);
@@ -101,13 +98,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     }
                     cacheHits.incrementAndGet();
-                    info(state).$("execute-new [q=`").$(state.query).
+                    info(state).$("execute-new [q=`").utf8(state.query).
                             $("`, skip: ").$(state.skip).
                             $(", stop: ").$(state.stop).
                             $(']').$();
                 } else {
                     cacheMisses.incrementAndGet();
-                    info(state).$("execute-cached [q=`").$(state.query).
+                    info(state).$("execute-cached [q=`").utf8(state.query).
                             $("`, skip: ").$(state.skip).
                             $(", stop: ").$(state.stop).
                             $(']').$();
@@ -285,6 +282,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context, dispatcher);
     }
 
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
     private LogRecord error(JsonQueryProcessorState state) {
         return LOG.error().$('[').$(state.fd).$("] ");
     }
@@ -316,7 +319,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").$(state.query).$(e).$();
+        error(state).$("Server error executing query ").utf8(state.query).$(e).$();
         sendException(socket, 0, e.getMessage(), 500, state.query);
     }
 
@@ -326,7 +329,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
-        final CharSequence query = request.getUrlParam("query");
+        final DirectByteCharSequence query = request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
             sendException(socket, 0, "No query text", 400, state.query);
@@ -361,7 +364,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             skip = 0;
         }
 
-        state.query = query;
+        state.query.clear();
+        try {
+            TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
+        } catch (Utf8Exception e) {
+            info(state).$("Bad UTF8 encoding").$();
+            sendException(socket, 0, "Bad UTF8 encoding in query text", 400, state.query);
+            return false;
+        }
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
@@ -485,7 +495,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
-                .$("syntax-error [q=`").$(state.query)
+                .$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(sqlException.getPosition())
                 .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();

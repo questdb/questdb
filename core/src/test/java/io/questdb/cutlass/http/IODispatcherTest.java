@@ -44,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,48 +55,6 @@ public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
-
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
 
     @Before
     public void setUp() throws Exception {
@@ -348,91 +307,6 @@ public class IODispatcherTest {
         }
     }
 
-    @Test
-    public void testImportMultipleOnSameConnection() throws Exception {
-        testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                ,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
-                , NetworkFacadeImpl.INSTANCE
-                , false
-                , 150
-        );
-    }
-
     public void testImport(
             String response,
             String request,
@@ -510,6 +384,40 @@ public class IODispatcherTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testImportDelimiterNotDetected() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "31\r\n" +
+                        "not enough lines [table=fhv_tripdata_2017-02.csv]\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "9988" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
     }
 
     @Test
@@ -684,18 +592,32 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportDelimiterNotDetected() throws Exception {
+    public void testImportMultipleOnSameConnection() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "31\r\n" +
-                        "not enough lines [table=fhv_tripdata_2017-02.csv]\r\n" +
+                        "05d7\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
                         "00\r\n" +
-                        "\r\n",
+                        "\r\n"
+                ,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -705,15 +627,52 @@ public class IODispatcherTest {
                         "Expect: 100-continue\r\n" +
                         "\r\n" +
                         "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
                         "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
                         "Content-Type: application/octet-stream\r\n" +
                         "\r\n" +
-                        "9988" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
                         "\r\n" +
-                        "--------------------------27d997ca93d2689d--",
-                NetworkFacadeImpl.INSTANCE,
-                true,
-                1
+                        "--------------------------27d997ca93d2689d--"
+                , NetworkFacadeImpl.INSTANCE
+                , false
+                , 150
         );
     }
 
@@ -1273,94 +1232,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryDropTable() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /query?query=drop%20table%20x HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                1
-        );
-    }
-
-    @Test
-    public void testJsonQueryCreateTable() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                1
-        );
-    }
-
-    @Test
-    public void testJsonQueryEmptyText() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /query?query= HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "31\r\n" +
-                        "{\"query\":\"\",\"error\":\"No query text\",\"position\":0}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-    }
-
-    @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
         testJsonQuery0(1, engine -> {
 
@@ -1524,6 +1395,94 @@ public class IODispatcherTest {
                     false
             );
         });
+    }
+
+    @Test
+    public void testJsonQueryCreateTable() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
+    }
+
+    @Test
+    public void testJsonQueryDropTable() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=drop%20table%20x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
+    }
+
+    @Test
+    public void testJsonQueryEmptyText() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query= HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "31\r\n" +
+                        "{\"query\":\"\",\"error\":\"No query text\",\"position\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
     }
 
     @Test
@@ -1874,6 +1833,37 @@ public class IODispatcherTest {
                         "\r\n" +
                         "0185\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonUtf8EncodedQuery() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=%0A%0A%0A%0ASELECT+%27Rapha%C3%ABl%27+a%2C+%27L%C3%A9o%27+b+FROM+long_sequence(2)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:13005\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (X11; Fedora; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:13005/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: ajs_group_id=null; ajs_anonymous_id=%22870b530ab5ce462f4545099f85657346%22; ajs_user_id=%22870b530ab5ce462f4545099f85657346%22; _ga=GA1.1.1909943241.1573659694\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "cb\r\n" +
+                        "{\"query\":\"\\n\\n\\n\\nSELECT 'Raphaël' a, 'Léo' b FROM long_sequence(2)\",\"columns\":[{\"name\":\"a\",\"type\":\"STRING\"},{\"name\":\"b\",\"type\":\"STRING\"}],\"dataset\":[[\"Raphaël\",\"Léo\"],[\"Raphaël\",\"Léo\"]],\"count\":2}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3089,6 +3079,48 @@ public class IODispatcherTest {
         });
     }
 
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
             String baseDir,
@@ -3218,7 +3250,7 @@ public class IODispatcherTest {
                         int received = 0;
                         if (print) {
                             System.out.println("expected");
-                            System.out.println(new String(expectedResponse));
+                            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
                         }
                         boolean disconnected = false;
                         while (received < expectedToReceive) {
@@ -3276,6 +3308,10 @@ public class IODispatcherTest {
                     false
             );
         });
+    }
+
+    private void testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, 100);
     }
 
     private void testJsonQuery0(int workerCount, HttpClientCode code) throws Exception {
@@ -3342,10 +3378,6 @@ public class IODispatcherTest {
                 }
             }
         });
-    }
-
-    private void testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
-        testJsonQuery(recordCount, request, expectedResponse, 100);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {

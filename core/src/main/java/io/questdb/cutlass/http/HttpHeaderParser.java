@@ -170,7 +170,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
-    public CharSequence getUrlParam(CharSequence name) {
+    public DirectByteCharSequence getUrlParam(CharSequence name) {
         return urlParams.get(name);
     }
 
@@ -442,7 +442,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                 case '%':
                     try {
                         if (rp + 1 < hi) {
-                            Unsafe.getUnsafe().putByte(wp++, (byte) Numbers.parseHexInt(temp.of(rp, rp += 2)));
+                            byte bb = (byte) Numbers.parseHexInt(temp.of(rp, rp += 2));
+                            Unsafe.getUnsafe().putByte(wp++, bb);
                             offset += 2;
                             continue;
                         }

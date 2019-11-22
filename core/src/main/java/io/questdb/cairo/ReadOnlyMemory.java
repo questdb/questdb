@@ -145,7 +145,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return pageSize;
     }
 
-    private void grow0(long size) {
+    private void grow0(final long size) {
         long targetPageSize = computePageSize(size);
         if (targetPageSize != getMapPageSize()) {
             setPageSize(targetPageSize);
@@ -184,11 +184,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             }
 
             address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-            if (address == -1L) {
-                return recoverPageMapOrFail(page, offset, sz);
-
-            }
-            return cachePageAddress(page, address);
+            return address == -1L ? recoverPageMapOrFail(page, offset, sz) : cachePageAddress(page, address);
         }
         throw CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
     }

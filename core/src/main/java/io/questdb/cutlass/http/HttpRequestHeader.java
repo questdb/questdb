@@ -50,5 +50,5 @@ public interface HttpRequestHeader {
 
     CharSequence getUrl();
 
-    CharSequence getUrlParam(CharSequence name);
+    DirectByteCharSequence getUrlParam(CharSequence name);
 }
