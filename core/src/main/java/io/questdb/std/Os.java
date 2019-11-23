@@ -41,17 +41,19 @@ public final class Os {
     public static final int _32Bit = -2;
     public static final int type;
     public static final int OSX = 1;
-    public static final int LINUX = 2;
+    public static final int LINUX_AMD64 = 2;
+    public static final int LINUX_ARM64 = 4;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     static {
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
             String osName = System.getProperty("os.name");
             if (osName.contains("Linux")) {
-                type = LINUX;
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
+                    type = LINUX_ARM64;
                     loadLib("/binaries/armlinux/libquestdb.so");
                 } else {
+                    type = LINUX_AMD64;
                     loadLib("/binaries/linux/libquestdb.so");
                 }
             } else if (osName.contains("Mac")) {

@@ -79,7 +79,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotBindSocket() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertCannotBindSocket(LINUX_FACTORY);
@@ -87,7 +87,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotJoin() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertCannotJoin(LINUX_FACTORY);
@@ -95,7 +95,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotOpenSocket() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertCannotOpenSocket(LINUX_FACTORY);
@@ -103,7 +103,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotSetReceiveBuffer() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertCannotSetReceiveBuffer(LINUX_FACTORY);
@@ -111,7 +111,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxFrequentCommit() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertFrequentCommit(LINUX_FACTORY);
@@ -119,7 +119,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxSimpleReceive() throws Exception {
-        if (Os.type != Os.LINUX) {
+        if (Os.type != Os.LINUX_AMD64) {
             return;
         }
         assertReceive(new TestLineUdpReceiverConfiguration(), LINUX_FACTORY);

@@ -14,6 +14,8 @@ WORKDIR /app
 # Install questdb
 RUN tar.exe xvfz questdb-%QUESTDB_VERSION%-bin.tar.gz
 RUN del questdb-%QUESTDB_VERSION%-bin.tar.gz
+RUN del questdb-%QUESTDB_VERSION%\questdb.exe
+RUN del questdb-%QUESTDB_VERSION%\questdb.sh
 
 # install JRE8
 RUN tar xvfz %JRE%
@@ -34,5 +36,4 @@ RUN mkdir C:\questdb
 VOLUME C:/questdb/db
 
 # Run questdb when the container launches
-#CMD /app/questdb-%QUESTDB_VERSION%/questdb.exe -j c:\app\jre1.8.0_231 -d c:\questdb
 CMD ["/app/jre1.8.0_231/bin/java", "-cp", "./questdb.jar", "io.questdb.ServerMain", "-d", "c:/questdb"]

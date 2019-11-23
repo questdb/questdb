@@ -43,7 +43,7 @@ public final class Net {
     static {
         Os.init();
         EWOULDBLOCK = getEwouldblock();
-        if (Os.type == Os.LINUX) {
+        if (Os.type == Os.LINUX_AMD64) {
             MMSGHDR_SIZE = getMsgHeaderSize();
             MMSGHDR_BUFFER_ADDRESS_OFFSET = getMsgHeaderBufferAddressOffset();
             MMSGHDR_BUFFER_LENGTH_OFFSET = getMsgHeaderBufferLengthOffset();

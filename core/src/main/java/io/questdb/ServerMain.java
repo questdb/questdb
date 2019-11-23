@@ -100,6 +100,24 @@ public class ServerMain {
                 System.out.println("Database root is '" + path + "'");
             }
         }
+        switch (Os.type) {
+            case Os.WINDOWS:
+                System.out.println("OS: windows-amd64");
+                break;
+            case Os.LINUX_AMD64:
+                System.out.println("OS: linux-amd64");
+                break;
+            case Os.OSX:
+                System.out.println("OS: apple-amd64");
+                break;
+            case Os.LINUX_ARM64:
+                System.out.println("OS: linux-arm64");
+                break;
+            default:
+                System.err.println("Unsupported OS");
+                break;
+        }
+
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");

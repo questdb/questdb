@@ -36,7 +36,8 @@ public class IODispatchers {
             IOContextFactory<C> ioContextFactory
     ) {
         switch (Os.type) {
-            case Os.LINUX:
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
                 return new IODispatcherLinux<>(configuration, ioContextFactory);
             case Os.OSX:
                 return new IODispatcherOsx<>(configuration, ioContextFactory);
