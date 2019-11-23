@@ -52,9 +52,14 @@ Push this image eventually:
 docker push questdb/questdb:4.0.0-linux-amd64
 ```
 
-Create ARM64 image. You will not be able to run it on Windows - so do push straight away 
+Create ARM64 image.
 ```
-docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-linux . --push
+docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-linux . --load
+```
+
+Push that eventually as well:
+```
+docker push questdb/questdb:4.0.0-linux-arm64
 ```
 
 ### Switch Docker Desktop to Windows
