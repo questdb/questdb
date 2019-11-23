@@ -79,8 +79,9 @@ docker manifest create questdb/questdb:4.0.0 questdb/questdb:4.0.0-linux-arm64 q
 
 Push manifest:
 ```
-docker manifest push questdb/questdb:4.0.0
+docker manifest push questdb/questdb:4.0.0 --purge
 ```
+The --purge option is there to delete manifest on local Docker. If you do not do it and find out that you added wrong image to manifest, it would be impossible to take that image out!
 
 ## Running QuestDB in Docker Container
 
