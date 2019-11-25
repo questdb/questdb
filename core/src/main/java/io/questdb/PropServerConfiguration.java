@@ -145,6 +145,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonCacheLimit;
     private int jsonCacheSize;
     private double maxRequiredDelimiterStdDev;
+    private double maxRequiredLineLengthStdDev;
     private int metadataStringPoolCapacity;
     private int rollBufferLimit;
     private int rollBufferSize;
@@ -229,6 +230,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonCacheLimit = getIntSize(properties, "http.text.json.cache.limit", 16384);
             this.jsonCacheSize = getIntSize(properties, "http.text.json.cache.size", 8192);
             this.maxRequiredDelimiterStdDev = getDouble(properties, "http.text.max.required.delimiter.stddev", 0.1222d);
+            this.maxRequiredLineLengthStdDev = getDouble(properties, "http.text.max.required.line.length.stddev", 0.8);
             this.metadataStringPoolCapacity = getInt(properties, "http.text.metadata.string.pool.capacity", 128);
 
             this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 1024 * 4096);
@@ -613,6 +615,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getMaxRequiredDelimiterStdDev() {
             return maxRequiredDelimiterStdDev;
+        }
+
+        @Override
+        public double getMaxRequiredLineLengthStdDev() {
+            return maxRequiredLineLengthStdDev;
         }
 
         @Override

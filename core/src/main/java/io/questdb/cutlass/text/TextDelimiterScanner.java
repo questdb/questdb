@@ -29,11 +29,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 public class TextDelimiterScanner implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);
     private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
     private static final double DOUBLE_TOLERANCE = 0.00000001d;
+    private static byte[] potentialDelimiterBytes = new byte[256];
 
     static {
         configurePriority((byte) ',', (byte) 10);
@@ -42,6 +44,22 @@ public class TextDelimiterScanner implements Closeable {
         configurePriority((byte) ':', (byte) 9);
         configurePriority((byte) ' ', (byte) 8);
         configurePriority((byte) ';', (byte) 8);
+
+        Arrays.fill(potentialDelimiterBytes, (byte) 0);
+        for (int i = 1; i < '0'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+        for (int i = '9' + 1; i < 'A'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'Z'; i < 'a'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'z' + 1; i < 255; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
     }
 
     private final long matrix;
@@ -49,6 +67,7 @@ public class TextDelimiterScanner implements Closeable {
     private final int matrixRowSize;
     private final int lineCountLimit;
     private final double maxRequiredDelimiterStdDev;
+    private final double maxRequiredLineLengthStdDev;
     private CharSequence tableName;
 
     public TextDelimiterScanner(TextConfiguration configuration) {
@@ -57,6 +76,7 @@ public class TextDelimiterScanner implements Closeable {
         this.matrixSize = matrixRowSize * lineCountLimit;
         this.matrix = Unsafe.malloc(this.matrixSize);
         this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
+        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
     }
 
     private static void configurePriority(byte value, byte priority) {
@@ -84,7 +104,7 @@ public class TextDelimiterScanner implements Closeable {
         long byteBitFieldLo = 0;
         long byteBitFieldHi = 0;
 
-        boolean lineHasContent = false;
+        int lineLen = 0;
 
         Unsafe.getUnsafe().setMemory(matrix, matrixSize, (byte) 0);
         while (cursor < hi && lineCount < lineCountLimit) {
@@ -114,24 +134,28 @@ public class TextDelimiterScanner implements Closeable {
                 case '\r':
                     // if line doesn't have content we just ignore
                     // line end, thus skipping empty lines as well
-                    if (lineHasContent) {
+                    if (lineLen > 0) {
+                        // we are going to be storing this line length in 'A' byte
+                        // we don't collect frequencies on printable characters when trying to determine
+                        // column delimiter, therefore 'A' is free to use.
+                        bumpCountAt(lineCount, (byte) 'A', lineLen);
+                        byteBitFieldHi = byteBitFieldHi | (1L << (Byte.MAX_VALUE - 'A'));
                         lineCount++;
-                        lineHasContent = false;
+                        lineLen = 0;
                     }
                     continue;
                 case '"':
                     quotes = true;
                     continue;
                 default:
-                    if ((b > 0 && b < '0') || (b > '9' && b < 'A') || (b > 'Z' && b < 'a') || (b > 'z')) {
+                    lineLen++;
+                    if (potentialDelimiterBytes[b & 0xff] == 1) {
                         break;
                     }
                     continue;
             }
 
-            lineHasContent = true;
-            long pos = matrix + (lineCount * matrixRowSize + b * Integer.BYTES);
-            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + 1);
+            bumpCountAt(lineCount, b, 1);
 
             if (b < 64) {
                 byteBitFieldLo = byteBitFieldLo | (1L << b);
@@ -148,9 +172,10 @@ public class TextDelimiterScanner implements Closeable {
             throw TextException.$("not enough lines [table=").put(tableName).put(']');
         }
 
-        double lastStdDev = Double.MAX_VALUE;
+        double lastDelimiterStdDev = Double.MAX_VALUE;
         byte lastDelimiterPriority = Byte.MIN_VALUE;
         double lastDelimiterMean = 0;
+        double lineLengthStdDev = 0;
 
         for (int i = 0, n = Byte.MAX_VALUE + 1; i < n; i++) {
             boolean set;
@@ -181,20 +206,25 @@ public class TextDelimiterScanner implements Closeable {
                         offset += matrixRowSize;
                     }
 
-                    double stdDev = Math.sqrt(squareSum / lineCount);
+                    final double stdDev = Math.sqrt(squareSum / lineCount);
+                    if (i == 'A') {
+                        lineLengthStdDev = stdDev;
+                        continue;
+                    }
+
                     final byte thisPriority = getPriority((byte) i);
 
                     // when stddev of this is less than last - use this
                     // when stddev of this is the same as last then
                     //    choose on priority (higher is better)
                     //    when priority is the same choose on mean (higher is better
-                    if (stdDev < lastStdDev
+                    if (stdDev < lastDelimiterStdDev
                             || (
-                            (Math.abs(stdDev - lastStdDev) < DOUBLE_TOLERANCE)
+                            (Math.abs(stdDev - lastDelimiterStdDev) < DOUBLE_TOLERANCE)
                                     &&
                                     (lastDelimiterPriority < thisPriority || lastDelimiterPriority == thisPriority && lastDelimiterMean > mean)
                     )) {
-                        lastStdDev = stdDev;
+                        lastDelimiterStdDev = stdDev;
                         lastDelimiterPriority = thisPriority;
                         lastDelimiterMean = mean;
                         delimiter = (byte) i;
@@ -205,27 +235,42 @@ public class TextDelimiterScanner implements Closeable {
 
         assert delimiter > 0;
 
-        if (lastStdDev < maxRequiredDelimiterStdDev) {
+        if (lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
                     .$("scan result [table=`").$(tableName)
                     .$("`, delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)
-                    .$(", stddev=").$(lastStdDev)
+                    .$(", stddev=").$(lastDelimiterStdDev)
                     .$(']').$();
 
             return delimiter;
         }
 
+        // it appears we could not establish delimiter
+        // we could treat input as single column of data if line length change stays within tolerance
+        if (lineLengthStdDev < maxRequiredLineLengthStdDev) {
+            return ',';
+        }
+
         LOG.info()
-                .$("min deviation is too high [stddev=").$(lastStdDev)
-                .$(", max=").$(maxRequiredDelimiterStdDev)
+                .$("min deviation is too high [delimiterStdDev=").$(lastDelimiterStdDev)
+                .$(", delimiterMaxStdDev=").$(maxRequiredDelimiterStdDev)
+                .$(", lineLengthStdDev=").$(lineLengthStdDev)
+                .$(", lineLengthMaxStdDev=").$(maxRequiredLineLengthStdDev)
                 .$(']').$();
 
-        throw TextException.$("min deviation is too high [stddev=")
-                .put(lastStdDev)
-                .put(", max=").put(maxRequiredDelimiterStdDev)
+        throw TextException.$("min deviation is too high [delimiterStdDev=")
+                .put(lastDelimiterStdDev)
+                .put(", delimiterMaxStdDev=").put(maxRequiredDelimiterStdDev)
+                .put(", lineLengthStdDev=").put(lineLengthStdDev)
+                .put(", lineLengthMaxStdDev=").put(maxRequiredLineLengthStdDev)
                 .put(']');
+    }
+
+    private void bumpCountAt(int line, byte bytePosition, int increment) {
+        long pos = matrix + (line * matrixRowSize + bytePosition * Integer.BYTES);
+        Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
     }
 
     void setTableName(CharSequence tableName) {

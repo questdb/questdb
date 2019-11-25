@@ -36,6 +36,8 @@ public interface TextConfiguration {
 
     double getMaxRequiredDelimiterStdDev();
 
+    double getMaxRequiredLineLengthStdDev();
+
     int getMetadataStringPoolCapacity();
 
     int getRollBufferLimit();

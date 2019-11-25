@@ -513,6 +513,48 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSingleColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\n" +
+                    "1\n" +
+                    "2\n" +
+                    "3\n" +
+                    "4\n" +
+                    "5\n" +
+                    "6\n" +
+                    "7\n" +
+                    "8\n" +
+                    "9\n" +
+                    "10\n" +
+                    "11\n";
+
+            String csv = "1\n" +
+                    "2\n" +
+                    "3\n" +
+                    "4\n" +
+                    "5\n" +
+                    "6\n" +
+                    "7\n" +
+                    "8\n" +
+                    "9\n" +
+                    "10\n" +
+                    "11";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    11,
+                    11
+            );
+        });
+    }
+
+    @Test
     public void testDanglingQuote() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +

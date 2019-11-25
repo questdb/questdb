@@ -76,6 +76,11 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
+    public double getMaxRequiredLineLengthStdDev() {
+        return 0.8;
+    }
+
+    @Override
     public int getMetadataStringPoolCapacity() {
         return 128;
     }
