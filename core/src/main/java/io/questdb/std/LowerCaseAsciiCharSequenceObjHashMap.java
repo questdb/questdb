@@ -24,13 +24,11 @@
 
 package io.questdb.std;
 
-import org.omg.CORBA.Object;
 
 import java.util.Arrays;
 
 
 public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAsciiCharSequenceHashSet {
-    private final java.lang.Object noEntryValue = null;
     private T[] values;
 
     public LowerCaseAsciiCharSequenceObjHashMap() {
