@@ -54,7 +54,7 @@ docker push questdb/questdb:4.0.0-linux-amd64
 
 Create ARM64 image.
 ```
-docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-linux . --load
+docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-linux-arm64 . --load
 ```
 
 Push that eventually as well:
