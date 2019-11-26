@@ -72,7 +72,7 @@ public class TextDelimiterScanner implements Closeable {
 
     public TextDelimiterScanner(TextConfiguration configuration) {
         this.lineCountLimit = configuration.getTextAnalysisMaxLines();
-        this.matrixRowSize = (Byte.MAX_VALUE + 1) * Integer.BYTES;
+        this.matrixRowSize = 256 * Integer.BYTES;
         this.matrixSize = matrixRowSize * lineCountLimit;
         this.matrix = Unsafe.malloc(this.matrixSize);
         this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
