@@ -16,6 +16,7 @@ __SQL__
 - [ ] Cancel active query: lightweight method for cancelling loops that have negligeable impact on query performance
 - [ ] JSON search
 - [ ] geospatial search
+- [ ] ACID over multiple tables 
 
 - [x] subqueries
 - [x] support for NULL and NaN values in filters
