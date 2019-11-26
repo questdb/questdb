@@ -51,7 +51,7 @@ You can find more documentation [here](https://www.questdb.io/docs/documentation
 
 ## Roadmap
 
-Our roadmap is [here](roadmap.md)
+Our roadmap is [here](https://www.questdb.io/docs/roadmap)
 
 ## Building from source
 
