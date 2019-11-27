@@ -269,8 +269,10 @@ public class TextDelimiterScanner implements Closeable {
     }
 
     private void bumpCountAt(int line, byte bytePosition, int increment) {
-        long pos = matrix + (line * matrixRowSize + bytePosition * Integer.BYTES);
-        Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
+        if (bytePosition > 0) {
+            final long pos = matrix + (line * matrixRowSize + bytePosition * Integer.BYTES);
+            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
+        }
     }
 
     void setTableName(CharSequence tableName) {
