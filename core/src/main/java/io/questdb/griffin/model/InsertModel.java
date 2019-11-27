@@ -35,6 +35,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private ExpressionNode tableName;
     private QueryModel queryModel;
     private int selectKeywordPosition;
+    private int endOfValuesPosition;
 
     private InsertModel() {
     }
@@ -59,6 +60,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.columnPositions.clear();
         this.columnValues.clear();
         this.selectKeywordPosition = 0;
+        this.endOfValuesPosition = 0;
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -100,6 +102,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
+    }
+
+    public int getEndOfValuesPosition() {
+        return endOfValuesPosition;
+    }
+
+    public void setEndOfValuesPosition(int endOfValuesPosition) {
+        this.endOfValuesPosition = endOfValuesPosition;
     }
 
     @Override

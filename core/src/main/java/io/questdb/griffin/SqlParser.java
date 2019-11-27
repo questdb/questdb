@@ -788,6 +788,7 @@ public final class SqlParser {
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
             expectTok(tok, lexer.lastTokenPosition(), ')');
+            model.setEndOfValuesPosition(lexer.lastTokenPosition());
 
             return model;
         }

@@ -117,6 +117,7 @@ public class InsertTest extends AbstractGriffinTest {
                 compiler.compile("alter table balances drop column ccy");
 
                 insertStatement.createMethod(sqlExecutionContext);
+                Assert.fail();
             } catch (WriterOutOfDateException ignored) {
             }
 
@@ -130,40 +131,36 @@ public class InsertTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
-            try {
-                sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
-                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
-                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertStatement insertStatement = cq.getInsertStatement();
+            sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
+            CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insertStatement = cq.getInsertStatement();
 
-                try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
-                    method.execute();
-                    method.commit();
-                }
-
-                BindVariableService bindVariableService = new BindVariableService();
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
-
-                bindVariableService.setDouble("bal", 56.4);
-
-                try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
-                    method.execute();
-                    method.commit();
-                }
-
-                sink.clear();
-                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
-                    printer.print(reader.getCursor(), reader.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
-                                "1\tGBP\t150.400000000000\n" +
-                                "1\tGBP\t56.400000000000\n",
-                        sink
-                );
-            } catch (WriterOutOfDateException ignored) {
+            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
             }
 
+            BindVariableService bindVariableService = new BindVariableService();
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+
+            bindVariableService.setDouble("bal", 56.4);
+
+            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+            }
+
+            TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
+                            "1\tGBP\t150.400000000000\n" +
+                            "1\tGBP\t56.400000000000\n",
+                    sink
+            );
             engine.releaseAllWriters();
             engine.releaseAllReaders();
         });
@@ -191,6 +188,21 @@ public class InsertTest extends AbstractGriffinTest {
                 TestUtils.assertEquals(expected, sink);
             }
 
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+        });
+    }
+
+    @Test
+    public void testInsertNotEnoughFields() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                compiler.compile("insert into balances values (1, 'USD')");
+            } catch (SqlException e) {
+                Assert.assertEquals(37, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
+            }
             engine.releaseAllReaders();
             engine.releaseAllWriters();
         });
@@ -262,7 +274,6 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insert = cq.getInsertStatement();
                 try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
-//                    Assert.assertEquals(writer.getStructureVersion(), insert.getStructureVersion());
                     for (int i = 0; i < 1_000_000; i++) {
                         bindVariableService.setInt(0, rnd.nextInt());
                         bindVariableService.setShort(1, rnd.nextShort());
@@ -316,7 +327,6 @@ public class InsertTest extends AbstractGriffinTest {
                         Assert.assertEquals(rnd.nextChar(), record.getChar(12));
 //                        Assert.assertEquals(0, record.getTimestamp(13));
                     }
-                    System.out.println(time);
                 }
             } finally {
                 engine.releaseAllWriters();
