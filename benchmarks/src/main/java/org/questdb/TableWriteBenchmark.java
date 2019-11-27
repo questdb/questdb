@@ -1,0 +1,97 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package org.questdb;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.util.concurrent.TimeUnit;
+
+@State(Scope.Benchmark)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
+public class TableWriteBenchmark {
+
+    private static TableWriter writer;
+    private static CairoConfiguration configuration = new DefaultCairoConfiguration(".");
+
+    private final Rnd rnd = new Rnd();
+
+    public static void main(String[] args) throws RunnerException {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                compiler.compile("create table test1(f long)");
+            } catch (SqlException e) {
+                e.printStackTrace();
+            }
+        }
+        Options opt = new OptionsBuilder()
+                .include(TableWriteBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+
+        LogFactory.INSTANCE.haltThread();
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        System.out.println("writer size = " + writer.size());
+        writer.commit();
+        writer.close();
+    }
+
+    @Setup(Level.Iteration)
+    public void reset() {
+        writer = new TableWriter(configuration, "test1");
+        rnd.reset();
+    }
+
+    @Benchmark
+    public void testRnd() {
+        rnd.nextLong();
+    }
+
+    @Benchmark
+    public void testWrite() {
+        TableWriter.Row r = writer.newRow();
+        r.putLong(0, rnd.nextLong());
+        r.append();
+    }
+}
