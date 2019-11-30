@@ -260,6 +260,7 @@ io.questdb.griffin.engine.functions.cast.ToDateLongFunctionFactory
 io.questdb.griffin.engine.functions.cast.ToTimestampLongFunctionFactory
 io.questdb.griffin.engine.functions.cast.ToIntDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.ToIntLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.ToLongTimestampFunctionFactory
 
 # 'in'
 io.questdb.griffin.engine.functions.str.SymbolInCursorFunctionFactory
