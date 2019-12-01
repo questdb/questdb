@@ -24,13 +24,13 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
@@ -89,40 +89,19 @@ public class PGWireServer implements Closeable {
     }
 
     @Nullable
-    public static PGWireServer create(PGWireConfiguration configuration, WorkerPool workerPool, Log log, CairoEngine cairoEngine) {
-        PGWireServer pgWireServer;
-        if (configuration.isEnabled()) {
-            final WorkerPool localPool;
-            if (configuration.getWorkerCount() > 0) {
-                localPool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return configuration.getWorkerAffinity();
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return configuration.getWorkerCount();
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return configuration.workerHaltOnError();
-                    }
-                });
-            } else {
-                localPool = workerPool;
-            }
-
-            pgWireServer = new PGWireServer(configuration, cairoEngine, localPool);
-
-            if (localPool != workerPool) {
-                localPool.start(log);
-            }
-        } else {
-            pgWireServer = null;
-        }
-        return pgWireServer;
+    public static PGWireServer create(
+            PGWireConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log log,
+            CairoEngine cairoEngine
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                log,
+                cairoEngine,
+                (configuration1, engine, workerPool, local) -> new PGWireServer(configuration1, cairoEngine, workerPool)
+        );
     }
 
     @Override

@@ -24,13 +24,14 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.time.MillisecondClock;
 
-public interface HttpServerConfiguration {
+public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
     int getConnectionPoolInitialCapacity();
@@ -56,12 +57,6 @@ public interface HttpServerConfiguration {
     TextImportProcessorConfiguration getTextImportProcessorConfiguration();
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getWorkerCount();
-
-    boolean workerHaltOnError();
-
-    int[] getWorkerAffinity();
 
     int getSendBufferSize();
 

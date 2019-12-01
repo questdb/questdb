@@ -24,24 +24,26 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cutlass.line.CairoLineProtoParser;
 import io.questdb.cutlass.line.LineProtoLexer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class GenericLineProtoReceiver implements Closeable, Job {
     private static final Log LOG = LogFactory.getLog(GenericLineProtoReceiver.class);
-
+    private static final WorkerPoolAwareConfiguration.ServerFactory<GenericLineProtoReceiver, LineUdpReceiverConfiguration> CREATE0 = GenericLineProtoReceiver::create0;
     private final DirectByteCharSequence byteSequence = new DirectByteCharSequence();
     private final LineProtoLexer lexer;
     private final CairoLineProtoParser parser;
@@ -53,11 +55,11 @@ public class GenericLineProtoReceiver implements Closeable, Job {
     private long buf;
 
     public GenericLineProtoReceiver(
-            LineUdpReceiverConfiguration receiverCfg,
+            LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
-            CairoSecurityContext cairoSecurityContext
+            WorkerPool workerPool
     ) {
-        nf = receiverCfg.getNetworkFacade();
+        nf = configuration.getNetworkFacade();
         fd = nf.socketUdp();
         if (fd < 0) {
             int errno = nf.errno();
@@ -66,42 +68,66 @@ public class GenericLineProtoReceiver implements Closeable, Job {
         }
 
         try {
-            if (nf.bindUdp(fd, 0, receiverCfg.getPort())) {
-                if (nf.join(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getGroupIPv4Address())) {
-                    this.commitRate = receiverCfg.getCommitRate();
+            if (nf.bindUdp(fd, 0, configuration.getPort())) {
+                if (nf.join(fd, configuration.getBindIPv4Address(), configuration.getGroupIPv4Address())) {
+                    this.commitRate = configuration.getCommitRate();
 
-                    if (receiverCfg.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, receiverCfg.getReceiveBufferSize()) != 0) {
-                        LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(receiverCfg.getReceiveBufferSize()).$(']').$();
+                    if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
+                        LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(configuration.getReceiveBufferSize()).$(']').$();
                     }
 
-                    this.buf = Unsafe.malloc(this.bufLen = receiverCfg.getMsgBufferSize());
+                    this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize());
 
-                    lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
-                    parser = new CairoLineProtoParser(engine, cairoSecurityContext);
+                    lexer = new LineProtoLexer(configuration.getMsgBufferSize());
+                    parser = new CairoLineProtoParser(engine, configuration.getCairoSecurityContext());
                     lexer.withParser(parser);
 
                     LOG.info()
-                            .$("started [fd=").$(fd)
-                            .$(", bind=").$(receiverCfg.getBindIPv4Address())
-                            .$(", group=").$(receiverCfg.getGroupIPv4Address())
-                            .$(", port=").$(receiverCfg.getPort())
+                            .$("receiving multicast from ")
+                            .$ip(configuration.getGroupIPv4Address())
+                            .$(':')
+                            .$(configuration.getPort())
+                            .$(" via ")
+                            .$ip(configuration.getBindIPv4Address())
+                            .$(" [fd=").$(fd)
                             .$(", commitRate=").$(commitRate)
                             .$(']').$();
 
+                    workerPool.assign(this);
                     return;
                 }
                 int errno = nf.errno();
-                LOG.error().$("cannot join group [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(']').$();
-                throw CairoException.instance(nf.errno()).put("Cannot join group ").put(receiverCfg.getGroupIPv4Address()).put(" [bindTo=").put(receiverCfg.getBindIPv4Address()).put(']');
+                LOG.error().$("cannot join group [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(configuration.getBindIPv4Address()).$(", group=").$(configuration.getGroupIPv4Address()).$(']').$();
+                throw CairoException.instance(nf.errno()).put("Cannot join group ").put(configuration.getGroupIPv4Address()).put(" [bindTo=").put(configuration.getBindIPv4Address()).put(']');
 
             }
             int errno = nf.errno();
-            LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
-            throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());
+            LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(configuration.getBindIPv4Address()).$(", port=").$(configuration.getPort()).$(']').$();
+            throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(configuration.getBindIPv4Address()).put(':').put(configuration.getPort());
         } catch (CairoException e) {
             close();
             throw e;
         }
+    }
+
+    @Nullable
+    public static GenericLineProtoReceiver create(
+            LineUdpReceiverConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log log,
+            CairoEngine cairoEngine
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                log,
+                cairoEngine,
+                CREATE0
+        );
+    }
+
+    private static GenericLineProtoReceiver create0(LineUdpReceiverConfiguration configuration1, CairoEngine cairoEngine, WorkerPool workerPool, boolean local) {
+        return new GenericLineProtoReceiver(configuration1, cairoEngine, workerPool);
     }
 
     @Override

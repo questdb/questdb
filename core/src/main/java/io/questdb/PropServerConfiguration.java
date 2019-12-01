@@ -25,6 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -109,7 +111,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpReceiveBufferSize;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
-    private final boolean shareWorkerHaltOnError;
+    private final boolean sharedWorkerHaltOnError;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
         @Override
@@ -160,6 +162,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
+    private boolean lineUdpEnabled;
+    private int lineUdpWorkerCount;
+    private int[] lineUdpWorkerAffinity;
+    private boolean lineUdpHaltOnError;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int sqlCopyBufferSize;
@@ -175,7 +181,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
-        this.shareWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
+        this.sharedWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
         this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
         if (httpServerEnabled) {
             this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
@@ -197,7 +203,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
 
             if (keepAliveTimeout > 0 && keepAliveMax > 0) {
-                this.keepAliveHeader = "Keep-Alive: timeout=5, max=10000" + Misc.EOL;
+                this.keepAliveHeader = "Keep-Alive: timeout=" + keepAliveTimeout + ", max=" + keepAliveMax + Misc.EOL;
             } else {
                 this.keepAliveHeader = null;
             }
@@ -298,7 +304,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlRenameTableModelPoolCapacity = getInt(properties, "cairo.sql.rename.table.model.pool.capacity", 16);
         this.sqlWithClauseModelPoolCapacity = getInt(properties, "cairo.sql.with.clause.model.pool.capacity", 128);
         this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
-        this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.copy.model.pool.capacity", 32);
+        this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.sql.copy.model.pool.capacity", 32);
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
         String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
@@ -324,6 +330,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 1024 * 1024);
         this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
         this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 2048);
+        this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
+        this.lineUdpWorkerCount = getInt(properties, "line.udp.worker.count", 0);
+        this.lineUdpWorkerAffinity = getAffinity(properties, "line.udp.worker.affinity", this.lineUdpWorkerCount);
+        this.lineUdpHaltOnError = getBoolean(properties, "line.udp.haltOnError", false);
     }
 
     @Override
@@ -726,7 +736,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean workerHaltOnError() {
+        public boolean haltOnError() {
             return httpWorkerHaltOnError;
         }
 
@@ -1043,6 +1053,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getReceiveBufferSize() {
             return lineUdpReceiveBufferSize;
         }
+
+        @Override
+        public CairoSecurityContext getCairoSecurityContext() {
+            return AllowAllCairoSecurityContext.INSTANCE;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return lineUdpEnabled;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineUdpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineUdpHaltOnError;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineUdpWorkerAffinity;
+        }
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
@@ -1090,7 +1125,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean haltOnError() {
-            return shareWorkerHaltOnError;
+            return sharedWorkerHaltOnError;
         }
     }
 }

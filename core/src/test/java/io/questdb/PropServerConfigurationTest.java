@@ -24,12 +24,14 @@
 
 package io.questdb;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -82,13 +84,22 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getRequestHeaderBufferSize());
         Assert.assertEquals(32768, configuration.getHttpServerConfiguration().getResponseHeaderBufferSize());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getWorkerCount());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
+        Assert.assertArrayEquals(new int[]{}, configuration.getHttpServerConfiguration().getWorkerAffinity());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getDumpNetworkTraffic());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().allowDeflateBeforeSend());
+
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative and we need to check if absolute path is good
         Assert.assertEquals(new File(root, "public").getAbsolutePath(),
                 configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
+        Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().abortBrokenUploads());
 
@@ -105,6 +116,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16384, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
         Assert.assertEquals(0.1222d, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
+        Assert.assertEquals(0.8, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredLineLengthStdDev(), 0.000000001);
         Assert.assertEquals(128, configuration.getCairoConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
         Assert.assertEquals(1024 * 4096, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferLimit());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferSize());
@@ -118,8 +130,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
-        Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
+        Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
+        Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
+        Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals("fast", configuration.getCairoConfiguration().getDefaultMapType());
         Assert.assertFalse(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
@@ -173,6 +187,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024 * 1024, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
         Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
         Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
+        Assert.assertSame(AllowAllCairoSecurityContext.INSTANCE, configuration.getLineUdpReceiverConfiguration().getCairoSecurityContext());
+        Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().isEnabled());
+        Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getWorkerCount());
+        Assert.assertArrayEquals(new int[]{}, configuration.getLineUdpReceiverConfiguration().getWorkerAffinity());
+        Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().haltOnError());
 
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
@@ -185,6 +204,8 @@ public class PropServerConfigurationTest {
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMillisecondClock());
         Assert.assertSame(MicrosecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMicrosecondClock());
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getLineUdpReceiverConfiguration().getNetworkFacade());
+        Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
+
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
 
         // assert mime types
@@ -269,11 +290,17 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getRequestHeaderBufferSize());
             Assert.assertEquals(9012, configuration.getHttpServerConfiguration().getResponseHeaderBufferSize());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6}, configuration.getHttpServerConfiguration().getWorkerAffinity());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
+            Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().allowDeflateBeforeSend());
+
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().abortBrokenUploads());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getActiveConnectionLimit());
@@ -289,6 +316,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(65536, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
             Assert.assertEquals(8388608, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
             Assert.assertEquals(0.3d, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000000001);
+            Assert.assertEquals(0.9d, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredLineLengthStdDev(), 0.000000001);
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTextConfiguration().getMetadataStringPoolCapacity());
             Assert.assertEquals(6144, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferLimit());
             Assert.assertEquals(3072, configuration.getCairoConfiguration().getTextConfiguration().getRollBufferSize());
@@ -298,12 +326,13 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
-
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
             Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
             Assert.assertEquals(4194304, configuration.getCairoConfiguration().getSqlCopyBufferSize());
+            Assert.assertEquals(64, configuration.getCairoConfiguration().getCopyPoolCapacity());
             Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
+            Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
             Assert.assertEquals("compact", configuration.getCairoConfiguration().getDefaultMapType());
@@ -356,6 +385,38 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(4 * 1024 * 1024, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
             Assert.assertEquals(4000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
             Assert.assertEquals(512, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
+            Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
+            Assert.assertEquals(1, configuration.getLineUdpReceiverConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{2}, configuration.getLineUdpReceiverConfiguration().getWorkerAffinity());
+            Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().haltOnError());
+        }
+    }
+
+    @Test
+    public void testSetZeroKeepAlive() throws IOException, ServerConfigurationException, JsonException {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-keep-alive.conf")) {
+            Properties properties = new Properties();
+            properties.load(is);
+
+            File root = new File(temp.getRoot(), "data");
+            copyMimeTypes(root.getAbsolutePath());
+
+            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
+        }
+    }
+
+    @Test
+    public void testHttpDisabled() throws IOException, ServerConfigurationException, JsonException {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
+            Properties properties = new Properties();
+            properties.load(is);
+
+            File root = new File(temp.getRoot(), "data");
+            copyMimeTypes(root.getAbsolutePath());
+
+            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
         }
     }
 }

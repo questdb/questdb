@@ -24,10 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 
-public interface PGWireConfiguration {
+public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
     int getCharacterStoreCapacity();
 
     int getCharacterStorePoolCapacity();
@@ -61,12 +62,4 @@ public interface PGWireConfiguration {
     int getSendBufferSize();
 
     String getServerVersion();
-
-    int[] getWorkerAffinity();
-
-    int getWorkerCount();
-
-    boolean isEnabled();
-
-    boolean workerHaltOnError();
 }

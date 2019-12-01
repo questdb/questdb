@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.line.udp.GenericLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,13 +37,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import sun.misc.Signal;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.FileSystem;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
@@ -122,8 +121,27 @@ public class ServerMain {
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
-        final HttpServer httpServer = HttpServer.create(configuration.getHttpServerConfiguration(), workerPool, log, cairoEngine);
-        final PGWireServer pgWireServer = PGWireServer.create(configuration.getPGWireConfiguration(), workerPool, log, cairoEngine);
+
+        final HttpServer httpServer = HttpServer.create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine
+        );
+
+        final PGWireServer pgWireServer = PGWireServer.create(
+                configuration.getPGWireConfiguration(),
+                workerPool,
+                log,
+                cairoEngine
+        );
+
+        final Closeable lineProtocolReceiver = GenericLineProtoReceiver.create(
+                configuration.getLineUdpReceiverConfiguration(),
+                workerPool,
+                log,
+                cairoEngine
+        );
 
         workerPool.start(log);
 
@@ -139,6 +157,7 @@ public class ServerMain {
             Misc.free(pgWireServer);
             Misc.free(httpServer);
             Misc.free(cairoEngine);
+            Misc.free(lineProtocolReceiver);
             System.err.println(new Date() + " QuestDB is down");
         }));
     }

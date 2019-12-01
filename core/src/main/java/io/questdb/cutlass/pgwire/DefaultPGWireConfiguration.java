@@ -122,7 +122,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public boolean workerHaltOnError() {
+    public boolean haltOnError() {
         return false;
     }
 
