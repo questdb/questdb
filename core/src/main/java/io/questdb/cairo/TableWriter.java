@@ -634,6 +634,30 @@ public class TableWriter implements Closeable {
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
+    public long partitionNameToTimestamp(CharSequence partitionName) {
+        if (partitionDirFmt == null) {
+            throw CairoException.instance(0).put("table is not partitioned");
+        }
+        try {
+            return partitionDirFmt.parse(partitionName, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
+        } catch (NumericException e) {
+            final CairoException ee = CairoException.instance(0);
+            switch (partitionBy) {
+                case PartitionBy.DAY:
+                    ee.put("'YYYY-MM-DD'");
+                    break;
+                case PartitionBy.MONTH:
+                    ee.put("'YYYY-MM'");
+                    break;
+                default:
+                    ee.put("'YYYY'");
+                    break;
+            }
+            ee.put(" expected");
+            throw ee;
+        }
+    }
+
     public boolean removePartition(long timestamp) {
 
         if (partitionBy == PartitionBy.NONE || timestamp < timestampFloorMethod.floor(minTimestamp) || timestamp > maxTimestamp) {

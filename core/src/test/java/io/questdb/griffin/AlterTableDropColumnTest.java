@@ -104,7 +104,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testDropExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x drop", 18, "'column' expected");
+        assertFailure("alter table x drop", 18, "'column' or 'partition' expected");
     }
 
     @Test

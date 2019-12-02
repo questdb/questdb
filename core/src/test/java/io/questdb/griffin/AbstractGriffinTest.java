@@ -455,4 +455,17 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
         }
     }
+
+    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
 }

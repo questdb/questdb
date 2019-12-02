@@ -685,9 +685,16 @@ public class SqlCompiler implements Closeable {
             if (Chars.equalsLowerCaseAscii("add", tok)) {
                 alterTableAddColumn(tableNamePosition, writer);
             } else if (Chars.equalsLowerCaseAscii("drop", tok)) {
-                alterTableDropColumn(tableNamePosition, writer);
+                tok = expectToken(lexer, "'column' or 'partition'");
+                if (Chars.equalsLowerCaseAscii(tok, "column")) {
+                    alterTableDropColumn(tableNamePosition, writer);
+                } else if (Chars.equalsLowerCaseAscii(tok, "partition")) {
+                    alterTableDropPartition(writer);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                }
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token: ").put(tok);
+                throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
             }
         } catch (CairoException e) {
             LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
@@ -818,9 +825,6 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropColumn(int tableNamePosition, TableWriter writer) throws SqlException {
-        // add columns to table
-        expectKeyword(lexer, "column");
-
         RecordMetadata metadata = writer.getMetadata();
 
         do {
@@ -835,6 +839,37 @@ public class SqlCompiler implements Closeable {
             } catch (CairoException e) {
                 LOG.error().$("Cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
                 throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+    }
+
+    private void alterTableDropPartition(TableWriter writer) throws SqlException {
+        do {
+            CharSequence tok = expectToken(lexer, "partition name");
+            if (Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
+            }
+            final CharSequence unquoted = GenericLexer.unquote(tok);
+
+            final long timestamp;
+            try {
+                timestamp = writer.partitionNameToTimestamp(unquoted);
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
+            }
+
+            if (!writer.removePartition(timestamp)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
             }
 
             tok = SqlUtil.fetchNext(lexer);
