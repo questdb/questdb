@@ -62,8 +62,6 @@ void buildJavaArgs(CONFIG *config) {
     " -XX:+PrintGCApplicationStoppedTime" \
     " -XX:+PrintSafepointStatistics" \
     " -XX:PrintSafepointStatisticsCount=1" \
-    " -XX:+UseParNewGC" \
-    " -XX:+UseConcMarkSweepGC" \
     " -XX:+PrintGCDetails" \
     " -XX:+PrintGCTimeStamps" \
     " -XX:+PrintGCDateStamps" \
