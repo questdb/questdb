@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.CairoLineProtoParser;
@@ -35,12 +36,13 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class LinuxLineProtoReceiver implements Closeable, Job {
     private static final Log LOG = LogFactory.getLog(LinuxLineProtoReceiver.class);
-
+    private static final WorkerPoolAwareConfiguration.ServerFactory<LinuxLineProtoReceiver, LineUdpReceiverConfiguration> CREATE0 = LinuxLineProtoReceiver::create0;
     private final int msgCount;
     private final LineProtoLexer lexer;
     private final CairoLineProtoParser parser;
@@ -54,7 +56,6 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
             LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool
-
     ) {
 
         nf = configuration.getNetworkFacade();
@@ -82,14 +83,16 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
                     parser = new CairoLineProtoParser(engine, configuration.getCairoSecurityContext());
                     lexer.withParser(parser);
 
-                    LOG.info().
-                            $("started [fd=").$(fd).
-                            $(", bind=").$(configuration.getBindIPv4Address()).
-                            $(", group=").$(configuration.getGroupIPv4Address()).
-                            $(", port=").$(configuration.getPort()).
-                            $(", batch=").$(msgCount).
-                            $(", commitRate=").$(commitRate).
-                            $(']').$();
+                    LOG.info()
+                            .$("receiving multicast from ")
+                            .$ip(configuration.getGroupIPv4Address())
+                            .$(':')
+                            .$(configuration.getPort())
+                            .$(" via ")
+                            .$ip(configuration.getBindIPv4Address())
+                            .$(" [fd=").$(fd)
+                            .$(", commitRate=").$(commitRate)
+                            .$(']').$();
 
                     workerPool.assign(this);
 
@@ -107,6 +110,22 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
             close();
             throw e;
         }
+    }
+
+    @Nullable
+    public static LinuxLineProtoReceiver create(
+            LineUdpReceiverConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log log,
+            CairoEngine cairoEngine
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                log,
+                cairoEngine,
+                CREATE0
+        );
     }
 
     @Override
@@ -158,5 +177,9 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
         }
         parser.commitAll();
         return ran;
+    }
+
+    private static LinuxLineProtoReceiver create0(LineUdpReceiverConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, boolean local) {
+        return new LinuxLineProtoReceiver(configuration, cairoEngine, workerPool);
     }
 }

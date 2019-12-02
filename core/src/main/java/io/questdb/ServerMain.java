@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.udp.GenericLineProtoReceiver;
+import io.questdb.cutlass.line.udp.LinuxLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -136,12 +137,23 @@ public class ServerMain {
                 cairoEngine
         );
 
-        final Closeable lineProtocolReceiver = GenericLineProtoReceiver.create(
-                configuration.getLineUdpReceiverConfiguration(),
-                workerPool,
-                log,
-                cairoEngine
-        );
+        final Closeable lineProtocolReceiver;
+
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            lineProtocolReceiver = LinuxLineProtoReceiver.create(
+                    configuration.getLineUdpReceiverConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine
+            );
+        } else {
+            lineProtocolReceiver = GenericLineProtoReceiver.create(
+                    configuration.getLineUdpReceiverConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine
+            );
+        }
 
         workerPool.start(log);
 
