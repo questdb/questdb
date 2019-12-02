@@ -138,12 +138,10 @@ function start {
 
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
-    -ea -Dnoebug
+    -da -Dnoebug
     -XX:+PrintGCApplicationStoppedTime
     -XX:+PrintSafepointStatistics
     -XX:PrintSafepointStatisticsCount=1
-    -XX:+UseParNewGC
-    -XX:+UseConcMarkSweepGC
     -XX:+PrintGCDetails
     -XX:+PrintGCTimeStamps
     -XX:+PrintGCDateStamps
