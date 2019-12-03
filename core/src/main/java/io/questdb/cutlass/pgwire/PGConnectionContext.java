@@ -25,10 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -63,25 +60,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
-
-    static {
-        // todo: this should be sparse array
-        //   change after we have good test coverage
-        typeOidMap.put(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOidMap.put(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMPZ
-        typeOidMap.put(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        typeOidMap.put(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        typeOidMap.put(ColumnType.INT, PG_INT4); // INT4
-        typeOidMap.put(ColumnType.SHORT, PG_INT2); // INT2
-        typeOidMap.put(ColumnType.CHAR, PG_CHAR);
-        typeOidMap.put(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        typeOidMap.put(ColumnType.LONG, PG_INT8); // INT8
-        typeOidMap.put(ColumnType.BYTE, PG_INT2); // INT2
-        typeOidMap.put(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOidMap.put(ColumnType.DATE, PG_TIMESTAMP); // DATE
-        typeOidMap.put(ColumnType.BINARY, PG_BYTEA); // BYTEA
-    }
-
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -110,12 +88,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     private int bufferRemainingSize = 0;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
+    private InsertStatement currentInsertStatement = null;
     private long fd;
     private CharSequence queryText;
     private CharSequence username;
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
-
     public PGConnectionContext(PGWireConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -186,271 +164,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
     }
 
-    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required != valueLen) {
-            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
-        if (lo + required > msgLimit) {
-            LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
-        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = sink.skip();
-        sink.encodeUtf8Z(name);
-        sink.encodeUtf8Z(value);
-        sink.putLen(addr);
-    }
-
-    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        responseAsciiSink.put('I');
-    }
-
-    /**
-     * returns address of where parsing stopped. If there are remaining bytes left
-     * int the buffer they need to be passed again in parse function along with
-     * any additional bytes received
-     */
-    private void parse(
-            long address,
-            int len,
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<RecordCursorFactory> factoryCache,
-            @Transient ObjList<BindVariableSetter> bindVariableSetters
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
-        long limit = address + len;
-        final int remaining = (int) (limit - address);
-
-        if (requireInitalMessage) {
-            processInitialMessage(address, remaining);
-            return;
-        }
-
-        // this is a type-prefixed message
-        // we will wait until we receive the entire header
-
-        if (remaining < PREFIXED_MESSAGE_HEADER_LEN) {
-            // we need to be able to read header and length
-            return;
-        }
-
-        final byte type = Unsafe.getUnsafe().getByte(address);
-        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
-        final int msgLen = getInt(address + 1);
-        if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        // msgLen does not take into account type byte
-        if (msgLen > remaining - 1) {
-            // When this happens we need to shift our receive buffer left
-            // to fit this message. Outer function will do that if we
-            // just exit.
-            return;
-        }
-        // we have enough to read entire message
-        recvBufferReadOffset += msgLen + 1;
-        final long msgLimit = address + msgLen + 1;
-        long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
-
-        if (authenticationRequired) {
-            CairoSecurityContext cairoSecurityContext;
-            try {
-                cairoSecurityContext = authenticator.authenticate(username, lo, msgLimit);
-            } catch (SqlException e) {
-                prepareError(e);
-                send();
-                return;
-            }
-
-            if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
-                authenticationRequired = false;
-                prepareLoginOk(responseAsciiSink);
-                send();
-            }
-            return;
-        }
-
-        switch (type) {
-            case 'P':
-
-                // 'Parse'
-                // this appears to be the execution side - we must at least return 'RowDescription'
-                // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
-
-                long hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad prepared statement name length [msgType='P']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad query text length").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                prepareForNewQuery();
-                parseQueryText(lo, hi);
-
-                lo = hi + 1;
-                if (lo + Short.BYTES > msgLimit) {
-                    LOG.error().$("could not read parameter count").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                short parameterCount = getShort(lo);
-
-                if (parameterCount > 0) {
-                    if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
-                        LOG.error()
-                                .$("could not read parameters [parameterCount=").$(parameterCount)
-                                .$(", offset=").$(lo - address)
-                                .$(", remaining=").$(msgLimit - lo)
-                                .$(']').$();
-                        throw BadProtocolException.INSTANCE;
-                    }
-
-                    LOG.debug().$("params [count=").$(parameterCount).$(']').$();
-                    lo += Short.BYTES;
-
-                    bindVariableService.clear();
-                    setupBindVariables(lo, parameterCount, bindVariableSetters);
-                } else if (parameterCount < 0) {
-                    LOG.error()
-                            .$("invalid parameter count [parameterCount=").$(parameterCount)
-                            .$(", offset=").$(lo - address)
-                            .$(']').$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                parseQuery(queryText, compiler, factoryCache);
-                if (currentFactory == null) {
-                    prepareReadyForQuery(responseAsciiSink);
-                    LOG.info().$("executed DDL").$();
-                    send();
-                }
-                break;
-            case 'X':
-                // 'Terminate'
-                throw PeerDisconnectedException.INSTANCE;
-            case 'C':
-                // close
-                // todo: read what we are closing
-                currentFactory = null;
-                sink().put('3'); // close complete
-                sink().putNetworkInt(Integer.BYTES);
-                send();
-                break;
-            case 'B': // bind
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad portal name length [msgType='B']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad prepared statement name length [msgType='B']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                if (lo + Short.BYTES > msgLimit) {
-                    LOG.error().$("could not read parameter format code count").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                parameterCount = getShort(lo);
-                if (parameterCount != bindVariableService.getIndexedVariableCount()) {
-                    LOG.error()
-                            .$("parameter count from parse message does not match format code count [fmtCodeCount=").$(parameterCount)
-                            .$(", typeCount=").$(bindVariableService.getIndexedVariableCount())
-                            .$(']').$();
-                    throw BadProtocolException.INSTANCE;
-                }
-                if (parameterCount > 0) {
-                    lo += Short.BYTES;
-                    bindVariables(lo, msgLimit, parameterCount, bindVariableSetters);
-                }
-                break;
-            case 'E': // execute
-                if (currentFactory != null) {
-                    LOG.info().$("executing query").$();
-                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                    sendCursor();
-                    sendExecuteTail();
-                }
-                break;
-            case 'S': // sync?
-                break;
-            case 'D': // describe?
-                if (currentFactory != null) {
-                    prepareRowDescription(currentFactory.getMetadata());
-                    send();
-                    LOG.info().$("described").$();
-                }
-                break;
-            case 'Q':
-                // vanilla query
-                prepareForNewQuery();
-                parseQueryText(lo, limit - 1);
-
-                currentFactory = factoryCache.peek(queryText);
-                if (currentFactory == null) {
-                    CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-
-                    if (cc.getType() == CompiledQuery.SELECT) {
-                        currentFactory = cc.getRecordCursorFactory();
-                        factoryCache.put(queryText, currentFactory);
-                    } else if (cc.getType() == CompiledQuery.COPY_REMOTE) {
-                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                    } else {
-                        // DDL SQL
-                        sendCurrentCursorTail = TAIL_SUCCESS;
-                        sendExecuteTail();
-                    }
-                }
-
-                if (currentFactory != null) {
-                    if (currentCursor != null) {
-                        currentCursor.close();
-                    }
-
-                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                    prepareRowDescription(currentFactory.getMetadata());
-                    sendCursor();
-                    sendExecuteTail();
-                }
-                break;
-            case 'd':
-
-                System.out.println("data " + msgLen);
-                // msgLen includes 4 bytes of self
-
-                break;
-            default:
-                LOG.error().$("unknown message [type=").$(type).$(']').$();
-                throw BadProtocolException.INSTANCE;
-        }
-    }
-
     @Override
     public void clear() {
         sendCurrentCursorTail = TAIL_NONE;
@@ -489,7 +202,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<RecordCursorFactory> factoryCache,
+            @Transient AssociativeCache<Object> factoryCache,
             @Transient ObjList<BindVariableSetter> binsVariableSetters
     ) throws PeerDisconnectedException,
             PeerIsSlowToReadException,
@@ -686,6 +399,34 @@ public class PGConnectionContext implements IOContext, Mutable {
             LOG.error().$("invalid UTF8 bytes [index=").$(index).$(']').$();
             throw BadProtocolException.INSTANCE;
         }
+    }
+
+    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
+        if (required != valueLen) {
+            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
+        if (lo + required > msgLimit) {
+            LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
+        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
+        final long addr = sink.skip();
+        sink.encodeUtf8Z(name);
+        sink.encodeUtf8Z(value);
+        sink.putLen(addr);
+    }
+
+    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        responseAsciiSink.put('I');
     }
 
     void appendRecord(
@@ -953,52 +694,289 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (TableUtils.TABLE_EXISTS == engine.getStatus(
-                sqlExecutionContext.getCairoSecurityContext(),
-                path,
-                textLoader.getTableName()
-        )) {
-            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-            long addr = responseAsciiSink.skip();
-            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
-                RecordMetadata metadata = writer.getMetadata();
-                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) typeOidMap.get(metadata.getColumnType(i)));
-                }
-            }
-            responseAsciiSink.putLen(addr);
-            transientCopyBuffer = Unsafe.malloc(1024 * 1024);
-            send();
-        } else {
-            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
-            prepareReadyForQuery(responseAsciiSink);
-            send();
-        }
-    }
-
-    private void parseQuery(
-            CharSequence query,
+    /**
+     * returns address of where parsing stopped. If there are remaining bytes left
+     * int the buffer they need to be passed again in parse function along with
+     * any additional bytes received
+     */
+    private void parse(
+            long address,
+            int len,
             @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<RecordCursorFactory> factoryCache
-    ) throws SqlException {
-        // at this point we may have a current query that is not null
-        // this is ok to lose reference to this query because we have cache
-        // of all of them, which is looked up by query text
+            @Transient AssociativeCache<Object> factoryCache,
+            @Transient ObjList<BindVariableSetter> bindVariableSetters
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
+        long limit = address + len;
+        final int remaining = (int) (limit - address);
 
-        responseAsciiSink.reset();
-        currentFactory = factoryCache.peek(query);
-        if (currentFactory == null) {
-            final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-            if (cc.getType() == CompiledQuery.SELECT) {
-                currentFactory = cc.getRecordCursorFactory();
-                factoryCache.put(query, currentFactory);
-            } else {
-                // DDL SQL
-                prepareParseComplete();
+        if (requireInitalMessage) {
+            processInitialMessage(address, remaining);
+            return;
+        }
+
+        // this is a type-prefixed message
+        // we will wait until we receive the entire header
+
+        if (remaining < PREFIXED_MESSAGE_HEADER_LEN) {
+            // we need to be able to read header and length
+            return;
+        }
+
+        final byte type = Unsafe.getUnsafe().getByte(address);
+        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
+        final int msgLen = getInt(address + 1);
+        if (msgLen < 1) {
+            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        // msgLen does not take into account type byte
+        if (msgLen > remaining - 1) {
+            // When this happens we need to shift our receive buffer left
+            // to fit this message. Outer function will do that if we
+            // just exit.
+            return;
+        }
+        // we have enough to read entire message
+        recvBufferReadOffset += msgLen + 1;
+        final long msgLimit = address + msgLen + 1;
+        long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+
+        if (authenticationRequired) {
+            CairoSecurityContext cairoSecurityContext;
+            try {
+                cairoSecurityContext = authenticator.authenticate(username, lo, msgLimit);
+            } catch (SqlException e) {
+                prepareError(e);
+                send();
+                return;
             }
+
+            if (cairoSecurityContext != null) {
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
+                authenticationRequired = false;
+                prepareLoginOk(responseAsciiSink);
+                send();
+            }
+            return;
+        }
+
+        switch (type) {
+            case 'P':
+
+                // 'Parse'
+                // this appears to be the execution side - we must at least return 'RowDescription'
+                // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
+
+                long hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad prepared statement name length [msgType='P']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad query text length").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                prepareForNewQuery();
+                parseQueryText(lo, hi);
+
+                lo = hi + 1;
+                if (lo + Short.BYTES > msgLimit) {
+                    LOG.error().$("could not read parameter count").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                short parameterCount = getShort(lo);
+
+                if (parameterCount > 0) {
+                    if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
+                        LOG.error()
+                                .$("could not read parameters [parameterCount=").$(parameterCount)
+                                .$(", offset=").$(lo - address)
+                                .$(", remaining=").$(msgLimit - lo)
+                                .$(']').$();
+                        throw BadProtocolException.INSTANCE;
+                    }
+
+                    LOG.debug().$("params [count=").$(parameterCount).$(']').$();
+                    lo += Short.BYTES;
+
+                    bindVariableService.clear();
+                    setupBindVariables(lo, parameterCount, bindVariableSetters);
+                } else if (parameterCount < 0) {
+                    LOG.error()
+                            .$("invalid parameter count [parameterCount=").$(parameterCount)
+                            .$(", offset=").$(lo - address)
+                            .$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                // at this point we may have a current query that is not null
+                // this is ok to lose reference to this query because we have cache
+                // of all of them, which is looked up by query text
+
+                responseAsciiSink.reset();
+                final Object statement = factoryCache.peek(queryText);
+                if (statement == null) {
+                    final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                    if (cc.getType() == CompiledQuery.SELECT) {
+                        currentFactory = cc.getRecordCursorFactory();
+                        factoryCache.put(queryText, currentFactory);
+                    } else if (cc.getType() == CompiledQuery.INSERT) {
+                        currentInsertStatement = cc.getInsertStatement();
+                        factoryCache.put(queryText, currentInsertStatement);
+                    } else if (cc.getType() == CompiledQuery.COPY_LOCAL) {
+                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                    } else {
+                        // DDL SQL
+                        prepareParseComplete();
+                        prepareReadyForQuery(responseAsciiSink);
+                        LOG.info().$("executed DDL").$();
+                        send();
+                    }
+                } else {
+                    if (statement instanceof RecordCursorFactory) {
+                        currentFactory = (RecordCursorFactory) statement;
+                    } else if (statement instanceof InsertStatement) {
+                        currentInsertStatement = (InsertStatement) statement;
+                    } else {
+                        assert false;
+                    }
+                }
+                break;
+            case 'X':
+                // 'Terminate'
+                throw PeerDisconnectedException.INSTANCE;
+            case 'C':
+                // close
+                // todo: read what we are closing
+                currentFactory = null;
+                sink().put('3'); // close complete
+                sink().putNetworkInt(Integer.BYTES);
+                send();
+                break;
+            case 'B': // bind
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad portal name length [msgType='B']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad prepared statement name length [msgType='B']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                if (lo + Short.BYTES > msgLimit) {
+                    LOG.error().$("could not read parameter format code count").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                parameterCount = getShort(lo);
+                if (parameterCount != bindVariableService.getIndexedVariableCount()) {
+                    LOG.error()
+                            .$("parameter count from parse message does not match format code count [fmtCodeCount=").$(parameterCount)
+                            .$(", typeCount=").$(bindVariableService.getIndexedVariableCount())
+                            .$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+                if (parameterCount > 0) {
+                    lo += Short.BYTES;
+                    bindVariables(lo, msgLimit, parameterCount, bindVariableSetters);
+                }
+                break;
+            case 'E': // execute
+                if (currentFactory != null) {
+                    LOG.info().$("executing query").$();
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    sendCursor();
+                    sendExecuteTail();
+                } else if (currentInsertStatement != null) {
+                    try (InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext)) {
+                        m.execute();
+                        m.commit();
+                    }
+                    currentInsertStatement = null;
+                    sendCurrentCursorTail = TAIL_SUCCESS;
+                    sendExecuteTail();
+                }
+                break;
+            case 'S': // sync?
+                break;
+            case 'D': // describe?
+                if (currentFactory != null) {
+                    prepareRowDescription(currentFactory.getMetadata());
+                    send();
+                    LOG.info().$("described").$();
+                }
+                break;
+            case 'Q':
+                // vanilla query
+                prepareForNewQuery();
+                parseQueryText(lo, limit - 1);
+
+                final Object statement2 = factoryCache.peek(queryText);
+                if (statement2 == null) {
+                    CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+
+                    if (cc.getType() == CompiledQuery.SELECT) {
+                        currentFactory = cc.getRecordCursorFactory();
+                        factoryCache.put(queryText, currentFactory);
+                    } else if (cc.getType() == CompiledQuery.COPY_REMOTE) {
+                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                    } else if (cc.getType() == CompiledQuery.INSERT) {
+                        try (InsertMethod m = cc.getInsertStatement().createMethod(sqlExecutionContext)) {
+                            m.execute();
+                            m.commit();
+                        }
+//                        factoryCache.put(queryText, currentInsertStatement);
+
+                        // not sure
+
+                        sendCurrentCursorTail = TAIL_SUCCESS;
+                        sendExecuteTail();
+                    } else {
+                        // DDL SQL
+                        sendCurrentCursorTail = TAIL_SUCCESS;
+                        sendExecuteTail();
+                    }
+                } else {
+                    if (statement2 instanceof RecordCursorFactory) {
+                        currentFactory = (RecordCursorFactory) statement2;
+                    }
+                }
+
+                if (currentFactory != null) {
+                    if (currentCursor != null) {
+                        currentCursor.close();
+                    }
+
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    prepareRowDescription(currentFactory.getMetadata());
+                    sendCursor();
+                    sendExecuteTail();
+                }
+                break;
+            case 'd':
+
+                System.out.println("data " + msgLen);
+                // msgLen includes 4 bytes of self
+
+                break;
+            default:
+                LOG.error().$("unknown message [type=").$(type).$(']').$();
+                throw BadProtocolException.INSTANCE;
         }
     }
 
@@ -1225,6 +1203,32 @@ public class PGConnectionContext implements IOContext, Mutable {
         send();
     }
 
+    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (TableUtils.TABLE_EXISTS == engine.getStatus(
+                sqlExecutionContext.getCairoSecurityContext(),
+                path,
+                textLoader.getTableName()
+        )) {
+            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
+            long addr = responseAsciiSink.skip();
+            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
+                RecordMetadata metadata = writer.getMetadata();
+                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    responseAsciiSink.putNetworkShort((short) typeOidMap.get(metadata.getColumnType(i)));
+                }
+            }
+            responseAsciiSink.putLen(addr);
+            transientCopyBuffer = Unsafe.malloc(1024 * 1024);
+            send();
+        } else {
+            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
+            prepareReadyForQuery(responseAsciiSink);
+            send();
+        }
+    }
+
     private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
@@ -1253,12 +1257,14 @@ public class PGConnectionContext implements IOContext, Mutable {
                 LOG.error().$(e.getFlyweightMessage()).$();
                 currentCursor = Misc.free(currentCursor);
                 sendCurrentCursorTail = PGConnectionContext.TAIL_ERROR;
+                currentFactory = null;
                 send();
                 return;
             }
         }
 
         currentCursor = Misc.free(currentCursor);
+        currentFactory = null;
         sendCurrentCursorTail = PGConnectionContext.TAIL_SUCCESS;
         send();
     }
@@ -1468,5 +1474,23 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendBufferPtr += Integer.BYTES;
             return checkpoint;
         }
+    }
+
+    static {
+        // todo: this should be sparse array
+        //   change after we have good test coverage
+        typeOidMap.put(ColumnType.STRING, PG_VARCHAR); // VARCHAR
+        typeOidMap.put(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMPZ
+        typeOidMap.put(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
+        typeOidMap.put(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
+        typeOidMap.put(ColumnType.INT, PG_INT4); // INT4
+        typeOidMap.put(ColumnType.SHORT, PG_INT2); // INT2
+        typeOidMap.put(ColumnType.CHAR, PG_CHAR);
+        typeOidMap.put(ColumnType.SYMBOL, PG_VARCHAR); // NAME
+        typeOidMap.put(ColumnType.LONG, PG_INT8); // INT8
+        typeOidMap.put(ColumnType.BYTE, PG_INT2); // INT2
+        typeOidMap.put(ColumnType.BOOLEAN, PG_BOOL); // BOOL
+        typeOidMap.put(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        typeOidMap.put(ColumnType.BINARY, PG_BYTEA); // BYTEA
     }
 }

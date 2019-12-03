@@ -63,41 +63,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
 
-    private static void toSink(InputStream is, CharSink sink) throws IOException {
-        // limit what we print
-        byte[] bb = new byte[1];
-        int i = 0;
-        while (is.read(bb) > 0) {
-            byte b = bb[0];
-            if (i > 0) {
-                if ((i % 16) == 0) {
-                    sink.put('\n');
-                    Numbers.appendHexPadded(sink, i);
-                }
-            } else {
-                Numbers.appendHexPadded(sink, i);
-            }
-            sink.put(' ');
-
-            final int v;
-            if (b < 0) {
-                v = 256 + b;
-            } else {
-                v = b;
-            }
-
-            if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
-            } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
-            }
-
-            i++;
-        }
-    }
-
     @Test
     public void testAllParamsHex() throws Exception {
         final String script = ">0000007300030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -316,6 +281,44 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
+    public void testCopyIn() throws SQLException, BrokenBarrierException, InterruptedException {
+        final CountDownLatch haltLatch = new CountDownLatch(1);
+        final AtomicBoolean running = new AtomicBoolean(true);
+        try {
+            startBasicServer(
+                    NetworkFacadeImpl.INSTANCE,
+                    new DefaultPGWireConfiguration(),
+                    haltLatch,
+                    running
+            );
+
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+
+            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+
+            PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
+            stmt.execute();
+
+            CopyManager copyManager = new CopyManager((BaseConnection) connection);
+
+            CopyIn copyIn = copyManager.copyIn("copy tab from STDIN");
+
+            String text = "a,b\r\n" +
+                    "10,20";
+
+            byte[] bytes = text.getBytes();
+            copyIn.writeToCopy(bytes, 0, bytes.length);
+            copyIn.endCopy();
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
+    }
+
+    @Test
     public void testDDL() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);
@@ -333,7 +336,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("create table x (a int)");
                 statement.execute();
                 connection.close();
@@ -376,6 +379,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testInsert() throws Exception {
+        testInsert0(false);
+    }
+
+    @Test
+    public void testInsertSimpleQueryMode() throws Exception {
+        testInsert0(true);
     }
 
     @Test
@@ -1488,6 +1501,41 @@ public class PGJobContextTest extends AbstractGriffinTest {
         testQuery("rnd_double(4) расход, ", "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY]\n");
     }
 
+    private static void toSink(InputStream is, CharSink sink) throws IOException {
+        // limit what we print
+        byte[] bb = new byte[1];
+        int i = 0;
+        while (is.read(bb) > 0) {
+            byte b = bb[0];
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+
+            i++;
+        }
+    }
+
     private void assertHexScript(String script) throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
             @Override
@@ -1508,7 +1556,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
             String script,
             PGWireConfiguration PGWireConfiguration
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);
             final AtomicBoolean running = new AtomicBoolean(true);
             try {
@@ -1723,6 +1771,18 @@ public class PGJobContextTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, sink);
     }
 
+    private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
+        sink.clear();
+        select.setInt(1, value);
+        try (ResultSet resultSet = select.executeQuery()) {
+            sink.clear();
+            while (resultSet.next()) {
+                sink.put(resultSet.getInt(1));
+                sink.put('\n');
+            }
+        }
+    }
+
     @NotNull
     private NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
@@ -1789,6 +1849,100 @@ public class PGJobContextTest extends AbstractGriffinTest {
             }
         }).start();
         barrier.await();
+    }
+
+    private void testInsert0(boolean simpleQueryMode) throws Exception {
+        assertMemoryLeak(() -> {
+
+            String expectedAll = "0\n" +
+                    "1\n" +
+                    "2\n" +
+                    "3\n" +
+                    "4\n" +
+                    "5\n" +
+                    "6\n" +
+                    "7\n" +
+                    "8\n" +
+                    "9\n" +
+                    "10\n" +
+                    "11\n" +
+                    "12\n" +
+                    "13\n" +
+                    "14\n" +
+                    "15\n" +
+                    "16\n" +
+                    "17\n" +
+                    "18\n" +
+                    "19\n" +
+                    "20\n" +
+                    "21\n" +
+                    "22\n" +
+                    "23\n" +
+                    "24\n" +
+                    "25\n" +
+                    "26\n" +
+                    "27\n" +
+                    "28\n" +
+                    "29\n";
+
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                if (simpleQueryMode) {
+                    properties.setProperty("preferQueryMode", "simple");
+                }
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
+                    PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                    statement.execute();
+
+                    // exercise parameters on select statement
+                    PreparedStatement select = connection.prepareStatement("x where a = ?");
+                    execSelectWithParam(select, 9);
+                    System.out.println(sink);
+
+
+                    PreparedStatement insert = connection.prepareStatement("insert into x (a) values (?)");
+                    for (int i = 0; i < 30; i++) {
+                        insert.setInt(1, i);
+                        insert.execute();
+                    }
+
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        while (resultSet.next()) {
+                            sink.put(resultSet.getInt(1));
+                            sink.put('\n');
+                        }
+                    }
+
+                    TestUtils.assertEquals(expectedAll, sink);
+
+                    // exercise parameters on select statement
+                    execSelectWithParam(select, 9);
+                    TestUtils.assertEquals("9\n", sink);
+
+                    execSelectWithParam(select, 11);
+                    TestUtils.assertEquals("11\n", sink);
+
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
     }
 
     private void testQuery(String s, String s2) throws Exception {
@@ -1897,43 +2051,5 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 haltLatch.await();
             }
         });
-    }
-
-    @Test
-    @Ignore
-    public void testCopyIn() throws SQLException, BrokenBarrierException, InterruptedException {
-        final CountDownLatch haltLatch = new CountDownLatch(1);
-        final AtomicBoolean running = new AtomicBoolean(true);
-        try {
-            startBasicServer(
-                    NetworkFacadeImpl.INSTANCE,
-                    new DefaultPGWireConfiguration(),
-                    haltLatch,
-                    running
-            );
-
-            Properties properties = new Properties();
-            properties.setProperty("user", "admin");
-            properties.setProperty("password", "quest");
-
-            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
-
-            PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
-            stmt.execute();
-
-            CopyManager copyManager = new CopyManager((BaseConnection) connection);
-
-            CopyIn copyIn = copyManager.copyIn("copy tab from STDIN");
-
-            String text = "a,b\r\n" +
-                    "10,20";
-
-            byte[] bytes = text.getBytes();
-            copyIn.writeToCopy(bytes, 0, bytes.length);
-            copyIn.endCopy();
-        } finally {
-            running.set(false);
-            haltLatch.await();
-        }
     }
 }

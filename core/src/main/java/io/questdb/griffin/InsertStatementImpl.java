@@ -64,13 +64,26 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
     public long getStructureVersion() {
         return structureVersion;
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
+        initContext(executionContext);
+
+        final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
+        if (writer.getStructureVersion() != getStructureVersion()) {
+            writer.close();
+            throw WriterOutOfDateException.INSTANCE;
+        }
+        insertMethod.writer = writer;
+        return insertMethod;
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
@@ -90,21 +103,6 @@ public class InsertStatementImpl implements InsertStatement {
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
         }
-    }
-
-    @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) {
-        if (lastUsedContext != executionContext) {
-            initContext(executionContext);
-        }
-
-        final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
-        if (writer.getStructureVersion() != getStructureVersion()) {
-            writer.close();
-            throw WriterOutOfDateException.INSTANCE;
-        }
-        insertMethod.writer = writer;
-        return insertMethod;
     }
 
     @FunctionalInterface
