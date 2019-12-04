@@ -1176,11 +1176,10 @@ public class SqlCompiler implements Closeable {
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
-            final ColumnFilter columnFilter;
             Function timestampFunction = null;
+            listColumnFilter.clear();
             if (columnSetSize > 0) {
                 listColumnFilter.clear();
-                columnFilter = listColumnFilter;
                 valueFunctions = new ObjList<>(columnSetSize);
                 for (int i = 0; i < columnSetSize; i++) {
                     int index = metadata.getColumnIndex(columnSet.get(i));
@@ -1193,7 +1192,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(index)));
                     }
 
-                    if (i == writerTimestampIndex) {
+                    if (index == writerTimestampIndex) {
                         timestampFunction = function;
                     } else {
                         valueFunctions.add(function);
@@ -1207,8 +1206,6 @@ public class SqlCompiler implements Closeable {
                 if (columnCount != valueCount) {
                     throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
                 }
-                entityColumnFilter.of(columnCount);
-                columnFilter = entityColumnFilter;
                 valueFunctions = new ObjList<>(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
@@ -1219,6 +1216,7 @@ public class SqlCompiler implements Closeable {
                         timestampFunction = function;
                     } else {
                         valueFunctions.add(function);
+                        listColumnFilter.add(i);
                     }
                 }
             }
@@ -1229,7 +1227,7 @@ public class SqlCompiler implements Closeable {
             }
 
             VirtualRecord record = new VirtualRecord(valueFunctions);
-            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, columnFilter);
+            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
             return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);

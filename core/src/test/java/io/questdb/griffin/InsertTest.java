@@ -90,46 +90,9 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertValueCannotReferenceTableColumn() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
-            try {
-                compiler.compile("insert into balances values (1, ccy, 356.12)");
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(32, e.getPosition());
-            }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
-    public void testInsertExecutionAfterStructureChange() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
-            try {
-                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)");
-                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertStatement insertStatement = cq.getInsertStatement();
-
-                compiler.compile("alter table balances drop column ccy");
-
-                insertStatement.createMethod(sqlExecutionContext);
-                Assert.fail();
-            } catch (WriterOutOfDateException ignored) {
-            }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
     public void testInsertContextSwitch() throws Exception {
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
@@ -161,15 +124,77 @@ public class InsertTest extends AbstractGriffinTest {
                             "1\tGBP\t56.400000000000\n",
                     sink
             );
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
 
     }
 
     @Test
+    public void testInsertExecutionAfterStructureChange() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)");
+                Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+                InsertStatement insertStatement = cq.getInsertStatement();
+
+                compiler.compile("alter table balances drop column ccy");
+
+                insertStatement.createMethod(sqlExecutionContext);
+                Assert.fail();
+            } catch (WriterOutOfDateException ignored) {
+            }
+        });
+    }
+
+    @Test
+    public void testInsertExplicitTimestampPos1() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
+            CompiledQuery cq = compiler.compile("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "timestamp\tfield\tvalue\n" +
+                    "2019-12-04T13:20:49.000000Z\tX\t123.330000000000\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertImplicitTimestampPos1() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
+            CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33)");
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "timestamp\tfield\tvalue\n" +
+                    "2019-12-04T13:20:49.000000Z\tX\t123.330000000000\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testInsertNoTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)");
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
@@ -187,15 +212,12 @@ public class InsertTest extends AbstractGriffinTest {
                 printer.print(reader.getCursor(), reader.getMetadata(), true);
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
     @Test
     public void testInsertNotEnoughFields() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
             try {
                 compiler.compile("insert into balances values (1, 'USD')");
@@ -203,8 +225,19 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(37, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
             }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+        });
+    }
+
+    @Test
+    public void testInsertValueCannotReferenceTableColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            try {
+                compiler.compile("insert into balances values (1, ccy, 356.12)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(32, e.getPosition());
+            }
         });
     }
 
@@ -212,18 +245,17 @@ public class InsertTest extends AbstractGriffinTest {
             int partitionBy,
             TimestampFunction timestampFunction
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                CairoTestUtils.createAllTableWithNewTypes(configuration, partitionBy);
-                // this is BLOB
-                byte[] blob = new byte[500];
-                TestBinarySequence bs = new TestBinarySequence();
-                bs.of(blob);
-                Rnd rnd = new Rnd();
+        assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTableWithNewTypes(configuration, partitionBy);
+            // this is BLOB
+            byte[] blob = new byte[500];
+            TestBinarySequence bs = new TestBinarySequence();
+            bs.of(blob);
+            Rnd rnd = new Rnd();
 
-                // this is type declaration to have query compile correctly
-                bindVariableService.setInt(0, 0);
-                bindVariableService.setShort(1, (short) 10);
+            // this is type declaration to have query compile correctly
+            bindVariableService.setInt(0, 0);
+            bindVariableService.setShort(1, (short) 10);
                 bindVariableService.setByte(2, (byte) 91);
                 bindVariableService.setDouble(3, 9.2);
                 bindVariableService.setFloat(4, 5.6f);
@@ -299,7 +331,6 @@ public class InsertTest extends AbstractGriffinTest {
                 try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "all2")) {
                     final TableReaderRecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
-                    long time = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(rnd.nextInt(), record.getInt(0));
                         Assert.assertEquals(rnd.nextShort(), record.getShort(1));
@@ -310,14 +341,12 @@ public class InsertTest extends AbstractGriffinTest {
                         TestUtils.assertEquals(rnd.nextChars(6), record.getStr(6));
                         TestUtils.assertEquals(rnd.nextChars(1), record.getSym(7));
                         Assert.assertEquals(rnd.nextBoolean(), record.getBool(8));
-                        long ns = System.nanoTime();
                         rnd.nextBytes(blob);
                         BinarySequence binarySequence = record.getBin(9);
                         Assert.assertEquals(blob.length, binarySequence.length());
                         for (int j = 0, m = blob.length; j < m; j++) {
                             Assert.assertEquals(blob[j], binarySequence.byteAt(j));
                         }
-                        time += System.nanoTime() - ns;
                         Assert.assertEquals(rnd.nextLong(), record.getDate(10));
                         Long256 long256 = record.getLong256A(11);
                         Assert.assertEquals(rnd.nextLong(), long256.getLong0());
@@ -328,10 +357,6 @@ public class InsertTest extends AbstractGriffinTest {
 //                        Assert.assertEquals(0, record.getTimestamp(13));
                     }
                 }
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
         });
     }
 
