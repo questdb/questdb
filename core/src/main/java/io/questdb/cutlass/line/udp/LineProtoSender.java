@@ -58,7 +58,8 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             int interfaceIPv4Address,
             int sendToIPv4Address,
             int sendToPort,
-            int capacity
+            int capacity,
+            int ttl
     ) {
         this.nf = nf;
         this.capacity = capacity;
@@ -72,6 +73,12 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             final int errno = nf.errno();
             nf.close(fd, LOG);
             throw NetworkError.instance(errno).put("could not bind to ").ip(interfaceIPv4Address);
+        }
+
+        if (nf.setMulticastTtl(fd, ttl) != 0) {
+            final int errno = nf.errno();
+            nf.close(fd, LOG);
+            throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
         }
 
         sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);

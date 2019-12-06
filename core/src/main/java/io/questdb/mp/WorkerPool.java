@@ -39,7 +39,7 @@ public class WorkerPool {
     private final int[] workerAffinity;
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final ObjList<ObjHashSet<Job>> workerJobs;
-    private final SOCountDownLatch haltLatch;
+    private final SOCountDownLatch halted;
     private final ObjList<Worker> workers = new ObjList<>();
     private final ObjList<ObjList<Closeable>> cleaners;
     private final boolean haltOnError;
@@ -47,7 +47,7 @@ public class WorkerPool {
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
         this.workerAffinity = configuration.getWorkerAffinity();
-        this.haltLatch = new SOCountDownLatch(workerCount);
+        this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
 
         assert workerAffinity.length == workerCount;
@@ -95,7 +95,7 @@ public class WorkerPool {
             for (int i = 0; i < workerCount; i++) {
                 workers.getQuick(i).halt();
             }
-            haltLatch.await();
+            halted.await();
 
             for (int i = 0; i < workerCount; i++) {
                 Misc.free(workers.getQuick(i));
@@ -109,7 +109,7 @@ public class WorkerPool {
                 final int index = i;
                 Worker worker = new Worker(
                         workerJobs.getQuick(i),
-                        haltLatch,
+                        halted,
                         workerAffinity[i],
                         log,
                         (ex) -> {

@@ -2,7 +2,7 @@ FROM debian:stable-20191014-slim
 
 ENV JRE jre-8u231-linux-x64.tar.gz
 ENV JRE_DIR jre1.8.0_231
-ENV QUESTDB_VERSION 4.0.2
+ENV QUESTDB_VERSION 4.0.3
 
 # install 'ps' command needed by questdb shell script
 #RUN apt-get update && apt-get install -y procps

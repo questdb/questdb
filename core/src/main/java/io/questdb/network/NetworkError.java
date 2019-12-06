@@ -74,6 +74,11 @@ public class NetworkError extends Error implements Sinkable {
         return this;
     }
 
+    public NetworkError put(long value) {
+        message.put(value);
+        return this;
+    }
+
     public NetworkError put(CharSequence cs) {
         message.put(cs);
         return this;

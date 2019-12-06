@@ -163,9 +163,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
     private boolean lineUdpEnabled;
-    private int lineUdpWorkerCount;
-    private int[] lineUdpWorkerAffinity;
-    private boolean lineUdpHaltOnError;
+    private int lineUdpOwnThreadAffinity;
+    private boolean lineUdpUnicast;
+    private boolean lineUdpOwnThread;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int sqlCopyBufferSize;
@@ -331,9 +331,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
         this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 2048);
         this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
-        this.lineUdpWorkerCount = getInt(properties, "line.udp.worker.count", 0);
-        this.lineUdpWorkerAffinity = getAffinity(properties, "line.udp.worker.affinity", this.lineUdpWorkerCount);
-        this.lineUdpHaltOnError = getBoolean(properties, "line.udp.haltOnError", false);
+//        this.lineUdpWorkerCount = getInt(properties, "line.udp.worker.count", 0);
+        this.lineUdpOwnThreadAffinity = getInt(properties, "line.udp.own.thread.affinity", -1);
+        this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
+        this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
     }
 
     @Override
@@ -603,11 +604,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropTextConfiguration implements TextConfiguration {
 
         @Override
-        public InputFormatConfiguration getInputFormatConfiguration() {
-            return inputFormatConfiguration;
-        }
-
-        @Override
         public int getDateAdapterPoolCapacity() {
             return dateAdapterPoolCapacity;
         }
@@ -665,6 +661,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getUtf8SinkSize() {
             return utf8SinkSize;
+        }
+
+        @Override
+        public InputFormatConfiguration getInputFormatConfiguration() {
+            return inputFormatConfiguration;
         }
     }
 
@@ -731,21 +732,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWorkerCount() {
-            return httpWorkerCount;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return httpWorkerHaltOnError;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return httpWorkerAffinity;
-        }
-
-        @Override
         public int getSendBufferSize() {
             return sendBufferSize;
         }
@@ -763,6 +749,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean allowDeflateBeforeSend() {
             return httpAllowDeflateBeforeSend;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return httpWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return httpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return httpWorkerHaltOnError;
         }
     }
 
@@ -1065,18 +1066,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWorkerCount() {
-            return lineUdpWorkerCount;
+        public boolean isUnicast() {
+            return lineUdpUnicast;
         }
 
         @Override
-        public boolean haltOnError() {
-            return lineUdpHaltOnError;
+        public boolean ownThread() {
+            return lineUdpOwnThread;
         }
 
         @Override
-        public int[] getWorkerAffinity() {
-            return lineUdpWorkerAffinity;
+        public int ownThreadAffinity() {
+            return lineUdpOwnThreadAffinity;
         }
     }
 

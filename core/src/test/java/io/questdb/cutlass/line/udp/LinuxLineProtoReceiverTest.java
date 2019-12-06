@@ -27,27 +27,24 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
 
 public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, sharedPool) -> new LinuxLineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, sharedPool) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, sharedPool) -> new GenericLineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, sharedPool) -> new LineProtoReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -208,10 +205,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
             try {
-                WorkerPool workerPool = new WorkerPool(
-                        receiverCfg
-                );
-                factory.create(receiverCfg, engine, workerPool, true);
+                factory.create(receiverCfg, engine, null, true);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -244,10 +238,8 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
 
-                WorkerPool workerPool = new WorkerPool(receiverCfg);
 
-
-                try (Closeable ignored = factory.create(receiverCfg, engine, workerPool, false)) {
+                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false)) {
 
                     // create table
 
@@ -264,9 +256,9 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         w.warmUp();
                     }
 
-                    workerPool.start(null);
+                    receiver.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
+                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }
@@ -285,21 +277,19 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         }
 
                         Assert.assertTrue(count > 0);
-                        workerPool.halt();
+                        receiver.halt();
 
                         StringSink sink = new StringSink();
                         RecordCursorPrinter printer = new RecordCursorPrinter(sink);
                         printer.print(reader.getCursor(), reader.getMetadata(), true);
                         TestUtils.assertEquals(expected, sink);
                     }
-                } finally {
-                    Misc.free(workerPool);
                 }
             }
         });
     }
 
-    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<Closeable, LineUdpReceiverConfiguration> {
+    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoReceiver, LineUdpReceiverConfiguration> {
     }
 
     private static class TestLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -355,18 +345,18 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public int[] getWorkerAffinity() {
-            return new int[]{-1};
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return 1;
-        }
-
-        @Override
-        public boolean haltOnError() {
+        public boolean isUnicast() {
             return false;
+        }
+
+        @Override
+        public boolean ownThread() {
+            return true;
+        }
+
+        @Override
+        public int ownThreadAffinity() {
+            return -1;
         }
     }
 }

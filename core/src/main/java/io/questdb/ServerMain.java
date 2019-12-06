@@ -26,8 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.line.udp.GenericLineProtoReceiver;
-import io.questdb.cutlass.line.udp.LinuxLineProtoReceiver;
+import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
+import io.questdb.cutlass.line.udp.LineProtoReceiver;
+import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,11 +39,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import sun.misc.Signal;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.FileSystem;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
@@ -137,25 +140,24 @@ public class ServerMain {
                 cairoEngine
         );
 
-        final Closeable lineProtocolReceiver;
+        final AbstractLineProtoReceiver lineProtocolReceiver;
 
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            lineProtocolReceiver = LinuxLineProtoReceiver.create(
+            lineProtocolReceiver = new LinuxMMLineProtoReceiver(
                     configuration.getLineUdpReceiverConfiguration(),
-                    workerPool,
-                    log,
-                    cairoEngine
+                    cairoEngine,
+                    workerPool
             );
         } else {
-            lineProtocolReceiver = GenericLineProtoReceiver.create(
+            lineProtocolReceiver = new LineProtoReceiver(
                     configuration.getLineUdpReceiverConfiguration(),
-                    workerPool,
-                    log,
-                    cairoEngine
+                    cairoEngine,
+                    workerPool
             );
         }
 
         workerPool.start(log);
+        lineProtocolReceiver.start();
 
         if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
             // suppress HUP signal
@@ -165,6 +167,7 @@ public class ServerMain {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.err.println(new Date() + " QuestDB is shutting down");
+            lineProtocolReceiver.halt();
             workerPool.halt();
             Misc.free(pgWireServer);
             Misc.free(httpServer);

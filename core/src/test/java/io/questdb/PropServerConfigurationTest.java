@@ -55,21 +55,6 @@ public class PropServerConfigurationTest {
         temp.create();
     }
 
-    private void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = PropServerConfigurationTest.class.getResourceAsStream("/site/conf/mime.types")) {
-            Assert.assertNotNull(stream);
-            final File target = new File(targetDir, "conf/mime.types");
-            Assert.assertTrue(target.getParentFile().mkdirs());
-            try (FileOutputStream fos = new FileOutputStream(target)) {
-                byte[] buffer = new byte[1024 * 1204];
-                int len;
-                while ((len = stream.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-            }
-        }
-    }
-
     @Test
     public void testAllDefaults() throws ServerConfigurationException, IOException, JsonException {
         Properties properties = new Properties();
@@ -189,9 +174,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
         Assert.assertSame(AllowAllCairoSecurityContext.INSTANCE, configuration.getLineUdpReceiverConfiguration().getCairoSecurityContext());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().isEnabled());
-        Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getWorkerCount());
-        Assert.assertArrayEquals(new int[]{}, configuration.getLineUdpReceiverConfiguration().getWorkerAffinity());
-        Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().haltOnError());
+        Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
+        Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
@@ -210,6 +194,20 @@ public class PropServerConfigurationTest {
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
+    }
+
+    @Test
+    public void testHttpDisabled() throws IOException, ServerConfigurationException, JsonException {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
+            Properties properties = new Properties();
+            properties.load(is);
+
+            File root = new File(temp.getRoot(), "data");
+            copyMimeTypes(root.getAbsolutePath());
+
+            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
+        }
     }
 
     @Test(expected = ServerConfigurationException.class)
@@ -386,9 +384,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(4000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
             Assert.assertEquals(512, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
-            Assert.assertEquals(1, configuration.getLineUdpReceiverConfiguration().getWorkerCount());
-            Assert.assertArrayEquals(new int[]{2}, configuration.getLineUdpReceiverConfiguration().getWorkerAffinity());
-            Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().haltOnError());
+            Assert.assertEquals(2, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
+            Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
         }
     }
 
@@ -406,17 +403,18 @@ public class PropServerConfigurationTest {
         }
     }
 
-    @Test
-    public void testHttpDisabled() throws IOException, ServerConfigurationException, JsonException {
-        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
-            Properties properties = new Properties();
-            properties.load(is);
-
-            File root = new File(temp.getRoot(), "data");
-            copyMimeTypes(root.getAbsolutePath());
-
-            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
-            Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
+    private void copyMimeTypes(String targetDir) throws IOException {
+        try (InputStream stream = PropServerConfigurationTest.class.getResourceAsStream("/site/conf/mime.types")) {
+            Assert.assertNotNull(stream);
+            final File target = new File(targetDir, "conf/mime.types");
+            Assert.assertTrue(target.getParentFile().mkdirs());
+            try (FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[1024 * 1204];
+                int len;
+                while ((len = stream.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+            }
         }
     }
 }

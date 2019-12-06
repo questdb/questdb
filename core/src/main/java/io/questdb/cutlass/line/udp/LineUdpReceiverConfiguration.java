@@ -24,11 +24,10 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.network.NetworkFacade;
 
-public interface LineUdpReceiverConfiguration extends WorkerPoolAwareConfiguration {
+public interface LineUdpReceiverConfiguration {
 
     int getBindIPv4Address();
 
@@ -47,4 +46,12 @@ public interface LineUdpReceiverConfiguration extends WorkerPoolAwareConfigurati
     int getReceiveBufferSize();
 
     CairoSecurityContext getCairoSecurityContext();
+
+    boolean isEnabled();
+
+    boolean isUnicast();
+
+    boolean ownThread();
+
+    int ownThreadAffinity();
 }

@@ -26,16 +26,18 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Os;
 import org.junit.Test;
 
 public class LineProtoSenderTest {
 
     @Test
     public void testSimple() {
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("234.5.6.7"), 4567, 110)) {
-            sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());
-            sender.metric("weather2").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());
-            sender.metric("weather3").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());
+        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("0.0.0.0"), 9009, 110, 2)) {
+            sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());
+            sender.metric("weather2").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());
+            sender.metric("weather3").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());
+            sender.metric("weather5").tag("location", "london").tag("by", "quest").field("temp", 3400).field("ok", 600000).$(Os.currentTimeMicros());
             sender.flush();
         }
     }
