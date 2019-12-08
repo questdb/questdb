@@ -252,7 +252,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                                     "from long_sequence(50)");
                     Assert.fail();
                 } catch (PSQLException e) {
-                    Assert.assertEquals("blob is too large [blobSize=1903, max=150, columnName=rnd_bin]", e.getServerErrorMessage().getMessage());
+                    Assert.assertEquals("blob is too large [blobSize=1903, max=150, columnIndex=12]", e.getServerErrorMessage().getMessage());
                 }
 
                 connection.close();

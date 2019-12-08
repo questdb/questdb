@@ -5,3 +5,4 @@ core/target
 deploy*.bat
 win64svc/cmake-build-debug
 core/cmake-build-debug
+core/cmake-build-release

@@ -114,10 +114,7 @@ public class IntList implements Mutable {
     }
 
     public int get(int index) {
-        if (index < pos) {
-            return buffer[index];
-        }
-        throw new ArrayIndexOutOfBoundsException(index);
+        return getQuick(index);
     }
 
     public int getLast() {
