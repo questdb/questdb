@@ -56,7 +56,7 @@ public class NetworkError extends Error implements Sinkable {
 
     @Override
     public String getMessage() {
-        return message.toString();
+        return "[" + errno + "] " + message.toString();
     }
 
     public NetworkError ip(int ipv4) {

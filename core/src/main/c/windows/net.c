@@ -210,6 +210,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
         return com_questdb_network_Net_ERETRY;
     }
 
+    SaveLastError();
     return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
@@ -230,13 +231,18 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
         return com_questdb_network_Net_ERETRY;
     }
 
+    SaveLastError();
     return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_sendTo
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
-    return (jint) sendto((SOCKET) fd, (const void *) ptr, len, 0, (const struct sockaddr *) sockaddr,
+    int result = sendto((SOCKET) fd, (const void *) ptr, len, 0, (const struct sockaddr *) sockaddr,
                          sizeof(struct sockaddr_in));
+    if (result != len) {
+        SaveLastError();
+    }
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
@@ -244,7 +250,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
     struct linger sl;
     sl.l_onoff = 1;
     sl.l_linger = 0;
-    return setsockopt((SOCKET) (int) fd, SOL_SOCKET, SO_LINGER, (const char *) &sl, sizeof(struct linger));
+
+    int result = setsockopt((SOCKET) (int) fd, SOL_SOCKET, SO_LINGER, (const char *) &sl, sizeof(struct linger));
+    if ( result == SOCKET_ERROR) {
+        SaveLastError();
+    }
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf
@@ -282,22 +293,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastInterface
     struct in_addr address;
     address.s_addr = htonl((u_long) ipv4address);
     int result = setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_IF, (const char *) &address, sizeof(address));
-    if (result == 0) {
-        return result;
+    if (result == SOCKET_ERROR) {
+        SaveLastError();
     }
-    SaveLastError();
-    return -1;
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastTtl
         (JNIEnv *e, jclass cl, jlong fd, jint ttl) {
     DWORD lTTL = ttl;
     int result = setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_TTL, (char *) &lTTL, sizeof(lTTL));
-    if (result == 0) {
-        return result;
+    if (result == SOCKET_ERROR) {
+        SaveLastError();
     }
-    SaveLastError();
-    return -1;
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReuseAddress
@@ -314,11 +323,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReusePort
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastLoop
         (JNIEnv *e, jclass cl, jlong fd, jboolean loop) {
     int result = setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *) &loop, sizeof(loop));
-    if (result == 0) {
-        return result;
+    if (result == SOCKET_ERROR) {
+        SaveLastError();
     }
-    SaveLastError();
-    return -1;
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getTcpNoDelay
