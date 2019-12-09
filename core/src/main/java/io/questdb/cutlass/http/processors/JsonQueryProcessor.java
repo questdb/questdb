@@ -130,18 +130,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final RecordCursorFactory factory = AbstractQueryContext.FACTORY_CACHE.get().poll(state.query);
         try {
             if (factory != null) {
-                executeCachedSelect(context, dispatcher, state, socket, factory);
+                try {
+                    executeCachedSelect(context, dispatcher, state, socket, factory);
+                } catch (ReaderOutOfDateException e) {
+                    Misc.free(factory);
+                    compileQuery(context, dispatcher, state, socket);
+                }
             } else {
                 // new query
-                info(state).$("exec [q='").utf8(state.query).$("']").$();
-                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                queryExecutors.getQuick(cc.getType()).execute(
-                        context,
-                        dispatcher,
-                        state,
-                        socket,
-                        cc
-                );
+                compileQuery(context, dispatcher, state, socket);
             }
         } catch (SqlException e) {
             syntaxError(socket, e, state);
@@ -150,6 +147,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(socket, e, state);
             readyForNextRequest(context, dispatcher);
         }
+    }
+
+    private void compileQuery(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, JsonQueryProcessorState state, HttpChunkedResponseSocket socket) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        info(state).$("exec [q='").utf8(state.query).$("']").$();
+        final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+        queryExecutors.getQuick(cc.getType()).execute(
+                context,
+                dispatcher,
+                state,
+                socket,
+                cc
+        );
     }
 
     @Override
