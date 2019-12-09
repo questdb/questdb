@@ -153,10 +153,10 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public long size() {
-            return -1;
+            return masterCursor.size();
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;

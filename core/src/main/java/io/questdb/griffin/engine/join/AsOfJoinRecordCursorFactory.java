@@ -148,7 +148,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            return -1;
+            return masterCursor.size();
         }
 
         @Override
@@ -208,7 +208,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             slaveCursor.toTop();
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             joinKeyMap.clear();
             slaveTimestamp = Long.MIN_VALUE;
             danglingSlaveRecord = false;

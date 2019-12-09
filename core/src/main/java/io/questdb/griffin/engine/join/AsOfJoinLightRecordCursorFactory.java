@@ -137,7 +137,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public long size() {
-            return -1;
+            return masterCursor.size();
         }
 
         @Override
