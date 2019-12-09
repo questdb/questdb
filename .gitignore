@@ -6,3 +6,4 @@ deploy*.bat
 win64svc/cmake-build-debug
 core/cmake-build-debug
 core/cmake-build-release
+core/cmake-build-minsizerel

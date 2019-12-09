@@ -33,7 +33,7 @@ public class LineProtoSenderTest {
 
     @Test
     public void testSimple() {
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("0.0.0.0"), 9009, 110, 2)) {
+        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("232.1.2.3"), 9009, 110, 2)) {
             sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());
             sender.metric("weather2").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());
             sender.metric("weather3").tag("location", "london").tag("by", "quest").field("temp", 3400).$(Os.currentTimeMicros());

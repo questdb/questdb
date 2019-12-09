@@ -460,6 +460,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 code.run();
+                engine.releaseInactive();
                 Assert.assertEquals(0, engine.getBusyWriterCount());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {

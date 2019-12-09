@@ -886,11 +886,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // todo: we are throwing away insert model here
                 //    we know what this is INSERT without parameters, we should
                 //    execute it as we parse without generating models etc.
-                try (InsertMethod m = cc.getInsertStatement().createMethod(sqlExecutionContext)) {
-                    m.execute();
-                    m.commit();
-                }
-                sendExecuteTail(TAIL_SUCCESS);
+                currentInsertStatement = cc.getInsertStatement();
+                executeInsert();
             } else {
                 // DDL SQL
                 sendExecuteTail(TAIL_SUCCESS);
@@ -925,14 +922,27 @@ public class PGConnectionContext implements IOContext, Mutable {
             currentCursor = currentFactory.getCursor(sqlExecutionContext);
             sendCursor();
         } else if (currentInsertStatement != null) {
-            // todo: test insert failure
-            try (final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext)) {
-                m.execute();
-                m.commit();
-            } finally {
-                currentInsertStatement = null;
-            }
+            executeInsert();
+        }
+    }
+
+    private void executeInsert() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        try (final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext)) {
+            m.execute();
+            m.commit();
             sendExecuteTail(TAIL_SUCCESS);
+        } catch (CairoException e) {
+            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+            final long addr = responseAsciiSink.skip();
+            responseAsciiSink.put('M');
+            responseAsciiSink.encodeUtf8Z((e).getFlyweightMessage());
+            responseAsciiSink.put('S');
+            responseAsciiSink.encodeUtf8Z("ERROR");
+            responseAsciiSink.put((char) 0);
+            responseAsciiSink.putLen(addr);
+            sendExecuteTail(TAIL_ERROR);
+        } finally {
+            currentInsertStatement = null;
         }
     }
 

@@ -92,6 +92,11 @@ public class CairoEngine implements Closeable {
         return writerPool.getBusyCount();
     }
 
+    public void releaseInactive() {
+        writerPool.releaseInactive();
+        readerPool.releaseInactive();
+    }
+
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
