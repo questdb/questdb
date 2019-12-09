@@ -47,14 +47,6 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 
 public class SqlCodeGenerator {
     private static final IntHashSet limitTypes = new IntHashSet();
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
-    }
-
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -69,7 +61,6 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private boolean fullFatJoins = false;
-
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
@@ -472,24 +463,33 @@ public class SqlCodeGenerator {
                         case QueryModel.JOIN_ASOF:
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                             if (slave.isRandomAccessCursor() && !fullFatJoins) {
-                                master = createAsOfJoin(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                        master,
-                                        RecordSinkFactory.getInstance(
-                                                asm,
-                                                masterMetadata,
-                                                listColumnFilterB,
-                                                true
-                                        ),
-                                        slave,
-                                        RecordSinkFactory.getInstance(
-                                                asm,
-                                                slaveMetadata,
-                                                listColumnFilterA,
-                                                true
-                                        ),
-                                        masterMetadata.getColumnCount()
-                                );
+                                if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                    master = createAsOfJoin(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            RecordSinkFactory.getInstance(
+                                                    asm,
+                                                    masterMetadata,
+                                                    listColumnFilterB,
+                                                    true
+                                            ),
+                                            slave,
+                                            RecordSinkFactory.getInstance(
+                                                    asm,
+                                                    slaveMetadata,
+                                                    listColumnFilterA,
+                                                    true
+                                            ),
+                                            masterMetadata.getColumnCount()
+                                    );
+                                } else {
+                                    master = new AsOfJoinNoKeyRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
                             } else {
                                 master = createFullFatAsOfJoin(
                                         master,
@@ -1428,22 +1428,6 @@ public class SqlCodeGenerator {
         return unionAllFactory;
     }
 
-    private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
-        final RecordMetadata metadata = masterFactory.getMetadata();
-        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
-                throw SqlException
-                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
-                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
-                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
-                        .put(']');
-            }
-        }
-    }
-
     private RecordCursorFactory generateUnionFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         entityColumnFilter.of(masterFactory.getMetadata().getColumnCount());
@@ -1516,6 +1500,22 @@ public class SqlCodeGenerator {
         this.fullFatJoins = fullFatJoins;
     }
 
+    private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
+        final RecordMetadata metadata = masterFactory.getMetadata();
+        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
+                throw SqlException
+                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
+                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
+                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
+                        .put(']');
+            }
+        }
+    }
+
     private int validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         final int firstColumnType = metadata.getColumnType(0);
         if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
@@ -1530,6 +1530,13 @@ public class SqlCodeGenerator {
                     .put(ColumnType.nameOf(firstColumnType));
         }
         return firstColumnType;
+    }
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
     }
 
 }
