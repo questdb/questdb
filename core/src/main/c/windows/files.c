@@ -116,7 +116,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
     return PathFileExistsA((LPCSTR) lpszName);
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(jlong addr, jlong len, jboolean async) {
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
     if (FlushViewOfFile((LPCVOID) addr, len) == 0) {
         SaveLastError();
         return -1;
