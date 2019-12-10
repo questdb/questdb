@@ -114,6 +114,8 @@ public final class Files {
 
     public static native int lock(long fd);
 
+    public static native int msync(long addr, long len, boolean async);
+
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);
     }
