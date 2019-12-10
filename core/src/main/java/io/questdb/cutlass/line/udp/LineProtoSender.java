@@ -128,6 +128,11 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
+    public LineProtoSender field(CharSequence name, boolean value) {
+        field(name).put(value ? 't' : 'f');
+        return this;
+    }
+
     @Override
     public void flush() {
         send();

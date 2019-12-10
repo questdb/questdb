@@ -34,6 +34,8 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.line.LineProtoNanosTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -1018,6 +1020,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindIPv4Address() {
             return lineUdpBindIPV4Address;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return LineProtoNanosTimestampAdapter.INSTANCE;
         }
 
         @Override

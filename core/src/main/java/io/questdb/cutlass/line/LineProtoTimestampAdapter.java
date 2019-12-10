@@ -22,39 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.cutlass.line;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.NumericException;
 
-public interface LineUdpReceiverConfiguration {
-
-    int getBindIPv4Address();
-
-    int getCommitRate();
-
-    int getGroupIPv4Address();
-
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    boolean isEnabled();
-
-    boolean isUnicast();
-
-    boolean ownThread();
-
-    int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
+@FunctionalInterface
+public interface LineProtoTimestampAdapter {
+    long getMicros(CharSequence value) throws NumericException;
 }

@@ -53,7 +53,6 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     protected int commitRate;
     protected long totalCount = 0;
 
-
     public AbstractLineProtoReceiver(
             LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
@@ -78,7 +77,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
             }
 
             lexer = new LineProtoLexer(configuration.getMsgBufferSize());
-            parser = new CairoLineProtoParser(engine, configuration.getCairoSecurityContext());
+            parser = new CairoLineProtoParser(engine, configuration.getCairoSecurityContext(), configuration.getTimestampAdapter());
             lexer.withParser(parser);
 
             if (!configuration.ownThread()) {

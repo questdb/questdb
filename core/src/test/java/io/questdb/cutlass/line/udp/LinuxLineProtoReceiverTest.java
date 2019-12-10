@@ -27,6 +27,8 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoNanosTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -260,7 +262,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
-                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
+                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000000L);
                         }
                         sender.flush();
                     }
@@ -327,6 +329,11 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         @Override
         public int getPort() {
             return 4567;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return LineProtoNanosTimestampAdapter.INSTANCE;
         }
 
         @Override

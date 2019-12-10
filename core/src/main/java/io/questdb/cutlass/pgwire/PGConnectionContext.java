@@ -507,70 +507,62 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void appendBooleanColumn(Record record, int i) {
+    private void appendBooleanColumn(Record record, int columnIndex) {
         responseAsciiSink.putNetworkInt(Byte.BYTES);
-        responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
+        responseAsciiSink.put(record.getBool(columnIndex) ? 't' : 'f');
     }
 
-    private void appendByteColumn(Record record, int i) {
-        long a;
-        a = responseAsciiSink.skip();
-        responseAsciiSink.put((int) record.getByte(i));
+    private void appendByteColumn(Record record, int columnIndex) {
+        long a = responseAsciiSink.skip();
+        responseAsciiSink.put((int) record.getByte(columnIndex));
         responseAsciiSink.putLenEx(a);
     }
 
-    private void appendLongColumn(Record record, int i) {
-        long longValue;
-        long a;
-        longValue = record.getLong(i);
+    private void appendLongColumn(Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.put(longValue);
             responseAsciiSink.putLenEx(a);
         }
     }
 
-    private void appendShortColumn(Record record, int i) {
-        long a;
-        a = responseAsciiSink.skip();
-        responseAsciiSink.put(record.getShort(i));
+    private void appendShortColumn(Record record, int columnIndex) {
+        final long a = responseAsciiSink.skip();
+        responseAsciiSink.put(record.getShort(columnIndex));
         responseAsciiSink.putLenEx(a);
     }
 
-    private void appendFloatColumn(Record record, int i) {
-        long a;
-        final float floatValue = record.getFloat(i);
+    private void appendFloatColumn(Record record, int columnIndex) {
+        final float floatValue = record.getFloat(columnIndex);
         if (Float.isNaN(floatValue)) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.put(floatValue, 3);
             responseAsciiSink.putLenEx(a);
         }
     }
 
-    private void appendDoubleColumn(Record record, int i) {
-        long a;
-        final double doubleValue = record.getDouble(i);
+    private void appendDoubleColumn(Record record, int columnIndex) {
+        final double doubleValue = record.getDouble(columnIndex);
         if (Double.isNaN(doubleValue)) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.put(doubleValue, 3);
             responseAsciiSink.putLenEx(a);
         }
     }
 
-    private void appendDateColumn(Record record, int i) {
-        long longValue;
-        long a;
-        longValue = record.getDate(i);
+    private void appendDateColumn(Record record, int columnIndex) {
+        final long longValue = record.getDate(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             PG_DATE_TIME_Z_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
@@ -588,38 +580,34 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void appendSymbolColumn(Record record, int i) {
-        CharSequence strValue;
-        long a;
-        strValue = record.getSym(i);
+    private void appendSymbolColumn(Record record, int columnIndex) {
+        final CharSequence strValue = record.getSym(columnIndex);
         if (strValue == null) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.encodeUtf8(strValue);
             responseAsciiSink.putLenEx(a);
         }
     }
 
-    private void appendStrColumn(Record record, int i) {
-        long a;
-        CharSequence strValue = record.getStr(i);
+    private void appendStrColumn(Record record, int columnIndex) {
+        final CharSequence strValue = record.getStr(columnIndex);
         if (strValue == null) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.encodeUtf8(strValue);
             responseAsciiSink.putLenEx(a);
         }
     }
 
     private void appendIntCol(Record record, int i) {
-        long a;
         final int intValue = record.getInt(i);
         if (intValue == Numbers.INT_NaN) {
             responseAsciiSink.setNullValue();
         } else {
-            a = responseAsciiSink.skip();
+            final long a = responseAsciiSink.skip();
             responseAsciiSink.put(intValue);
             responseAsciiSink.putLenEx(a);
         }

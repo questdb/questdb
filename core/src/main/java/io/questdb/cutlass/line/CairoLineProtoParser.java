@@ -45,6 +45,16 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     };
     private static final FieldNameParser NOOP_FIELD_NAME = name -> {
     };
+    private static ObjList<ColumnWriter> writers = new ObjList<>();
+
+    static {
+        writers.extendAndSet(ColumnType.LONG, CairoLineProtoParser::putLong);
+        writers.extendAndSet(ColumnType.BOOLEAN, CairoLineProtoParser::putBoolean);
+        writers.extendAndSet(ColumnType.STRING, CairoLineProtoParser::putStr);
+        writers.extendAndSet(ColumnType.SYMBOL, CairoLineProtoParser::putSymbol);
+        writers.extendAndSet(ColumnType.DOUBLE, CairoLineProtoParser::putDouble);
+    }
+
     private final CairoEngine engine;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
@@ -58,6 +68,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final CairoSecurityContext cairoSecurityContext;
+    private final LineProtoTimestampAdapter timestampAdapter;
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = 0;
@@ -79,11 +90,51 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
 
-    public CairoLineProtoParser(CairoEngine engine, CairoSecurityContext cairoSecurityContext) {
+    public CairoLineProtoParser(
+            CairoEngine engine,
+            CairoSecurityContext cairoSecurityContext,
+            LineProtoTimestampAdapter timestampAdapter
+    ) {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
         this.cairoSecurityContext = cairoSecurityContext;
+        this.timestampAdapter = timestampAdapter;
+    }
+
+    private static boolean isTrue(CharSequence value) {
+        final char firstChar = value.charAt(0);
+        return firstChar == 't' || firstChar == 'T';
+    }
+
+    private static void putSymbol(TableWriter.Row row, int index, CharSequence value) {
+        row.putSym(index, value);
+    }
+
+    private static void putStr(TableWriter.Row row, int index, CharSequence value) {
+        row.putStr(index, value, 1, value.length() - 2);
+    }
+
+    private static void putBoolean(TableWriter.Row row, int index, CharSequence value) {
+        row.putBool(index, isTrue(value));
+    }
+
+    private static void putDouble(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
+        try {
+            row.putDouble(index, Numbers.parseDouble(value));
+        } catch (NumericException e) {
+            LOG.error().$("not a DOUBLE: ").$(value).$();
+            throw BadCastException.INSTANCE;
+        }
+    }
+
+    private static void putLong(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
+        try {
+            row.putLong(index, Numbers.parseLong(value, 0, value.length() - 1));
+        } catch (NumericException e) {
+            LOG.error().$("not an INT: ").$(value).$();
+            throw BadCastException.INSTANCE;
+        }
     }
 
     @Override
@@ -158,6 +209,20 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         clearState();
     }
 
+    private TableWriter.Row createNewRow(CharSequenceCache cache) {
+        final int valueCount = columnValues.size();
+        if (columnNameType.size() / 2 == valueCount) {
+            return writer.newRow(clock.getTicks());
+        } else {
+            try {
+                return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
+            } catch (NumericException e) {
+                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
+                return null;
+            }
+        }
+    }
+
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
         TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName));
         this.writer = writer;
@@ -165,20 +230,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         this.columnCount = metadata.getColumnCount();
         writerCache.valueAt(cacheEntryIndex).writer = writer;
 
-        int columnCount = columnNameType.size() / 2;
-        int valueCount = columnValues.size();
-
-        TableWriter.Row row;
-
-        if (columnCount == valueCount) {
-            row = writer.newRow(clock.getTicks());
-        } else {
-            try {
-                row = writer.newRow(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))));
-            } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
-                return;
-            }
+        final int columnCount = columnNameType.size() / 2;
+        final TableWriter.Row row = createNewRow(cache);
+        if (row == null) {
+            return;
         }
 
         try {
@@ -195,20 +250,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendRow(CharSequenceCache cache) {
-        int columnCount = columnNameType.size() / 2;
-        int valueCount = columnValues.size();
-
-        TableWriter.Row row;
-
-        if (columnCount == valueCount) {
-            row = writer.newRow(clock.getTicks());
-        } else {
-            try {
-                row = writer.newRow(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))));
-            } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
-                return;
-            }
+        final int columnCount = columnNameType.size() / 2;
+        final TableWriter.Row row = createNewRow(cache);
+        if (row == null) {
+            return;
         }
 
         try {
@@ -263,10 +308,18 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         char c = token.charAt(len - 1);
         switch (c) {
             case 'i':
-                return ColumnType.INT;
+                return ColumnType.LONG;
             case 'e':
                 // tru(e)
                 // fals(e)
+            case 't':
+            case 'T':
+                // t
+                // T
+            case 'f':
+            case 'F':
+                // f
+                // F
                 return ColumnType.BOOLEAN;
             case '"':
                 if (len < 2 || token.charAt(0) != '\"') {
@@ -276,7 +329,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 return ColumnType.STRING;
             default:
                 return ColumnType.DOUBLE;
-
         }
     }
 
@@ -391,36 +443,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
      * @param value      value characters
      */
     private void putValue(TableWriter.Row row, int index, int columnType, CharSequence value) throws BadCastException {
-        switch (columnType) {
-            case ColumnType.INT:
-                try {
-                    row.putInt(index, Numbers.parseInt(value, 0, value.length() - 1));
-                } catch (NumericException e) {
-                    LOG.error().$("not an INT: ").$(value).$();
-                    throw BadCastException.INSTANCE;
-                }
-                break;
-            case ColumnType.DOUBLE:
-                try {
-                    row.putDouble(index, Numbers.parseDouble(value));
-                } catch (NumericException e) {
-                    LOG.error().$("not a DOUBLE: ").$(value).$();
-                    throw BadCastException.INSTANCE;
-                }
-                break;
-            case ColumnType.BOOLEAN:
-                row.putBool(index, Chars.equals(value, "true"));
-                break;
-            case ColumnType.STRING:
-                row.putStr(index, value, 1, value.length() - 2);
-                break;
-            case ColumnType.SYMBOL:
-                row.putSym(index, value);
-                break;
-            default:
-                break;
-
-        }
+        writers.getQuick(columnType).write(row, index, value);
     }
 
     private void switchModeToAppend() {
@@ -467,6 +490,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         } else {
             createState(entry);
         }
+    }
+
+    private interface ColumnWriter {
+        void write(TableWriter.Row row, int columnIndex, CharSequence value) throws BadCastException;
     }
 
     @FunctionalInterface
