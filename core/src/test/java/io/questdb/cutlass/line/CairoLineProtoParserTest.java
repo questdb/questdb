@@ -58,6 +58,14 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStr() throws Exception {
+        String expected = "host\tuptime_format\ttimestamp\n" +
+                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
+        assertThat(expected, lines, "system");
+    }
+
+    @Test
     public void testAppendExistingTable() throws Exception {
         final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n" +
                 "1.600000000000\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +

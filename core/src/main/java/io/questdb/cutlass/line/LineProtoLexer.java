@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -42,6 +39,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
+    private final ObjList<Runnable> charHandlers = new ObjList<>();
     private long buffer;
 
     private final CharSequenceCache charSequenceCache = address -> {
@@ -58,11 +56,18 @@ public class LineProtoLexer implements Mutable, Closeable {
     private long utf8ErrorTop;
     private long utf8ErrorPos;
     private int errorCode = 0;
+    private boolean unquoted = true;
 
     public LineProtoLexer(int bufferSize) {
         buffer = Unsafe.malloc(bufferSize);
         bufferHi = buffer + bufferSize;
+        populateCharHandlers();
         clear();
+    }
+
+    @Override
+    public void close() {
+        Unsafe.free(buffer, bufferHi - buffer);
     }
 
     @Override
@@ -72,12 +77,8 @@ public class LineProtoLexer implements Mutable, Closeable {
         state = LineProtoParser.EVT_MEASUREMENT;
         utf8ErrorTop = utf8ErrorPos = -1;
         skipLine = false;
+        unquoted = true;
         errorCode = 0;
-    }
-
-    @Override
-    public void close() {
-        Unsafe.free(buffer, bufferHi - buffer);
     }
 
     /**
@@ -91,7 +92,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
         while (p < hi) {
 
-            byte b = Unsafe.getUnsafe().getByte(p);
+            final byte b = Unsafe.getUnsafe().getByte(p);
 
             if (skipLine) {
                 doSkipLine(b);
@@ -104,16 +105,14 @@ public class LineProtoLexer implements Mutable, Closeable {
             }
 
             try {
-                char c;
                 if (b < 0) {
                     try {
                         p = utf8Decode(p, hi, b);
-                        c = Unsafe.getUnsafe().getChar(dstPos);
                     } catch (Utf8RepairContinue e) {
                         break;
                     }
                 } else {
-                    sink.put(c = (char) b);
+                    sink.put((char) b);
                     p++;
                 }
 
@@ -124,28 +123,10 @@ public class LineProtoLexer implements Mutable, Closeable {
                     continue;
                 }
 
-                switch (c) {
-                    case ',':
-                        fireEventTransition(LineProtoParser.EVT_TAG_NAME, LineProtoParser.EVT_FIELD_NAME);
-                        break;
-                    case '=':
-                        fireEventTransition2();
-                        break;
-                    case '\\':
-                        escape = true;
-                        continue;
-                    case ' ':
-                        fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
-                        break;
-                    case '\n':
-                    case '\r':
-                        consumeLineEnd();
-                        break;
-                    default:
-                        // normal byte
-                        continue;
+                if (b > -1) {
+                    charHandlers.getQuick(b).run();
                 }
-                dstTop = dstPos;
+
             } catch (LineProtoException ex) {
                 skipLine = true;
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
@@ -157,7 +138,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         if (!skipLine) {
             dstPos += 2;
             try {
-                consumeLineEnd();
+                onEol();
             } catch (LineProtoException e) {
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
             }
@@ -165,13 +146,39 @@ public class LineProtoLexer implements Mutable, Closeable {
         clear();
     }
 
-    public void withParser(LineProtoParser parser) {
-        this.parser = parser;
+    private static void noop() {
     }
 
-    private void consumeLineEnd() throws LineProtoException {
+    private void chop() {
+        dstTop = dstPos;
+    }
+
+    private void doSkipLine(byte b) {
+        if (b == '\n' || b == '\r') {
+            clear();
+        }
+    }
+
+    private void fireEvent() throws LineProtoException {
+        // two bytes less between these and one more byte so we don't have to use >=
+        if (dstTop > dstPos - 3) {
+            errorCode = LineProtoParser.ERROR_EMPTY;
+            throw LineProtoException.INSTANCE;
+        }
+        parser.onEvent(cs, state, charSequenceCache);
+        chop();
+    }
+
+    private void onComma() {
+        if (unquoted) {
+            fireEventTransition(LineProtoParser.EVT_TAG_NAME, LineProtoParser.EVT_FIELD_NAME);
+        }
+    }
+
+    private void onEol() throws LineProtoException {
         switch (state) {
             case LineProtoParser.EVT_MEASUREMENT:
+                chop();
                 break;
             case LineProtoParser.EVT_TAG_VALUE:
             case LineProtoParser.EVT_FIELD_VALUE:
@@ -186,24 +193,43 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    private void doSkipLine(byte b) {
-        switch (b) {
-            case '\n':
-            case '\r':
-                clear();
-                break;
-            default:
-                break;
+    private void onEquals() {
+        if (unquoted) {
+            fireEventTransition2();
         }
     }
 
-    private void fireEvent() throws LineProtoException {
-        // two bytes less between these and one more byte so we don't have to use >=
-        if (dstTop > dstPos - 3) {
-            errorCode = LineProtoParser.ERROR_EMPTY;
-            throw LineProtoException.INSTANCE;
+    private void onEsc() {
+        escape = true;
+    }
+
+    public void withParser(LineProtoParser parser) {
+        this.parser = parser;
+    }
+
+    private void onQuote() {
+        unquoted = !unquoted;
+    }
+
+    private void onSpace() {
+        if (unquoted) {
+            fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
         }
-        parser.onEvent(cs, state, charSequenceCache);
+    }
+
+    private void populateCharHandlers() {
+        final Runnable noop = LineProtoLexer::noop;
+        final Runnable eol = this::onEol;
+        for (int i = 0; i <= Byte.MAX_VALUE; i++) {
+            charHandlers.add(noop);
+        }
+        charHandlers.extendAndSet('"', this::onQuote);
+        charHandlers.extendAndSet('\n', eol);
+        charHandlers.extendAndSet('\r', eol);
+        charHandlers.extendAndSet(' ', this::onSpace);
+        charHandlers.extendAndSet('\\', this::onEsc);
+        charHandlers.extendAndSet(',', this::onComma);
+        charHandlers.extendAndSet('=', this::onEquals);
     }
 
     private void fireEventTransition(int evtTagName, int evtFieldName) {
