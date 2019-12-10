@@ -50,6 +50,8 @@ public interface FilesFacade {
 
     long getLastModified(LPSZ path);
 
+    int msync(long addr, long len, boolean async);
+
     long getMapPageSize();
 
     long getOpenFileCount();

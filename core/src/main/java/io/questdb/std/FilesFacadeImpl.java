@@ -98,6 +98,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int msync(long addr, long len, boolean async) {
+        return Files.msync(addr, len, async);
+    }
+
+    @Override
     public long getMapPageSize() {
         if (mapPageSize == 0) {
             mapPageSize = computeMapPageSize();

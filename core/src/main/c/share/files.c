@@ -186,11 +186,9 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
     return JNI_FALSE;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(jlong addr, jlong len, jboolean async) {
-    int flags;
-    return msync((void *) addr, len, (async ? MS_ASYNC : MS_SYNC) | MS_INVALIDATE);
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
+    return msync((void *) addr, len, async ? MS_ASYNC : MS_SYNC);
 }
-
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {

@@ -152,6 +152,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCommitMode() {
+        return CommitMode.ASYNC;
+    }
+
+    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }

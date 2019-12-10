@@ -134,6 +134,21 @@ public class AppendMemory extends VirtualMemory {
         ff.munmap(address, getPageSize(page));
     }
 
+    public void sync(boolean async) {
+        if (pageAddress != 0) {
+            if (ff.msync(pageAddress, getMapPageSize(), async) != 0) {
+                LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+            }
+        }
+    }
+
+    private void releaseCurrentPage() {
+        if (pageAddress != 0) {
+            release(0, pageAddress);
+            pageAddress = 0;
+        }
+    }
+
     private long mapPage(int page) {
         long target = pageOffset(page + 1);
         if (ff.length(fd) < target && !ff.truncate(fd, target)) {
@@ -142,15 +157,8 @@ public class AppendMemory extends VirtualMemory {
         long offset = pageOffset(page);
         long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
         if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
+            throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
         }
         return address;
-    }
-
-    private void releaseCurrentPage() {
-        if (pageAddress != 0) {
-            release(0, pageAddress);
-            pageAddress = 0;
-        }
     }
 }

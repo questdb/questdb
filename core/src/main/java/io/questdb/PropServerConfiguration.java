@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
@@ -68,6 +69,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
+    private final int commitMode;
     private final boolean httpServerEnabled;
     private final int createAsSelectRetryCount;
     private final CharSequence defaultMapType;
@@ -264,6 +266,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
+        this.commitMode = getCommitMode(properties);
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
         this.defaultMapType = getString(properties, "cairo.default.map.type", "fast");
         this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", false);
@@ -388,6 +391,28 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean getBoolean(Properties properties, String key, boolean defaultValue) {
         final String value = properties.getProperty(key);
         return value == null ? defaultValue : Boolean.parseBoolean(value);
+    }
+
+    private int getCommitMode(Properties properties) {
+        final String commitMode = properties.getProperty("cairo.commit.mode");
+
+        if (commitMode == null) {
+            return CommitMode.NOSYNC;
+        }
+
+        if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
+            return CommitMode.NOSYNC;
+        }
+
+        if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
+            return CommitMode.ASYNC;
+        }
+
+        if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
+            return CommitMode.SYNC;
+        }
+
+        return CommitMode.NOSYNC;
     }
 
     private double getDouble(Properties properties, String key, double defaultValue) throws ServerConfigurationException {
@@ -1014,17 +1039,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getInsertPoolCapacity() {
             return sqlInsertModelPoolCapacity;
         }
+
+        @Override
+        public int getCommitMode() {
+            return commitMode;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
         public int getBindIPv4Address() {
             return lineUdpBindIPV4Address;
-        }
-
-        @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
-            return LineProtoNanosTimestampAdapter.INSTANCE;
         }
 
         @Override
@@ -1085,6 +1110,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return LineProtoNanosTimestampAdapter.INSTANCE;
         }
     }
 

@@ -133,4 +133,6 @@ public interface CairoConfiguration {
     int getWithClauseModelPoolCapacity();
 
     int getInsertPoolCapacity();
+
+    int getCommitMode();
 }

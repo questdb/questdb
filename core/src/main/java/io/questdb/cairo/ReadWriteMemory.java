@@ -112,4 +112,16 @@ public class ReadWriteMemory extends VirtualMemory {
             throw e;
         }
     }
+
+    public void sync(boolean async) {
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            sync(i, async);
+        }
+    }
+
+    public void sync(int pageIndex, boolean async) {
+        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) != 0) {
+            LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+        }
+    }
 }
