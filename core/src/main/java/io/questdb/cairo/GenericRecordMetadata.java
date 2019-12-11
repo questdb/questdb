@@ -29,6 +29,8 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
+    public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
+
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();
         this.columnNameIndexMap = new CharSequenceIntHashMap();

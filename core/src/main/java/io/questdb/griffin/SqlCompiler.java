@@ -1187,7 +1187,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                     }
 
-                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), metadata, executionContext);
+                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(index), function.getType())) {
                         throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(index)));
                     }
