@@ -153,7 +153,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCommitMode() {
-        return CommitMode.ASYNC;
+        return CommitMode.NOSYNC;
     }
 
     @Override

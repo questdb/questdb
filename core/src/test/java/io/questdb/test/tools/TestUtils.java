@@ -40,7 +40,7 @@ public final class TestUtils {
         if (Chars.contains(_this, that)) {
             return;
         }
-        Assert.fail("\'" + _this.toString() + "\' does not contain: " + that);
+        Assert.fail("'" + _this.toString() + "  ' does not contain: " + that);
     }
 
     public static void assertEquals(File a, File b) throws IOException {

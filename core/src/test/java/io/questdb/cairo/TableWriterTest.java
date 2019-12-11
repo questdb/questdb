@@ -2283,7 +2283,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 r.putStr(0, rnd.nextChars(5));
                 r.append();
             }
-            writer.commit();
+            writer.commit(CommitMode.ASYNC);
             writer.addColumn("митинг", ColumnType.INT);
             Assert.assertEquals(0, writer.getColumnIndex("секьюрити"));
             Assert.assertEquals(2, writer.getColumnIndex("митинг"));
@@ -2402,7 +2402,7 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
             Assert.assertEquals(12, writer.columns.size());
             populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
-            writer.commit();
+            writer.commit(CommitMode.SYNC);
             Assert.assertEquals(30000, writer.size());
         }
     }
@@ -2442,7 +2442,7 @@ public class TableWriterTest extends AbstractCairoTest {
         long interval = 60000L * 1000L;
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
             ts = populateProducts(writer, rnd, ts, n, interval);
-            writer.commit();
+            writer.commit(CommitMode.NOSYNC);
 
             Assert.assertEquals(n, writer.size());
 

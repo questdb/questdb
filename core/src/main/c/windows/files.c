@@ -49,6 +49,31 @@ int set_file_pos(HANDLE fd, jlong offset) {
     return r;
 }
 
+HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+
+        HANDLE fd = CreateFileW(
+                buf,
+                dwDesiredAccess,
+                dwShareMode,
+                NULL,
+                dwCreationDisposition,
+                FILE_ATTRIBUTE_NORMAL,
+                NULL
+        );
+
+        if (fd == INVALID_HANDLE_VALUE) {
+            SaveLastError();
+        }
+
+        return fd;
+    }
+    return INVALID_HANDLE_VALUE;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
@@ -83,17 +108,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong lpszName) {
 
-    HANDLE handle = CreateFile(
-            (LPCSTR) lpszName,
+    HANDLE handle = openUtf8(
+            lpszName,
             FILE_WRITE_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
+            OPEN_EXISTING
     );
 
-    if (handle == INVALID_HANDLE_VALUE) {
+    if (handle > INVALID_HANDLE_VALUE) {
         SaveLastError();
         return -1;
     }
@@ -104,16 +126,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
 
     if (GetFileTime(handle, &creation, &access, &write)) {
         CloseHandle(handle);
-        return  ((((jlong)write.dwHighDateTime) << 32) | write.dwLowDateTime) / 10000 - MILLIS_SINCE_1970;
+        return ((((jlong) write.dwHighDateTime) << 32) | write.dwLowDateTime) / 10000 - MILLIS_SINCE_1970;
     }
     CloseHandle(handle);
     SaveLastError();
     return -1;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
-        (JNIEnv *e, jclass cl, jlong lpszName) {
-    return PathFileExistsA((LPCSTR) lpszName);
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0(JNIEnv *e, jclass cl, jlong lpszName) {
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+        return PathFileExistsW(buf);
+    }
+    return FALSE;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
@@ -127,66 +154,64 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
 
-    HANDLE handle = CreateFile(
-            (LPCSTR) lpszName,
+    HANDLE handle = openUtf8(
+            lpszName,
             FILE_WRITE_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
+            OPEN_EXISTING
     );
-    if (handle == INVALID_HANDLE_VALUE) {
+
+
+    if (handle != INVALID_HANDLE_VALUE) {
+        millis += MILLIS_SINCE_1970; // millis between 1601-01-01 and 1970-01-01
+        millis *= 10000;
+        FILETIME t;
+        t.dwHighDateTime = (DWORD) ((millis >> 32) & 0xFFFFFFFF);
+        t.dwLowDateTime = (DWORD) millis;
+        int r = SetFileTime(handle, NULL, NULL, &t);
+        CloseHandle(handle);
+        return (jboolean) r;
+    }
+    return FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, jlong lpszName) {
+
+    HANDLE h = openUtf8(
+            lpszName,
+            FILE_READ_ONLY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            OPEN_EXISTING
+    );
+    jlong len = Java_io_questdb_std_Files_length(e, cl, (jlong) h);
+    CloseHandle(h);
+    return len;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
+
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+
+        if (CreateDirectoryW(buf, NULL)) {
+            return 0;
+        }
         SaveLastError();
-        return 0;
+        return -1;
     }
 
-    millis += MILLIS_SINCE_1970; // millis between 1601-01-01 and 1970-01-01
-    millis *= 10000;
-    FILETIME t;
-    t.dwHighDateTime = (DWORD) ((millis >> 32) & 0xFFFFFFFF);
-    t.dwLowDateTime = (DWORD) millis;
-    int r = SetFileTime(handle, NULL, NULL, &t);
-    CloseHandle(handle);
-    return (jboolean) r;
+    return -2;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
-        (JNIEnv *e, jclass cl, jlong lpszName) {
-    struct stat st;
-    int r = stat((const char *) lpszName, &st);
-    if (r == 0) {
-        return st.st_size;
-    }
-    SaveLastError();
-    return r;
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
-        (JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
-    jint r = _mkdir((const char *) lpszName);
-    if (r != 0) {
-        SaveLastError();
-    }
-    return r;
-}
-
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO
-        (JNIEnv *e, jclass cl, jlong lpszName) {
-    HANDLE fd = CreateFile(
-            (LPCSTR) lpszName,
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
+    return (jlong) openUtf8(
+            lpszName,
             GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
+            OPEN_EXISTING
     );
-
-    if (fd == INVALID_HANDLE_VALUE) {
-        SaveLastError();
-    }
-    return (jlong) fd;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
@@ -206,36 +231,24 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_dup
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    //NtOpenFile()
-    HANDLE r = CreateFile(
-            (LPCSTR) lpszName,
+    return (jlong) openUtf8(
+            lpszName,
             GENERIC_WRITE | GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
+            OPEN_ALWAYS
     );
-
-    if (r == INVALID_HANDLE_VALUE) {
-        SaveLastError();
-    }
-    return (jlong) r;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    HANDLE h = CreateFile(
-            (LPCSTR) lpszName,
+    HANDLE h = openUtf8(
+            lpszName,
             FILE_APPEND_DATA,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            NULL
+            OPEN_ALWAYS
     );
 
-    if (h != INVALID_HANDLE_VALUE) {
+    if (h > INVALID_HANDLE_VALUE) {
         SetFilePointer(h, 0, NULL, FILE_END);
     }
 
@@ -351,52 +364,76 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove
-        (JNIEnv *e, jclass cl, jlong lpsz) {
-    if (DeleteFile((LPCSTR) lpsz)) {
-        return TRUE;
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+
+        if (DeleteFileW(buf)) {
+            return TRUE;
+        }
     }
+
     SaveLastError();
     return FALSE;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
-        (JNIEnv *e, jclass cl, jlong lpsz) {
-    jboolean b = (jboolean) RemoveDirectoryA((LPCSTR) lpsz);
-    if (!b) {
-        SaveLastError();
-    }
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
 
-    return b;
+        if (RemoveDirectoryW(buf)) {
+            return TRUE;
+        }
+    }
+    SaveLastError();
+    return FALSE;
 }
 
+#define UTF8_MAX_PATH MAX_PATH * 4
+
 typedef struct {
-    WIN32_FIND_DATAA *find_dataa;
+    WIN32_FIND_DATAW *find_data;
     HANDLE hFind;
+    char utf8Name[UTF8_MAX_PATH];
 } FIND;
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
         (JNIEnv *e, jclass cl, jlong lpszName) {
 
-    FIND *find = malloc(sizeof(FIND));
-    find->find_dataa = malloc(sizeof(WIN32_FIND_DATAA));
-
-    char path[2048];
+    char path[strlen((const char *) lpszName) + 32];
     sprintf(path, "%s\\*.*", (char *) lpszName);
-    find->hFind = FindFirstFile(path, find->find_dataa);
-    if (find->hFind == INVALID_HANDLE_VALUE) {
-        SaveLastError();
-        DWORD err = GetLastError();
-        free(find->find_dataa);
-        free(find);
-        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 0 : -1;
+
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, path, -1, buf, len);
+
+        FIND *find = malloc(sizeof(FIND));
+        find->find_data = malloc(sizeof(WIN32_FIND_DATAW));
+
+        find->hFind = FindFirstFileW(buf, find->find_data);
+        if (find->hFind == INVALID_HANDLE_VALUE) {
+            SaveLastError();
+            DWORD err = GetLastError();
+            free(find->find_data);
+            free(find);
+            return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 0 : -1;
+        }
+        return (jlong) find;
     }
-    return (jlong) find;
+    return -2;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
-    if (FindNextFile(find->hFind, find->find_dataa)) {
+    if (FindNextFileW(find->hFind, find->find_data)) {
         return 1;
     }
 
@@ -412,19 +449,21 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Files_findClose
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
     FindClose(find->hFind);
-    free(find->find_dataa);
+    free(find->find_data);
     free(find);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    return (jlong) ((FIND *) findPtr)->find_dataa->cFileName;
+    WideCharToMultiByte(CP_UTF8, 0, ((FIND *) findPtr)->find_data->cFileName, -1, ((FIND *) findPtr)->utf8Name,
+                        UTF8_MAX_PATH, NULL, NULL);
+    return (jlong) ((FIND *) findPtr)->utf8Name;
 }
 
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->find_dataa->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
+    return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
 }
 
@@ -440,11 +479,23 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     return 1;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
-        (JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
-    if (MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew)) {
-        return TRUE;
+    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf1[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, buf1, len);
+
+        len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, NULL, 0);
+
+        if (len > 0) {
+            wchar_t buf2[len];
+            MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
+
+            if (MoveFileW(buf1, buf2)) {
+                return TRUE;
+            }
+        }
     }
     SaveLastError();
     return FALSE;

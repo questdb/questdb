@@ -37,7 +37,7 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
 
         long fd = ff.openRO(path);
         if (fd < 0) {
-            throw HttpException.instance("could not open [file=").put(path).put(']');
+            throw HttpException.instance("could not open [file=").put(path).put(", errno=").put(ff.errno()).put(']');
         }
 
         final long fileSize = ff.length(fd);

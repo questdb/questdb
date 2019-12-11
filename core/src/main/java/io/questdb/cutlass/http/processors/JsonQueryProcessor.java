@@ -693,7 +693,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$(", message=`").utf8(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();
         sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
     }

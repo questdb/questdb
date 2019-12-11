@@ -238,7 +238,6 @@ public class JsonLexerTest {
                 try {
                     Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
 
-                    long t = System.nanoTime();
                     for (int i = 0; i < l; i++) {
                         try {
                             LEXER.clear();
@@ -252,7 +251,6 @@ public class JsonLexerTest {
                             throw e;
                         }
                     }
-                    System.out.println((System.nanoTime() - t) / l);
                 } finally {
                     Unsafe.free(buf, l);
                     Unsafe.free(bufA, l);

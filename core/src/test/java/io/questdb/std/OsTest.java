@@ -65,7 +65,5 @@ public class OsTest {
         Assert.assertTrue(actual > 0);
         long delta = actual / 1_000_000 - reference;
         Assert.assertTrue(delta < 200);
-        System.out.println(reference);
-        System.out.println(actual);
     }
 }
