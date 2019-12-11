@@ -24,10 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.LogFactory;
@@ -89,9 +86,34 @@ public class TableWriteBenchmark {
     }
 
     @Benchmark
-    public void testWrite() {
+    public void testWriteAsync() {
+        TableWriter.Row r = writer.newRow();
+        r.putLong(0, rnd.nextLong());
+        r.append();
+        writer.commit(CommitMode.ASYNC);
+    }
+
+    @Benchmark
+    public void testWriteNoCommit() {
         TableWriter.Row r = writer.newRow();
         r.putLong(0, rnd.nextLong());
         r.append();
     }
+
+    @Benchmark
+    public void testWriteNoSync() {
+        TableWriter.Row r = writer.newRow();
+        r.putLong(0, rnd.nextLong());
+        r.append();
+        writer.commit(CommitMode.NOSYNC);
+    }
+
+    @Benchmark
+    public void testWriteSync() {
+        TableWriter.Row r = writer.newRow();
+        r.putLong(0, rnd.nextLong());
+        r.append();
+        writer.commit(CommitMode.SYNC);
+    }
+
 }
