@@ -28,12 +28,13 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import org.junit.Assert;
-import sun.nio.ch.DirectBuffer;
 
-import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 
 public final class TestUtils {
 
@@ -47,43 +48,50 @@ public final class TestUtils {
         Assert.fail("'" + _this.toString() + "  ' does not contain: " + that);
     }
 
-    public static void assertEquals(File a, File b) throws IOException {
-        try (RandomAccessFile rafA = new RandomAccessFile(a, "r")) {
-            try (RandomAccessFile rafB = new RandomAccessFile(b, "r")) {
-                try (FileChannel chA = rafA.getChannel()) {
-                    try (FileChannel chB = rafB.getChannel()) {
-                        Assert.assertEquals(chA.size(), chB.size());
-                        ByteBuffer bufA = chA.map(FileChannel.MapMode.READ_ONLY, 0, chA.size());
-                        try {
-                            ByteBuffer bufB = chB.map(FileChannel.MapMode.READ_ONLY, 0, chB.size());
-                            try {
-                                long pa = getAddress(bufA);
-                                long pb = getAddress(bufB);
-                                long lim = pa + bufA.limit();
+    public static void assertEquals(File a, File b) {
+        try (Path path = new Path()) {
+            path.of(a.getAbsolutePath()).$();
+            long fda = Files.openRO(path);
+            Assert.assertNotEquals(-1, fda);
 
-                                while (pa + 8 < lim) {
-                                    if (Unsafe.getUnsafe().getLong(pa) != Unsafe.getUnsafe().getLong(pb)) {
-                                        Assert.fail();
-                                    }
-                                    pa += 8;
-                                    pb += 8;
-                                }
+            try {
+                path.of(b.getAbsolutePath()).$();
+                long fdb = Files.openRO(path);
+                Assert.assertNotEquals(-1, fdb);
+                try {
 
-                                while (pa < lim) {
-                                    if (Unsafe.getUnsafe().getByte(pa++) != Unsafe.getUnsafe().getByte(pb++)) {
-                                        Assert.fail();
-                                    }
-                                }
+                    Assert.assertEquals(Files.length(fda), Files.length(fdb));
 
-                            } finally {
-                                release(bufB);
+                    long bufa = Unsafe.malloc(4096);
+                    long bufb = Unsafe.malloc(4096);
+
+                    long offset = 0;
+                    try {
+
+                        while (true) {
+                            long reada = Files.read(fda, bufa, 4096, offset);
+                            long readb = Files.read(fdb, bufb, 4096, offset);
+                            Assert.assertEquals(reada, readb);
+
+                            if (reada == 0) {
+                                break;
                             }
 
-                        } finally {
-                            release(bufA);
+                            offset += reada;
+
+                            for (int i = 0; i < reada; i++) {
+                                Assert.assertEquals(Unsafe.getUnsafe().getByte(bufa + i), Unsafe.getUnsafe().getByte(bufb + i));
+                            }
                         }
+                    } finally {
+                        Unsafe.free(bufa, 4096);
+                        Unsafe.free(bufb, 4096);
                     }
+                } finally {
+                    Files.close(fdb);
                 }
+            } finally {
+                Files.close(fda);
             }
         }
     }
@@ -167,29 +175,6 @@ public final class TestUtils {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
         }
-    }
-
-    public static long getAddress(ByteBuffer buffer) {
-        return ((DirectBuffer) buffer).address();
-    }
-
-    /**
-     * Releases ByteBuffer if possible. Call semantics should be as follows:
-     * <p>
-     * ByteBuffer buffer = ....
-     * <p>
-     * buffer = release(buffer);
-     *
-     * @param <T>    ByteBuffer subclass
-     * @param buffer direct byte buffer
-     * @return null if buffer is released or same buffer if release is not possible.
-     */
-    public static <T extends ByteBuffer> T release(final T buffer) {
-        if (buffer instanceof DirectBuffer) {
-            ((DirectBuffer) buffer).cleaner().clean();
-            return null;
-        }
-        return buffer;
     }
 
     @FunctionalInterface
