@@ -58,8 +58,8 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
     }
 
     public void addAt(int index, CharSequence key) {
-        String s = key.toString().toLowerCase();
-        Unsafe.arrayPut(keys, index, s);
+        String s = Chars.toString(key).toLowerCase();
+        keys[index] = s;
         if (--free < 1) {
             rehash();
         }
@@ -75,12 +75,12 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
+        keys[index] = noEntryKey;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
+        keys[to] = keys[from];
         erase(from);
     }
 
@@ -98,7 +98,7 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
         for (int i = 0, n = oldKeys.length; i < n; i++) {
             CharSequence key = oldKeys[i];
             if (key != null) {
-                Unsafe.arrayPut(keys, keyIndex(key), key);
+                keys[keyIndex(key)] = key;
             }
         }
     }

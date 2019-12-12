@@ -30,18 +30,31 @@ import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Unsafe {
-    public static final long CHAR_OFFSET;
-    public static final long CHAR_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
-    private static final long OBJ_OFFSET;
-    private static final long OBJ_SCALE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
+
+    static {
+        try {
+            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+
+            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
+            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
+
+            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
+            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
+
+        } catch (Exception e) {
+            throw new FatalError(e);
+        }
+    }
 
     private Unsafe() {
     }
@@ -49,26 +62,6 @@ public final class Unsafe {
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + (index << LONG_SCALE));
-    }
-
-    public static <T> void arrayPut(T[] array, int index, T obj) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + (index << OBJ_SCALE), obj);
-    }
-
-    public static void arrayPut(int[] array, int index, int value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putInt(array, INT_OFFSET + (index << INT_SCALE), value);
-    }
-
-    public static void arrayPut(long[] array, int index, long value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
-    }
-
-    public static void arrayPut(char[] array, int index, char value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putChar(array, CHAR_OFFSET + (index << CHAR_SCALE), value);
     }
 
     public static void arrayPutOrdered(long[] array, int index, long value) {
@@ -150,26 +143,5 @@ public final class Unsafe {
 
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
-    }
-
-    static {
-        try {
-            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            theUnsafe.setAccessible(true);
-            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
-            OBJ_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-            OBJ_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(Object[].class));
-
-            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
-            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
-
-            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
-            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
-
-            CHAR_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(char[].class);
-            CHAR_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(char[].class));
-        } catch (Exception e) {
-            throw new FatalError(e);
-        }
     }
 }

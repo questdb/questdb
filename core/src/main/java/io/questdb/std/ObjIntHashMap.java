@@ -99,7 +99,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     public void putAt(int index, K key, int value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
             return;
         }
         putAt0(index, key, value);
@@ -137,8 +137,8 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     private void putAt0(int index, K key, int value) {
-        Unsafe.arrayPut(keys, index, key);
-        Unsafe.arrayPut(values, index, value);
+        keys[index] = key;
+        values[index] = value;
         if (--free == 0) {
             rehash();
         }

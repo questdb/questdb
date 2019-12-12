@@ -75,7 +75,7 @@ public class LongList implements Mutable {
 
     public void add(long value) {
         ensureCapacity(pos + 1);
-        Unsafe.arrayPut(buffer, pos++, value);
+        buffer[pos++] = value;
     }
 
     public void add(LongList that) {
@@ -89,7 +89,7 @@ public class LongList implements Mutable {
     public void add(int index, long element) {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        Unsafe.arrayPut(buffer, index, element);
+        buffer[index] = element;
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
@@ -147,7 +147,7 @@ public class LongList implements Mutable {
         if (index >= pos) {
             pos = index + 1;
         }
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     public void fill(int from, int to, long value) {
@@ -163,7 +163,7 @@ public class LongList implements Mutable {
 
     public long getAndSetQuick(int index, long value) {
         long v = getQuick(index);
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
         return v;
     }
 
@@ -232,7 +232,7 @@ public class LongList implements Mutable {
     }
 
     public void increment(int index) {
-        Unsafe.arrayPut(buffer, index, buffer[index] + 1);
+        buffer[index] = buffer[index] + 1;
     }
 
     public void remove(long v) {
@@ -250,7 +250,7 @@ public class LongList implements Mutable {
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+        buffer[--pos] = noEntryValue;
     }
 
     public void seed(int capacity, long value) {
@@ -268,7 +268,7 @@ public class LongList implements Mutable {
 
     public void set(int index, long element) {
         if (index < pos) {
-            Unsafe.arrayPut(buffer, index, element);
+            buffer[index] = element;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
@@ -280,7 +280,7 @@ public class LongList implements Mutable {
     }
 
     public void setQuick(int index, long value) {
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     public void shuffle(Rnd rnd) {
@@ -336,7 +336,7 @@ public class LongList implements Mutable {
     }
 
     private void let(int a, int b) {
-        Unsafe.arrayPut(buffer, a, buffer[b]);
+        buffer[a] = buffer[b];
     }
 
     private int scanSearch(long v) {

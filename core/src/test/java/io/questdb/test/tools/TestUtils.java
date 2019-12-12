@@ -24,8 +24,12 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
+import sun.nio.ch.DirectBuffer;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -53,8 +57,8 @@ public final class TestUtils {
                         try {
                             ByteBuffer bufB = chB.map(FileChannel.MapMode.READ_ONLY, 0, chB.size());
                             try {
-                                long pa = ByteBuffers.getAddress(bufA);
-                                long pb = ByteBuffers.getAddress(bufB);
+                                long pa = getAddress(bufA);
+                                long pb = getAddress(bufB);
                                 long lim = pa + bufA.limit();
 
                                 while (pa + 8 < lim) {
@@ -72,11 +76,11 @@ public final class TestUtils {
                                 }
 
                             } finally {
-                                ByteBuffers.release(bufB);
+                                release(bufB);
                             }
 
                         } finally {
-                            ByteBuffers.release(bufA);
+                            release(bufA);
                         }
                     }
                 }
@@ -163,6 +167,29 @@ public final class TestUtils {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
         }
+    }
+
+    public static long getAddress(ByteBuffer buffer) {
+        return ((DirectBuffer) buffer).address();
+    }
+
+    /**
+     * Releases ByteBuffer if possible. Call semantics should be as follows:
+     * <p>
+     * ByteBuffer buffer = ....
+     * <p>
+     * buffer = release(buffer);
+     *
+     * @param <T>    ByteBuffer subclass
+     * @param buffer direct byte buffer
+     * @return null if buffer is released or same buffer if release is not possible.
+     */
+    public static <T extends ByteBuffer> T release(final T buffer) {
+        if (buffer instanceof DirectBuffer) {
+            ((DirectBuffer) buffer).cleaner().clean();
+            return null;
+        }
+        return buffer;
     }
 
     @FunctionalInterface

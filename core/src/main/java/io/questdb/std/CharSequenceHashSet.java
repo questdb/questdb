@@ -80,8 +80,8 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
     }
 
     public void addAt(int index, CharSequence key) {
-        String s = key.toString();
-        Unsafe.arrayPut(keys, index, s);
+        final String s = Chars.toString(key);
+        keys[index] = s;
         list.add(s);
         if (--free < 1) {
             rehash();
@@ -129,7 +129,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
+        keys[index] = noEntryKey;
     }
 
     public CharSequence keyAt(int index) {
@@ -160,7 +160,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
+        keys[to] = keys[from];
         erase(from);
     }
 
@@ -189,9 +189,8 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         int n = list.size();
         free -= n;
         for (int i = 0; i < n; i++) {
-            CharSequence key = list.getQuick(i);
-            int keyIndex = keyIndex(key);
-            Unsafe.arrayPut(keys, keyIndex, key);
+            final CharSequence key = list.getQuick(i);
+            keys[keyIndex(key)] = key;
         }
     }
 }

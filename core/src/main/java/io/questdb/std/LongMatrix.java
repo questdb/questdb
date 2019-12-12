@@ -94,11 +94,11 @@ public class LongMatrix<T> {
     }
 
     public void set(int r, T obj) {
-        Unsafe.arrayPut(payload, r, obj);
+        payload[r] = obj;
     }
 
     public void set(int r, int c, long value) {
-        Unsafe.arrayPut(data, offset(r, c), value);
+        data[offset(r, c)] = value;
     }
 
     public int size() {

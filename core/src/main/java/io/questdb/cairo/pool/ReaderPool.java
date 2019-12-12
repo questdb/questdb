@@ -86,7 +86,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             throw ex;
                         }
 
-                        Unsafe.arrayPut(e.readers, i, r);
+                        e.readers[i] = r;
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         r.reload();
@@ -94,7 +94,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
 
                     if (isClosed()) {
-                        Unsafe.arrayPut(e.readers, i, null);
+                        e.readers[i] = null;
                         r.goodby();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
                         return r;
@@ -224,7 +224,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             r.close();
             LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
             notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
+            entry.readers[index] = null;
         }
     }
 
@@ -310,7 +310,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
 
-            Unsafe.arrayPut(e.releaseTimes, index, clock.getTicks());
+            e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
 
             // todo: there is a race condition between this method and

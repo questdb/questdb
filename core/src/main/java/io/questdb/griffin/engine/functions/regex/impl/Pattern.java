@@ -24,8 +24,6 @@
 
 package io.questdb.griffin.engine.functions.regex.impl;
 
-import io.questdb.std.Unsafe;
-
 import java.text.Normalizer;
 import java.util.*;
 
@@ -5346,8 +5344,8 @@ public final class Pattern
                 boolean ret = next.match(matcher, i + patternLength, seq);
                 if (ret) {
                     matcher.first = i;
-                    Unsafe.arrayPut(matcher.groups, 0, matcher.first);
-                    Unsafe.arrayPut(matcher.groups, 1, matcher.last);
+                    matcher.groups[0] = matcher.first;
+                    matcher.groups[1] = matcher.last;
                     return true;
                 }
                 i++;

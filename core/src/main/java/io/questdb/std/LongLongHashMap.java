@@ -54,10 +54,10 @@ public class LongLongHashMap extends AbstractLongHashSet {
 
     public void putAt(int index, long key, long value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
         } else {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
+            keys[index] = key;
+            values[index] = value;
             if (--free == 0) {
                 rehash();
             }
@@ -70,13 +70,13 @@ public class LongLongHashMap extends AbstractLongHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, this.noEntryKeyValue);
+        keys[index] = this.noEntryKeyValue;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
-        Unsafe.arrayPut(values, to, values[from]);
+        keys[to] = keys[from];
+        values[to] = values[from];
         erase(from);
     }
 
@@ -98,8 +98,8 @@ public class LongLongHashMap extends AbstractLongHashSet {
             long key = oldKeys[i];
             if (key != noEntryKeyValue) {
                 final int index = keyIndex(key);
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, oldValues[i]);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

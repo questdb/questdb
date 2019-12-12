@@ -55,10 +55,10 @@ public class IntIntHashMap extends AbstractIntHashSet {
 
     public void putAt(int index, int key, int value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
         } else {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
+            keys[index] = key;
+            values[index] = value;
             if (--free == 0) {
                 rehash();
             }
@@ -66,19 +66,18 @@ public class IntIntHashMap extends AbstractIntHashSet {
     }
 
     public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
+        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, this.noEntryKeyValue);
+        keys[index] = this.noEntryKeyValue;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
-        Unsafe.arrayPut(values, to, values[from]);
+        keys[to] = keys[from];
+        values[to] = values[from];
         erase(from);
     }
 
@@ -100,8 +99,8 @@ public class IntIntHashMap extends AbstractIntHashSet {
             int key = oldKeys[i];
             if (key != noEntryKeyValue) {
                 final int index = keyIndex(key);
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, oldValues[i]);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

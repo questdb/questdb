@@ -75,7 +75,7 @@ public class IntHashSet extends AbstractIntHashSet {
     }
 
     public void addAt(int index, int key) {
-        Unsafe.arrayPut(keys, index, key);
+        keys[index] = key;
         list.add(key);
         if (--free < 1) {
             rehash();
@@ -113,12 +113,12 @@ public class IntHashSet extends AbstractIntHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKeyValue);
+        keys[index] = noEntryKeyValue;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
+        keys[to] = keys[from];
         erase(from);
     }
 
@@ -149,9 +149,8 @@ public class IntHashSet extends AbstractIntHashSet {
         int n = list.size();
         free -= n;
         for (int i = 0; i < n; i++) {
-            int key = list.getQuick(i);
-            int keyIndex = keyIndex(key);
-            Unsafe.arrayPut(keys, keyIndex, key);
+            final int key = list.getQuick(i);
+            keys[keyIndex(key)] = key;
         }
     }
 }

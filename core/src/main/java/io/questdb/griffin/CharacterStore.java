@@ -29,7 +29,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -86,7 +85,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     @Override
     public CharSink put(char c) {
         if (size < capacity) {
-            Unsafe.arrayPut(chars, size++, c);
+            chars[size++] = c;
         } else {
             resizeAndPut(c);
         }
@@ -98,7 +97,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         System.arraycopy(chars, 0, next, 0, capacity);
         chars = next;
         capacity *= 2;
-        Unsafe.arrayPut(chars, size++, c);
+        chars[size++] = c;
         LOG.info().$("resize [capacity=").$(capacity).$(']').$();
     }
 

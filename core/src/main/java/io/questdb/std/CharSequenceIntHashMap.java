@@ -58,8 +58,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     public void increment(CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
-            int index1 = -index - 1;
-            Unsafe.arrayPut(values, -index - 1, values[index1] + 1);
+            values[-index - 1] = values[-index - 1] + 1;
         } else {
             putAt0(index, key.toString(), 0);
         }
@@ -102,20 +101,20 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
-        Unsafe.arrayPut(values, index, noEntryValue);
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
-        Unsafe.arrayPut(values, to, values[from]);
+        keys[to] = keys[from];
+        values[to] = values[from];
         erase(from);
     }
 
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
             return false;
         }
         String keyString = key.toString();
@@ -141,8 +140,8 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     }
 
     private void putAt0(int index, CharSequence key, int value) {
-        Unsafe.arrayPut(keys, index, key);
-        Unsafe.arrayPut(values, index, value);
+        keys[index] = key;
+        values[index] = value;
         if (--free == 0) {
             rehash();
         }
@@ -166,8 +165,8 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
             CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, oldValues[i]);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

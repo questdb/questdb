@@ -27,9 +27,16 @@ package io.questdb.std.microtime;
 
 import io.questdb.std.ConcurrentHashMap;
 
+import java.util.function.Function;
+
 public class TimestampFormatFactory {
     private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private static final Function<CharSequence, TimestampFormat> mapper = TimestampFormatFactory::map;
     private final ConcurrentHashMap<TimestampFormat> cache = new ConcurrentHashMap<>();
+
+    private static TimestampFormat map(CharSequence value) {
+        return tlCompiler.get().compile(value);
+    }
 
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
@@ -42,6 +49,6 @@ public class TimestampFormatFactory {
      * @return compiled implementation of DateFormat
      */
     public TimestampFormat get(CharSequence pattern) {
-        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p));
+        return cache.computeIfAbsent(pattern, mapper);
     }
 }

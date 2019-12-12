@@ -54,8 +54,8 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
-        Unsafe.arrayPut(values, index, noEntryValue);
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
     }
 
     public int valueAt(int index) {
@@ -76,7 +76,7 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
 
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
             return false;
         }
         putAt0(index, key.toString().toLowerCase(), value);
@@ -92,14 +92,14 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
-        Unsafe.arrayPut(values, to, values[from]);
+        keys[to] = keys[from];
+        values[to] = values[from];
         erase(from);
     }
 
     private void putAt0(int index, CharSequence key, int value) {
-        Unsafe.arrayPut(keys, index, key);
-        Unsafe.arrayPut(values, index, value);
+        keys[index] = key;
+        values[index] = value;
         if (--free == 0) {
             rehash();
         }
@@ -123,8 +123,8 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
             CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, oldValues[i]);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

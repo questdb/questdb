@@ -49,14 +49,14 @@ public class ObjList<T> implements Mutable, Sinkable {
      */
     public void add(T value) {
         ensureCapacity0(pos + 1);
-        Unsafe.arrayPut(buffer, pos++, value);
+        buffer[pos++] = value;
     }
 
     public void addAll(ObjList<T> that) {
         int n = that.size();
         ensureCapacity0(pos + n);
         for (int i = 0; i < n; i++) {
-            Unsafe.arrayPut(buffer, pos++, that.getQuick(i));
+            buffer[pos++] = that.getQuick(i);
         }
     }
 
@@ -73,7 +73,7 @@ public class ObjList<T> implements Mutable, Sinkable {
         if (index >= pos) {
             pos = index + 1;
         }
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     /**
@@ -88,7 +88,7 @@ public class ObjList<T> implements Mutable, Sinkable {
 
     public T getAndSetQuick(int index, T value) {
         T v = buffer[index];
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
         return v;
     }
 
@@ -196,7 +196,7 @@ public class ObjList<T> implements Mutable, Sinkable {
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
-        Unsafe.arrayPut(buffer, --pos, null);
+        buffer[--pos] = null;
     }
 
     public void remove(int from, int to) {
@@ -237,7 +237,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public void setQuick(int index, T value) {
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     /**

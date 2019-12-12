@@ -66,8 +66,8 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
-        Unsafe.arrayPut(values, index, null);
+        keys[index] = noEntryKey;
+        values[index] = null;
     }
 
     public void removeAt(int index) {
@@ -93,8 +93,8 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
-        Unsafe.arrayPut(values, to, values[from]);
+        keys[to] = keys[from];
+        values[to] = values[from];
         erase(from);
     }
 
@@ -121,11 +121,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     private boolean putAt0(int index, CharSequence key, V value) {
         if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
+            values[-index - 1] = value;
             return false;
         } else {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
+            keys[index] = key;
+            values[index] = value;
             if (--free == 0) {
                 rehash();
             }
@@ -152,8 +152,8 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
             CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, oldValues[i]);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

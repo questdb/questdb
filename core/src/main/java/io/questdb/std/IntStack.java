@@ -60,13 +60,13 @@ public class IntStack implements Mutable {
         if (result == noEntryValue) {
             return noEntryValue;
         }
-        Unsafe.arrayPut(elements, h, noEntryValue);
+        elements[h] = noEntryValue;
         head = (h + 1) & mask;
         return result;
     }
 
     public void push(int e) {
-        Unsafe.arrayPut(elements, head = (head - 1) & mask, e);
+        elements[head = (head - 1) & mask] = e;
         if (head == tail) {
             doubleCapacity();
         }

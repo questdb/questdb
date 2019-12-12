@@ -73,7 +73,7 @@ public class LongHashSet extends AbstractLongHashSet {
     }
 
     public void addAt(int index, long key) {
-        Unsafe.arrayPut(keys, index, key);
+        keys[index] = key;
         list.add(key);
         if (--free < 1) {
             rehash();
@@ -101,12 +101,12 @@ public class LongHashSet extends AbstractLongHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKeyValue);
+        keys[index] = noEntryKeyValue;
     }
 
     @Override
     protected void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
+        keys[to] = keys[from];
         erase(from);
     }
 
@@ -139,7 +139,7 @@ public class LongHashSet extends AbstractLongHashSet {
         for (int i = 0; i < n; i++) {
             long key = list.getQuick(i);
             int keyIndex = keyIndex(key);
-            Unsafe.arrayPut(keys, keyIndex, key);
+            keys[keyIndex] = key;
         }
     }
 }

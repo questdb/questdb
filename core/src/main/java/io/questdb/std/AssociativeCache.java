@@ -73,8 +73,8 @@ public class AssociativeCache<V> implements Closeable {
             return null;
         }
         V value = values[index];
-        Unsafe.arrayPut(values, index, null);
-        Unsafe.arrayPut(keys, index, null);
+        values[index] = null;
+        keys[index] = null;
         return value;
     }
 
@@ -86,8 +86,8 @@ public class AssociativeCache<V> implements Closeable {
         }
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
         System.arraycopy(values, lo, values, lo + 1, bmask);
-        Unsafe.arrayPut(keys, lo, key.toString());
-        Unsafe.arrayPut(values, lo, value);
+        keys[lo] = Chars.toString(key);
+        values[lo] = value;
         return ok;
     }
 
@@ -101,7 +101,7 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     private void free(int lo) {
-        Unsafe.arrayPut(values, lo, Misc.free(values[lo]));
+        values[lo] = Misc.free(values[lo]);
     }
 
     private int getIndex(CharSequence key) {

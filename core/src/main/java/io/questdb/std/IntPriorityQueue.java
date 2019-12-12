@@ -61,7 +61,7 @@ public class IntPriorityQueue {
         if (p >= buffer.length) {
             resize();
         }
-        Unsafe.arrayPut(buffer, p, value);
+        buffer[p] = value;
         limit++;
     }
 

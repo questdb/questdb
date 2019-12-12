@@ -148,7 +148,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     private boolean addAt0(int index, T key) {
         if (index > -1) {
-            Unsafe.arrayPut(keys, index, key);
+            keys[index] = key;
             if (--free == 0) {
                 rehash();
             }
@@ -158,7 +158,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     private void erase(int index) {
-        Unsafe.arrayPut(keys, index, noEntryKey);
+        ((Object[]) keys)[index] = noEntryKey;
     }
 
     private int idx(T key) {
@@ -166,7 +166,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     private void move(int from, int to) {
-        Unsafe.arrayPut(keys, to, keys[from]);
+        keys[to] = keys[from];
         erase(from);
     }
 

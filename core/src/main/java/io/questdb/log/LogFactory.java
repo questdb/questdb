@@ -540,7 +540,7 @@ public class LogFactory implements Closeable {
                 if (((mask >> i) & 1) == 1) {
                     int that = channels[i];
                     if (that == 0) {
-                        Unsafe.arrayPut(channels, i, q);
+                        channels[i] = q;
                     }
 
                     if (that > 0 && that < min) {
@@ -552,7 +552,7 @@ public class LogFactory implements Closeable {
             if (mask > 1 && min < Integer.MAX_VALUE) {
                 for (int i = 0, n = channels.length; i < n; i++) {
                     if (((mask >> i) & 1) == 1) {
-                        Unsafe.arrayPut(channels, i, min);
+                        channels[i] = min;
                     }
                 }
             }

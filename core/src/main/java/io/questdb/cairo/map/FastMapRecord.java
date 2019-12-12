@@ -298,8 +298,8 @@ final class FastMapRecord implements MapRecord {
 
             for (int i = 0; i < n; i++) {
                 if (this.csA[i] != null) {
-                    Unsafe.arrayPut(csA, i, new DirectCharSequence());
-                    Unsafe.arrayPut(csB, i, new DirectCharSequence());
+                    csA[i] = new DirectCharSequence();
+                    csB[i] = new DirectCharSequence();
                 }
             }
         } else {
@@ -312,7 +312,7 @@ final class FastMapRecord implements MapRecord {
             bs = new DirectBinarySequence[n];
             for (int i = 0; i < n; i++) {
                 if (this.bs[i] != null) {
-                    Unsafe.arrayPut(bs, i, new DirectBinarySequence());
+                    bs[i] = new DirectBinarySequence();
                 }
             }
         } else {
@@ -326,8 +326,8 @@ final class FastMapRecord implements MapRecord {
 
             for (int i = 0; i < n; i++) {
                 if (this.long256A[i] != null) {
-                    Unsafe.arrayPut(csA, i, new Long256Impl());
-                    Unsafe.arrayPut(csB, i, new Long256Impl());
+                    long256A[i] = new Long256Impl();
+                    long256B[i] = new Long256Impl();
                 }
             }
         } else {

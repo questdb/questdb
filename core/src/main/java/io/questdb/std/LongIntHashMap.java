@@ -81,14 +81,14 @@ public class LongIntHashMap implements Mutable {
     private void insertKey(long key, int value) {
         int index = (int) key & mask;
         if (values[index] == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
+            keys[index] = key;
+            values[index] = value;
             free--;
             return;
         }
 
         if (keys[index] == key) {
-            Unsafe.arrayPut(values, index, value);
+            values[index] = value;
             return;
         }
 
@@ -108,14 +108,14 @@ public class LongIntHashMap implements Mutable {
         do {
             index = (index + 1) & mask;
             if (values[index] == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
+                keys[index] = key;
+                values[index] = value;
                 free--;
                 return;
             }
 
             if (key == keys[index]) {
-                Unsafe.arrayPut(values, index, value);
+                values[index] = value;
                 return;
             }
         } while (true);

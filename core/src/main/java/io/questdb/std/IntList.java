@@ -44,13 +44,13 @@ public class IntList implements Mutable {
 
     public void add(int value) {
         ensureCapacity0(pos + 1);
-        Unsafe.arrayPut(buffer, pos++, value);
+        buffer[pos++] = value;
     }
 
     public void add(int index, int element) {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        Unsafe.arrayPut(buffer, index, element);
+        buffer[index] = element;
     }
 
     public void addAll(IntList that) {
@@ -110,7 +110,7 @@ public class IntList implements Mutable {
         if (index >= pos) {
             pos = index + 1;
         }
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     public int get(int index) {
@@ -192,7 +192,7 @@ public class IntList implements Mutable {
     }
 
     public void increment(int index) {
-        Unsafe.arrayPut(buffer, index, buffer[index] + 1);
+        buffer[index] = buffer[index] + 1;
     }
 
     public void remove(int key) {
@@ -215,12 +215,13 @@ public class IntList implements Mutable {
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+        int index1 = --pos;
+        buffer[index1] = noEntryValue;
     }
 
     public void set(int index, int element) {
         if (index < pos) {
-            Unsafe.arrayPut(buffer, index, element);
+            buffer[index] = element;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
@@ -233,7 +234,7 @@ public class IntList implements Mutable {
     }
 
     public void setQuick(int index, int value) {
-        Unsafe.arrayPut(buffer, index, value);
+        buffer[index] = value;
     }
 
     public int size() {

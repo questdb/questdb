@@ -68,7 +68,7 @@ public class IntLongAssociativeCache {
         }
         long value = values[index];
 //        Unsafe.arrayPut(values, index, 0);
-        Unsafe.arrayPut(keys, index, UNUSED_KEY);
+        keys[index] = UNUSED_KEY;
         return value;
     }
 
@@ -77,8 +77,8 @@ public class IntLongAssociativeCache {
         int ok = keys[lo + bmask];
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
         System.arraycopy(values, lo, values, lo + 1, bmask);
-        Unsafe.arrayPut(keys, lo, key);
-        Unsafe.arrayPut(values, lo, value);
+        keys[lo] = key;
+        values[lo] = value;
         return ok;
     }
 
