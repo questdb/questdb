@@ -442,16 +442,6 @@ public class SqlCodeGenerator {
                     final RecordMetadata masterMetadata = master.getMetadata();
                     final RecordMetadata slaveMetadata = slave.getMetadata();
 
-                    if (joinType == QueryModel.JOIN_ASOF || joinType == QueryModel.JOIN_SPLICE) {
-                        if (masterMetadata.getTimestampIndex() == -1) {
-                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
-                        }
-
-                        if (slaveMetadata.getTimestampIndex() == -1) {
-                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
-                        }
-                    }
-
                     switch (joinType) {
                         case QueryModel.JOIN_CROSS:
                             return new CrossJoinRecordCursorFactory(
@@ -461,6 +451,7 @@ public class SqlCodeGenerator {
                                     masterMetadata.getColumnCount()
                             );
                         case QueryModel.JOIN_ASOF:
+                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                             if (slave.isRandomAccessCursor() && !fullFatJoins) {
                                 if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
@@ -504,6 +495,7 @@ public class SqlCodeGenerator {
                             masterAlias = null;
                             break;
                         case QueryModel.JOIN_SPLICE:
+                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                             if (slave.isRandomAccessCursor() && master.isRandomAccessCursor() && !fullFatJoins) {
                                 master = createSpliceJoin(
@@ -570,6 +562,16 @@ public class SqlCodeGenerator {
         } catch (CairoException | SqlException e) {
             Misc.free(master);
             throw e;
+        }
+    }
+
+    private void validateBothTimestamps(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+        if (masterMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
+        }
+
+        if (slaveMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
         }
     }
 
@@ -904,6 +906,10 @@ public class SqlCodeGenerator {
     @NotNull
     private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        // we require timestamp
+        if (factory.getMetadata().getTimestampIndex() == -1) {
+            throw SqlException.$(model.getSampleBy().position, "base query does not provide dedicated TIMESTAMP column");
+        }
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
@@ -1061,7 +1067,10 @@ public class SqlCodeGenerator {
         if (timestamp == null) {
             timestampIndex = metadata.getTimestampIndex();
         } else {
-            timestampIndex = metadata.getColumnIndex(timestamp.token);
+            timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+            if (timestampIndex == -1) {
+                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            }
         }
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = model.getColumns().getQuick(i);

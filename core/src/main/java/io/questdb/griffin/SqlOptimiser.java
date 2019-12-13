@@ -2240,11 +2240,6 @@ class SqlOptimiser {
         // sample by clause should be promoted to all of the models as well as validated
         final ExpressionNode sampleBy = baseModel.getSampleBy();
         if (sampleBy != null) {
-            final ExpressionNode timestamp = baseModel.getTimestamp();
-            if (timestamp == null) {
-                throw SqlException.$(sampleBy.position, "TIMESTAMP column is not defined");
-            }
-
             // move sample by to group by model
             groupByModel.moveSampleByFrom(baseModel);
         }

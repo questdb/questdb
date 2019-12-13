@@ -276,11 +276,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnMap.put(name, name);
         }
-        // do not copy timestamp from nested model to join models
-        // join type will determine timestamp
-        if (this.timestamp == null && other.timestamp != null && joinModels.size() < 2) {
-            this.timestamp = other.timestamp;
-        }
     }
 
     public void clearColumnMapStructs() {

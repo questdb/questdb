@@ -90,6 +90,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectWildcardAndNotTimestamp() {
+        assertSyntaxError(
+                "select * from (select x from tab1) timestamp(y)",
+                45,
+                "Invalid column",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testAsOfJoin() throws SqlException {
         assertQuery(
                 "select-choose" +
@@ -3687,12 +3697,24 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose a, b, t from (tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) timestamp (t) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose a, b, t from (tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testOrderByWithSampleBy3() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose a, b, t from (tab timestamp (t)) order by t) _xQdbA3) sample by 10m) _xQdbA1) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by t) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .timestamp("t")
         );
     }
 
@@ -4036,7 +4058,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testSampleByUndefinedTimestamp() {
         assertSyntaxError("select x,sum(y) from tab sample by 2m",
                 35,
-                "TIMESTAMP column is not defined",
+                "base query does not provide dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)

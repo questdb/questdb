@@ -155,9 +155,13 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     public TableModel timestamp() {
+        return timestamp("timestamp");
+    }
+
+    public TableModel timestamp(CharSequence name) {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
-        col("timestamp", ColumnType.TIMESTAMP);
+        col(name, ColumnType.TIMESTAMP);
         return this;
     }
 }
