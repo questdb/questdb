@@ -331,10 +331,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         });
 
         this.lineUdpGroupIPv4Address = getIPv4Address(properties, "line.udp.join", "232.1.2.3");
-        this.lineUdpCommitRate = getInt(properties, "line.udp.commit.rate", 10_000);
-        this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 1024 * 1024);
+        this.lineUdpCommitRate = getInt(properties, "line.udp.commit.rate", 100_000);
+        this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 4 * 1024 * 1024);
         this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
-        this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 2048);
+        this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 1024 * 1024);
         this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
 //        this.lineUdpWorkerCount = getInt(properties, "line.udp.worker.count", 0);
         this.lineUdpOwnThreadAffinity = getInt(properties, "line.udp.own.thread.affinity", -1);

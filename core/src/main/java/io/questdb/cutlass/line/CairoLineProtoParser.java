@@ -61,6 +61,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final Path path = new Path();
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
+    private final LongList columnIndexAndType = new LongList();
     private final LongList columnValues = new LongList();
     private final AppendMemory appendMemory = new AppendMemory();
     private final MicrosecondClock clock;
@@ -209,20 +210,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         clearState();
     }
 
-    private TableWriter.Row createNewRow(CharSequenceCache cache) {
-        final int valueCount = columnValues.size();
-        if (columnNameType.size() / 2 == valueCount) {
-            return writer.newRow(clock.getTicks());
-        } else {
-            try {
-                return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
-            } catch (NumericException e) {
-                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
-                return null;
-            }
-        }
-    }
-
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
         TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName));
         this.writer = writer;
@@ -231,7 +218,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         writerCache.valueAt(cacheEntryIndex).writer = writer;
 
         final int columnCount = columnNameType.size() / 2;
-        final TableWriter.Row row = createNewRow(cache);
+        final TableWriter.Row row = createNewRow(cache, columnCount);
         if (row == null) {
             return;
         }
@@ -250,23 +237,31 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendRow(CharSequenceCache cache) {
-        final int columnCount = columnNameType.size() / 2;
-        final TableWriter.Row row = createNewRow(cache);
+        final int columnCount = columnIndexAndType.size();
+        final TableWriter.Row row = createNewRow(cache, columnCount);
         if (row == null) {
             return;
         }
 
         try {
             for (int i = 0; i < columnCount; i++) {
+                final long value = columnIndexAndType.getQuick(i);
                 putValue(row
-                        , (int) columnNameType.getQuick(i * 2)
-                        , (int) columnNameType.getQuick(i * 2 + 1), cache.get(columnValues.getQuick(i))
+                        , Numbers.decodeLowInt(value)
+                        , Numbers.decodeHighInt(value)
+                        , cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();
         } catch (BadCastException ignore) {
             row.cancel();
         }
+    }
+
+    private void clearState() {
+        columnNameType.clear();
+        columnIndexAndType.clear();
+        columnValues.clear();
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
@@ -281,9 +276,18 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
-    private void clearState() {
-        columnNameType.clear();
-        columnValues.clear();
+    private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
+        final int valueCount = columnValues.size();
+        if (columnCount == valueCount) {
+            return writer.newRow(clock.getTicks());
+        } else {
+            try {
+                return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));
+            } catch (NumericException e) {
+                LOG.error().$("invalid timestamp: ").$(cache.get(columnValues.getQuick(valueCount - 1))).$();
+                return null;
+            }
+        }
     }
 
     private void createState(CacheEntry entry) {
@@ -305,8 +309,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private int getValueType(CharSequence token) {
         int len = token.length();
-        char c = token.charAt(len - 1);
-        switch (c) {
+        switch (token.charAt(len - 1)) {
             case 'i':
                 return ColumnType.LONG;
             case 'e':
@@ -367,10 +370,19 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void parseFieldName(CachedCharSequence token) {
         columnIndex = metadata.getColumnIndexQuiet(token);
-        if (columnIndex == -1) {
-            columnName = token.getCacheAddress();
-        } else {
+        if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
+        } else {
+            prepareNewColumn(token);
+        }
+    }
+
+    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
+        if (columnType == valueType) {
+            columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
+            columnValues.add(value.getCacheAddress());
+        } else {
+            possibleNewColumn(value, valueType, cache);
         }
     }
 
@@ -406,25 +418,24 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }
 
-    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        if (columnIndex == -1) {
-            columnNameType.add(columnCount++);
-            columnNameType.add(valueType);
-            writer.addColumn(cache.get(columnName), valueType);
+    private void possibleNewColumn(CachedCharSequence value, int valueType, CharSequenceCache cache) {
+        if (columnIndex > -1) {
+            LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                    .$(", column=").$(metadata.getColumnName(columnIndex))
+                    .$(", columnType=").$(ColumnType.nameOf(columnType))
+                    .$(", valueType=").$(ColumnType.nameOf(valueType))
+                    .$(']').$();
+            switchModeToSkipLine();
         } else {
-            if (columnType != valueType) {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
-                        .$(", columnType=").$(ColumnType.nameOf(columnType))
-                        .$(", valueType=").$(ColumnType.nameOf(valueType))
-                        .$(']').$();
-                switchModeToSkipLine();
-            } else {
-                columnNameType.add(columnIndex);
-                columnNameType.add(valueType);
-            }
+            columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+            writer.addColumn(cache.get(columnName), valueType);
+            columnValues.add(value.getCacheAddress());
         }
-        columnValues.add(value.getCacheAddress());
+    }
+
+    private void prepareNewColumn(CachedCharSequence token) {
+        columnName = token.getCacheAddress();
+        columnType = -1;
     }
 
     private void parseValueNewTable(CachedCharSequence value, int valueType) {

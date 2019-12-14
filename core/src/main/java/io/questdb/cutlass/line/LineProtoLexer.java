@@ -33,21 +33,19 @@ import java.io.Closeable;
 
 public class LineProtoLexer implements Mutable, Closeable {
 
+    private static final Runnable NOOP = LineProtoLexer::noop;
     private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-
+    private final ObjList<Runnable> charHandlers = new ObjList<>();
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
-    private final ObjList<Runnable> charHandlers = new ObjList<>();
     private long buffer;
-
     private final CharSequenceCache charSequenceCache = address -> {
         floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
         floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
         return floatingCharSequence;
     };
-
     private long bufferHi;
     private long dstPos = 0;
     private long dstTop = 0;
@@ -66,11 +64,6 @@ public class LineProtoLexer implements Mutable, Closeable {
     }
 
     @Override
-    public void close() {
-        Unsafe.free(buffer, bufferHi - buffer);
-    }
-
-    @Override
     public final void clear() {
         escape = false;
         dstTop = dstPos = buffer;
@@ -79,6 +72,11 @@ public class LineProtoLexer implements Mutable, Closeable {
         skipLine = false;
         unquoted = true;
         errorCode = 0;
+    }
+
+    @Override
+    public void close() {
+        Unsafe.free(buffer, bufferHi - buffer);
     }
 
     /**
@@ -124,7 +122,10 @@ public class LineProtoLexer implements Mutable, Closeable {
                 }
 
                 if (b > -1) {
-                    charHandlers.getQuick(b).run();
+                    final Runnable runnable = charHandlers.getQuick(b);
+                    if (runnable != NOOP) {
+                        runnable.run();
+                    }
                 }
 
             } catch (LineProtoException ex) {
@@ -144,6 +145,10 @@ public class LineProtoLexer implements Mutable, Closeable {
             }
         }
         clear();
+    }
+
+    public void withParser(LineProtoParser parser) {
+        this.parser = parser;
     }
 
     private static void noop() {
@@ -167,6 +172,39 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
         parser.onEvent(cs, state, charSequenceCache);
         chop();
+    }
+
+    private void fireEventTransition(int evtTagName, int evtFieldName) {
+        switch (state) {
+            case LineProtoParser.EVT_MEASUREMENT:
+            case LineProtoParser.EVT_TAG_VALUE:
+                fireEvent();
+                state = evtTagName;
+                break;
+            case LineProtoParser.EVT_FIELD_VALUE:
+                fireEvent();
+                state = evtFieldName;
+                break;
+            default:
+                errorCode = LineProtoParser.ERROR_EXPECTED;
+                throw LineProtoException.INSTANCE;
+        }
+    }
+
+    private void fireEventTransition2() {
+        switch (state) {
+            case LineProtoParser.EVT_TAG_NAME:
+                fireEvent();
+                state = LineProtoParser.EVT_TAG_VALUE;
+                break;
+            case LineProtoParser.EVT_FIELD_NAME:
+                fireEvent();
+                state = LineProtoParser.EVT_FIELD_VALUE;
+                break;
+            default:
+                errorCode = LineProtoParser.ERROR_EXPECTED;
+                throw LineProtoException.INSTANCE;
+        }
     }
 
     private void onComma() {
@@ -203,10 +241,6 @@ public class LineProtoLexer implements Mutable, Closeable {
         escape = true;
     }
 
-    public void withParser(LineProtoParser parser) {
-        this.parser = parser;
-    }
-
     private void onQuote() {
         unquoted = !unquoted;
     }
@@ -218,10 +252,9 @@ public class LineProtoLexer implements Mutable, Closeable {
     }
 
     private void populateCharHandlers() {
-        final Runnable noop = LineProtoLexer::noop;
         final Runnable eol = this::onEol;
         for (int i = 0; i <= Byte.MAX_VALUE; i++) {
-            charHandlers.add(noop);
+            charHandlers.add(NOOP);
         }
         charHandlers.extendAndSet('"', this::onQuote);
         charHandlers.extendAndSet('\n', eol);
@@ -230,39 +263,6 @@ public class LineProtoLexer implements Mutable, Closeable {
         charHandlers.extendAndSet('\\', this::onEsc);
         charHandlers.extendAndSet(',', this::onComma);
         charHandlers.extendAndSet('=', this::onEquals);
-    }
-
-    private void fireEventTransition(int evtTagName, int evtFieldName) {
-        switch (state) {
-            case LineProtoParser.EVT_MEASUREMENT:
-            case LineProtoParser.EVT_TAG_VALUE:
-                fireEvent();
-                state = evtTagName;
-                break;
-            case LineProtoParser.EVT_FIELD_VALUE:
-                fireEvent();
-                state = evtFieldName;
-                break;
-            default:
-                errorCode = LineProtoParser.ERROR_EXPECTED;
-                throw LineProtoException.INSTANCE;
-        }
-    }
-
-    private void fireEventTransition2() {
-        switch (state) {
-            case LineProtoParser.EVT_TAG_NAME:
-                fireEvent();
-                state = LineProtoParser.EVT_TAG_VALUE;
-                break;
-            case LineProtoParser.EVT_FIELD_NAME:
-                fireEvent();
-                state = LineProtoParser.EVT_FIELD_VALUE;
-                break;
-            default:
-                errorCode = LineProtoParser.ERROR_EXPECTED;
-                throw LineProtoException.INSTANCE;
-        }
     }
 
     private long repairMultiByteChar(long lo, long hi, byte b) throws LineProtoException {

@@ -179,6 +179,12 @@ public class LongList implements Mutable {
         return noEntryValue;
     }
 
+    public void setLast(long value) {
+        if (pos > 0) {
+            buffer[pos - 1] = value;
+        }
+    }
+
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
