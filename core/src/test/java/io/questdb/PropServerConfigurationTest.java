@@ -169,11 +169,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
         Assert.assertEquals(-402587133, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
 
-        Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getCommitRate());
+        Assert.assertEquals(100000, configuration.getLineUdpReceiverConfiguration().getCommitRate());
 
-        Assert.assertEquals(1024 * 1024, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
+        Assert.assertEquals(4 * 1024 * 1024, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
         Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
-        Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
+        Assert.assertEquals(1048576, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
         Assert.assertSame(AllowAllCairoSecurityContext.INSTANCE, configuration.getLineUdpReceiverConfiguration().getCairoSecurityContext());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().isEnabled());
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
