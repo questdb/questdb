@@ -61,7 +61,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     }
 
     public int keyIndex(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
+        int index = Hash.spread(Chars.hashCode(key)) & mask;
 
         if (keys[index] == noEntryKey) {
             return index;
@@ -75,7 +75,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     }
 
     public int keyIndex(CharSequence key, int lo, int hi) {
-        int index = Chars.hashCode(key, lo, hi) & mask;
+        int index = Hash.spread(Chars.hashCode(key, lo, hi)) & mask;
 
         if (keys[index] == noEntryKey) {
             return index;
@@ -115,7 +115,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
                     key != noEntryKey;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = Chars.hashCode(key) & mask;
+                int idealHit = Hash.spread(Chars.hashCode(key)) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKey) {

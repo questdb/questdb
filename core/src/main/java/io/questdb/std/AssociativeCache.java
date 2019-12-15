@@ -120,6 +120,6 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     private int lo(CharSequence key) {
-        return (Chars.hashCode(key) & rmask) << bshift;
+        return (Hash.spread(Chars.hashCode(key)) & rmask) << bshift;
     }
 }

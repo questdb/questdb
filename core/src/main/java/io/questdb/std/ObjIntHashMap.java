@@ -79,7 +79,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     public int keyIndex(K key) {
-        int index = key.hashCode() & mask;
+        int index = Hash.spread(key.hashCode()) & mask;
 
         final K kv = keys[index];
         if (kv == noEntryValue) {

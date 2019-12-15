@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 public final class Hash {
+    static final int HASH_BITS = 0x7fffffff;
+
     private Hash() {
     }
 
@@ -47,17 +49,38 @@ public final class Hash {
      * @return hash code
      */
     public static int hashMem(long p, int len) {
-        int hash = 0;
+        long hash = 0;
         final long hi = p + len;
-        while (hi - p > 3) {
-            hash = (hash << 5) - hash + Unsafe.getUnsafe().getInt(p);
-            p += 4;
+        while (hi - p > 7) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getLong(p);
+            p += Long.BYTES;
         }
 
         while (p < hi) {
             hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(p++);
         }
 
-        return hash < 0 ? -hash : hash;
+        return spread((int) hash);
+    }
+
+    /**
+     * (copied from ConcurrentHashMap)
+     * Spreads (XORs) higher bits of hash to lower and also forces top
+     * bit to 0. Because the table uses power-of-two masking, sets of
+     * hashes that vary only in bits above the current mask will
+     * always collide. (Among known examples are sets of Float keys
+     * holding consecutive whole numbers in small tables.)  So we
+     * apply a transform that spreads the impact of higher bits
+     * downward. There is a trade off between speed, utility, and
+     * quality of bit-spreading. Because many common sets of hashes
+     * are already reasonably distributed (so don't benefit from
+     * spreading), and because we use trees to handle large sets of
+     * collisions in bins, we just XOR some shifted bits in the
+     * cheapest possible way to reduce systematic lossage, as well as
+     * to incorporate impact of the highest bits that would otherwise
+     * never be used in index calculations because of table bounds.
+     */
+    public static int spread(int h) {
+        return (h ^ (h >>> 16)) & HASH_BITS;
     }
 }

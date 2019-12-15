@@ -162,7 +162,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     private int idx(T key) {
-        return key == null ? 0 : (key.hashCode() & mask);
+        return key == null ? 0 : (Hash.spread(key.hashCode()) & mask);
     }
 
     private void move(int from, int to) {
@@ -220,7 +220,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
                     key != noEntryKey;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = key.hashCode() & mask;
+                int idealHit = Hash.spread(key.hashCode()) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKey) {
