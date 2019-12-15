@@ -35,8 +35,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.LineProtoNanosTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -124,6 +123,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     };
     private final InputFormatConfiguration inputFormatConfiguration;
+    private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -336,10 +336,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
         this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 1024 * 1024);
         this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
-//        this.lineUdpWorkerCount = getInt(properties, "line.udp.worker.count", 0);
         this.lineUdpOwnThreadAffinity = getInt(properties, "line.udp.own.thread.affinity", -1);
         this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
         this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
+
+        final String lineUdpTimestampSwitch = getString(properties, "line.udp.timestamp", "n");
+        switch (lineUdpTimestampSwitch) {
+            case "u":
+                lineUdpTimestampAdapter = LineProtoMicroTimestampAdapter.INSTANCE;
+                break;
+            case "ms":
+                lineUdpTimestampAdapter = LineProtoMilliTimestampAdapter.INSTANCE;
+                break;
+            case "s":
+                lineUdpTimestampAdapter = LineProtoSecondTimestampAdapter.INSTANCE;
+                break;
+            case "m":
+                lineUdpTimestampAdapter = LineProtoMinuteTimestampAdapter.INSTANCE;
+                break;
+            case "h":
+                lineUdpTimestampAdapter = LineProtoHourTimestampAdapter.INSTANCE;
+                break;
+            default:
+                lineUdpTimestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
+                break;
+        }
     }
 
     @Override
@@ -1114,7 +1135,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
-            return LineProtoNanosTimestampAdapter.INSTANCE;
+            return lineUdpTimestampAdapter;
         }
     }
 

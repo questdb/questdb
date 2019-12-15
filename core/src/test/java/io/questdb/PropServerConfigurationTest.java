@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.line.*;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
@@ -224,6 +225,39 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1");
         new PropServerConfiguration("root", properties);
+    }
+
+    @Test
+    public void testLineUdpTimestamp() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("http.enabled", "false");
+        properties.setProperty("line.udp.timestamp", "");
+        PropServerConfiguration configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "n");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "u");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "ms");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "s");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "m");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+
+        properties.setProperty("line.udp.timestamp", "h");
+        configuration = new PropServerConfiguration("root", properties);
+        Assert.assertSame(LineProtoHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
     }
 
     @Test(expected = ServerConfigurationException.class)

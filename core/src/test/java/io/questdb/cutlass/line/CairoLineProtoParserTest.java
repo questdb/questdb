@@ -535,7 +535,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                try (CairoLineProtoParser parser = new CairoLineProtoParser(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanosTimestampAdapter.INSTANCE)) {
+                try (CairoLineProtoParser parser = new CairoLineProtoParser(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
                     byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len);

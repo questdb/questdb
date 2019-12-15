@@ -27,7 +27,7 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoNanosTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
@@ -333,7 +333,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
         @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
-            return LineProtoNanosTimestampAdapter.INSTANCE;
+            return LineProtoNanoTimestampAdapter.INSTANCE;
         }
 
         @Override
