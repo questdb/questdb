@@ -1,0 +1,118 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.catalogue;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
+
+public class TypeCatalogueFunctionFactory implements FunctionFactory {
+
+    private static final RecordMetadata METADATA;
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        METADATA = metadata;
+    }
+
+    @Override
+    public String getSignature() {
+        return "pg_type()";
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new CursorFunction(
+                position,
+                new TypeCatalogueCursorFactory(
+                        METADATA
+                )
+        );
+    }
+
+    private static class TypeCatalogueCursorFactory extends AbstractRecordCursorFactory {
+
+        private final Path path = new Path();
+
+        public TypeCatalogueCursorFactory(RecordMetadata metadata) {
+            super(metadata);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(path);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            return TypeCatalogueCursor.INSTANCE;
+        }
+
+        @Override
+        public boolean isRandomAccessCursor() {
+            return false;
+        }
+    }
+
+    private static class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
+        private static final TypeCatalogueCursor INSTANCE = new TypeCatalogueCursor();
+
+        private final TypeCatalogueRecord record = new TypeCatalogueRecord();
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void toTop() {
+        }
+
+        private static class TypeCatalogueRecord implements Record {
+        }
+    }
+}
