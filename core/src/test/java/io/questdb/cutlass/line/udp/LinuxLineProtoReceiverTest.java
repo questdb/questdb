@@ -365,5 +365,10 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         public int ownThreadAffinity() {
             return -1;
         }
+
+        @Override
+        public int getCommitMode() {
+            return CommitMode.NOSYNC;
+        }
     }
 }

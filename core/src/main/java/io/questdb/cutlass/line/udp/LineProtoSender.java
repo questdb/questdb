@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
@@ -52,6 +53,16 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private long lineStart;
     private boolean hasMetric = false;
     private boolean noFields = true;
+
+    public LineProtoSender(
+            int interfaceIPv4Address,
+            int sendToIPv4Address,
+            int sendToPort,
+            int bufferCapacity,
+            int ttl
+    ) {
+        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
+    }
 
     public LineProtoSender(
             NetworkFacade nf,

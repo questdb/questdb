@@ -52,6 +52,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     protected long fd;
     protected int commitRate;
     protected long totalCount = 0;
+    protected final int commitMode;
 
     public AbstractLineProtoReceiver(
             LineUdpReceiverConfiguration configuration,
@@ -59,6 +60,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
             WorkerPool workerPool
     ) {
         this.configuration = configuration;
+        this.commitMode = configuration.getCommitMode();
         nf = configuration.getNetworkFacade();
         fd = nf.socketUdp();
         if (fd < 0) {
@@ -100,7 +102,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
             if (parser != null) {
-                parser.commitAll();
+                parser.commitAll(commitMode);
                 parser.close();
             }
             Misc.free(lexer);

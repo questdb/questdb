@@ -30,6 +30,8 @@ import io.questdb.network.NetworkFacade;
 
 public interface LineUdpReceiverConfiguration {
 
+    int getCommitMode();
+
     int getBindIPv4Address();
 
     int getCommitRate();

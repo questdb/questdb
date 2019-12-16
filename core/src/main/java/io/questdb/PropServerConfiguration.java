@@ -112,6 +112,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpMsgBufferSize;
     private final int lineUdpMsgCount;
     private final int lineUdpReceiveBufferSize;
+    private final int lineUdpCommitMode;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -266,7 +267,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        this.commitMode = getCommitMode(properties);
+        this.commitMode = getCommitMode(properties, "cairo.commit.mode");
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
         this.defaultMapType = getString(properties, "cairo.default.map.type", "fast");
         this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", false);
@@ -331,14 +332,15 @@ public class PropServerConfiguration implements ServerConfiguration {
         });
 
         this.lineUdpGroupIPv4Address = getIPv4Address(properties, "line.udp.join", "232.1.2.3");
-        this.lineUdpCommitRate = getInt(properties, "line.udp.commit.rate", 100_000);
-        this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 4 * 1024 * 1024);
+        this.lineUdpCommitRate = getInt(properties, "line.udp.commit.rate", 1_000_000);
+        this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 2048);
         this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
-        this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 1024 * 1024);
+        this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 8 * 1024 * 1024);
         this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
         this.lineUdpOwnThreadAffinity = getInt(properties, "line.udp.own.thread.affinity", -1);
         this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
         this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
+        this.lineUdpCommitMode = getCommitMode(properties, "line.udp.commit.mode");
 
         final String lineUdpTimestampSwitch = getString(properties, "line.udp.timestamp", "n");
         switch (lineUdpTimestampSwitch) {
@@ -414,8 +416,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value == null ? defaultValue : Boolean.parseBoolean(value);
     }
 
-    private int getCommitMode(Properties properties) {
-        final String commitMode = properties.getProperty("cairo.commit.mode");
+    private int getCommitMode(Properties properties, String property) {
+        final String commitMode = properties.getProperty(property);
 
         if (commitMode == null) {
             return CommitMode.NOSYNC;
@@ -1068,6 +1070,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
+        @Override
+        public int getCommitMode() {
+            return commitMode;
+        }
+
         @Override
         public int getBindIPv4Address() {
             return lineUdpBindIPV4Address;

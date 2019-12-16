@@ -65,7 +65,7 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
 
             if (totalCount > commitRate) {
                 totalCount = 0;
-                parser.commitAll();
+                parser.commitAll(commitMode);
             }
 
             if (ran) {
@@ -74,7 +74,7 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
 
             ran = true;
         }
-        parser.commitAll();
+        parser.commitAll(commitMode);
         return ran;
     }
 }

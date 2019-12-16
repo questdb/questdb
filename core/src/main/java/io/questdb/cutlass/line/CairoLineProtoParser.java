@@ -147,12 +147,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
-    public void commitAll() {
+    public void commitAll(int commitMode) {
         if (writer != null) {
-            writer.commit();
+            writer.commit(commitMode);
         }
         for (int i = 0, n = commitList.size(); i < n; i++) {
-            commitList.valueQuick(i).commit();
+            commitList.valueQuick(i).commit(commitMode);
         }
         commitList.clear();
     }

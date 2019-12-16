@@ -547,7 +547,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                             lexer.withParser(parser);
                             lexer.parse(mem, mem + len);
                             lexer.parseLast();
-                            parser.commitAll();
+                            parser.commitAll(CommitMode.NOSYNC);
                         }
                     } finally {
                         Unsafe.free(mem, len);
