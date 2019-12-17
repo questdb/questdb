@@ -30,4 +30,8 @@ public interface WorkerPoolConfiguration {
     int getWorkerCount();
 
     boolean haltOnError();
+
+    default boolean isDaemonPool() {
+        return false;
+    }
 }

@@ -388,6 +388,11 @@ public class LogFactory implements Closeable {
             public boolean haltOnError() {
                 return false;
             }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
         });
         assign(workerPool);
         workerPool.start(null);

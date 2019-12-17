@@ -43,12 +43,14 @@ public class WorkerPool {
     private final ObjList<Worker> workers = new ObjList<>();
     private final ObjList<ObjList<Closeable>> cleaners;
     private final boolean haltOnError;
+    private final boolean daemons;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
         this.workerAffinity = configuration.getWorkerAffinity();
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
+        this.daemons = configuration.isDaemonPool();
 
         assert workerAffinity.length == workerCount;
 
@@ -123,6 +125,7 @@ public class WorkerPool {
                         },
                         haltOnError
                 );
+                worker.setDaemon(daemons);
                 workers.add(worker);
                 worker.start();
             }
