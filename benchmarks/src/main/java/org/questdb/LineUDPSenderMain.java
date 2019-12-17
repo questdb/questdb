@@ -22,23 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package org.questdb;
 
+import io.questdb.cutlass.line.udp.LineProtoSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
-import org.junit.Ignore;
-import org.junit.Test;
+import io.questdb.std.Rnd;
 
-public class LineProtoSenderTest {
+public class LineUDPSenderMain {
+    public static void main(String[] args) {
+        final long count = 50_000_000;
+        String hostIPv4 = "127.0.0.1";
+        int port = 9009;
+        int ttl = 1;
 
-    @Test
-    @Ignore
-    public void testSimple() {
-        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4("127.0.0.1"), 9009, 1024, 1)) {
-            for (int i = 0; i < 50000000; i++) {
-                sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", 3400).field("ok", 600000).$(Os.currentTimeMicros() * 1000);
+        final Rnd rnd = new Rnd();
+        long start = System.nanoTime();
+        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4(hostIPv4), port, 1024, ttl)) {
+            for (int i = 0; i < count; i++) {
+                sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
             }
             sender.flush();
         }
+        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
     }
 }
