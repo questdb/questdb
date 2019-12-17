@@ -127,6 +127,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private CharSequence username;
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
+    private IODispatcher<PGConnectionContext> dispatcher;
 
     public PGConnectionContext(PGWireConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
@@ -349,10 +350,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public PGConnectionContext of(long clientFd) {
+    public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
         this.fd = clientFd;
+        this.dispatcher = dispatcher;
         clear();
         return this;
+    }
+
+    @Override
+    public IODispatcher<PGConnectionContext> getDispatcher() {
+        return dispatcher;
     }
 
     @SuppressWarnings("unused")

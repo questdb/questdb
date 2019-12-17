@@ -144,7 +144,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
-            processor.onRequest(operation, connectionContext, this);
+            processor.onRequest(operation, connectionContext);
             return true;
         }
 
@@ -211,9 +211,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
         pending.set(r, M_TIMESTAMP, timestamp);
         pending.set(r, M_FD, fd);
-        pending.set(r, ioContextFactory.newInstance(fd));
+        pending.set(r, ioContextFactory.newInstance(fd, this));
         pendingAdded(r);
     }
+
 
     private void disconnectContext(IOEvent<C> event) {
         doDisconnect(event.context);

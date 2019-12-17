@@ -60,16 +60,16 @@ public class PGWireServer implements Closeable {
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
             final PGJobContext jobContext = new PGJobContext(configuration, engine);
             pool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
                         jobContext.handleClientOperation(context);
-                        dispatcher.registerChannel(context, IOOperation.READ);
+                        context.getDispatcher().registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToWriteException e) {
-                        dispatcher.registerChannel(context, IOOperation.READ);
+                        context.getDispatcher().registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
-                        dispatcher.registerChannel(context, IOOperation.WRITE);
+                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException | BadProtocolException e) {
-                        dispatcher.disconnect(context);
+                        context.getDispatcher().disconnect(context);
                     }
                 };
 
@@ -125,8 +125,8 @@ public class PGWireServer implements Closeable {
         }
 
         @Override
-        public PGConnectionContext newInstance(long fd) {
-            return contextPool.get().pop().of(fd);
+        public PGConnectionContext newInstance(long fd, IODispatcher<PGConnectionContext> dispatcher) {
+            return contextPool.get().pop().of(fd, dispatcher);
         }
 
         @Override
@@ -134,7 +134,7 @@ public class PGWireServer implements Closeable {
             if (closed) {
                 Misc.free(context);
             } else {
-                context.of(-1);
+                context.of(-1, null);
                 contextPool.get().push(context);
                 LOG.info().$("pushed").$();
             }

@@ -42,7 +42,10 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.*;
+import io.questdb.network.IOOperation;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -76,6 +79,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
     }
 
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(compiler);
@@ -83,12 +92,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute(
             HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher,
-            JsonQueryProcessorState state,
-            HttpChunkedResponseSocket socket
+            JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            state.recordCursorFactory = AbstractQueryContext.FACTORY_CACHE.get().poll(state.query);
+            state.recordCursorFactory = JsonQueryProcessorState.FACTORY_CACHE.get().poll(state.query);
             int retryCount = 0;
             do {
                 sqlExecutionContext.with(context.getCairoSecurityContext(), null);
@@ -114,8 +121,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     try {
                         state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                         state.metadata = state.recordCursorFactory.getMetadata();
-                        header(socket, 200);
-                        resumeSend(context, dispatcher);
+                        header(context.getChunkedResponseSocket(), 200);
+                        resumeSend(context);
                         break;
                     } catch (CairoError | CairoException e) {
                         // todo: investigate why we need to keep retrying to execute query when it is failing
@@ -123,28 +130,28 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         //  we could be having severe hardware issues and continue trying
                         if (retryCount == 0) {
                             // todo: we want to clear cache, no need to create string to achieve this
-                            AbstractQueryContext.FACTORY_CACHE.get().put(state.query.toString(), null);
+                            JsonQueryProcessorState.FACTORY_CACHE.get().put(state.query.toString(), null);
                             state.recordCursorFactory = null;
                             LOG.error().$("RecordSource execution failed. ").$(e.getMessage()).$(". Retrying ...").$();
                             retryCount++;
                         } else {
-                            internalError(socket, e, state);
+                            internalError(context.getChunkedResponseSocket(), e, state);
                             break;
                         }
                     }
                 } else {
-                    header(socket, 200);
-                    sendConfirmation(socket);
-                    readyForNextRequest(context, dispatcher);
+                    header(context.getChunkedResponseSocket(), 200);
+                    sendConfirmation(context.getChunkedResponseSocket());
+                    readyForNextRequest(context);
                     break;
                 }
             } while (true);
         } catch (SqlException e) {
-            syntaxError(socket, e, state);
-            readyForNextRequest(context, dispatcher);
+            syntaxError(context.getChunkedResponseSocket(), e, state);
+            readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
-            internalError(socket, e, state);
-            readyForNextRequest(context, dispatcher);
+            internalError(context.getChunkedResponseSocket(), e, state);
+            readyForNextRequest(context);
         }
     }
 
@@ -154,8 +161,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     @Override
     public void onRequestComplete(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null) {
@@ -163,20 +169,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (parseUrl(socket, context.getRequestHeader(), state)) {
-            execute(context, dispatcher, state, socket);
+            execute(context, state);
         } else {
-            readyForNextRequest(context, dispatcher);
+            readyForNextRequest(context);
         }
     }
 
     @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    public void resumeRecv(HttpConnectionContext context) {
     }
 
     @Override
     public void resumeSend(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null || state.cursor == null) {
@@ -193,10 +198,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 SWITCH:
                 switch (state.queryState) {
-                    case AbstractQueryContext.QUERY_PREFIX:
-                    case AbstractQueryContext.QUERY_METADATA:
+                    case JsonQueryProcessorState.QUERY_PREFIX:
+                    case JsonQueryProcessorState.QUERY_METADATA:
                         state.columnIndex = 0;
-                        state.queryState = AbstractQueryContext.QUERY_METADATA;
+                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
 
                             socket.bookmark();
@@ -206,9 +211,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
                         }
                         socket.put(Misc.EOL);
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         // fall through
-                    case AbstractQueryContext.QUERY_RECORD_START:
+                    case JsonQueryProcessorState.QUERY_RECORD_START:
 
                         if (state.record == null) {
                             // check if cursor has any records
@@ -226,21 +231,21 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                         break;
                                     }
                                 } else {
-                                    state.queryState = AbstractQueryContext.QUERY_SUFFIX;
+                                    state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (state.count > state.stop) {
-                            state.queryState = AbstractQueryContext.QUERY_SUFFIX;
+                            state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
                             break;
                         }
 
-                        state.queryState = AbstractQueryContext.QUERY_RECORD;
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD;
                         state.columnIndex = 0;
                         // fall through
-                    case AbstractQueryContext.QUERY_RECORD:
+                    case JsonQueryProcessorState.QUERY_RECORD:
 
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
                             socket.bookmark();
@@ -250,16 +255,16 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                         }
 
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_SUFFIX;
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
                         // fall through
 
-                    case AbstractQueryContext.QUERY_RECORD_SUFFIX:
+                    case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
                         socket.bookmark();
                         socket.put(Misc.EOL);
                         state.record = null;
-                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         break;
-                    case AbstractQueryContext.QUERY_SUFFIX:
+                    case JsonQueryProcessorState.QUERY_SUFFIX:
                         sendDone(socket, state);
                         break OUT;
                     default:
@@ -279,13 +284,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             }
         }
         // reached the end naturally?
-        readyForNextRequest(context, dispatcher);
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
+        readyForNextRequest(context);
     }
 
     private LogRecord error(JsonQueryProcessorState state) {
@@ -449,10 +448,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    private void readyForNextRequest(HttpConnectionContext context) {
         LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
         context.clear();
-        dispatcher.registerChannel(context, IOOperation.READ);
+        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {

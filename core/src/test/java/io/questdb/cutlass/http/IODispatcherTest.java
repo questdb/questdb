@@ -78,9 +78,9 @@ public class IODispatcherTest {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
                     },
-                    fd -> {
+                    (fd, dispatcher1) -> {
                         connectLatch.countDown();
-                        return new HelloContext(fd, contextClosedLatch);
+                        return new HelloContext(fd, contextClosedLatch, dispatcher1);
                     }
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -90,10 +90,10 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> {
+                                (operation, context) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        disp.disconnect(context);
+                                        context.dispatcher.disconnect(context);
                                     }
                                 }
                         );
@@ -154,7 +154,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
@@ -167,7 +167,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd);
+                            }.of(fd, dispatcher1);
                         }
                     }
             )) {
@@ -186,7 +186,7 @@ public class IODispatcherTest {
                             }
 
                             @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher1) {
+                            public void onRequestComplete(HttpConnectionContext connectionContext) {
                             }
                         };
                     }
@@ -204,7 +204,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -2059,7 +2059,7 @@ public class IODispatcherTest {
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
@@ -2067,7 +2067,7 @@ public class IODispatcherTest {
                                     closeCount.incrementAndGet();
                                     super.close();
                                 }
-                            }.of(fd);
+                            }.of(fd, dispatcher1);
                         }
                     }
             )) {
@@ -2086,7 +2086,7 @@ public class IODispatcherTest {
                                     }
 
                                     @Override
-                                    public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher) {
+                                    public void onRequestComplete(HttpConnectionContext connectionContext) {
                                     }
                                 };
                             }
@@ -2103,7 +2103,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -2531,7 +2531,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
@@ -2544,7 +2544,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd);
+                            }.of(fd, dispatcher1);
                         }
                     }
             )) {
@@ -2572,8 +2572,8 @@ public class IODispatcherTest {
                                     }
 
                                     @Override
-                                    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher1) {
-                                        dispatcher1.registerChannel(context, IOOperation.READ);
+                                    public void onRequestComplete(HttpConnectionContext context) {
+                                        context.getDispatcher().registerChannel(context, IOOperation.READ);
                                     }
                                 };
                             }
@@ -2595,7 +2595,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -2700,7 +2700,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
@@ -2713,7 +2713,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd);
+                            }.of(fd, dispatcher1);
                         }
                     }
             )) {
@@ -2746,9 +2746,9 @@ public class IODispatcherTest {
                                     }
 
                                     @Override
-                                    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher1) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                                    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
                                         context.simpleResponse().sendStatusWithDefaultMessage(200);
-                                        dispatcher1.registerChannel(context, IOOperation.READ);
+                                        context.getDispatcher().registerChannel(context, IOOperation.READ);
                                     }
                                 };
                             }
@@ -2765,7 +2765,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -2861,7 +2861,7 @@ public class IODispatcherTest {
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
@@ -2874,7 +2874,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd);
+                            }.of(fd, dispatcher1);
                         }
                     }
             )) {
@@ -2905,8 +2905,8 @@ public class IODispatcherTest {
                             }
 
                             @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher1) {
-                                dispatcher1.registerChannel(connectionContext, IOOperation.READ);
+                            public void onRequestComplete(HttpConnectionContext connectionContext) {
+                                connectionContext.getDispatcher().registerChannel(connectionContext, IOOperation.READ);
                             }
                         };
                     }
@@ -2923,7 +2923,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -3022,7 +3022,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    fd -> new HttpConnectionContext(httpServerConfiguration).of(fd)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue
@@ -3079,12 +3079,12 @@ public class IODispatcherTest {
                             }
 
                             @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher) {
+                            public void onRequestComplete(HttpConnectionContext connectionContext) {
                                 connectionContext.clear();
 
                                 // there is interesting situation here, its possible that header is fully
                                 // read and there are either more bytes or disconnect lingering
-                                dispatcher.disconnect(connectionContext);
+                                connectionContext.getDispatcher().disconnect(connectionContext);
                             }
                         };
 
@@ -3108,7 +3108,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run();
                             dispatcher.processIOQueue(
-                                    (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
+                                    (operation, context) -> context.handleClientOperation(operation, selector)
                             );
                         }
 
@@ -3575,10 +3575,18 @@ public class IODispatcherTest {
         private final long fd;
         private final long buffer = Unsafe.malloc(1024);
         private final SOCountDownLatch closeLatch;
+        private final IODispatcher<HelloContext> dispatcher;
 
-        public HelloContext(long fd, SOCountDownLatch closeLatch) {
+        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             this.fd = fd;
             this.closeLatch = closeLatch;
+            this.dispatcher = dispatcher;
+        }
+
+
+        @Override
+        public IODispatcher<HelloContext> getDispatcher() {
+            return dispatcher;
         }
 
         @Override

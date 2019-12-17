@@ -29,7 +29,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -62,15 +61,15 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    public void resumeRecv(HttpConnectionContext context) {
     }
 
     @Override
-    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    public void resumeSend(HttpConnectionContext context) {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         CharSequence tableName = context.getRequestHeader().getUrlParam("j");
         if (tableName == null) {
             context.simpleResponse().sendStatus(400, "table name missing");
@@ -91,6 +90,6 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }
         }
-        dispatcher.registerChannel(context, IOOperation.READ);
+        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 }

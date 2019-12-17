@@ -27,7 +27,7 @@ package io.questdb.network;
 import io.questdb.std.Misc;
 
 public interface IOContextFactory<C extends IOContext> {
-    C newInstance(long fd);
+    C newInstance(long fd, IODispatcher<C> dispatcher);
 
     default void done(C context) {
         Misc.free(context);

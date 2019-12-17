@@ -1829,7 +1829,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     final long clientFd = Net.accept(fd);
                     nf.configureNonBlocking(clientFd);
                     try (PGConnectionContext context = new PGConnectionContext(configuration)) {
-                        context.of(clientFd);
+                        context.of(clientFd, null);
                         LOG.info().$("connected [clientFd=").$(clientFd).$(']').$();
                         while (running.get()) {
                             try {

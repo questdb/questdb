@@ -76,7 +76,7 @@ public class HttpServer implements Closeable {
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context, dispatcher) -> context.handleClientOperation(operation, dispatcher, selector);
+                        (operation, context) -> context.handleClientOperation(operation, selector);
 
                 @Override
                 public boolean run() {
@@ -245,8 +245,8 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public HttpConnectionContext newInstance(long fd) {
-            return contextPool.get().pop().of(fd);
+        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
+            return contextPool.get().pop().of(fd, dispatcher);
         }
 
         @Override
@@ -254,7 +254,7 @@ public class HttpServer implements Closeable {
             if (closed) {
                 Misc.free(context);
             } else {
-                context.of(-1);
+                context.of(-1, null);
                 contextPool.get().push(context);
                 LOG.info().$("pushed").$();
             }

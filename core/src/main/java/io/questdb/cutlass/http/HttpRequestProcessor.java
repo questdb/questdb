@@ -24,18 +24,17 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.network.IODispatcher;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
 public interface HttpRequestProcessor {
     void onHeadersReady(HttpConnectionContext context);
 
-    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    default void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    default void resumeRecv(HttpConnectionContext context) {
     }
 
-    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
     }
 }

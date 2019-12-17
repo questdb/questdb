@@ -34,7 +34,10 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.IOOperation;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -70,7 +73,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private final TextImportProcessorConfiguration configuration;
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
-    private IODispatcher<HttpConnectionContext> transientDispatcher;
     private TextImportProcessorState transientState;
 
     public TextImportProcessor(
@@ -285,7 +287,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             if (name == null) {
                 transientContext.simpleResponse().sendStatus(400, "no name given");
                 // we have to disconnect to interrupt potentially large upload
-                transientDispatcher.disconnect(transientContext);
+                transientContext.getDispatcher().disconnect(transientContext);
                 return;
             }
 
@@ -330,16 +332,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    public void onRequestComplete(HttpConnectionContext context) {
         transientState.clear();
         context.clear();
-        dispatcher.registerChannel(context, IOOperation.READ);
+        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    public void resumeRecv(HttpConnectionContext context) {
         this.transientContext = context;
-        this.transientDispatcher = dispatcher;
         this.transientState = LV.get(context);
         if (this.transientState == null) {
             LOG.debug().$("new text state").$();
@@ -349,8 +350,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void resumeSend(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }

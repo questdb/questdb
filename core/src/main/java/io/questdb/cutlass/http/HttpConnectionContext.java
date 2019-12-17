@@ -52,6 +52,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final boolean allowDeflateBeforeSend;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private IODispatcher<HttpConnectionContext> dispatcher;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -67,6 +68,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
+    }
+
+    @Override
+    public IODispatcher<HttpConnectionContext> getDispatcher() {
+        return dispatcher;
     }
 
     @Override
@@ -129,11 +135,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getHeader();
     }
 
-    public void handleClientOperation(int operation, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
+    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector) {
         switch (operation) {
             case IOOperation.READ:
                 try {
-                    handleClientRecv(dispatcher, selector);
+                    handleClientRecv(selector);
                 } catch (PeerDisconnectedException ignore) {
                     LOG.debug().$("peer disconnected").$();
                     dispatcher.disconnect(this);
@@ -146,7 +152,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 if (resumeProcessor != null) {
                     try {
                         responseSink.resumeSend();
-                        resumeProcessor.resumeSend(this, dispatcher);
+                        resumeProcessor.resumeSend(this);
                         resumeProcessor = null;
                     } catch (PeerIsSlowToReadException ignore) {
                         LOG.debug().$("peer is slow reader").$();
@@ -164,8 +170,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    public HttpConnectionContext of(long fd) {
+    public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
         this.fd = fd;
+        this.dispatcher = dispatcher;
         this.responseSink.of(fd);
         return this;
     }
@@ -174,10 +181,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
+    private void completeRequest(HttpRequestProcessor processor) {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         try {
-            processor.onRequestComplete(this, dispatcher);
+            processor.onRequestComplete(this);
         } catch (PeerDisconnectedException ignore) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException e) {
@@ -186,7 +193,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     }
 
     private void handleClientRecv(
-            IODispatcher<HttpConnectionContext> dispatcher,
             HttpRequestProcessorSelector selector
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
@@ -251,7 +257,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     multipartContentParser.of(headerParser.getBoundary());
                 }
 
-                processor.resumeRecv(this, dispatcher);
+                processor.resumeRecv(this);
 
                 final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
                 final long bufferEnd = recvBuffer + read;
@@ -296,7 +302,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         if (buf > start) {
                             if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
                                 // request is complete
-                                completeRequest(dispatcher, fd, processor);
+                                completeRequest(processor);
                                 break;
                             }
 
@@ -321,7 +327,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     if (bufRemaining == 0) {
                         if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
                             // request is complete
-                            completeRequest(dispatcher, fd, processor);
+                            completeRequest(processor);
                             break;
                         }
 
@@ -344,7 +350,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     processor.onHeadersReady(this);
                     LOG.debug().$("good [fd=").$(fd).$(']').$();
                     try {
-                        processor.onRequestComplete(this, dispatcher);
+                        processor.onRequestComplete(this);
                         resumeProcessor = null;
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this);
