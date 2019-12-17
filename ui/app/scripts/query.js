@@ -292,7 +292,6 @@
             let sql = null;
             let inQuote = false;
 
-
             for (let i = 0; i < text.length; i++) {
                 const char = text.charAt(i);
 
@@ -310,9 +309,9 @@
                             c++;
                         } else {
                             if (startPos === -1) {
-                                sql = text.substring(0, i);
+                                sql = text.substring(0, i).trim();
                             } else {
-                                sql = text.substring(startPos, i);
+                                sql = text.substring(startPos, i).trim();
                             }
                         }
                         break;
@@ -338,7 +337,7 @@
                 if (startPos === -1) {
                     sql = text;
                 } else {
-                    sql = text.substring(startPos);
+                    sql = text.substring(startPos).trim();
                 }
             }
 

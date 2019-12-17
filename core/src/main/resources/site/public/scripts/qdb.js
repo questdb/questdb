@@ -25870,9 +25870,10 @@ function nopropagation(e) {
                             c++;
                         } else {
                             if (startPos === -1) {
-                                sql = text.substring(0, i);
+                                sql = text.substring(0, i).trim();
                             } else {
-                                sql = text.substring(startPos, i);
+                                sql = text.substring(startPos, i).trim();
+                                console.log('sql="' + sql + '"');
                             }
                         }
                         break;
@@ -25898,7 +25899,7 @@ function nopropagation(e) {
                 if (startPos === -1) {
                     sql = text;
                 } else {
-                    sql = text.substring(startPos);
+                    sql = text.substring(startPos).trim();
                 }
             }
 
