@@ -78,17 +78,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-    <nav class="navbar-default navbar-static-side" role="navigation">
-        <div class="sidebar-collapse">
-            <ul class="nav metismenu" id="side-menu">
-                <li class="nav-header">
-                    <div class="logo-element">
-                        <img src="../images/favicon@76x-8.png" style="max-height: 30px; margin-left: -7px;">
-                    </div>
-                </li>
-                <li>
-                    <a id="nav-console" href="#"><i class="fa fa-bars"></i><span class="nav-pointer"></span></a>
-                </li>
+<nav class="navbar-default navbar-static-side" role="navigation">
+    <div class="sidebar-collapse">
+        <ul class="nav metismenu" id="side-menu">
+            <li class="nav-header">
+                <div class="logo-element">
+                    <img src="../images/favicon@76x-8.png" style="max-height: 30px; margin-left: -7px;">
+                </div>
+            </li>
+            <li>
+                <a href="#" id="nav-console"><i class="fa fa-bars"></i><span class="nav-pointer"></span></a>
+            </li>
             <li>
                 <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i><span class="nav-pointer"></span></a>
             </li>
@@ -126,17 +126,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-        <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
-            <div class="col-lg-12">
-                <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
-                <div class="m-b-sm m-t-sm section-nav">
-                    <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
-                            class="fa fa-play"></i>Run
-                    </button>
+<div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
+    <div class="col-lg-12">
+        <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
+        <div class="m-b-sm m-t-sm section-nav">
+            <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
+                    class="fa fa-play"></i>Run
+            </button>
 
-                    <div class="btn-group">
-                        <button id="js-toggle-grid" type="button" class="btn btn-white btn-sm active"><i
-                                class="fa fa-bars"></i>
+            <div class="btn-group">
+                <button class="btn btn-white btn-sm active" id="js-toggle-grid" type="button"><i
+                        class="fa fa-bars"></i>
                 </button>
                 <button id="js-toggle-chart" type="button" class="btn btn-white btn-sm"><i
                         class="fa fa-pie-chart"></i>
@@ -227,17 +227,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-        <div class="row js-vis-panel">
+<div class="row js-vis-panel">
+    <div class="col-lg-12">
+        <div class="row wrapper border-bottom white-bg page-heading" id="vis-menu">
             <div class="col-lg-12">
-                <div id="vis-menu" class="row wrapper border-bottom white-bg page-heading">
-                    <div class="col-lg-12">
-                        <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
-                        <div class="m-b-sm m-t-sm section-nav">
-                            <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
-                                    class="fa fa-refresh"></i>Refresh
-                            </button>
-                            <button id="btnVisFetch" class="btn btn-white btn-sm btn-icon"><i
-                                    class="fa fa-play-circle"></i>Fetch
+                <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button class="btn btn-white btn-sm btn-icon" id="btnVisRefresh"><i
+                            class="fa fa-refresh"></i>Refresh
+                    </button>
+                    <button class="btn btn-white btn-sm btn-icon" id="btnVisFetch"><i
+                            class="fa fa-play-circle"></i>Fetch
                     </button>
                     <button id="btnVisReload" class="btn btn-white btn-sm btn-icon"><i
                             class="fa fa-play-circle"></i>Reload
@@ -303,18 +303,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                    class="fa fa-plus" aria-hidden="true"></i>
-                                            </button>
-                                            <span>Query</span>
-                                        </div>
-                                        <div class="portlet-body">
-                                            <div class="qdb-list">
-                                                <ul>
-                                                </ul>
-                                            </div>
+<div class="portlet v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-info qdb-list-add-btn" type="button"><i aria-hidden="true" class="fa fa-plus"></i>
+        </button>
+        <span>Query</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
     </div>
 </div>
 
@@ -344,29 +343,28 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet qdb-vis-form v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                    class="fa fa-trash-o"
-                                                    aria-hidden="true"></i> Delete
-                                            </button>
-                                            <span class="js-vis-title">Query_1</span>
-                                        </div>
-                                        <div class="portlet-body v-fit">
-                                            <form role="form" class="v-fit">
-                                                <div class="form-group qdb-vis-query-name">
-                                                    <label>Query name</label>
+<div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-danger qdb-list-delete-btn" type="button"><i aria-hidden="true"
+                                                                            class="fa fa-trash-o"></i> Delete
+        </button>
+        <span class="js-vis-title">Query_1</span>
+    </div>
+    <div class="portlet-body v-fit">
+        <form class="v-fit" role="form">
+            <div class="form-group qdb-vis-query-name">
+                <label>Query name</label>
                 <input id="_vis_frm_query_name" type="text" class="form-control" placeholder="Enter query name">
                 <div class="help-block with-errors"></div>
-                                                </div>
+            </div>
 
-                                                <div class="form-group qdb-vis-query-editor">
-                                                    <label for="_vis_frm_query_text">Query text</label>
-                                                    <div id="_vis_frm_query_text" class="form-control"></div>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
+            <div class="form-group qdb-vis-query-editor">
+                <label for="_vis_frm_query_text">Query text</label>
+                <div class="form-control" id="_vis_frm_query_text"></div>
+            </div>
+        </form>
+    </div>
+</div>
 
                                     <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ~     ___                  _   ____  ____
@@ -392,11 +390,11 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="qdb-vis-placeholder">
+<div class="qdb-vis-placeholder">
 
-                                        <h1>Nothing to display</h1>
+    <h1>Nothing to display</h1>
 
-                                    </div>
+</div>
 
                                 </div>
                             </div>
@@ -428,18 +426,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                    class="fa fa-plus" aria-hidden="true"></i>
-                                            </button>
-                                            <span>Axis</span>
-                                        </div>
-                                        <div class="portlet-body">
-                                            <div class="qdb-list">
-                                                <ul>
-                                                </ul>
-                                            </div>
+<div class="portlet v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-info qdb-list-add-btn" type="button"><i aria-hidden="true" class="fa fa-plus"></i>
+        </button>
+        <span>Axis</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
     </div>
 </div>
 
@@ -469,18 +466,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet qdb-vis-form v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                    class="fa fa-trash-o"
-                                                    aria-hidden="true"></i> Delete
-                                            </button>
+<div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-danger qdb-list-delete-btn" type="button"><i aria-hidden="true"
+                                                                            class="fa fa-trash-o"></i> Delete
+        </button>
 
-                                            <span class="js-vis-title">Axis details</span>
-                                        </div>
-                                        <div class="portlet-body">
-                                            <form role="form" class="v-fit">
-                                                <div class="form-group">
+        <span class="js-vis-title">Axis details</span>
+    </div>
+    <div class="portlet-body">
+        <form class="v-fit" role="form">
+            <div class="form-group">
                 <label>Axis name</label>
                 <input id="_vis_frm_axis_name" type="text" class="form-control" placeholder="Axis name">
             </div>
@@ -507,13 +503,13 @@
                 <label>Category values</label>
                 <textarea id="_vis_frm_axis_values" class="form-control" rows="4"></textarea>
             </div>
-                                                <div class="form-group">
-                                                    <label>Scale</label>
-                                                    <input id="_vis_frm_axis_scale" type="checkbox">
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
+            <div class="form-group">
+                <label>Scale</label>
+                <input id="_vis_frm_axis_scale" type="checkbox">
+            </div>
+        </form>
+    </div>
+</div>
 
                                     <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ~     ___                  _   ____  ____
@@ -539,11 +535,11 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="qdb-vis-placeholder">
+<div class="qdb-vis-placeholder">
 
-                                        <h1>Nothing to display</h1>
+    <h1>Nothing to display</h1>
 
-                                    </div>
+</div>
 
                                 </div>
                             </div>
@@ -575,18 +571,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                    class="fa fa-plus" aria-hidden="true"></i>
-                                            </button>
-                                            <span>Series</span>
-                                        </div>
-                                        <div class="portlet-body">
-                                            <div class="qdb-list">
-                                                <ul>
-                                                </ul>
-                                            </div>
+<div class="portlet v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-info qdb-list-add-btn" type="button"><i aria-hidden="true" class="fa fa-plus"></i>
+        </button>
+        <span>Series</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
     </div>
 </div>
 
@@ -616,18 +611,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet qdb-vis-form v-fit">
-                                        <div class="portlet-title">
-                                            <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                    class="fa fa-trash-o"
-                                                    aria-hidden="true"></i> Delete
-                                            </button>
-                                            <span id="js-vis-series-name">Series 1</span>
-                                        </div>
-                                        <div class="portlet-body">
-                                            <form role="form">
-                                                <div class="form-group">
-                                                    <label>Series name</label>
+<div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button class="btn btn-danger qdb-list-delete-btn" type="button"><i aria-hidden="true"
+                                                                            class="fa fa-trash-o"></i> Delete
+        </button>
+        <span id="js-vis-series-name">Series 1</span>
+    </div>
+    <div class="portlet-body">
+        <form role="form">
+            <div class="form-group">
+                <label>Series name</label>
                 <input id="_vis_frm_ser_name" type="text" class="form-control">
             </div>
             <div class="form-group">
@@ -656,14 +650,13 @@
                 <input id="_vis_frm_ser_color" type="text" class="form-control" placeholder="Auto">
             </div>
 
-                                                <div class="form-group">
-                                                    <label>Bound axis</label>
-                                                    <input id="_vis_frm_ser_axis" type="text" class="form-control"
-                                                           placeholder="Auto">
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
+            <div class="form-group">
+                <label>Bound axis</label>
+                <input class="form-control" id="_vis_frm_ser_axis" placeholder="Auto" type="text">
+            </div>
+        </form>
+    </div>
+</div>
 
                                     <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   ~     ___                  _   ____  ____
@@ -689,11 +682,11 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="qdb-vis-placeholder">
+<div class="qdb-vis-placeholder">
 
-                                        <h1>Nothing to display</h1>
+    <h1>Nothing to display</h1>
 
-                                    </div>
+</div>
 
                                 </div>
                             </div>
@@ -725,11 +718,11 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-                                    <div class="portlet">
-                                        <div class="portlet-title">
-                                            <span>General Settings</span>
-                                        </div>
-                                    </div>
+<div class="portlet">
+    <div class="portlet-title">
+        <span>General Settings</span>
+    </div>
+</div>
 
                                 </div>
                             </div>
@@ -738,8 +731,8 @@
                 </div>
             </div>
         </div>
-            </div>
-        </div>
+    </div>
+</div>
 
 
         <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -766,17 +759,17 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-        <div class="row js-import-panel">
+<div class="row js-import-panel">
+    <div class="col-lg-12">
+        <div class="row wrapper border-bottom white-bg page-heading" id="import-menu">
             <div class="col-lg-12">
-                <div id="import-menu" class="row wrapper border-bottom white-bg page-heading">
-                    <div class="col-lg-12">
-                        <div class="section-title"><i class="fa fa-upload"></i> import</div>
-                        <div class="m-b-sm m-t-sm section-nav">
-                            <button id="btnImportClearSelected" class="btn btn-white btn-sm btn-icon" disabled><i
-                                    class="fa fa-remove"></i>Clear
-                            </button>
-                            <button id="btnRetry" class="btn btn-white btn-sm" title disabled><i
-                                    class="fa fa-upload"></i></button>
+                <div class="section-title"><i class="fa fa-upload"></i> import</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button class="btn btn-white btn-sm btn-icon" disabled id="btnImportClearSelected"><i
+                            class="fa fa-remove"></i>Clear
+                    </button>
+                    <button class="btn btn-white btn-sm" disabled id="btnRetry" title><i
+                            class="fa fa-upload"></i></button>
                     <button id="btnImportCancel" class="btn btn-white btn-sm" title disabled><i
                             class="fa fa-stop"></i></button>
                 </div>

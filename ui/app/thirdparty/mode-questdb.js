@@ -28,10 +28,10 @@ ace.define(
     function (e, t) {
         "use strict";
         var r = e("../lib/oop"), i = e("./text_highlight_rules").TextHighlightRules, s = function () {
-            var e = "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename";
+            var e = "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename|truncate|asof|copy|alter|into|values|index|add|column";
             var t = "true|false";
             var n = "avg|count|first|last|max|min|sum|ucase|lcase|mid|len|round|rank|now|format|coalesce|ifnull|isnull|nvl";
-            var r = "int|date|string|symbol|float|double|binary|timestamp";
+            var r = "int|date|string|symbol|float|double|binary|timestamp|long|long256";
             i = this.createKeywordMapper({
                 "support.function": n,
                 keyword: e,
