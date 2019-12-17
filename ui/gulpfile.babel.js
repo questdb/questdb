@@ -21,20 +21,36 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-// generated on 2016-03-23 using generator-webapp 2.0.0
-import gulp from "gulp";
+
 import gulpLoadPlugins from "gulp-load-plugins";
-import browserSync from "browser-sync";
-import del from "del";
-import path from "path";
 import fileinclude from "gulp-file-include";
 
-const $ = gulpLoadPlugins();
-const reload = browserSync.reload;
 const dist = '../core/src/main/resources/site/public';
+const {src, dest, series} = require('gulp');
+const del = require('del');
+const path = require('path');
+const $ = gulpLoadPlugins();
 
-gulp.task('styles', () => {
-    return gulp.src('app/styles/*.scss')
+
+function clean(cb) {
+    del(['.tmp', dist], {force: true});
+    cb();
+}
+
+function tidy(cb) {
+    del(['.tmp'], {force: true});
+    cb();
+}
+
+function lint() {
+    return src('app/scripts/**/*.js')
+        .pipe($.eslint({}))
+        .pipe($.eslint.format())
+        ;
+}
+
+function styles() {
+    return src('app/styles/*.scss')
         .pipe($.plumber())
         .pipe($.sourcemaps.init())
         .pipe($.sass.sync({
@@ -44,41 +60,30 @@ gulp.task('styles', () => {
         }).on('error', $.sass.logError))
         .pipe($.autoprefixer({browsers: ['> 1%', 'last 2 versions', 'Firefox ESR']}))
         .pipe($.sourcemaps.write())
-        .pipe(gulp.dest('.tmp/styles'))
-        .pipe(reload({stream: true}));
-});
+        .pipe(dest('.tmp/styles'))
+        ;
+}
 
-gulp.task('scripts', () => {
-    return gulp.src(['app/scripts/**/*.js', 'app/thirdparty/**/*.js'])
+function scripts() {
+    return src(['app/scripts/**/*.js', 'app/thirdparty/**/*.js'])
         .pipe($.plumber())
         .pipe($.sourcemaps.init())
         .pipe($.babel())
         .pipe($.sourcemaps.write('.'))
-        .pipe(gulp.dest('.tmp/scripts'))
-        .pipe(reload({stream: true}));
-});
+        .pipe(dest('.tmp/scripts'))
+        ;
 
-function lint(files, options) {
-    return () => {
-        return gulp.src(files)
-            .pipe(reload({stream: true, once: true}))
-            .pipe($.eslint(options))
-            .pipe($.eslint.format())
-            .pipe($.if(!browserSync.active, $.eslint.failAfterError()));
-    };
 }
 
-gulp.task('lint', lint('app/scripts/**/*.js'));
-
-gulp.task('html', ['styles', 'scripts'], () => {
-    return gulp.src('app/*.html')
+function html() {
+    return src('app/*.html')
         .pipe(fileinclude({
             prefix: '@@',
             basepath: '@file'
         }))
         .pipe($.useref({searchPath: ['.tmp', 'app', '.']}))
         .pipe($.if('/\.js$/', $.uglify({compress: {drop_console: true}})))
-        .pipe($.if('/\.css$/b', $.cssnano({safe: true, autoprefixer: false})))
+        .pipe($.if('/\.css$/b', $.cssnano({safe: true, autoprefixer: false, discardComments: {removeAll: true}})))
         .pipe($.if('/\.html$/', $.htmlmin({
             collapseWhitespace: true,
             minifyCSS: true,
@@ -89,16 +94,28 @@ gulp.task('html', ['styles', 'scripts'], () => {
             removeScriptTypeAttributes: true,
             removeStyleLinkTypeAttributes: true
         })))
-        .pipe(gulp.dest(dist));
-});
+        .pipe(dest(dist))
+        ;
+}
 
-gulp.task('css_patterns', () => {
-    return gulp.src('app/styles/patterns/**/*')
-        .pipe(gulp.dest(path.join(dist, 'styles/patterns')));
-});
+function fonts() {
+    return src(
+        require('main-bower-files')
+        ('**/*.{eot,svg,ttf,woff,woff2}', function (err) {
+        })
+            .concat('app/fonts/**/*'))
+        .pipe(dest(path.join(dist, 'fonts')))
+        ;
+}
 
-gulp.task('images', ['css_patterns'], () => {
-    return gulp.src('app/images/**/*')
+function css_patterns() {
+    return src('app/styles/patterns/**/*')
+        .pipe(dest(path.join(dist, 'styles/patterns')))
+        ;
+}
+
+function images() {
+    return src('app/images/**/*')
         .pipe($.cache($.imagemin({
             progressive: true,
             interlaced: true,
@@ -106,31 +123,30 @@ gulp.task('images', ['css_patterns'], () => {
             // as hooks for embedding and styling
             svgoPlugins: [{cleanupIDs: false}]
         })))
-        .pipe(gulp.dest(path.join(dist, 'images')));
-});
+        .pipe(dest(path.join(dist, 'images')))
+        ;
+}
 
-gulp.task('fonts', () => {
-    return gulp.src(require('main-bower-files')('**/*.{eot,svg,ttf,woff,woff2}', function (err) {
-    })
-        .concat('app/fonts/**/*'))
-        .pipe(gulp.dest(path.join(dist, 'fonts')));
-});
-
-gulp.task('extras', () => {
-    return gulp.src([
+function extras() {
+    return src([
         'app/*.*',
         '!app/*.html'
     ], {
         dot: true
-    }).pipe(gulp.dest(dist));
-});
+    })
+        .pipe(dest(dist))
+        ;
+}
 
-gulp.task('clean', del.bind(null, ['.tmp', dist], {force: true}));
-
-gulp.task('build', ['lint', 'html', 'images', 'fonts', 'extras'], () => {
-    return gulp.src(path.join(dist, '**/*')).pipe($.size({title: 'build', gzip: true}));
-});
-
-gulp.task('default', ['clean'], () => {
-    gulp.start('build');
-});
+exports.default = series(
+    clean,
+    lint,
+    styles,
+    scripts,
+    html,
+    fonts,
+    css_patterns,
+    images,
+    extras,
+    tidy
+);
