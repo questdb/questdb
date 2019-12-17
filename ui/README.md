@@ -7,5 +7,7 @@ In IntelliJ Idea settings set JavaScript language level to 'ECMAScript 6'. Witho
 Pre-requisite: NodeJS installed
 
 - npm install
+- npm install -g bower
+- npm install -g gulp
 - bower install
 - gulp
