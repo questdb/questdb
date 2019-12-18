@@ -25988,7 +25988,6 @@ function nopropagation(e) {
         function insertColumn(e, q) {
             edit.insert(', ' + q);
             edit.focus();
-            console.log('focused? ' + edit.isFocused());
         }
 
         function bind() {
