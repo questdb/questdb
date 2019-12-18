@@ -82,7 +82,7 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
             return false;
         }
 
-        final String lcKey = key.toString().toLowerCase();
+        final String lcKey = Chars.toLowerCaseAscii(key);
         putAt0(index, lcKey, value);
         list.add(lcKey);
         return true;
@@ -91,7 +91,7 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
     public void putIfAbsent(CharSequence key, T value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, key.toString(), value);
+            putAt0(index, Chars.toLowerCaseAscii(key), value);
         }
     }
     

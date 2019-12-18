@@ -836,7 +836,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                 @Override
                 public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
-                    names.add(name == null ? "" : Chars.stringOf(name));
+                    names.add(name == null ? "" : Chars.toString(name));
                     events.add(event);
                 }
             }

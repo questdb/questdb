@@ -142,7 +142,7 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.path = new Path().of(configuration.getRoot()).concat(name);
         this.other = new Path().of(configuration.getRoot()).concat(name);
-        this.name = Chars.stringOf(name);
+        this.name = Chars.toString(name);
         this.rootLen = path.length();
         try {
             if (lock) {

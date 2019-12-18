@@ -224,17 +224,17 @@ public class LongList implements Mutable {
      */
     @Override
     public String toString() {
-        CharSink toStringBuilder = Misc.getThreadLocalBuilder();
+        final CharSink sb = Misc.getThreadLocalBuilder();
 
-        toStringBuilder.put('[');
+        sb.put('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                toStringBuilder.put(',');
+                sb.put(',');
             }
-            toStringBuilder.put(get(i));
+            sb.put(get(i));
         }
-        toStringBuilder.put(']');
-        return toStringBuilder.toString();
+        sb.put(']');
+        return sb.toString();
     }
 
     public void increment(int index) {

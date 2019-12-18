@@ -87,7 +87,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         if (dot == -1) {
             cm = new TableColumnMetadata(b.put(tableAlias).put('.').put(columnName).toString(), columnType);
         } else {
-            cm = new TableColumnMetadata(Chars.stringOf(columnName), columnType);
+            cm = new TableColumnMetadata(Chars.toString(columnName), columnType);
         }
         this.columnMetadata.add(cm);
 

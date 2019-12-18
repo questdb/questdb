@@ -56,7 +56,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public GenericLexer(int poolCapacity) {
         this.csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
-            defineSymbol(WHITESPACE.get(i).toString());
+            defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }
     }
 

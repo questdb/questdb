@@ -25,9 +25,10 @@
 package io.questdb.std.microtime;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.CharSink;
 
 final public class Timestamps {
 
@@ -585,7 +586,7 @@ final public class Timestamps {
     }
 
     public static String toString(long micros) {
-        StringSink sink = new StringSink();
+        CharSink sink = Misc.getThreadLocalBuilder();
         DateFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }

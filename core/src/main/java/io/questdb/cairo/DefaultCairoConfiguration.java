@@ -41,7 +41,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
 
     public DefaultCairoConfiguration(CharSequence root) {
-        this.root = Chars.stringOf(root);
+        this.root = Chars.toString(root);
     }
 
     @Override

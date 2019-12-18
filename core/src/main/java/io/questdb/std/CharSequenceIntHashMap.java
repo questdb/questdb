@@ -60,7 +60,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         if (index < 0) {
             values[-index - 1] = values[-index - 1] + 1;
         } else {
-            putAt0(index, key.toString(), 0);
+            putAt0(index, Chars.toString(key), 0);
         }
     }
 
@@ -117,7 +117,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
             values[-index - 1] = value;
             return false;
         }
-        String keyString = key.toString();
+        final String keyString = Chars.toString(key);
         putAt0(index, keyString, value);
         list.add(keyString);
         return true;
@@ -130,7 +130,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     public void putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, key.toString(), value);
+            putAt0(index, Chars.toString(key), value);
         }
     }
 

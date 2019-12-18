@@ -48,7 +48,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public boolean addColumn(CharSequence name, int type, int symbolCapacity) {
         if (columnNameIndexMap.put(name, columnNames.size())) {
-            columnNames.add(Chars.stringOf(name));
+            columnNames.add(Chars.toString(name));
             columnBits.add(Numbers.encodeLowHighInts(type, symbolCapacity));
             columnBits.add(Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0));
             return true;

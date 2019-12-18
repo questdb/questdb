@@ -89,7 +89,7 @@ public class TableReader implements Closeable {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.tableName = Chars.stringOf(tableName);
+        this.tableName = Chars.toString(tableName);
         this.path = new Path().of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {

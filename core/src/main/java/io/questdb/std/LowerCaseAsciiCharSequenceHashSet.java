@@ -58,8 +58,7 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
     }
 
     public void addAt(int index, CharSequence key) {
-        String s = Chars.toString(key).toLowerCase();
-        keys[index] = s;
+        keys[index] = Chars.toLowerCaseAscii(key);
         if (--free < 1) {
             rehash();
         }

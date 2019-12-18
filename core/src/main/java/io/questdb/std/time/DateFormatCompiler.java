@@ -197,7 +197,7 @@ public class DateFormatCompiler {
             int op = opMap.get(cs);
             if (op == -1) {
                 makeLastOpGreedy(ops);
-                delimiters.add(cs.toString());
+                delimiters.add(Chars.toString(cs));
                 ops.add(-(delimiters.size()));
             } else {
                 if (op == OP_AM_PM) {

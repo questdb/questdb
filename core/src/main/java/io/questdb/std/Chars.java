@@ -35,31 +35,6 @@ public final class Chars {
     private Chars() {
     }
 
-    public static int compare(CharSequence l, CharSequence r) {
-        if (l == r) {
-            return 0;
-        }
-
-        if (l == null) {
-            return -1;
-        }
-
-        if (r == null) {
-            return 1;
-        }
-
-        int ll = l.length();
-        int rl = r.length();
-
-        for (int i = 0, n = Math.min(ll, rl); i < n; i++) {
-            int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k;
-            }
-        }
-        return Integer.compare(ll, rl);
-    }
-
     public static boolean contains(CharSequence sequence, CharSequence term) {
         int m = term.length();
         if (m == 0) {
@@ -120,7 +95,11 @@ public final class Chars {
             return false;
         }
 
-        for (int i = 0; i < ll; i++) {
+        return equalsChars(l, r, ll);
+    }
+
+    private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
             if (l.charAt(i) != r.charAt(i)) {
                 return false;
             }
@@ -215,6 +194,24 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    public static String toLowerCaseAscii(@Nullable CharSequence value) {
+        if (value == null) {
+            return null;
+        }
+        final int len = value.length();
+        if (len == 0) {
+            return "";
+        }
+
+        final CharSink b = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            b.put(toLowerCaseAscii(value.charAt(i)));
+        }
+        return b.toString();
+
+
     }
 
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, CharSequence r) {
@@ -408,17 +405,8 @@ public final class Chars {
     }
 
     public static boolean startsWith(CharSequence _this, CharSequence that) {
-        int len = that.length();
-        if (_this.length() < len) {
-            return false;
-        }
-
-        for (int i = 0; i < len; i++) {
-            if (_this.charAt(i) != that.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
+        final int len = that.length();
+        return _this.length() >= len && equalsChars(_this, that, len);
     }
 
     public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
@@ -444,29 +432,6 @@ public final class Chars {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
         }
-    }
-
-    public static void strcpy(final CharSequence value, final int lo, final int hi, final long address) {
-        for (int i = lo; i < hi; i++) {
-            Unsafe.getUnsafe().putByte(address + i - lo, (byte) value.charAt(i));
-        }
-    }
-
-    public static void strcpyw(final CharSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
-        }
-    }
-
-    public static String stringOf(CharSequence charSequence) {
-        if (charSequence instanceof String) {
-            return (String) charSequence;
-        }
-
-        if (charSequence == null) {
-            return null;
-        }
-        return charSequence.toString();
     }
 
     public static char toLowerCaseAscii(char character) {
@@ -720,5 +685,31 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
+    }
+
+    public static int compare(CharSequence l, CharSequence r) {
+        if (l == r) {
+            return 0;
+        }
+
+        if (l == null) {
+            return -1;
+        }
+
+        if (r == null) {
+            return 1;
+        }
+
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k;
+            }
+        }
+        return Integer.compare(ll, rl);
     }
 }

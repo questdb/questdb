@@ -79,14 +79,14 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
             values[-index - 1] = value;
             return false;
         }
-        putAt0(index, key.toString().toLowerCase(), value);
+        putAt0(index, Chars.toLowerCaseAscii(key), value);
         return true;
     }
 
     public void putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, key.toString(), value);
+            putAt0(index, Chars.toLowerCaseAscii(key), value);
         }
     }
 

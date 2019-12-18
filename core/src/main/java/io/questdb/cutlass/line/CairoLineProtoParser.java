@@ -489,7 +489,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             entry = writerCache.valueAt(entryIndex);
         } else {
             entry = new CacheEntry();
-            writerCache.putAt(entryIndex, Chars.stringOf(tableName), entry);
+            writerCache.putAt(entryIndex, Chars.toString(tableName), entry);
             // adjust writer map index to negative, which indicates that entry exists
             entryIndex = -entryIndex - 1;
         }

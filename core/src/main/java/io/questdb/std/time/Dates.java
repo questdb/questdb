@@ -25,6 +25,7 @@
 package io.questdb.std.time;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
@@ -556,7 +557,7 @@ final public class Dates {
     }
 
     public static String toString(long millis) {
-        StringSink sink = new StringSink();
+        StringSink sink = Misc.getThreadLocalBuilder();
         DateFormatUtils.appendDateTime(sink, millis);
         return sink.toString();
     }
