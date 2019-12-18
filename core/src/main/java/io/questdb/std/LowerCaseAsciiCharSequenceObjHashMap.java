@@ -29,6 +29,7 @@ import java.util.Arrays;
 
 
 public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAsciiCharSequenceHashSet {
+    private final ObjList<CharSequence> list;
     private T[] values;
 
     public LowerCaseAsciiCharSequenceObjHashMap() {
@@ -43,11 +44,13 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
     public LowerCaseAsciiCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         values = (T[]) new Object[capacity];
+        this.list = new ObjList<>(capacity);
         clear();
     }
 
     public final void clear() {
         super.clear();
+        list.clear();
         Arrays.fill(values, null);
     }
 
@@ -75,11 +78,13 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
 
     public boolean putAt(int index, CharSequence key, T value) {
         if (index < 0) {
-            int index1 = -index - 1;
-            values[index1] = value;
+            values[-index - 1] = value;
             return false;
         }
-        putAt0(index, key.toString().toLowerCase(), value);
+
+        final String lcKey = key.toString().toLowerCase();
+        putAt0(index, lcKey, value);
+        list.add(lcKey);
         return true;
     }
 
@@ -88,6 +93,19 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
         if (index > -1) {
             putAt0(index, key.toString(), value);
         }
+    }
+    
+    @Override
+    public void removeAt(int index) {
+        if (index < 0) {
+            CharSequence key = keys[-index - 1];
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
     }
 
     @Override

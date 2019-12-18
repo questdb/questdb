@@ -192,11 +192,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    private void handleClientRecv(
-            HttpRequestProcessorSelector selector
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void handleClientRecv(HttpRequestProcessorSelector selector) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            long fd = this.fd;
+            final long fd = this.fd;
             // this is address of where header ended in our receive buffer
             // we need to being processing request content starting from this address
             long headerEnd = recvBuffer;

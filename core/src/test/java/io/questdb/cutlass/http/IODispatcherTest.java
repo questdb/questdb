@@ -400,7 +400,7 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n",
                 "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
+                        "host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Length: 437760673\r\n" +
@@ -408,7 +408,7 @@ public class IODispatcherTest {
                         "Expect: 100-continue\r\n" +
                         "\r\n" +
                         "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "content-disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
                         "Content-Type: application/octet-stream\r\n" +
                         "\r\n" +
                         "9988" +
@@ -2509,14 +2509,14 @@ public class IODispatcherTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "Host:localhost:9000\r\n" +
-                "Connection:keep-alive\r\n" +
-                "Cache-Control:max-age=0\r\n" +
-                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "Accept-Encoding:gzip,deflate,sdch\r\n" +
-                "Accept-Language:en-US,en;q=0.8\r\n" +
-                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "host:localhost:9000\r\n" +
+                "connection:keep-alive\r\n" +
+                "cache-control:max-age=0\r\n" +
+                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "accept-encoding:gzip,deflate,sdch\r\n" +
+                "accept-language:en-US,en;q=0.8\r\n" +
+                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         TestUtils.assertMemoryLeak(() -> {
@@ -2662,14 +2662,14 @@ public class IODispatcherTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "Host:localhost:9000\r\n" +
-                "Connection:keep-alive\r\n" +
-                "Cache-Control:max-age=0\r\n" +
-                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "Accept-Encoding:gzip,deflate,sdch\r\n" +
-                "Accept-Language:en-US,en;q=0.8\r\n" +
-                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "host:localhost:9000\r\n" +
+                "connection:keep-alive\r\n" +
+                "cache-control:max-age=0\r\n" +
+                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "accept-encoding:gzip,deflate,sdch\r\n" +
+                "accept-language:en-US,en;q=0.8\r\n" +
+                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
@@ -2999,14 +2999,14 @@ public class IODispatcherTest {
 
         // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
         final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
-                "Host:localhost:9000\r\n" +
-                "Connection:keep-alive\r\n" +
-                "Cache-Control:max-age=0\r\n" +
-                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                "Accept-Encoding:gzip,deflate,sdch\r\n" +
-                "Accept-Language:en-US,en;q=0.8\r\n" +
-                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "host:localhost:9000\r\n" +
+                "connection:keep-alive\r\n" +
+                "cache-control:max-age=0\r\n" +
+                "accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "user-agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "accept-encoding:gzip,deflate,sdch\r\n" +
+                "accept-language:en-US,en;q=0.8\r\n" +
+                "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
         final int N = 1000;

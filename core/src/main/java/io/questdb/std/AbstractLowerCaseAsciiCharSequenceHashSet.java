@@ -34,7 +34,7 @@ public abstract class AbstractLowerCaseAsciiCharSequenceHashSet implements Mutab
     protected int free;
     protected int capacity;
     // exposed for testing only
-    CharSequence[] keys;
+    protected CharSequence[] keys;
 
     public AbstractLowerCaseAsciiCharSequenceHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {

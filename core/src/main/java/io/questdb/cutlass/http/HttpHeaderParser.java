@@ -33,7 +33,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
     private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private final ObjectPool<DirectByteCharSequence> pool;
-    private final CharSequenceObjHashMap<DirectByteCharSequence> headers = new CharSequenceObjHashMap<>();
+    private final LowerCaseAsciiCharSequenceObjHashMap<DirectByteCharSequence> headers = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
     private final long hi;
     private final DirectByteCharSequence temp = new DirectByteCharSequence();

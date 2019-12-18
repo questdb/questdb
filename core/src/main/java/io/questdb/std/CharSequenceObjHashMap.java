@@ -72,8 +72,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     public void removeAt(int index) {
         if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
+            CharSequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
