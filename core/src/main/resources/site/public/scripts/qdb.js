@@ -24287,13 +24287,17 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
             }
         }
 
+        function headerClick(e) {
+            bus.trigger('editor.insert.column', e.toElement.innerHTML);
+        }
+
         function computeColumnWidths() {
             colMax = [];
             var i, k, w;
             totalWidth = 0;
             for (i = 0; i < columns.length; i++) {
                 var c = columns[i];
-                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
+                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').click(headerClick).appendTo(header);
                 switch (c.type) {
                     case 'STRING':
                     case 'SYMBOL':
@@ -25853,6 +25857,8 @@ function nopropagation(e) {
             var sql = null;
             var inQuote = false;
 
+            // console.log('offset=' + edit.getSession().getDocument().positionToIndex(pos, 0));
+
             for (var i = 0; i < text.length; i++) {
                 var char = text.charAt(i);
 
@@ -25873,7 +25879,6 @@ function nopropagation(e) {
                                 sql = text.substring(0, i).trim();
                             } else {
                                 sql = text.substring(startPos, i).trim();
-                                console.log('sql="' + sql + '"');
                             }
                         }
                         break;
@@ -25980,11 +25985,18 @@ function nopropagation(e) {
             submitQuery();
         }
 
+        function insertColumn(e, q) {
+            edit.insert(', ' + q);
+            edit.focus();
+            console.log('focused? ' + edit.isFocused());
+        }
+
         function bind() {
             bus.on('editor.execute', submitQuery);
             bus.on('editor.show.error', showError);
             bus.on('editor.toggle.invisibles', toggleInvisibles);
             bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
+            bus.on('editor.insert.column', insertColumn);
             bus.on('editor.focus', function () {
                 edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {});
                 edit.focus();

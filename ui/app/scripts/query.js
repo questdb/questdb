@@ -292,6 +292,8 @@
             let sql = null;
             let inQuote = false;
 
+            // console.log('offset=' + edit.getSession().getDocument().positionToIndex(pos, 0));
+
             for (let i = 0; i < text.length; i++) {
                 const char = text.charAt(i);
 
@@ -422,11 +424,17 @@
             submitQuery();
         }
 
+        function insertColumn(e, q) {
+            edit.insert(', ' + q);
+            edit.focus();
+        }
+
         function bind() {
             bus.on('editor.execute', submitQuery);
             bus.on('editor.show.error', showError);
             bus.on('editor.toggle.invisibles', toggleInvisibles);
             bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
+            bus.on('editor.insert.column', insertColumn);
             bus.on('editor.focus', function () {
                 edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
                 });

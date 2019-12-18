@@ -359,13 +359,17 @@
             }
         }
 
+        function headerClick(e) {
+            bus.trigger('editor.insert.column', e.toElement.innerHTML);
+        }
+
         function computeColumnWidths() {
             colMax = [];
             var i, k, w;
             totalWidth = 0;
             for (i = 0; i < columns.length; i++) {
                 var c = columns[i];
-                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
+                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').click(headerClick).appendTo(header);
                 switch (c.type) {
                     case 'STRING':
                     case 'SYMBOL':
