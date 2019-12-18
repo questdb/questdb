@@ -146,6 +146,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 } catch (PeerIsSlowToReadException ignore) {
                     LOG.debug().$("peer is slow writer").$();
                     dispatcher.registerChannel(this, IOOperation.READ);
+                } catch (ServerDisconnectException ignore) {
+                    LOG.info().$("kicked out [fd=").$(fd).$(']');
+                    dispatcher.disconnect(this);
                 }
                 break;
             case IOOperation.WRITE:
@@ -158,6 +161,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         LOG.debug().$("peer is slow reader").$();
                         dispatcher.registerChannel(this, IOOperation.WRITE);
                     } catch (PeerDisconnectedException ignore) {
+                        dispatcher.disconnect(this);
+                    } catch (ServerDisconnectException ignore) {
+                        LOG.info().$("kicked out [fd=").$(fd).$(']');
                         dispatcher.disconnect(this);
                     }
                 } else {
@@ -192,7 +198,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    private void handleClientRecv(HttpRequestProcessorSelector selector) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void handleClientRecv(HttpRequestProcessorSelector selector)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             final long fd = this.fd;
             // this is address of where header ended in our receive buffer

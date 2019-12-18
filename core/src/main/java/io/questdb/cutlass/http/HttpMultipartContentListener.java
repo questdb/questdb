@@ -26,11 +26,12 @@ package io.questdb.cutlass.http;
 
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 
 public interface HttpMultipartContentListener {
     void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 
-    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

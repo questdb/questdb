@@ -34,10 +34,7 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -275,9 +272,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        LOG.debug().$("part begin [name=").$(partHeader.getContentDispositionName()).$(']').$();
-        if (Chars.equals("data", partHeader.getContentDispositionName())) {
+    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        final CharSequence contentDisposition = partHeader.getContentDispositionName();
+        LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();
+        if (Chars.equalsNc("data", contentDisposition)) {
 
             final HttpRequestHeader rh = transientContext.getRequestHeader();
             CharSequence name = rh.getUrlParam("name");
@@ -285,10 +283,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 name = partHeader.getContentDispositionFilename();
             }
             if (name == null) {
-                transientContext.simpleResponse().sendStatus(400, "no name given");
-                // we have to disconnect to interrupt potentially large upload
-                transientContext.getDispatcher().disconnect(transientContext);
-                return;
+                transientContext.simpleResponse().sendStatus(400, "no file name given");
+                throw ServerDisconnectException.INSTANCE;
             }
 
             transientState.analysed = false;
@@ -304,17 +300,21 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
             transientState.messagePart = MESSAGE_DATA;
-        } else if (Chars.equals("schema", partHeader.getContentDispositionName())) {
+        } else if (Chars.equalsNc("schema", contentDisposition)) {
             transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
             transientState.messagePart = MESSAGE_SCHEMA;
         } else {
-            // todo: disconnect
-            transientState.messagePart = MESSAGE_UNKNOWN;
+            if (partHeader.getContentDisposition() == null) {
+                transientContext.simpleResponse().sendStatus(400, "'Content-Disposition' multipart header missing'");
+            } else {
+                transientContext.simpleResponse().sendStatus(400, "invalid value in 'Content-Disposition' multipart header");
+            }
+            throw ServerDisconnectException.INSTANCE;
         }
     }
 
     @Override
-    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             LOG.debug().$("part end").$();
             transientState.textLoader.wrapUp();
@@ -351,14 +351,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
     private void doResumeSend(
             TextImportProcessorState state,
             HttpChunkedResponseSocket socket
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
 
             if (state.json) {
@@ -374,8 +374,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 // is larger that response content buffer
                 // all we can do in this scenario is to log appropriately
                 // and disconnect socket
-                // todo: this is a force disconnect
-                throw PeerDisconnectedException.INSTANCE;
+                throw ServerDisconnectException.INSTANCE;
             }
         }
 
@@ -410,7 +409,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         socket.done();
     }
 
-    private void sendResponse(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendResponse(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         TextImportProcessorState state = LV.get(context);
         // todo: may be set this up when headers are ready?
         state.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));

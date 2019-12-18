@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -89,7 +90,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         return this;
     }
 
-    public boolean parse(long lo, long hi, HttpMultipartContentListener listener) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = Long.MAX_VALUE;
         long ptr = lo;
         while (ptr < hi) {

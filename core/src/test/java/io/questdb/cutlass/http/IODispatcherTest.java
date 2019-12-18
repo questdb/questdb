@@ -409,6 +409,110 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d\r\n" +
                         "content-disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "content-type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "9988" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testMissingContentDisposition() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "31\r\n" +
+                        "'Content-Disposition' multipart header missing'\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "9988" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testMissingContentDispositionName() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "39\r\n" +
+                        "invalid value in 'Content-Disposition' multipart header\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "content-disposition: ; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "9988" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testMissingContentDispositionFileName() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "14\r\n" +
+                        "no file name given\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "content-disposition: form-data; name=\"data\"\r\n" +
                         "Content-Type: application/octet-stream\r\n" +
                         "\r\n" +
                         "9988" +
