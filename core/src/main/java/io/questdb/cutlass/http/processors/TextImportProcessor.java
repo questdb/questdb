@@ -67,16 +67,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         atomicityParamMap.put("strict", Atomicity.SKIP_ALL);
     }
 
-    private final TextImportProcessorConfiguration configuration;
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
 
-    public TextImportProcessor(
-            TextImportProcessorConfiguration configuration,
-            CairoEngine cairoEngine
-    ) {
-        this.configuration = configuration;
+    public TextImportProcessor(CairoEngine cairoEngine) {
         this.engine = cairoEngine;
     }
 
@@ -257,7 +252,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onChunk(long lo, long hi)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
                 transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
@@ -381,18 +377,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.clear();
     }
 
-    private void handleTextException(TextException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (configuration.abortBrokenUploads()) {
-            sendError(transientContext, e.getMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
-            throw PeerDisconnectedException.INSTANCE;
-        }
-        transientState.state = TextImportProcessorState.STATE_DATA_ERROR;
-        transientState.stateMessage = e.getMessage();
+    private void handleTextException(TextException e)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        sendError(transientContext, e.getFlyweightMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
+        throw ServerDisconnectException.INSTANCE;
     }
 
     private void sendError(
             HttpConnectionContext context,
-            String message,
+            CharSequence message,
             boolean json
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();

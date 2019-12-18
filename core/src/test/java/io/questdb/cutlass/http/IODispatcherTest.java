@@ -56,6 +56,48 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
     @Before
     public void setUp() throws Exception {
         temp.create();
@@ -359,10 +401,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(
-                                httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine
-                        );
+                        return new TextImportProcessor(engine);
                     }
                 });
 
@@ -597,6 +636,71 @@ public class IODispatcherTest {
                         "Content-Disposition: form-data; name=\"schema\"\r\n" +
                         "\r\n" +
                         "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:04,103\r\n" +
+                        "27/05/2018 00:00:05,104\r\n" +
+                        "27/05/2018 00:00:06,105\r\n" +
+                        "27/05/2018 00:00:07,106\r\n" +
+                        "27/05/2018 00:00:08,107\r\n" +
+                        "27/05/2018 00:00:09,108\r\n" +
+                        "27/05/2018 00:00:10,109\r\n" +
+                        "27/05/2018 00:00:11,110\r\n" +
+                        "27/05/2018 00:00:12,111\r\n" +
+                        "27/05/2018 00:00:13,112\r\n" +
+                        "27/05/2018 00:00:14,113\r\n" +
+                        "27/05/2018 00:00:15,114\r\n" +
+                        "27/05/2018 00:00:16,115\r\n" +
+                        "27/05/2018 00:00:17,116\r\n" +
+                        "27/05/2018 00:00:18,117\r\n" +
+                        "27/05/2018 00:00:19,118\r\n" +
+                        "27/05/2018 00:00:20,119\r\n" +
+                        "27/05/2018 00:00:21,120\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testImportBadJson() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "1e\r\n" +
+                        "{\"status\":\"Unexpected symbol\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
                         "\r\n" +
@@ -1014,10 +1118,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(
-                                httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine
-                        );
+                        return new TextImportProcessor(engine);
                     }
                 });
 
@@ -3319,10 +3420,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(
-                                httpConfiguration.getTextImportProcessorConfiguration(),
-                                engine
-                        );
+                        return new TextImportProcessor(engine);
                     }
                 });
 
@@ -3347,48 +3445,6 @@ public class IODispatcherTest {
                 Thread.sleep(2000000);
             }
         });
-    }
-
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
     @NotNull

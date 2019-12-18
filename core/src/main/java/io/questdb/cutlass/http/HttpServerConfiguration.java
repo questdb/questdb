@@ -27,7 +27,6 @@ package io.questdb.cutlass.http;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.time.MillisecondClock;
 
@@ -53,8 +52,6 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
     IODispatcherConfiguration getDispatcherConfiguration();
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    TextImportProcessorConfiguration getTextImportProcessorConfiguration();
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 

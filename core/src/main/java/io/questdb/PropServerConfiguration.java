@@ -61,7 +61,6 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new HttpIODispatcherConfiguration();
-    private final TextImportProcessorConfiguration textImportProcessorConfiguration = new PropTextImportProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -139,7 +138,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sendBufferSize;
     private CharSequence indexFileName;
     private String publicDirectory;
-    private boolean abortBrokenUploads;
     private int activeConnectionLimit;
     private int eventCapacity;
     private int ioQueueCapacity;
@@ -250,7 +248,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
             this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
             this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
-            this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
 
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
@@ -562,13 +559,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropTextImportProcessorConfiguration implements TextImportProcessorConfiguration {
-        @Override
-        public boolean abortBrokenUploads() {
-            return abortBrokenUploads;
-        }
-    }
-
     private class HttpIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getActiveConnectionLimit() {
@@ -769,11 +759,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
-        }
-
-        @Override
-        public TextImportProcessorConfiguration getTextImportProcessorConfiguration() {
-            return textImportProcessorConfiguration;
         }
 
         @Override

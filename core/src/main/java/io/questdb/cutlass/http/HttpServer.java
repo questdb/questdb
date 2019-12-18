@@ -139,7 +139,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TextImportProcessor(configuration.getTextImportProcessorConfiguration(), cairoEngine);
+                return new TextImportProcessor(cairoEngine);
             }
         });
 
