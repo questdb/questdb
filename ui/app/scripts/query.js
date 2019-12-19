@@ -292,8 +292,6 @@
             let sql = null;
             let inQuote = false;
 
-            // console.log('offset=' + edit.getSession().getDocument().positionToIndex(pos, 0));
-
             for (let i = 0; i < text.length; i++) {
                 const char = text.charAt(i);
 
@@ -311,15 +309,31 @@
                             c++;
                         } else {
                             if (startPos === -1) {
-                                sql = text.substring(0, i).trim();
+                                sql = text.substring(0, i);
                             } else {
-                                sql = text.substring(startPos, i).trim();
+                                console.log('thru this, startRow=' + startRow + ', startCol=' + startCol);
+                                sql = text.substring(startPos, i);
                             }
                         }
+                        break;
+                    case ' ':
+                        // ignore leading space
+                        if (startPos === i) {
+                            startRow = r;
+                            startCol = c;
+                            startPos = i + 1;
+                        }
+                        c++;
                         break;
                     case '\n':
                         r++;
                         c = 0;
+                        if (startPos === i) {
+                            startRow = r;
+                            startCol = c;
+                            startPos = i + 1;
+                            c++;
+                        }
                         break;
                     case '\'':
                         inQuote = !inQuote;
@@ -339,7 +353,7 @@
                 if (startPos === -1) {
                     sql = text;
                 } else {
-                    sql = text.substring(startPos).trim();
+                    sql = text.substring(startPos);
                 }
             }
 

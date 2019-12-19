@@ -354,6 +354,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         sqlExecutionContext.with(context.getCairoSecurityContext(), null);
+        info(state).$("exec [q='").utf8(state.query).$("']").$();
         final RecordCursorFactory factory = JsonQueryProcessorState.FACTORY_CACHE.get().poll(state.query);
         try {
             if (factory != null) {
@@ -384,7 +385,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void compileQuery(HttpConnectionContext context, JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("exec [q='").utf8(state.query).$("']").$();
         final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
         queryExecutors.getQuick(cc.getType()).execute(
                 context,
