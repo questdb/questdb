@@ -32,7 +32,6 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.*;
@@ -1057,7 +1056,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
         public int getCommitMode() {
-            return commitMode;
+            return lineUdpCommitMode;
         }
 
         @Override

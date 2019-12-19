@@ -343,7 +343,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {
-            e.printStackTrace();
+            LOG.error().$("exception in function factory: ").$(e).$();
             throw SqlException.position(position).put("exception in function factory");
         }
 
