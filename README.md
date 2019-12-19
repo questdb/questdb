@@ -7,7 +7,7 @@
   <a href="https://www.codacy.com/app/bluestreak/nfsdb"><img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754"></a>
   <a href="https://circleci.com/gh/questdb/questdb"><img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099"></a>
   <a href="https://serieux-saucisson-79115.herokuapp.com/"><img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg"></a>
-  <a href="https://github.com/questdb/questdb/releases/download/4.0.3/questdb-4.0.3-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
+  <a href="https://github.com/questdb/questdb/releases/download/4.0.4/questdb-4.0.4-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
   <a href="https://search.maven.org/search?q=g:org.questdb"><img src="https://img.shields.io/maven-central/v/org.questdb/core"></a>
 </p
   
