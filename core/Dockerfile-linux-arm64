@@ -2,7 +2,7 @@ FROM debian:stable-20191014-slim
 
 ENV JRE jdk-8u231-linux-arm64-vfp-hflt.tar.gz
 ENV JRE_DIR jdk1.8.0_231
-ENV QUESTDB_VERSION 4.0.3
+ENV QUESTDB_VERSION 4.0.4
 
 # Copy the binary file into the container at /app
 COPY target/questdb-${QUESTDB_VERSION}-bin.tar.gz /app/
