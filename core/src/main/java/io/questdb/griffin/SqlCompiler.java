@@ -598,7 +598,7 @@ public class SqlCompiler implements Closeable {
         return castGroups.getQuick(from) == castGroups.getQuick(to);
     }
 
-    private static boolean isAssignableFrom(int to, int from) {
+    public static boolean isAssignableFrom(int to, int from) {
         return to == from
                 || (
                 from >= ColumnType.BYTE

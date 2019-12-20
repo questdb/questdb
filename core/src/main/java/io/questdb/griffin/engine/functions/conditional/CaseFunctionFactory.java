@@ -27,20 +27,38 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
 
 public class CaseFunctionFactory implements FunctionFactory {
+    private static ObjList<CaseFunctionConstructor> constructors = new ObjList<>();
+
+    static {
+        constructors.set(0, ColumnType.MAX, null);
+        constructors.setQuick(ColumnType.SYMBOL, StrCaseFunction::new);
+        constructors.setQuick(ColumnType.STRING, StrCaseFunction::new);
+        constructors.setQuick(ColumnType.DOUBLE, DoubleCaseFunction::new);
+        constructors.setQuick(ColumnType.FLOAT, FloatCaseFunction::new);
+        constructors.setQuick(ColumnType.LONG, LongCaseFunction::new);
+        constructors.setQuick(ColumnType.INT, IntCaseFunction::new);
+        constructors.setQuick(ColumnType.SHORT, ShortCaseFunction::new);
+        constructors.setQuick(ColumnType.BINARY, BinCaseFunction::new);
+        constructors.setQuick(ColumnType.CHAR, CharCaseFunction::new);
+        constructors.setQuick(ColumnType.BYTE, ByteCaseFunction::new);
+        constructors.setQuick(ColumnType.BOOLEAN, BooleanCaseFunction::new);
+        constructors.setQuick(ColumnType.DATE, DateCaseFunction::new);
+        constructors.setQuick(ColumnType.TIMESTAMP, TimestampCaseFunction::new);
+        constructors.setQuick(ColumnType.LONG256, Long256CaseFunction::new);
+    }
+
     @Override
     public String getSignature() {
         return "case(V)";
     }
 
     @Override
-    //todo: unit test this and add support for all types
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         int n = args.size();
         int returnType = -1;
@@ -65,7 +83,7 @@ public class CaseFunctionFactory implements FunctionFactory {
 
             if (i == 0) {
                 returnType = outcome.getType();
-            } else if (returnType != outcome.getType()) {
+            } else if (!SqlCompiler.isAssignableFrom(returnType, outcome.getType())) {
                 throw SqlException.position(outcome.getPosition()).put(ColumnType.nameOf(returnType)).put(" expected, found ").put(ColumnType.nameOf(outcome.getType()));
             }
 
@@ -73,45 +91,20 @@ public class CaseFunctionFactory implements FunctionFactory {
             vars.add(outcome);
         }
 
-        switch (returnType) {
-            case ColumnType.STRING:
-                return new StrCaseFunction(position, vars, elseBranch);
-            default:
-                throw SqlException.$(position, "not implemented for type '").put(ColumnType.nameOf(returnType)).put('\'');
-
+        if (elseBranch != null && !SqlCompiler.isAssignableFrom(returnType, elseBranch.getType())) {
+            throw SqlException.position(elseBranch.getPosition()).put(ColumnType.nameOf(returnType)).put(" expected, found ").put(ColumnType.nameOf(elseBranch.getType()));
         }
+
+        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
+        if (constructor == null) {
+            throw SqlException.$(position, "not implemented for type '").put(ColumnType.nameOf(returnType)).put('\'');
+        }
+
+        return constructor.newInstance(position, vars, elseBranch);
     }
 
-    private static class StrCaseFunction extends StrFunction {
-        private final ObjList<Function> args;
-        private final int argsLen;
-        private final Function elseBranch;
-
-        public StrCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
-            super(position);
-            this.args = args;
-            this.argsLen = args.size();
-            this.elseBranch = elseBranch;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            for (int i = 0; i < argsLen; i += 2) {
-                if (args.getQuick(i).getBool(rec)) {
-                    return args.getQuick(i + 1).getStr(rec);
-                }
-            }
-            return elseBranch == null ? null : elseBranch.getStr(rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            for (int i = 0; i < argsLen; i += 2) {
-                if (args.getQuick(i).getBool(rec)) {
-                    return args.getQuick(i + 1).getStrB(rec);
-                }
-            }
-            return elseBranch.getStrB(rec);
-        }
+    @FunctionalInterface
+    private interface CaseFunctionConstructor {
+        Function newInstance(int position, ObjList<Function> vars, Function elseBranch);
     }
 }

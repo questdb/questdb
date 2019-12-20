@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,7 +43,7 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public char getChar(Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -92,7 +93,7 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
+    public final RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 
@@ -102,7 +103,7 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory() {
+    public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 
@@ -118,7 +119,8 @@ public abstract class StrFunction implements Function {
 
     @Override
     public int getStrLen(Record rec) {
-        return getStr(rec).length();
+        final CharSequence str = getStr(rec);
+        return str == null ? TableUtils.NULL_LEN : str.length();
     }
 
     @Override
@@ -137,17 +139,17 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public Long256 getLong256A(Record rec) {
+    public final Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Long256 getLong256B(Record rec) {
+    public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 }

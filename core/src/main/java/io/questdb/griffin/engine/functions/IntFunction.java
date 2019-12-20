@@ -67,8 +67,8 @@ public abstract class IntFunction implements Function {
     }
 
     @Override
-    public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+    public long getDate(Record rec) {
+        return getInt(rec);
     }
 
     @Override
@@ -132,8 +132,8 @@ public abstract class IntFunction implements Function {
     }
 
     @Override
-    public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+    public long getTimestamp(Record rec) {
+        return getInt(rec);
     }
 
     @Override

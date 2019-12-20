@@ -34,9 +34,19 @@ public class IntFunctionTest {
     private static final IntFunction function = new IntFunction(25) {
         @Override
         public int getInt(Record rec) {
-            return 0;
+            return 150;
         }
     };
+
+    @Test
+    public void testGetDate() {
+        Assert.assertEquals(150, function.getDate(null));
+    }
+
+    @Test
+    public void testGetTimestamp() {
+        Assert.assertEquals(150, function.getTimestamp(null));
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -56,11 +66,6 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDate() {
-        function.getDate(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -106,11 +111,6 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
         function.getSymbol(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
