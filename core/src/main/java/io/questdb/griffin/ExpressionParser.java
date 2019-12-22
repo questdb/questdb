@@ -258,6 +258,7 @@ class ExpressionParser {
                                 case BRANCH_LEFT_BRACE:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
+                                case BRANCH_CASE_CONTROL:
                                     // we have unary minus
                                     operatorType = OperatorExpression.UNARY;
                                     break;

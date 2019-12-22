@@ -256,6 +256,50 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntOrElseUnaryNeg() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t315515118\n" +
+                        "701\t-125\n" +
+                        "706\t-125\n" +
+                        "-714\t-1575378703\n" +
+                        "116\t339631474\n" +
+                        "67\t-125\n" +
+                        "207\t-125\n" +
+                        "-55\t-1792928964\n" +
+                        "-104\t-1153445279\n" +
+                        "-127\t1631244228\n" +
+                        "790\t-125\n" +
+                        "881\t-125\n" +
+                        "-535\t-938514914\n" +
+                        "-973\t-342047842\n" +
+                        "-463\t-27395319\n" +
+                        "-667\t2137969456\n" +
+                        "578\t-125\n" +
+                        "940\t-125\n" +
+                        "-54\t-1162267908\n" +
+                        "-393\t-296610933\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else -125\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testInt() throws Exception {
         assertQuery(
                 "x\tcase\n" +
