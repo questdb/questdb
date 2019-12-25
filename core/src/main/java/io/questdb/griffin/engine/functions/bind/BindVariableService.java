@@ -44,12 +44,7 @@ public class BindVariableService {
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
-
-        int index = namedVariables.keyIndex(name, 1, name.length());
-        if (index > -1) {
-            return null;
-        }
-        return namedVariables.valueAt(index);
+        return namedVariables.valueAt(namedVariables.keyIndex(name, 1, name.length()));
     }
 
     public Function getFunction(int index) {
@@ -65,7 +60,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new BinBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof BinBindVariable) {
                 ((BinBindVariable) function).value = value;
             } else {
@@ -94,7 +89,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new BooleanBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof BooleanBindVariable) {
                 ((BooleanBindVariable) function).value = value;
             } else {
@@ -123,7 +118,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new ByteBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof ByteBindVariable) {
                 ((ByteBindVariable) function).value = value;
             } else {
@@ -152,7 +147,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new DateBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof DateBindVariable) {
                 ((DateBindVariable) function).value = value;
             } else {
@@ -166,7 +161,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new CharBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof CharBindVariable) {
                 ((CharBindVariable) function).value = value;
             } else {
@@ -195,7 +190,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new DoubleBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof DoubleBindVariable) {
                 ((DoubleBindVariable) function).value = value;
             } else {
@@ -224,7 +219,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new FloatBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof FloatBindVariable) {
                 ((FloatBindVariable) function).value = value;
             } else {
@@ -253,7 +248,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new IntBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof IntBindVariable) {
                 ((IntBindVariable) function).value = value;
             } else {
@@ -271,7 +266,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new Long256BindVariable(l0, l1, l2, l3));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof Long256BindVariable) {
                 Long256Impl v = ((Long256BindVariable) function).value;
                 v.setLong0(l0);
@@ -289,7 +284,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new Long256BindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof Long256BindVariable) {
                 ((Long256BindVariable) function).value.copyFrom(value);
             } else {
@@ -352,7 +347,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new LongBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof LongBindVariable) {
                 ((LongBindVariable) function).value = value;
             } else {
@@ -396,7 +391,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new ShortBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof ShortBindVariable) {
                 ((ShortBindVariable) function).value = value;
             } else {
@@ -425,7 +420,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new StrBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof StrBindVariable) {
                 ((StrBindVariable) function).setValue(value);
             } else {
@@ -454,7 +449,7 @@ public class BindVariableService {
         if (index > -1) {
             namedVariables.putAt(index, name, new TimestampBindVariable(value));
         } else {
-            Function function = namedVariables.valueAt(index);
+            Function function = namedVariables.valueAtQuick(index);
             if (function instanceof TimestampBindVariable) {
                 ((TimestampBindVariable) function).value = value;
             } else {

@@ -26,53 +26,33 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-
-public class IntObjHashMap<V> extends AbstractIntHashSet {
+public class LongObjHashMap<V> extends AbstractLongHashSet {
     private V[] values;
 
-    public IntObjHashMap() {
+    public LongObjHashMap() {
         this(8);
     }
 
-    public IntObjHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5f, noEntryKey);
+    public LongObjHashMap(int initialCapacity) {
+        this(initialCapacity, 0.5f);
     }
 
     @SuppressWarnings("unchecked")
-    public IntObjHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
-        super(initialCapacity, loadFactor, noKeyValue);
+    private LongObjHashMap(int initialCapacity, double loadFactor) {
+        super(initialCapacity, loadFactor);
         values = (V[]) new Object[keys.length];
         clear();
     }
 
-    public final void clear() {
-        super.clear();
-        Arrays.fill(values, null);
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKeyValue;
-        ((Object[]) values)[index] = null;
-    }
-
-    public V valueAt(int index) {
-        return index < 0 ? valueAtQuick(index) : null;
-    }
-
-    public V valueAtQuick(int index) {
-        return values[-index - 1];
-    }
-
-    public V get(int key) {
+    public V get(long key) {
         return valueAt(keyIndex(key));
     }
 
-    public void put(int key, V value) {
+    public void put(long key, V value) {
         putAt(keyIndex(key), key, value);
     }
 
-    public void putAt(int index, int key, V value) {
+    public void putAt(int index, long key, V value) {
         if (index < 0) {
             values[-index - 1] = value;
         } else {
@@ -84,6 +64,19 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         }
     }
 
+    public V valueAt(int index) {
+        return index < 0 ? valueAtQuick(index) : null;
+    }
+
+    public V valueAtQuick(int index) {
+        return values[-index - 1];
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
+
     @Override
     protected void move(int from, int to) {
         keys[to] = keys[from];
@@ -91,7 +84,7 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         erase(from);
     }
 
-    @SuppressWarnings({"unchecked"})
+    @SuppressWarnings("unchecked")
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
@@ -100,14 +93,14 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         int arrayCapacity = (int) (newCapacity / loadFactor);
 
         V[] oldValues = values;
-        int[] oldKeys = keys;
-        this.keys = new int[arrayCapacity];
+        long[] oldKeys = keys;
+        this.keys = new long[arrayCapacity];
         this.values = (V[]) new Object[arrayCapacity];
         Arrays.fill(keys, noEntryKeyValue);
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            int key = oldKeys[i];
+            long key = oldKeys[i];
             if (key != noEntryKeyValue) {
                 final int index = keyIndex(key);
                 keys[index] = key;

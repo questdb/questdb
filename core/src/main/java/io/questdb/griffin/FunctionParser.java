@@ -439,6 +439,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } catch (NumericException ignore) {
         }
 
+        try {
+            return new FloatConstant(node.position, Numbers.parseFloat(node.token));
+        } catch (NumericException ignore) {
+        }
+
         throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
@@ -733,7 +738,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final int index = factories.keyIndex(name);
             final ObjList<FunctionFactory> overload;
             if (index < 0) {
-                overload = factories.valueAt(index);
+                overload = factories.valueAtQuick(index);
             } else {
                 overload = new ObjList<>(4);
                 factories.putAt(index, name, overload);

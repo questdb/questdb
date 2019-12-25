@@ -118,7 +118,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             l = new ObjList<>();
             symbols.putAt(index, c0, l);
         } else {
-            l = symbols.valueAt(index);
+            l = symbols.valueAtQuick(index);
         }
         l.add(token);
         l.sort(COMPARATOR);

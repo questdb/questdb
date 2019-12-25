@@ -24,32 +24,19 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 class CharCaseFunction extends CharFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public CharCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public CharCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public char getChar(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getChar(rec);
-            }
-        }
-        return elseBranch == null ? 0 : elseBranch.getChar(rec);
+        return picker.pick(rec).getChar(rec);
     }
 }

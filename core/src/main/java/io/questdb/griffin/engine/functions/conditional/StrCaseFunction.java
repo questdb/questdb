@@ -24,55 +24,35 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 class StrCaseFunction extends StrFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public StrCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public StrCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getStr(rec);
-            }
-        }
-        return elseBranch == null ? null : elseBranch.getStr(rec);
+        return picker.pick(rec).getStr(rec);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getStrB(rec);
-            }
-        }
-        return elseBranch == null ? null : elseBranch.getStrB(rec);
+        return picker.pick(rec).getStrB(rec);
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                args.getQuick(i + 1).getStr(rec, sink);
-                return;
-            }
-        }
+        picker.pick(rec).getStr(rec, sink);
+    }
 
-        if (elseBranch != null) {
-            elseBranch.getStr(rec, sink);
-        }
+    @Override
+    public int getStrLen(Record rec) {
+        return picker.pick(rec).getStrLen(rec);
     }
 }

@@ -24,31 +24,19 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.std.ObjList;
 
 class ByteCaseFunction extends ByteFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public ByteCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public ByteCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public byte getByte(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getByte(rec);
-            }
-        }
-        return elseBranch == null ? 0 : elseBranch.getByte(rec);
+        return picker.pick(rec).getByte(rec);
     }
 }

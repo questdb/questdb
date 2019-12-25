@@ -132,7 +132,7 @@ public final class ColumnType {
         if (index > -1) {
             return "unknown";
         }
-        return typeNameMap.valueAt(index);
+        return typeNameMap.valueAtQuick(index);
     }
 
     public static int pow2SizeOf(int columnType) {

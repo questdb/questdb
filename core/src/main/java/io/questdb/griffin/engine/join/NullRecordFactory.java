@@ -54,6 +54,10 @@ public class NullRecordFactory {
         return new VirtualRecord(functions);
     }
 
+    public static Function getNullFunction(int columnType) {
+        return constantNulls.getQuick(columnType);
+    }
+
     static {
         LONG_256_NULL.setLong0(-1);
         LONG_256_NULL.setLong1(-1);
@@ -107,7 +111,6 @@ public class NullRecordFactory {
 
             @Override
             public void getLong256(Record rec, CharSink sink) {
-
             }
         });
     }

@@ -30,29 +30,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.std.ObjList;
 
 public class CaseFunctionFactory implements FunctionFactory {
-    private static ObjList<CaseFunctionConstructor> constructors = new ObjList<>();
-
-    static {
-        constructors.set(0, ColumnType.MAX, null);
-        constructors.setQuick(ColumnType.SYMBOL, StrCaseFunction::new);
-        constructors.setQuick(ColumnType.STRING, StrCaseFunction::new);
-        constructors.setQuick(ColumnType.DOUBLE, DoubleCaseFunction::new);
-        constructors.setQuick(ColumnType.FLOAT, FloatCaseFunction::new);
-        constructors.setQuick(ColumnType.LONG, LongCaseFunction::new);
-        constructors.setQuick(ColumnType.INT, IntCaseFunction::new);
-        constructors.setQuick(ColumnType.SHORT, ShortCaseFunction::new);
-        constructors.setQuick(ColumnType.BINARY, BinCaseFunction::new);
-        constructors.setQuick(ColumnType.CHAR, CharCaseFunction::new);
-        constructors.setQuick(ColumnType.BYTE, ByteCaseFunction::new);
-        constructors.setQuick(ColumnType.BOOLEAN, BooleanCaseFunction::new);
-        constructors.setQuick(ColumnType.DATE, DateCaseFunction::new);
-        constructors.setQuick(ColumnType.TIMESTAMP, TimestampCaseFunction::new);
-        constructors.setQuick(ColumnType.LONG256, Long256CaseFunction::new);
-    }
-
     @Override
     public String getSignature() {
         return "case(V)";
@@ -95,16 +76,18 @@ public class CaseFunctionFactory implements FunctionFactory {
             throw SqlException.position(elseBranch.getPosition()).put(ColumnType.nameOf(returnType)).put(" expected, found ").put(ColumnType.nameOf(elseBranch.getType()));
         }
 
-        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
-        if (constructor == null) {
-            throw SqlException.$(position, "not implemented for type '").put(ColumnType.nameOf(returnType)).put('\'');
-        }
+        final int argsLen = vars.size();
+        final Function elseB = elseBranch != null ? elseBranch : NullRecordFactory.getNullFunction(returnType);
 
-        return constructor.newInstance(position, vars, elseBranch);
-    }
+        final CaseFunctionPicker picker = record -> {
+            for (int i = 0; i < argsLen; i += 2) {
+                if (vars.getQuick(i).getBool(record)) {
+                    return args.getQuick(i + 1);
+                }
+            }
+            return elseB;
+        };
 
-    @FunctionalInterface
-    private interface CaseFunctionConstructor {
-        Function newInstance(int position, ObjList<Function> vars, Function elseBranch);
+        return CaseCommon.getCaseFunction(position, returnType, picker);
     }
 }

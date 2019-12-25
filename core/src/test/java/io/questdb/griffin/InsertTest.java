@@ -187,7 +187,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertImplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33)");
+            CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {

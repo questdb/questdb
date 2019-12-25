@@ -48,6 +48,7 @@ public class StrConstant extends StrFunction implements ConstantFunction {
         }
     }
 
+
     @Override
     public CharSequence getStr(Record rec) {
         return value;

@@ -176,7 +176,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     if (writer != null) {
                         switchModeToAppend();
                     } else {
-                        initCacheEntry(token, writerCache.valueAt(wrtIndex));
+                        initCacheEntry(token, writerCache.valueAtQuick(wrtIndex));
                     }
                 } else {
                     switchTable(token, wrtIndex);
@@ -215,7 +215,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         this.writer = writer;
         this.metadata = writer.getMetadata();
         this.columnCount = metadata.getColumnCount();
-        writerCache.valueAt(cacheEntryIndex).writer = writer;
+        writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
 
         final int columnCount = columnNameType.size() / 2;
         final TableWriter.Row row = createNewRow(cache, columnCount);
@@ -478,7 +478,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void switchTable(CachedCharSequence tableName, int entryIndex) {
         if (this.cacheEntryIndex != 0) {
             // add previous writer to commit list
-            CacheEntry e = writerCache.valueAt(cacheEntryIndex);
+            CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
                 commitList.put(e.writer.getName(), e.writer);
             }
@@ -486,7 +486,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         CacheEntry entry;
         if (entryIndex < 0) {
-            entry = writerCache.valueAt(entryIndex);
+            entry = writerCache.valueAtQuick(entryIndex);
         } else {
             entry = new CacheEntry();
             writerCache.putAt(entryIndex, Chars.toString(tableName), entry);

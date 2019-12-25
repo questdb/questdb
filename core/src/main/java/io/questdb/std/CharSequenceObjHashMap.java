@@ -110,8 +110,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
     }
 
     public V valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : null;
+        return index < 0 ? valueAtQuick(index) : null;
+    }
+
+    public V valueAtQuick(int index) {
+        return values[-index - 1];
     }
 
     public V valueQuick(int index) {

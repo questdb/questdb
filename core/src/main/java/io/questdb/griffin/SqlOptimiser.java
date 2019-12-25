@@ -667,7 +667,7 @@ class SqlOptimiser {
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
             // column is already being referenced by translating model
-            final CharSequence translatedColumnName = translatingAliasMap.valueAt(index);
+            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence alias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
             innerModel.addColumn(translatedColumn);
@@ -1867,7 +1867,7 @@ class SqlOptimiser {
                 }
                 return nextLiteral(alias, node.position);
             }
-            return nextLiteral(map.valueAt(index), node.position);
+            return nextLiteral(map.valueAtQuick(index), node.position);
         }
         return node;
     }
@@ -2073,7 +2073,7 @@ class SqlOptimiser {
 
                         if (index < 0) {
                             // we have found alias, rewrite order by column
-                            orderBy.token = map.valueAt(index);
+                            orderBy.token = map.valueAtQuick(index);
                         } else {
                             // we must attempt to ascend order by column
                             // when we have group by model, ascent is not possible
@@ -2102,7 +2102,7 @@ class SqlOptimiser {
                                     }
 
                                     if (index < 0) {
-                                        alias = synthetic.getColumnToAliasMap().valueAt(index);
+                                        alias = synthetic.getColumnToAliasMap().valueAtQuick(index);
                                     }
                                 }
 
@@ -2547,7 +2547,7 @@ class SqlOptimiser {
                 // we have table column hit when alias is not found
                 // in this case expression rewrite is unnecessary
                 if (index < 0) {
-                    CharSequence column = nameTypeMap.valueAt(index);
+                    CharSequence column = nameTypeMap.valueAtQuick(index);
                     assert column != null;
                     // it is also unnecessary to rewrite literal if target value is the same
                     if (!Chars.equals(node.token, column)) {

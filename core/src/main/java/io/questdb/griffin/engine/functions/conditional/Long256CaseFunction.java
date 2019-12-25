@@ -24,56 +24,31 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.std.Long256;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 class Long256CaseFunction extends Long256Function {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public Long256CaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public Long256CaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getLong256A(rec);
-            }
-        }
-        return elseBranch == null ? NullRecordFactory.LONG_256_NULL : elseBranch.getLong256A(rec);
+        return picker.pick(rec).getLong256A(rec);
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getLong256B(rec);
-            }
-        }
-        return elseBranch == null ? NullRecordFactory.LONG_256_NULL : elseBranch.getLong256B(rec);
+        return picker.pick(rec).getLong256B(rec);
     }
 
     @Override
     public void getLong256(Record rec, CharSink sink) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                args.getQuick(i + 1).getLong256(rec, sink);
-                return;
-            }
-        }
-        if (elseBranch != null) {
-            elseBranch.getLong256(rec, sink);
-        }
+        picker.pick(rec).getLong256(rec, sink);
     }
 }

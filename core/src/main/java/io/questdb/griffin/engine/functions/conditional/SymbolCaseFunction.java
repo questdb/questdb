@@ -25,25 +25,23 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.std.BinarySequence;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 
-class BinCaseFunction extends BinFunction {
+class SymbolCaseFunction extends SymbolFunction {
     private final CaseFunctionPicker picker;
 
-    public BinCaseFunction(int position, CaseFunctionPicker picker) {
+    public SymbolCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
         this.picker = picker;
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return picker.pick(rec).getBin(rec);
+    public CharSequence getSymbol(Record rec) {
+        return picker.pick(rec).getSymbol(rec);
     }
 
     @Override
-    public long getBinLen(Record rec) {
-        return picker.pick(rec).getBinLen(rec);
+    public int getInt(Record rec) {
+        return picker.pick(rec).getInt(rec);
     }
-
 }

@@ -125,7 +125,7 @@ public abstract class StrFunction implements Function {
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr(rec);
     }
 
     @Override

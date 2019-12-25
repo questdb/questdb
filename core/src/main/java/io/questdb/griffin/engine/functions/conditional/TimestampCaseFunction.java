@@ -24,32 +24,19 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 class TimestampCaseFunction extends TimestampFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public TimestampCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getTimestamp(rec);
-            }
-        }
-        return elseBranch == null ? Numbers.LONG_NaN : elseBranch.getTimestamp(rec);
+        return picker.pick(rec).getTimestamp(rec);
     }
 }

@@ -41,7 +41,7 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public char getChar(Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -71,13 +71,13 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return getLong(rec);
+    public final double getDouble(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return getLong(rec);
+    public final float getFloat(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -86,7 +86,7 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
+    public final RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 
@@ -96,7 +96,7 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory() {
+    public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 

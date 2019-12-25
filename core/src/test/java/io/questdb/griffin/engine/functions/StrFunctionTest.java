@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -113,9 +114,9 @@ public class StrFunctionTest {
         Assert.assertEquals(1, function.getStrLen(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetSym() {
-        function.getSymbol(null);
+        TestUtils.assertEquals("a", function.getSymbol(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

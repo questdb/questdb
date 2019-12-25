@@ -24,26 +24,9 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.std.BinarySequence;
+import io.questdb.cairo.sql.Function;
 
-class BinCaseFunction extends BinFunction {
-    private final CaseFunctionPicker picker;
-
-    public BinCaseFunction(int position, CaseFunctionPicker picker) {
-        super(position);
-        this.picker = picker;
-    }
-
-    @Override
-    public BinarySequence getBin(Record rec) {
-        return picker.pick(rec).getBin(rec);
-    }
-
-    @Override
-    public long getBinLen(Record rec) {
-        return picker.pick(rec).getBinLen(rec);
-    }
-
+@FunctionalInterface
+interface CaseFunctionConstructor {
+    Function getInstance(int position, CaseFunctionPicker picker);
 }

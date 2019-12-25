@@ -69,7 +69,7 @@ public class DateLocale {
             l = new ObjList<>();
             map.putAt(index, c0, l);
         } else {
-            l = map.valueAt(index);
+            l = map.valueAtQuick(index);
         }
         l.add(((char) pos) + token.toUpperCase());
         l.sort(GenericLexer.COMPARATOR);

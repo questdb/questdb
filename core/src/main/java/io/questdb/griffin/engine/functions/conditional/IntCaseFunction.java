@@ -24,32 +24,19 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 class IntCaseFunction extends IntFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public IntCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public IntCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public int getInt(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getInt(rec);
-            }
-        }
-        return elseBranch == null ? Numbers.INT_NaN : elseBranch.getInt(rec);
+        return picker.pick(rec).getInt(rec);
     }
 }

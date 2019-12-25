@@ -24,31 +24,19 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.std.ObjList;
 
 class BooleanCaseFunction extends BooleanFunction {
-    private final ObjList<Function> args;
-    private final int argsLen;
-    private final Function elseBranch;
+    private final CaseFunctionPicker picker;
 
-    public BooleanCaseFunction(int position, ObjList<Function> args, Function elseBranch) {
+    public BooleanCaseFunction(int position, CaseFunctionPicker picker) {
         super(position);
-        this.args = args;
-        this.argsLen = args.size();
-        this.elseBranch = elseBranch;
+        this.picker = picker;
     }
 
     @Override
     public boolean getBool(Record rec) {
-        for (int i = 0; i < argsLen; i += 2) {
-            if (args.getQuick(i).getBool(rec)) {
-                return args.getQuick(i + 1).getBool(rec);
-            }
-        }
-        return elseBranch != null && elseBranch.getBool(rec);
+        return picker.pick(rec).getBool(rec);
     }
 }

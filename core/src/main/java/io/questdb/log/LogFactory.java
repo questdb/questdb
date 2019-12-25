@@ -71,6 +71,7 @@ public class LogFactory implements Closeable {
         this.clock = clock;
     }
 
+    @SuppressWarnings("rawtypes")
     public static Log getLog(Class clazz) {
         return getLog(clazz.getName());
     }
@@ -99,14 +100,14 @@ public class LogFactory implements Closeable {
             if (is != null) {
                 Properties properties = new Properties();
                 properties.load(is);
-                configureFromPoperties(factory, properties, workerPool);
+                configureFromProperties(factory, properties, workerPool);
             } else {
                 File f = new File(conf);
                 if (f.canRead()) {
                     try (FileInputStream fis = new FileInputStream(f)) {
                         Properties properties = new Properties();
                         properties.load(fis);
-                        configureFromPoperties(factory, properties, workerPool);
+                        configureFromProperties(factory, properties, workerPool);
                     }
                 } else {
                     factory.configureDefaultWriter();
@@ -122,7 +123,7 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    public static void configureFromPoperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
+    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
 
         factory.workerPool = workerPool;
         String writers = properties.getProperty("writers");
@@ -162,6 +163,7 @@ public class LogFactory implements Closeable {
         factory.bind();
     }
 
+    @SuppressWarnings("rawtypes")
     private static LogWriterConfig createWriter(final Properties properties, String w) {
         final String writer = "w." + w + '.';
         final String clazz = properties.getProperty(writer + "class");
@@ -277,7 +279,7 @@ public class LogFactory implements Closeable {
             scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(3));
             scopeConfigs.add(scopeConf);
         } else {
-            scopeConf = scopeConfigMap.valueAt(index);
+            scopeConf = scopeConfigMap.valueAtQuick(index);
         }
         scopeConf.add(config);
     }

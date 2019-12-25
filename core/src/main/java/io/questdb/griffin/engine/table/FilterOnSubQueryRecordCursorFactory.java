@@ -110,7 +110,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                     final RowCursorFactory rowCursorFactory;
                     final int index = factories.keyIndex(symbolKey);
                     if (index < 0) {
-                        rowCursorFactory = factories.valueAt(index);
+                        rowCursorFactory = factories.valueAtQuick(index);
                     } else {
                         if (filter == null) {
                             rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
