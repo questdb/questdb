@@ -326,11 +326,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             mutableArgs.clear();
             mutableArgs.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                Function c = stack.poll();
-                if (c == null) {
-                    throw SqlException.position(node.position).put("too few arguments [found=").put(n).put(",expected=").put(argCount).put(']');
-                }
-                mutableArgs.setQuick(n, c);
+                mutableArgs.setQuick(n, stack.poll());
             }
             stack.push(createFunction(node, mutableArgs));
         }
@@ -636,6 +632,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(int position, Function function) {
+        // todo: LONG256 missing
         switch (function.getType()) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {

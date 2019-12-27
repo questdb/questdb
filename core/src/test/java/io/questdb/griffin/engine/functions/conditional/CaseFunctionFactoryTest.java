@@ -300,6 +300,29 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntOrElseMalformedBinaryOperator() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else +125\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                103,
+                "too few arguments for '+' [found=1,expected=2]"
+        );
+    }
+
+    @Test
     public void testInt() throws Exception {
         assertQuery(
                 "x\tcase\n" +
@@ -861,6 +884,28 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true
+        );
+    }
+
+    @Test
+    public void testNonBooleanWhen() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_date() a," +
+                        " rnd_date() b," +
+                        " rnd_date() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                37,
+                "BOOLEAN expected, found INT"
         );
     }
 

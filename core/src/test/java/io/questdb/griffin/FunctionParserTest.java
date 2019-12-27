@@ -1128,7 +1128,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testTooFewArguments() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.SHORT));
-        assertFail(2, "too few arguments [found=1,expected=2]", "a + ", metadata);
+        assertFail(2, "too few arguments for '+' [found=1,expected=2]", "a + ", metadata);
     }
 
     @Test

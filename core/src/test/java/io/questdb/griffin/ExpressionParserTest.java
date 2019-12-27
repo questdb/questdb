@@ -54,6 +54,47 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseLikeSwitch() throws SqlException {
+        x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterCase() {
+        assertFail(
+                "1 + case *x when 1 then 'a' when 2 then 'b' end",
+                9,
+                "too few arguments for '*' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterWhen() {
+        assertFail(
+                "1 + case x when 1* then 'a' when 2 then 'b' end",
+                17,
+                "too few arguments for '*' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterThen() {
+        assertFail(
+                "1 + case x when 1 then +'a' when 2 then 'b' end",
+                23,
+                "too few arguments for '+' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterElse() {
+        assertFail(
+                "1 + case x when 1 then 'a' when 2 then 'b' else * end",
+                48,
+                "too few arguments for '*' [found=0,expected=2]"
+        );
+    }
+
+    @Test
     public void testCaseInFunction() throws SqlException {
         x(
                 "xyab+10>'a'ab-3<'b'0case10+zf*",
@@ -227,6 +268,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotConsumeArgumentOutsideOfBrace() {
+        assertFail("a+(*b)", 3, "too few arguments for '*' [found=1,expected=2]");
+    }
+
+    @Test
     public void testLiteralExit() throws Exception {
         x("abxybzc*+", "a + b * c(b(x,y),z) lit");
     }
@@ -302,6 +348,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountStar() throws SqlException {
+        x("*count", "count(*)");
+    }
+
+    @Test
     public void testUnary() throws Exception {
         x("4c-*", "4 * -c");
     }
@@ -317,8 +368,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWhacky() throws Exception {
-        x("ab^-", "a-^b");
+    public void testWhacky() {
+        assertFail("a-^b", 1, "too few arguments for '-' [found=1,expected=2]");
     }
 
     private void assertFail(String content, int pos, String contains) {

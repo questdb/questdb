@@ -3101,7 +3101,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(
                 "select x from tab where not (x != 1 and)",
                 36,
-                "Missing right argument",
+                "too few arguments for 'and' [found=1,expected=2]",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }

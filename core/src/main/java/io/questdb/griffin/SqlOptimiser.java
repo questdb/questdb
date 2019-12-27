@@ -143,12 +143,6 @@ class SqlOptimiser {
         this.path = path;
     }
 
-    private static void assertNotNull(ExpressionNode node, int position, String message) throws SqlException {
-        if (node == null) {
-            throw SqlException.$(position, message);
-        }
-    }
-
     private static void linkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
@@ -1452,7 +1446,7 @@ class SqlOptimiser {
         return rewrittenModel;
     }
 
-    private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) throws SqlException {
+    private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) {
         switch (notOps.get(node.token)) {
             case NOT_OP_NOT:
                 if (reverse) {
@@ -1463,7 +1457,6 @@ class SqlOptimiser {
                         case ExpressionNode.CONSTANT:
                             return node;
                         default:
-                            assertNotNull(node.rhs, node.position, "Missing right argument");
                             return optimiseBooleanNot(node.rhs, true);
                     }
                 }
@@ -1471,8 +1464,6 @@ class SqlOptimiser {
                 if (reverse) {
                     node.token = "or";
                 }
-                assertNotNull(node.lhs, node.position, "Missing right argument");
-                assertNotNull(node.rhs, node.position, "Missing left argument");
                 node.lhs = optimiseBooleanNot(node.lhs, reverse);
                 node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
@@ -1480,8 +1471,6 @@ class SqlOptimiser {
                 if (reverse) {
                     node.token = "and";
                 }
-                assertNotNull(node.lhs, node.position, "Missing right argument");
-                assertNotNull(node.rhs, node.position, "Missing left argument");
                 node.lhs = optimiseBooleanNot(node.lhs, reverse);
                 node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
@@ -1529,7 +1518,7 @@ class SqlOptimiser {
         }
     }
 
-    private void optimiseBooleanNot(QueryModel model) throws SqlException {
+    private void optimiseBooleanNot(QueryModel model) {
         ExpressionNode where = model.getWhereClause();
         if (where != null) {
             model.setWhereClause(optimiseBooleanNot(where, false));
