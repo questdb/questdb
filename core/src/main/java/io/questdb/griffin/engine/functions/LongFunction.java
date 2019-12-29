@@ -68,7 +68,7 @@ public abstract class LongFunction implements Function {
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return getLong(rec);
     }
 
     @Override
@@ -133,7 +133,7 @@ public abstract class LongFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        return getLong(rec);
     }
 
     @Override

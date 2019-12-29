@@ -57,7 +57,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -84,7 +84,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -98,7 +98,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -312,7 +312,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -330,7 +330,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -373,7 +373,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 360000000) k" +
+                        " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -382,7 +382,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 360000000) k" +
+                        " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
@@ -539,7 +539,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 360000000) k" +
+                        " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -548,7 +548,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 360000000) k" +
+                        " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
@@ -716,7 +716,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -730,7 +730,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -861,7 +861,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -875,7 +875,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -937,7 +937,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -946,7 +946,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1047,7 +1047,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1095,7 +1095,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
@@ -1113,7 +1113,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
                         ") timestamp(k) partition by NONE"));
@@ -1167,7 +1167,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
                         ") timestamp(k) partition by NONE")
@@ -1240,7 +1240,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1249,7 +1249,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1326,7 +1326,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1340,7 +1340,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1485,7 +1485,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1494,7 +1494,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1536,7 +1536,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -1545,7 +1545,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1600,7 +1600,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1609,7 +1609,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1710,7 +1710,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1740,7 +1740,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(400)" +
                         ") timestamp(k) partition by NONE",
@@ -1770,7 +1770,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -1801,7 +1801,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(30000)" +
                         ") timestamp(k) partition by NONE",
@@ -1854,7 +1854,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -1863,7 +1863,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -1987,8 +1987,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(to_timestamp(0), 3600000000) p," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k) partition by NONE",
@@ -2041,7 +2041,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2050,7 +2050,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2186,7 +2186,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2195,7 +2195,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2331,7 +2331,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2340,7 +2340,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2452,8 +2452,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(to_timestamp(0), 3600000000) p," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k) partition by NONE",
@@ -2506,7 +2506,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2515,7 +2515,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2757,7 +2757,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_long256() a," +
                         " rnd_char() b," +
                         " rnd_double() c, " +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2767,7 +2767,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_long256() a," +
                         " rnd_char() b," +
                         " rnd_double() c, " +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -3119,7 +3119,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3128,7 +3128,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -3278,7 +3278,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) i," +
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) j," +
                         " rnd_boolean() l," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -3335,7 +3335,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3349,7 +3349,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -3480,7 +3480,7 @@ public class SampleByTest extends AbstractGriffinTest {
                                 " rnd_short() e," +
                                 " rnd_byte(3,10) f," +
                                 " rnd_long() g," +
-                                " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                                " timestamp_sequence(172800000000, 3600000000) k" +
                                 " from" +
                                 " long_sequence(20)" +
                                 ") timestamp(k) partition by NONE"));
@@ -3554,7 +3554,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3572,7 +3572,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -3624,7 +3624,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3633,7 +3633,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -3739,7 +3739,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3762,7 +3762,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",

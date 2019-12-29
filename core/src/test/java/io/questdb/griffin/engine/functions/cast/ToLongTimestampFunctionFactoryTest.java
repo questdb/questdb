@@ -30,15 +30,9 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
-
-import java.sql.SQLException;
 
 public class ToLongTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
     static long testValue = 1262596503400000L;

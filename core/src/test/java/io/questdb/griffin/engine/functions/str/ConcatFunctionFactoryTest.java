@@ -63,7 +63,7 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
                     " rnd_date()," +
                     " rnd_long256()," +
                     " rnd_char()," +
-                    " timestamp_sequence(to_timestamp(0L), 10L) ts from long_sequence(10)) timestamp(ts)");
+                    " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)");
             CompiledQuery cq = compiler.compile("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1");
 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {

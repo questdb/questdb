@@ -69,17 +69,17 @@ public abstract class TimestampFunction implements Function {
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return getTimestamp(rec) / 1000L;
     }
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return getTimestamp(rec);
     }
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return getTimestamp(rec);
     }
 
     @Override
@@ -89,7 +89,7 @@ public abstract class TimestampFunction implements Function {
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getTimestamp(rec);
     }
 
     @Override

@@ -52,7 +52,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -66,7 +66,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -90,7 +90,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -104,7 +104,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -128,7 +128,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
@@ -142,7 +142,7 @@ public class CountTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(to_timestamp(0), 0) k" +
+                        " timestamp_sequence(0, 0) k" +
                         " from" +
                         " long_sequence(800)" +
                         ") timestamp(k)",

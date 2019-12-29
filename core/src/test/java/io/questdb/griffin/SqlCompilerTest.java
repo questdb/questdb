@@ -1646,7 +1646,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
@@ -1726,7 +1726,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 " 'i', rnd_symbol(4,4,4,2)," +
                 " 'j', rnd_long(100,200,2)," +
                 " 'j1', rnd_long()," +
-                " 'k', timestamp_sequence(to_timestamp(0), 1000000000)," +
+                " 'k', timestamp_sequence(0, 1000000000)," +
                 " 'l', rnd_byte(2,50)," +
                 " 'm', rnd_bin(10, 20, 2)" +
                 "))  timestamp(k) partition by DAY");
@@ -2383,7 +2383,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_symbol(4,4,4,2)," +
                         " rnd_long(100,200,2)," +
                         " rnd_long()," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " timestamp_sequence(0, 1000000000)," +
                         " rnd_byte(2,50)," +
                         " rnd_bin(10, 20, 2)" +
                         " from long_sequence(20)",
@@ -2438,7 +2438,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_symbol(4,4,4,2)," +
                         " rnd_long(100,200,2)," +
                         " rnd_long()," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " timestamp_sequence(0, 1000000000)," +
                         " rnd_byte(2,50)," +
                         " rnd_bin(10, 20, 2)" +
                         " from long_sequence(20)",
@@ -2493,7 +2493,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_symbol(4,4,4,2)," +
                         " rnd_long(100,200,2)," +
                         " rnd_long()," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) ts," +
+                        " timestamp_sequence(0, 1000000000) ts," +
                         " rnd_byte(2,50)," +
                         " rnd_bin(10, 20, 2)" +
                         " from long_sequence(20)) timestamp(ts)",
@@ -2540,7 +2540,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x (e,n)" +
                         "select" +
                         " rnd_double(2)," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        " timestamp_sequence(0, 1000000000)" +
                         " from long_sequence(30)",
                 "x"
         );
@@ -2971,7 +2971,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         testInsertAsSelectError(null, "insert into x (e,n)" +
                 "select" +
                 " rnd_double(2)," +
-                " timestamp_sequence(to_timestamp(0), 1000000000)" +
+                " timestamp_sequence(0, 1000000000)" +
                 " from long_sequence(30)", 12, "table 'x' does not exist");
     }
 

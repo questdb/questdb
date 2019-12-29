@@ -241,7 +241,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -267,7 +267,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ")",
@@ -288,7 +288,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -315,7 +315,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        " 'k', timestamp_sequence(0, 1000000000)" +
                         ")" +
                         "), index(b) timestamp(k)",
                 "k",
@@ -344,7 +344,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        " 'k', timestamp_sequence(0, 1000000000)" +
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
@@ -365,7 +365,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        " 'k', timestamp_sequence(0, 1000000000)" +
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
@@ -381,7 +381,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnIntrinsicFalse() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
                 null,
                 false);
     }
@@ -453,7 +453,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
@@ -479,7 +479,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
@@ -523,7 +523,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
@@ -557,7 +557,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
@@ -596,7 +596,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         assertQuery(expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
                 null,
                 "insert into x (a,b)" +
                         " select" +
@@ -635,7 +635,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " *" +
                         " from" +
-                        " random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))" +
+                        " random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))" +
                         ")," +
                         " index(b)",
                 null,
@@ -675,7 +675,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        " 'k', timestamp_sequence(0, 1000000000)" +
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
@@ -685,7 +685,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnValuesDeferred() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
                 null,
                 "insert into x (a,b)" +
                         " select" +
@@ -807,7 +807,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -849,7 +849,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -891,7 +891,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -915,7 +915,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -955,7 +955,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -987,7 +987,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_boolean()," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1021,7 +1021,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str('USD', 'GBP', 'EUR')," +
                         " rnd_double()," +
                         " rnd_byte(0,1)," +
-                        " to_timestamp(0) timestamp" +
+                        " 0 timestamp" +
                         " from long_sequence(150)" +
                         ") timestamp (timestamp)",
                 "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
@@ -1056,7 +1056,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1091,7 +1091,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1126,7 +1126,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
@@ -1162,7 +1162,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
@@ -1196,7 +1196,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
@@ -1229,7 +1229,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1274,7 +1274,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "(200," +
                                     " 'a', rnd_double(0)*100," +
                                     " 'b', rnd_symbol(5,4,4,1)," +
-                                    " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                                    " 'k', timestamp_sequence(0, 100000000000)" +
                                     ")" +
                                     ") timestamp(k) partition by DAY"),
                             sqlExecutionContext);
@@ -1314,7 +1314,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1342,7 +1342,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(200," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1374,7 +1374,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(20," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
@@ -1402,7 +1402,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "(200," +
                         " 'a', rnd_double(0)*100," +
                         " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        " 'k', timestamp_sequence(0, 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
@@ -1431,7 +1431,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         " random_cursor" +
@@ -1451,7 +1451,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1482,7 +1482,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1516,7 +1516,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1545,7 +1545,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1576,7 +1576,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1602,7 +1602,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1632,7 +1632,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1658,7 +1658,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1689,7 +1689,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1717,7 +1717,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1749,7 +1749,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1777,7 +1777,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 10000000000) k" +
+                        " timestamp_sequence(0, 10000000000) k" +
                         " from" +
                         " long_sequence(300)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1808,7 +1808,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1829,7 +1829,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1860,7 +1860,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1894,7 +1894,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -1930,7 +1930,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -1963,7 +1963,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -2001,7 +2001,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -2035,7 +2035,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -2067,7 +2067,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
@@ -2098,7 +2098,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -2116,7 +2116,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
@@ -2238,7 +2238,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -2309,7 +2309,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_long256() a," +
                         " rnd_char() b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -2473,7 +2473,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
@@ -2547,7 +2547,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2556,7 +2556,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2613,7 +2613,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(4,4,4,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2622,7 +2622,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(4,4,4,2) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2679,7 +2679,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2688,7 +2688,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -2819,7 +2819,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
@@ -2883,7 +2883,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
@@ -2999,7 +2999,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_str(1,1,2) c," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
@@ -3053,7 +3053,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) i," +
                         " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
@@ -3111,7 +3111,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " 'i', rnd_symbol(4,4,4,2)," +
                         " 'j', rnd_long(100,200,2)," +
                         " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " 'k', timestamp_sequence(0, 1000000000)," +
                         " 'l', rnd_byte(2,50)," +
                         " 'm', rnd_bin(10, 20, 2)" +
                         "))  timestamp(k) partition by DAY",
@@ -3158,7 +3158,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " 'i', rnd_symbol(4,4,4,2)," +
                         " 'j', rnd_long(100,200,2)," +
                         " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " 'k', timestamp_sequence(0, 1000000000)," +
                         " 'l', rnd_byte(2,50)," +
                         " 'm', rnd_bin(10, 20, 2)" +
                         "))  timestamp(k) partition by DAY",
@@ -3227,7 +3227,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " 'i', rnd_symbol(4,4,4,2)," +
                         " 'j', rnd_long(100,200,2)," +
                         " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " 'k', timestamp_sequence(0, 1000000000)," +
                         " 'l', rnd_byte(2,50)," +
                         " 'm', rnd_bin(10, 20, 2)" +
                         "))  timestamp(k) partition by DAY",
@@ -3274,7 +3274,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " 'i', rnd_symbol(4,4,4,2)," +
                         " 'j', rnd_long(100,200,2)," +
                         " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)," +
+                        " 'k', timestamp_sequence(0, 1000000000)," +
                         " 'l', rnd_byte(2,50)," +
                         " 'm', rnd_bin(10, 20, 2)" +
                         "))  timestamp(k) partition by DAY",

@@ -34,7 +34,7 @@ public class DateFunctionTest {
     private static final DateFunction function = new DateFunction(25) {
         @Override
         public long getDate(Record rec) {
-            return 0;
+            return 163;
         }
     };
 
@@ -58,14 +58,14 @@ public class DateFunctionTest {
         function.getByte(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetDouble() {
-        function.getDouble(null);
+        Assert.assertEquals(163, function.getDouble(null), 0.1);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetFloat() {
-        function.getFloat(null);
+        Assert.assertEquals(163, function.getFloat(null), 0.1);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -73,9 +73,9 @@ public class DateFunctionTest {
         function.getInt(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetLong() {
-        function.getLong(null);
+        Assert.assertEquals(163, function.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -123,9 +123,9 @@ public class DateFunctionTest {
         function.getSymbol(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetTimestamp() {
-        function.getTimestamp(null);
+        Assert.assertEquals(163000, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

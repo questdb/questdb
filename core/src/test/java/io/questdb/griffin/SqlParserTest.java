@@ -385,7 +385,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testConsistentColumnOrder() throws SqlException {
         assertQuery(
-                "select-choose rnd_int, rnd_int1, rnd_boolean, rnd_str, rnd_double, rnd_float, rnd_short, rnd_short1, rnd_date, rnd_timestamp, rnd_symbol, rnd_long, rnd_long1, ts, rnd_byte, rnd_bin from ((select-virtual rnd_int() rnd_int, rnd_int(0,30,2) rnd_int1, rnd_boolean() rnd_boolean, rnd_str(3,3,2) rnd_str, rnd_double(2) rnd_double, rnd_float(2) rnd_float, rnd_short(10,1024) rnd_short, rnd_short() rnd_short1, rnd_date(to_date('2015','yyyy'),to_date('2016','yyyy'),2) rnd_date, rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) rnd_timestamp, rnd_symbol(4,4,4,2) rnd_symbol, rnd_long(100,200,2) rnd_long, rnd_long() rnd_long1, timestamp_sequence(to_timestamp(0),1000000000) ts, rnd_byte(2,50) rnd_byte, rnd_bin(10,20,2) rnd_bin from (long_sequence(20))) _xQdbA1)",
+                "select-choose rnd_int, rnd_int1, rnd_boolean, rnd_str, rnd_double, rnd_float, rnd_short, rnd_short1, rnd_date, rnd_timestamp, rnd_symbol, rnd_long, rnd_long1, ts, rnd_byte, rnd_bin from ((select-virtual rnd_int() rnd_int, rnd_int(0,30,2) rnd_int1, rnd_boolean() rnd_boolean, rnd_str(3,3,2) rnd_str, rnd_double(2) rnd_double, rnd_float(2) rnd_float, rnd_short(10,1024) rnd_short, rnd_short() rnd_short1, rnd_date(to_date('2015','yyyy'),to_date('2016','yyyy'),2) rnd_date, rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) rnd_timestamp, rnd_symbol(4,4,4,2) rnd_symbol, rnd_long(100,200,2) rnd_long, rnd_long() rnd_long1, timestamp_sequence(0,1000000000) ts, rnd_byte(2,50) rnd_byte, rnd_bin(10,20,2) rnd_bin from (long_sequence(20))) _xQdbA1)",
                 "select * from (select" +
                         " rnd_int()," +
                         " rnd_int(0, 30, 2)," +
@@ -400,7 +400,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " rnd_symbol(4,4,4,2)," +
                         " rnd_long(100,200,2)," +
                         " rnd_long()," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) ts," +
+                        " timestamp_sequence(0, 1000000000) ts," +
                         " rnd_byte(2,50)," +
                         " rnd_bin(10, 20, 2)" +
                         " from long_sequence(20))"

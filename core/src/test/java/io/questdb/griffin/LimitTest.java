@@ -144,7 +144,7 @@ public class LimitTest extends AbstractGriffinTest {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
@@ -173,7 +173,7 @@ public class LimitTest extends AbstractGriffinTest {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " timestamp_sequence(0, 1000000000) k," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
@@ -251,7 +251,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
@@ -440,7 +440,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
@@ -496,7 +496,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
@@ -544,7 +544,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
@@ -569,7 +569,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                                 " rnd_symbol(4,4,4,2) ik," +
                                 " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " timestamp_sequence(0, 1000000000) k," +
                                 " rnd_byte(2,50) l," +
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +

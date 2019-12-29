@@ -34,7 +34,7 @@ public class LongFunctionTest {
     private static final LongFunction function = new LongFunction(25) {
         @Override
         public long getLong(Record rec) {
-            return 0;
+            return 149;
         }
     };
 
@@ -58,9 +58,9 @@ public class LongFunctionTest {
         function.getByte(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetDate() {
-        function.getDate(null);
+        Assert.assertEquals(149, function.getDate(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -113,9 +113,9 @@ public class LongFunctionTest {
         function.getSymbol(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetTimestamp() {
-        function.getTimestamp(null);
+        Assert.assertEquals(149, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

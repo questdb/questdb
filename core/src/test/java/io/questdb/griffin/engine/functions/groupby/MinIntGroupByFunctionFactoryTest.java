@@ -176,7 +176,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 360000000) k" +
+                        " timestamp_sequence(172800000000, 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -185,7 +185,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 360000000) k" +
+                        " timestamp_sequence(277200000000, 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
