@@ -40,7 +40,6 @@ import io.questdb.std.str.CharSink;
 
 public class NullRecordFactory {
 
-    public static final Long256Impl LONG_256_NULL = new Long256Impl();
     private static final ObjList<Function> constantNulls = new ObjList<>();
 
     public static Record getInstance(ColumnTypes types) {
@@ -59,11 +58,6 @@ public class NullRecordFactory {
     }
 
     static {
-        LONG_256_NULL.setLong0(-1);
-        LONG_256_NULL.setLong1(-1);
-        LONG_256_NULL.setLong2(-1);
-        LONG_256_NULL.setLong3(-1);
-
         constantNulls.extendAndSet(ColumnType.INT, new IntConstant(0, Numbers.INT_NaN));
         constantNulls.extendAndSet(ColumnType.STRING, new StrConstant(0, null));
         constantNulls.extendAndSet(ColumnType.SYMBOL, new SymbolFunction(0) {
@@ -101,12 +95,12 @@ public class NullRecordFactory {
         constantNulls.extendAndSet(ColumnType.LONG256, new Long256Function(0) {
             @Override
             public Long256 getLong256A(Record rec) {
-                return LONG_256_NULL;
+                return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public Long256 getLong256B(Record rec) {
-                return LONG_256_NULL;
+                return Long256Impl.NULL_LONG256;
             }
 
             @Override

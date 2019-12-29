@@ -31,11 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
-import io.questdb.griffin.engine.join.NullRecordFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.LongList;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -241,7 +237,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     case ColumnType.LONG256:
                         Long256 l1 = record.getLong256A(i);
                         Long256 l2 = record.getLong256B(i);
-                        if (l1 == NullRecordFactory.LONG_256_NULL) {
+                        if (l1 == Long256Impl.NULL_LONG256) {
                             Assert.assertSame(l1, l2);
                         } else {
                             Assert.assertNotSame(l1, l2);

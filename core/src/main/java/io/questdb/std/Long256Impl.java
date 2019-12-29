@@ -25,6 +25,16 @@
 package io.questdb.std;
 
 public class Long256Impl implements Long256Sink, Long256 {
+
+    public static final Long256Impl NULL_LONG256 = new Long256Impl();
+
+    static {
+        NULL_LONG256.setLong0(-1);
+        NULL_LONG256.setLong1(-1);
+        NULL_LONG256.setLong2(-1);
+        NULL_LONG256.setLong3(-1);
+    }
+
     private long l0;
     private long l1;
     private long l2;

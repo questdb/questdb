@@ -33,14 +33,6 @@ import io.questdb.std.str.CharSink;
 public class NullColumn implements ReadOnlyColumn {
 
     public static final NullColumn INSTANCE = new NullColumn();
-    private static final Long256Impl NULL_LONG_256 = new Long256Impl();
-
-    static {
-        NULL_LONG_256.setLong0(Numbers.LONG_NaN);
-        NULL_LONG_256.setLong1(Numbers.LONG_NaN);
-        NULL_LONG_256.setLong2(Numbers.LONG_NaN);
-        NULL_LONG_256.setLong3(Numbers.LONG_NaN);
-    }
 
     @Override
     public void close() {
@@ -126,12 +118,12 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public Long256 getLong256A(long offset) {
-        return NULL_LONG_256;
+        return Long256Impl.NULL_LONG256;
     }
 
     @Override
     public Long256 getLong256B(long offset) {
-        return NULL_LONG_256;
+        return Long256Impl.NULL_LONG256;
     }
 
     @Override
