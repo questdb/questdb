@@ -31,7 +31,8 @@ public class IntStackTest {
     @Test
     public void testStack() {
 
-        int[] expected = new int[29];
+        int sz = 2050;
+        int[] expected = new int[sz];
         int l = expected.length - 1;
 
         IntStack stack = new IntStack();
@@ -39,7 +40,7 @@ public class IntStackTest {
             stack.push(expected[l--] = i);
         }
 
-        Assert.assertEquals(29, stack.size());
+        Assert.assertEquals(sz, stack.size());
 
         int count = 0;
         while (stack.notEmpty()) {

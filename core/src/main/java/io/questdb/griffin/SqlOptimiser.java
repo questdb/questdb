@@ -1842,23 +1842,24 @@ class SqlOptimiser {
             QueryModel innerModel,
             QueryModel validatingModel
     ) throws SqlException {
-        if (node != null && node.type == ExpressionNode.LITERAL) {
-            final CharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnToAliasMap();
-            int index = map.keyIndex(node.token);
-            if (index > -1) {
-                // this is the first time we see this column and must create alias
-                CharSequence alias = createColumnAlias(node, translatingModel);
-                QueryColumn column = queryColumnPool.next().of(alias, node);
-                // add column to both models
-                addColumnToTranslatingModel(column, translatingModel, validatingModel);
-                if (innerModel != null) {
-                    innerModel.addColumn(column);
-                }
-                return nextLiteral(alias, node.position);
+        return node != null && node.type == ExpressionNode.LITERAL ? doReplaceLiteral(node, translatingModel, innerModel, validatingModel) : node;
+    }
+
+    private ExpressionNode doReplaceLiteral(@Transient ExpressionNode node, QueryModel translatingModel, QueryModel innerModel, QueryModel validatingModel) throws SqlException {
+        final CharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnToAliasMap();
+        int index = map.keyIndex(node.token);
+        if (index > -1) {
+            // this is the first time we see this column and must create alias
+            CharSequence alias = createColumnAlias(node, translatingModel);
+            QueryColumn column = queryColumnPool.next().of(alias, node);
+            // add column to both models
+            addColumnToTranslatingModel(column, translatingModel, validatingModel);
+            if (innerModel != null) {
+                innerModel.addColumn(column);
             }
-            return nextLiteral(map.valueAtQuick(index), node.position);
+            return nextLiteral(alias, node.position);
         }
-        return node;
+        return nextLiteral(map.valueAtQuick(index), node.position);
     }
 
     private void resolveJoinColumns(QueryModel model) throws SqlException {

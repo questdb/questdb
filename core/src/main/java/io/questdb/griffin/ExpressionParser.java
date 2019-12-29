@@ -43,6 +43,7 @@ class ExpressionParser {
     private static final int BRANCH_LAMBDA = 7;
     private static final int BRANCH_CASE_START = 9;
     private static final int BRANCH_CASE_CONTROL = 10;
+    private static final int BRANCH_CAST_AS = 11;
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
 
     static {
@@ -59,11 +60,17 @@ class ExpressionParser {
     private final Deque<ExpressionNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final IntStack argStackDepthStack = new IntStack();
-    private final ObjectPool<ExpressionNode> sqlNodePool;
+    private final IntStack castBraceCountStack = new IntStack();
+
+    private final IntStack backupParamCountStack = new IntStack();
+    private final IntStack backupArgStackDepthStack = new IntStack();
+    private final IntStack backupCastBraceCountStack = new IntStack();
+
+    private final ObjectPool<ExpressionNode> expressionNodePool;
     private final SqlParser sqlParser;
 
-    ExpressionParser(ObjectPool<ExpressionNode> sqlNodePool, SqlParser sqlParser) {
-        this.sqlNodePool = sqlNodePool;
+    ExpressionParser(ObjectPool<ExpressionNode> expressionNodePool, SqlParser sqlParser) {
+        this.expressionNodePool = expressionNodePool;
         this.sqlParser = sqlParser;
     }
 
@@ -78,6 +85,7 @@ class ExpressionParser {
             int braceCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
+            int castAsCount = 0;
 
             ExpressionNode node;
             CharSequence tok;
@@ -121,7 +129,6 @@ class ExpressionParser {
 
                     case '(':
                         thisBranch = BRANCH_LEFT_BRACE;
-                        braceCount++;
                         // If the token is a left parenthesis, then push it onto the stack.
                         paramCountStack.push(paramCount);
                         paramCount = 0;
@@ -131,7 +138,13 @@ class ExpressionParser {
 
                         // precedence must be max value to make sure control node isn't
                         // consumed as parameter to a greedy function
-                        opStack.push(sqlNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+
+                        // check if this brace was opened after 'cast'
+                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == -1) {
+                            castBraceCountStack.update(braceCount + 1);
+                        }
+                        braceCount++;
                         break;
 
                     case ')':
@@ -145,6 +158,13 @@ class ExpressionParser {
                         }
 
                         thisBranch = BRANCH_RIGHT_BRACE;
+                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
+                            if (castAsCount == 0) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'as' missing");
+                            }
+                            castAsCount--;
+                            castBraceCountStack.pop();
+                        }
                         braceCount--;
                         // If the token is a right parenthesis:
                         // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
@@ -177,35 +197,46 @@ class ExpressionParser {
                         }
 
                         break;
+                    case 'c':
+                    case 'C':
+                        if (Chars.equalsLowerCaseAscii(tok, "cast")) {
+                            castBraceCountStack.push(-1);
+                            thisBranch = BRANCH_LITERAL;
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lexer.lastTokenPosition()));
+                            break;
+                        }
+                        processDefaultBranch = true;
+                        break;
+                    case 'a':
+                    case 'A':
+                        if (Chars.equalsLowerCaseAscii(tok, "as")) {
+                            if (castAsCount < castBraceCountStack.size()) {
+
+                                thisBranch = BRANCH_CAST_AS;
+
+                                // push existing args to the listener
+                                while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                                    argStackDepth = onNode(listener, node, argStackDepth);
+                                }
+
+                                if (node != null) {
+                                    opStack.push(node);
+                                }
+
+                                paramCount++;
+                                castAsCount++;
+                            } else {
+                                processDefaultBranch = true;
+                            }
+                        } else {
+                            processDefaultBranch = true;
+                        }
+                        break;
                     case 's':
                     case 'S':
                         if (Chars.equalsLowerCaseAscii(tok, "select")) {
                             thisBranch = BRANCH_LAMBDA;
-                            // It is highly likely this expression parser will be re-entered when
-                            // parsing sub-query. To prevent sub-query consuming operation stack we must add a
-                            // control node, which would prevent such consumption
-
-                            // precedence must be max value to make sure control node isn't
-                            // consumed as parameter to a greedy function
-                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
-
-
-                            int pos = lexer.lastTokenPosition();
-                            // allow sub-query to parse "select" keyword
-                            lexer.unparse();
-
-                            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
-                            n.queryModel = sqlParser.parseSubQuery(lexer);
-                            argStackDepth = onNode(listener, n, argStackDepth);
-
-                            // pop our control node if sub-query hasn't done it
-                            ExpressionNode control = opStack.peek();
-                            if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
-                                opStack.poll();
-                            }
-
-                            // re-introduce closing brace to this loop
-                            lexer.unparse();
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
                         } else {
                             processDefaultBranch = true;
                         }
@@ -225,7 +256,7 @@ class ExpressionParser {
                         if (nonLiteralBranches.excludes(thisBranch)) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         } else {
                             if (opStack.size() > 1) {
@@ -244,7 +275,7 @@ class ExpressionParser {
                                 || Chars.equalsLowerCaseAscii(tok, "true") || Chars.equalsLowerCaseAscii(tok, "false")) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         }
                     default:
@@ -266,7 +297,6 @@ class ExpressionParser {
                         // push o1 onto the operator stack.
 
                         int operatorType = op.type;
-
 
                         if (thisChar == '-') {
                             switch (prevBranch) {
@@ -296,7 +326,7 @@ class ExpressionParser {
                                 break;
                             }
                         }
-                        node = sqlNodePool.next().of(
+                        node = expressionNodePool.next().of(
                                 op.type == OperatorExpression.SET ? ExpressionNode.SET_OPERATION : ExpressionNode.OPERATION,
                                 op.token,
                                 op.precedence,
@@ -319,7 +349,7 @@ class ExpressionParser {
 
                             argStackDepthStack.push(argStackDepth);
                             argStackDepth = 0;
-                            opStack.push(sqlNodePool.next().of(ExpressionNode.FUNCTION, GenericLexer.immutableOf(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lexer.lastTokenPosition()));
                             thisBranch = BRANCH_CASE_START;
                             continue;
                         }
@@ -388,7 +418,7 @@ class ExpressionParser {
                                             if (argCount == 0) {
                                                 // this is 'case when', we will
                                                 // indicate that this is regular 'case' to the rewrite logic
-                                                onNode(listener, sqlNodePool.next().of(ExpressionNode.LITERAL, null, Integer.MIN_VALUE, -1), argStackDepth);
+                                                onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL, null, Integer.MIN_VALUE, -1), argStackDepth);
                                             }
                                             paramCount++;
                                         }
@@ -423,7 +453,7 @@ class ExpressionParser {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(sqlNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
+                        opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
@@ -454,11 +484,57 @@ class ExpressionParser {
             }
 
         } catch (SqlException e) {
+            opStack.clear();
+            backupCastBraceCountStack.clear();
+            backupParamCountStack.clear();
+            backupArgStackDepthStack.clear();
+            throw e;
+        } finally {
             argStackDepthStack.clear();
             paramCountStack.clear();
-            opStack.clear();
-            throw e;
+            castBraceCountStack.clear();
         }
+    }
+
+    private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
+        // It is highly likely this expression parser will be re-entered when
+        // parsing sub-query. To prevent sub-query consuming operation stack we must add a
+        // control node, which would prevent such consumption
+
+        // precedence must be max value to make sure control node isn't
+        // consumed as parameter to a greedy function
+        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+
+        final int paramCountStackSize = paramCountStack.size();
+        paramCountStack.copyTo(backupParamCountStack, paramCountStackSize);
+
+        final int argStackDepthStackSize = argStackDepthStack.size();
+        argStackDepthStack.copyTo(backupArgStackDepthStack, argStackDepthStackSize);
+
+        final int castBraceCountStackSize = castBraceCountStack.size();
+        castBraceCountStack.copyTo(backupCastBraceCountStack, castBraceCountStackSize);
+
+        int pos = lexer.lastTokenPosition();
+        // allow sub-query to parse "select" keyword
+        lexer.unparse();
+
+        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
+        node.queryModel = sqlParser.parseSubQuery(lexer);
+        argStackDepth = onNode(listener, node, argStackDepth);
+
+        // pop our control node if sub-query hasn't done it
+        ExpressionNode control = opStack.peek();
+        if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
+            opStack.poll();
+        }
+
+        backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
+        backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
+        backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
+
+        // re-introduce closing brace to this loop
+        lexer.unparse();
+        return argStackDepth;
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {

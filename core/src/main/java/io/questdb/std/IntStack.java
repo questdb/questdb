@@ -24,19 +24,23 @@
 
 package io.questdb.std;
 
-
 import java.util.Arrays;
 
 public class IntStack implements Mutable {
     private static final int noEntryValue = -1;
     private static final int MIN_INITIAL_CAPACITY = 8;
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
     private int[] elements;
     private int head;
     private int tail;
     private int mask;
 
     public IntStack() {
-        allocateElements(16);
+        this(DEFAULT_INITIAL_CAPACITY);
+    }
+
+    public IntStack(int initialCapacity) {
+        allocateElements(initialCapacity);
     }
 
     public void clear() {
@@ -72,6 +76,13 @@ public class IntStack implements Mutable {
         }
     }
 
+    public void copyTo(IntStack there, int count) {
+        int n = Math.min(count, size());
+        while (n-- > 0) {
+            there.push(pop());
+        }
+    }
+
     public int size() {
         return (tail - head) & mask;
     }
@@ -88,17 +99,18 @@ public class IntStack implements Mutable {
 
     private void doubleCapacity() {
         assert head == tail;
-        int p = head;
+        int h = head;
         int n = elements.length;
-        int r = n - p;
+        int r = n - h;
         int newCapacity = n << 1;
         if (newCapacity < 0) {
             throw new IllegalStateException("Stack is too big");
         }
-        int[] a = new int[newCapacity];
-        System.arraycopy(elements, p, a, 0, r);
-        System.arraycopy(elements, 0, a, r, p);
-        elements = a;
+        int[] next = new int[newCapacity];
+        System.arraycopy(elements, h, next, 0, r);
+        System.arraycopy(elements, 0, next, r, h);
+        Arrays.fill(next, r + h, newCapacity, noEntryValue);
+        elements = next;
         head = 0;
         tail = n;
         mask = newCapacity - 1;

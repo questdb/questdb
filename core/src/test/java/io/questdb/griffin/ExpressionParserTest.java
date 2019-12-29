@@ -209,6 +209,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseLowercase() throws SqlException {
+        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+                "10*(CASE" +
+                        " WHEN (w1+1)*5=10" +
+                        " THEN 'th1'-1" +
+                        " WHEN w2*3>1" +
+                        " THEN 'th2'" +
+                        " ELSE 0" +
+                        " END + 1)");
+    }
+
+    @Test
     public void testCaseWithOuterBraces() throws SqlException {
         x("10w11+10='th1'w23*1>'th2'0case1+*",
                 "10*(case" +
@@ -238,6 +250,73 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testEqualPrecedence() throws Exception {
         x("abc^^", "a^b^c");
+    }
+
+    @Test
+    public void testCastSimple() throws SqlException {
+        x("10shortcast", "cast(10 as short)");
+    }
+
+    @Test
+    public void testCastLowercase() throws SqlException {
+        x("10shortcast", "CAST(10 AS short)");
+    }
+
+    @Test
+    public void testCastFunctionCall() throws SqlException {
+        x("1102030f+shortcast", "cast(1+f(10,20,30) as short)");
+    }
+
+    @Test
+    public void testCastNested() throws SqlException {
+        x("1longcastshortcast", "cast(cast(1 as long) as short)");
+    }
+
+    @Test
+    public void testCastLambdaWithAs() throws SqlException {
+        x("(select-choose x y from (tab))funshortcast", "cast(fun(select x as y from tab order by x) as short)");
+    }
+
+    @Test
+    public void testCastNoAs() {
+        assertFail("cast(1) + 1",
+                6,
+                "'as' missing");
+    }
+
+    @Test
+    public void testCastNoAs2() {
+        assertFail("cast(1)",
+                6,
+                "'as' missing");
+    }
+
+    @Test
+    public void testCastNoAs3() {
+        assertFail("cast(cast(1 as short))",
+                21,
+                "'as' missing");
+    }
+
+    @Test
+    public void testCastNoAs4() {
+        assertFail("cast(cast(1) as short)",
+                11,
+                "'as' missing");
+    }
+
+    @Test
+    public void testCastMissingExpression() {
+        assertFail("cast(as short)",
+                0,
+                "too few arguments for 'cast'");
+    }
+
+    @Test
+    public void testCastMissingType() {
+        assertFail("cast(1 as)",
+                0,
+                "too few arguments for 'cast'");
     }
 
     @Test

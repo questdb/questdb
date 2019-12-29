@@ -58,8 +58,8 @@ public class JsonLexer implements Mutable, Closeable {
         unquotedTerminators.add('[');
     }
 
-    private final IntStack objDepthStack = new IntStack();
-    private final IntStack arrayDepthStack = new IntStack();
+    private final IntStack objDepthStack = new IntStack(64);
+    private final IntStack arrayDepthStack = new IntStack(64);
     private final StringSink sink = new StringSink();
     private final int cacheSizeLimit;
     private int state = S_START;
