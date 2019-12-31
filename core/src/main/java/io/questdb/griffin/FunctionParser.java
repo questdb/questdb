@@ -440,6 +440,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } catch (NumericException ignore) {
         }
 
+        // type constant for 'CAST' operation
+
+        final int columnType = ColumnType.columnTypeOf(node.token);
+
+        if (columnType > -1) {
+            return Constants.getNullConstant(columnType);
+        }
+
         throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
@@ -745,6 +753,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             if (factory.isGroupBy()) {
                 groupByFunctionNames.add(name);
             }
+
+            LOG.info().$("func: ").$(factory.getSignature()).$();
         }
     }
 }

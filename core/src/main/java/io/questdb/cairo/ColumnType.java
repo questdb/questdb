@@ -25,10 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.TypeEx;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
 public final class ColumnType {
     public static final int BOOLEAN = 0;
@@ -43,13 +42,12 @@ public final class ColumnType {
     public static final int DOUBLE = 9;
     public static final int STRING = 10;
     public static final int SYMBOL = 11;
-    public static final int BINARY = 12;
-    public static final int LONG256 = 13;
+    public static final int LONG256 = 12;
+    public static final int BINARY = 13;
     public static final int PARAMETER = 14;
     public static final int MAX = PARAMETER;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
-    private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
-    private static final ThreadLocal<StringSink> caseConverterBuffer = ThreadLocal.withInitial(StringSink::new);
+    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
 
@@ -71,22 +69,22 @@ public final class ColumnType {
         typeNameMap.put(TypeEx.CURSOR, "CURSOR");
         typeNameMap.put(LONG256, "LONG256");
 
-        nameTypeMap.put("BOOLEAN", BOOLEAN);
-        nameTypeMap.put("BYTE", BYTE);
-        nameTypeMap.put("DOUBLE", DOUBLE);
-        nameTypeMap.put("FLOAT", FLOAT);
-        nameTypeMap.put("INT", INT);
-        nameTypeMap.put("LONG", LONG);
-        nameTypeMap.put("SHORT", SHORT);
-        nameTypeMap.put("CHAR", CHAR);
-        nameTypeMap.put("STRING", STRING);
-        nameTypeMap.put("SYMBOL", SYMBOL);
-        nameTypeMap.put("BINARY", BINARY);
-        nameTypeMap.put("DATE", DATE);
-        nameTypeMap.put("PARAMETER", PARAMETER);
-        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
-        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
-        nameTypeMap.put("LONG256", ColumnType.LONG256);
+        nameTypeMap.put("boolean", BOOLEAN);
+        nameTypeMap.put("byte", BYTE);
+        nameTypeMap.put("double", DOUBLE);
+        nameTypeMap.put("float", FLOAT);
+        nameTypeMap.put("int", INT);
+        nameTypeMap.put("long", LONG);
+        nameTypeMap.put("short", SHORT);
+        nameTypeMap.put("char", CHAR);
+        nameTypeMap.put("string", STRING);
+        nameTypeMap.put("symbol", SYMBOL);
+        nameTypeMap.put("binary", BINARY);
+        nameTypeMap.put("date", DATE);
+        nameTypeMap.put("parameter", PARAMETER);
+        nameTypeMap.put("timestamp", TIMESTAMP);
+        nameTypeMap.put("cursor", TypeEx.CURSOR);
+        nameTypeMap.put("long256", ColumnType.LONG256);
 
         TYPE_SIZE_POW2[ColumnType.BOOLEAN] = 0;
         TYPE_SIZE_POW2[ColumnType.BYTE] = 0;
@@ -119,12 +117,7 @@ public final class ColumnType {
     }
 
     public static int columnTypeOf(CharSequence name) {
-        StringSink b = caseConverterBuffer.get();
-        b.clear();
-        for (int i = 0, n = name.length(); i < n; i++) {
-            b.put(Character.toUpperCase(name.charAt(i)));
-        }
-        return nameTypeMap.get(b);
+        return nameTypeMap.get(name);
     }
 
     public static String nameOf(int columnType) {

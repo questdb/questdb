@@ -28,27 +28,27 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
 
-public class ToDateLongFunctionFactory implements FunctionFactory {
+public class CastLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_date(L)";
+        return "cast(Ln)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            return new DateConstant(position, arg.getLong(null));
+        Function var = args.getQuick(0);
+        if (var.isConstant()) {
+            return new TimestampConstant(position, var.getLong(null));
         }
-        return new Func(position, arg);
+        return new Func(position, var);
     }
 
-    private static class Func extends DateFunction implements UnaryFunction {
+    private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function arg;
 
         public Func(int position, Function arg) {
@@ -62,7 +62,7 @@ public class ToDateLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDate(Record rec) {
+        public long getTimestamp(Record rec) {
             return arg.getLong(rec);
         }
     }

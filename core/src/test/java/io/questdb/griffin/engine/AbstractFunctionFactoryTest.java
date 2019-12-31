@@ -30,10 +30,10 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.cast.ToByteIntFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.ToDateLongFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.ToShortIntFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.ToTimestampLongFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -202,18 +202,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         functions.add(functionFactory);
         if (toTimestampRefs > 0) {
-            functions.add(new ToTimestampLongFunctionFactory());
+            functions.add(new CastLongToTimestampFunctionFactory());
         }
         if (toDateRefs > 0) {
-            functions.add(new ToDateLongFunctionFactory());
+            functions.add(new CastLongToDateFunctionFactory());
         }
 
         if (toShortRefs > 0) {
-            functions.add(new ToShortIntFunctionFactory());
+            functions.add(new CastIntToShortFunctionFactory());
         }
 
         if (toByteRefs > 0) {
-            functions.add(new ToByteIntFunctionFactory());
+            functions.add(new CastIntToByteFunctionFactory());
         }
 
         addExtraFunctions();
@@ -371,15 +371,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 sink.put((Long) value);
                 break;
             case ColumnType.DATE:
-                sink.put("to_date(").put((Long) value).put(")");
+                sink.put("cast(").put((Long) value).put(" as date)");
                 toDateRefs++;
                 break;
             case ColumnType.TIMESTAMP:
-                sink.put("to_timestamp(").put((Long) value).put(")");
+                sink.put("cast(").put((Long) value).put(" as timestamp)");
                 toTimestampRefs++;
                 break;
             case ColumnType.SHORT:
-                sink.put("to_short(").put((Integer) value).put(")");
+                sink.put("cast(").put((Integer) value).put(" as short)");
                 toShortRefs++;
                 break;
             case ColumnType.CHAR:
@@ -387,7 +387,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 break;
             default:
                 // byte
-                sink.put("to_byte(").put((Integer) value).put(")");
+                sink.put("cast(").put((Integer) value).put(" as byte)");
                 toByteRefs++;
                 break;
         }

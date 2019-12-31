@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.join.NullRecordFactory;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ObjList;
 
 public class CaseFunctionFactory implements FunctionFactory {
@@ -77,7 +77,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         final int argsLen = vars.size();
-        final Function elseB = elseBranch != null ? elseBranch : NullRecordFactory.getNullFunction(returnType);
+        final Function elseB = elseBranch != null ? elseBranch : Constants.getNullConstant(returnType);
 
         final CaseFunctionPicker picker = record -> {
             for (int i = 0; i < argsLen; i += 2) {

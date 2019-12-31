@@ -140,7 +140,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -162,7 +162,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -225,7 +225,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -247,7 +247,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -272,7 +272,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -294,7 +294,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -368,7 +368,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
@@ -378,7 +378,7 @@ public class JoinTest extends AbstractGriffinTest {
 
                 compiler.compile(
                         "create table y as (" +
-                                "select to_int(x) i," +
+                                "select cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -391,7 +391,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from (" +
                                 "select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
@@ -402,7 +402,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from (" +
                                 "select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
@@ -464,7 +464,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
@@ -474,7 +474,7 @@ public class JoinTest extends AbstractGriffinTest {
 
                 compiler.compile(
                         "create table y as (" +
-                                "select to_int(x) i," +
+                                "select cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -487,7 +487,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from (" +
                                 "select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
@@ -498,7 +498,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from (" +
                                 "select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
@@ -560,7 +560,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
@@ -570,7 +570,7 @@ public class JoinTest extends AbstractGriffinTest {
 
                 compiler.compile(
                         "create table y as (" +
-                                "select to_int(x) i," +
+                                "select cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -583,7 +583,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from (" +
                                 "select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
@@ -594,7 +594,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from (" +
                                 "select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
@@ -656,7 +656,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -678,7 +678,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -703,7 +703,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -725,7 +725,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -788,8 +788,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
+                compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
+                compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 try {
                     compiler.compile(query);
@@ -813,8 +813,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
+                compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
 
                 try {
                     compiler.compile(query);
@@ -854,7 +854,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -876,7 +876,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -898,7 +898,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -919,7 +919,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -990,7 +990,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -1012,7 +1012,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -1034,7 +1034,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -1055,7 +1055,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -1126,7 +1126,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -1147,7 +1147,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -1171,7 +1171,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -1192,7 +1192,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -1266,7 +1266,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -1287,7 +1287,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -1309,7 +1309,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -1330,7 +1330,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -1401,7 +1401,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
@@ -1410,7 +1410,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -1420,8 +1420,8 @@ public class JoinTest extends AbstractGriffinTest {
 
                 assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile("insert into x select * from (select to_int(x + 10) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
-                compiler.compile("insert into y select * from (select to_int(x + 30) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
+                compiler.compile("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 assertQuery("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
                                 "1\tmsft\t\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
@@ -1476,7 +1476,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1494,7 +1494,7 @@ public class JoinTest extends AbstractGriffinTest {
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
+                        " cast((x-1)/4 + 1 as int) kk," +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1537,7 +1537,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1555,7 +1555,7 @@ public class JoinTest extends AbstractGriffinTest {
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
+                        " cast((x-1)/4 + 1 as int) kk," +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1588,8 +1588,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String expected = "c\ta\tb\tcolumn\n";
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQuery(expected, "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10", null);
@@ -1623,8 +1623,8 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null);
@@ -1689,9 +1689,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -1741,7 +1741,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "00000010 b8 06\tQSPZPBHLNEJ\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1759,7 +1759,7 @@ public class JoinTest extends AbstractGriffinTest {
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
+                        " cast((x-1)/4 + 1 as int) kk," +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -1839,9 +1839,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -1885,16 +1885,16 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
                 // filter is applied to intermediate join result
                 assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null);
 
-                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)");
-                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)");
-                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)");
+                compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+                compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+                compiler.compile("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
                 assertQuery(expected +
                                 "7\t253\t14\t228\t214\n" +
@@ -1950,9 +1950,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 // filter is applied to final join result
                 assertQuery(
@@ -2001,14 +2001,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\tE\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_long256() a," +
                         " rnd_char() b " +
                         " from long_sequence(5))"
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
+                        " cast((x-1)/4 + 1 as int) kk," +
                         " rnd_long256() a," +
                         " rnd_char() b " +
                         " from long_sequence(20))"
@@ -2052,14 +2052,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\tI\t5\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\tE\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_long256() a," +
                         " rnd_char() b " +
                         " from long_sequence(5))"
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
+                        " cast((x-1)/4 + 1 as int) kk," +
                         " rnd_long256() a," +
                         " rnd_char() b " +
                         " from long_sequence(20))"
@@ -2092,13 +2092,13 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null);
 
-                compiler.compile("insert into x select to_int(x+10) c, abs(rnd_int() % 650) a from long_sequence(4)");
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                compiler.compile("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
+                compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "12\t347\t7\n" +
@@ -2263,16 +2263,16 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t258\n" +
                         "5\t251\t7\t198\t258\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
                 // filter is applied to intermediate join result
                 assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null);
 
-                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)");
-                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)");
-                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)");
+                compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+                compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+                compiler.compile("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
                 assertQuery(expected +
                                 "7\t253\t35\t228\t288\n" +
@@ -2350,9 +2350,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\t2018-03-01T00:00:00.000005Z\n" +
                         "5\t251\t7\t198\t191\t2018-03-01T00:00:00.000005Z\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts");
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -2378,7 +2378,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_long256() hash" +
                                 " from long_sequence(3)" +
                                 ")"
@@ -2418,7 +2418,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t-1915752164\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\t10\t-682294338\ttrue\tG\t0.915304483996\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T02:30:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -2436,7 +2436,7 @@ public class JoinTest extends AbstractGriffinTest {
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int(2*((x-1)/2))+2 kk," +
+                        " cast(2*((x-1)/2) as int)+2 kk," +
                         " rnd_int() a," +
                         " rnd_boolean() b," +
                         " rnd_str(1,1,2) c," +
@@ -2495,14 +2495,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_long256() a," +
                         " rnd_char() b" +
                         " from long_sequence(10))"
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int(2*((x-1)/2))+2 kk," +
+                        " cast(2*((x-1)/2) as int)+2 kk," +
                         " rnd_long256() a," +
                         " rnd_char() b" +
                         " from long_sequence(10))"
@@ -2545,14 +2545,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "6\t0x87aa0968faec6879a0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88\tP\t6\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\tS\n";
 
                 compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
+                        " cast(x as int) kk, " +
                         " rnd_long256() a," +
                         " rnd_char() b" +
                         " from long_sequence(10))"
                 );
 
                 compiler.compile("create table y as (select" +
-                        " to_int(2*((x-1)/2))+2 kk," +
+                        " cast(2*((x-1)/2) as int)+2 kk," +
                         " rnd_long256() a," +
                         " rnd_char() b" +
                         " from long_sequence(10))"
@@ -2595,14 +2595,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null);
 
-                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
+                compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "11\t467\tNaN\n" +
@@ -2651,14 +2651,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\t2018-03-01T00:00:00.000010Z\n" +
                         "10\t598\t74\t2018-03-01T00:00:00.000010Z\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQueryAndCache(expected, query, "ts");
 
-                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
+                compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "11\t467\tNaN\t2018-03-01T00:00:00.000011Z\n" +
@@ -2815,7 +2815,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -2837,7 +2837,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -2862,7 +2862,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -2884,7 +2884,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -2992,8 +2992,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
+                compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
+                compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 try {
                     compiler.compile(query);
@@ -3017,8 +3017,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
+                compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
 
                 try {
                     compiler.compile(query);
@@ -3083,7 +3083,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table x as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -3105,7 +3105,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -3127,7 +3127,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into x select * from " +
                                 "(select" +
-                                " to_int(x + 10) i," +
+                                " cast(x + 10 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym," +
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
@@ -3149,7 +3149,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
@@ -3254,8 +3254,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 compiler.compile("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))");
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
+                compiler.compile("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 try {
                     compiler.compile("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)");

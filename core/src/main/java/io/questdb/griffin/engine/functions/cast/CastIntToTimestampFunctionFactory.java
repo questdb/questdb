@@ -28,14 +28,15 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class ToShortIntFunctionFactory implements FunctionFactory {
+public class CastIntToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_short(I)";
+        return "cast(In)";
     }
 
     @Override
@@ -43,7 +44,7 @@ public class ToShortIntFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends ShortFunction implements UnaryFunction {
+    private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function arg;
 
         public Func(int position, Function arg) {
@@ -57,8 +58,9 @@ public class ToShortIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getShort(Record rec) {
-            return (short) arg.getInt(rec);
+        public long getTimestamp(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
         }
     }
 }

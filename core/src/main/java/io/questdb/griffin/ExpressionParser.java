@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -111,6 +112,10 @@ class ExpressionParser {
                             break OUT;
                         }
 
+                        if (castBraceCountStack.peek() == braceCount) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "',' is not expected here");
+                        }
+
                         // If the token is a function argument separator (e.g., a comma):
                         // Until the token at the top of the stack is a left parenthesis,
                         // pop operators off the stack onto the output queue. If no left
@@ -158,13 +163,21 @@ class ExpressionParser {
                         }
 
                         thisBranch = BRANCH_RIGHT_BRACE;
+                        final int localParamCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1);
+                        final boolean thisWasCast;
+
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
                             if (castAsCount == 0) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'as' missing");
                             }
+
                             castAsCount--;
                             castBraceCountStack.pop();
+                            thisWasCast = true;
+                        } else {
+                            thisWasCast = false;
                         }
+
                         braceCount--;
                         // If the token is a right parenthesis:
                         // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
@@ -176,6 +189,16 @@ class ExpressionParser {
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && opStack.size() == 2 && Chars.equals(opStack.peek().token, '(')) {
                                 argStackDepth = onNode(listener, node, 2);
                             } else {
+                                if (thisWasCast) {
+                                    // validate type
+                                    final int columnType = ColumnType.columnTypeOf(node.token);
+
+                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                        throw SqlException.$(node.position, "invalid type");
+                                    }
+
+                                    node.type = ExpressionNode.CONSTANT;
+                                }
                                 argStackDepth = onNode(listener, node, argStackDepth);
                             }
                         }
@@ -186,10 +209,19 @@ class ExpressionParser {
 
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
-                            node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
+                            node.paramCount = localParamCount + (node.paramCount == 2 ? 1 : 0);
                             node.type = ExpressionNode.FUNCTION;
                             argStackDepth = onNode(listener, node, argStackDepth);
                             opStack.poll();
+                        } else {
+                            // not at function?
+                            // peek the op stack to make sure it isn't a repeating brace
+                            if (localParamCount > 1
+                                    && (node = opStack.peek()) != null
+                                    && node.token.charAt(0) == '('
+                            ) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "no function or operator?");
+                            }
                         }
 
                         if (paramCountStack.notEmpty()) {

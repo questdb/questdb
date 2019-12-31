@@ -28,28 +28,23 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class SecondsToTimestampFunctionFactory implements FunctionFactory {
+public class CastIntToCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sec_to_timestamp(L)";
+        return "cast(Ia)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function var = args.getQuick(0);
-        if (var.isConstant()) {
-            return new TimestampConstant(position, var.getLong(null));
-        }
-        return new Func(position, var);
+        return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends TimestampFunction implements UnaryFunction {
+    private static class Func extends CharFunction implements UnaryFunction {
         private final Function arg;
 
         public Func(int position, Function arg) {
@@ -63,12 +58,9 @@ public class SecondsToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return value * 1_000_000L;
+        public char getChar(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NaN ? (char) value : 0;
         }
     }
 }

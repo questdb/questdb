@@ -36,7 +36,7 @@ import org.junit.Test;
 public class RndTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testInvalidNaNRate() {
-        assertFailure(50, "invalid NaN rate", 0L, 10000L, -2);
+        assertFailure(60, "invalid NaN rate", 0L, 10000L, -2);
     }
 
     @Test

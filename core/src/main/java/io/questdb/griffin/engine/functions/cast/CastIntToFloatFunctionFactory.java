@@ -22,25 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullRecordFactory {
+public class CastIntToFloatFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "cast(If)";
+    }
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.nullConstants.get(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new Func(position, args.getQuick(0));
+    }
+
+    private static class Func extends FloatFunction implements UnaryFunction {
+        private final Function arg;
+
+        public Func(int position, Function arg) {
+            super(position);
+            this.arg = arg;
         }
 
-        return new VirtualRecord(functions);
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NaN ? value : Float.NaN;
+        }
     }
 }

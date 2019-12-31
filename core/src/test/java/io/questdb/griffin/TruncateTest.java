@@ -351,7 +351,7 @@ public class TruncateTest extends AbstractGriffinTest {
         compiler.compile(
                 "create table x as (" +
                         "select" +
-                        " to_int(x) i," +
+                        " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
@@ -376,7 +376,7 @@ public class TruncateTest extends AbstractGriffinTest {
         compiler.compile(
                 "create table y as (" +
                         "select" +
-                        " to_int(x) i," +
+                        " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +

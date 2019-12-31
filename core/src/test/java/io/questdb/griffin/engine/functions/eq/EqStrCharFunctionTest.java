@@ -48,8 +48,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
-                    "abs(to_int(rnd_double(0)*100000)) price,\n" +
-                    "abs(to_int(rnd_double(0)*10000)) qty,\n" +
+                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
                     "from long_sequence(100000) x");
 
@@ -77,8 +77,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
-                    "abs(to_int(rnd_double(0)*100000)) price,\n" +
-                    "abs(to_int(rnd_double(0)*10000)) qty,\n" +
+                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
                     "from long_sequence(100000) x");
 
@@ -105,8 +105,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
-                    "abs(to_int(rnd_double(0)*100000)) price,\n" +
-                    "abs(to_int(rnd_double(0)*10000)) qty,\n" +
+                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
                     "from long_sequence(100000) x");
 
@@ -134,8 +134,8 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
                     "rnd_str(2,2,3) instrument,\n" +
-                    "abs(to_int(rnd_double(0)*100000)) price,\n" +
-                    "abs(to_int(rnd_double(0)*10000)) qty,\n" +
+                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
                     "from long_sequence(100000) x");
 

@@ -24,30 +24,43 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import org.junit.Test;
+import io.questdb.std.ObjList;
 
-public class ToIntDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testNan() throws SqlException {
-        call(Double.NaN).andAssert(Numbers.INT_NaN);
-    }
-
-    @Test
-    public void testNegative() throws SqlException {
-        call(-3.2).andAssert(-3);
-    }
-
-    @Test
-    public void testPositive() throws SqlException {
-        call(4567.0).andAssert(4567);
+public class CastIntToDoubleFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "cast(Id)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new ToIntDoubleFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new Func(position, args.getQuick(0));
+    }
+
+    private static class Func extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+
+        public Func(int position, Function arg) {
+            super(position);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NaN ? value : Double.NaN;
+        }
     }
 }

@@ -22,28 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.cast.ToDateLongFunctionFactory;
-import io.questdb.std.Numbers;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Chars;
 
-public class ToDateLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testNotNull() throws SqlException {
-        call(123L).andAssertDate(123);
-    }
+public class SymbolConstant extends SymbolFunction implements ConstantFunction {
+    private final String value;
+    private final int index;
 
-    @Test
-    public void testNull() throws SqlException {
-        call(Numbers.LONG_NaN).andAssertDate(Numbers.LONG_NaN);
+    public SymbolConstant(int position, CharSequence value, int index) {
+        super(position);
+        if (value == null) {
+            this.value = null;
+            this.index = SymbolTable.VALUE_IS_NULL;
+        } else {
+            if (Chars.startsWith(value, '\'')) {
+                this.value = Chars.toString(value, 1, value.length() - 1);
+            } else {
+                this.value = Chars.toString(value);
+            }
+            this.index = index;
+        }
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new ToDateLongFunctionFactory();
+    public int getInt(Record rec) {
+        return index;
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        return value;
     }
 }

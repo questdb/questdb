@@ -22,22 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.cast.ToShortIntFunctionFactory;
-import org.junit.Test;
+import io.questdb.std.ObjList;
 
-public class ToShortIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testSimple() throws SqlException {
-        call(123).andAssert((short) 123);
+public class CastIntToIntFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "cast(Ii)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new ToShortIntFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return args.getQuick(0);
     }
 }

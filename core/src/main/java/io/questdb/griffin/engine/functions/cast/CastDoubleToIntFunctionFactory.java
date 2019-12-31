@@ -33,10 +33,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class ToIntLongFunctionFactory implements FunctionFactory {
+public class CastDoubleToIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_int(L)";
+        return "cast(Di)";
     }
 
     @Override
@@ -59,8 +59,8 @@ public class ToIntLongFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getLong(rec);
-            return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
+            final double value = arg.getDouble(rec);
+            return value == value ? (int) value : Numbers.INT_NaN;
         }
     }
 }

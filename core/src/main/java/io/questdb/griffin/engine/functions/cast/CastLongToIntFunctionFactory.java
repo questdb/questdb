@@ -28,27 +28,23 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class ToLongTimestampFunctionFactory implements FunctionFactory {
+public class CastLongToIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_long(N)";
+        return "cast(Li)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function var = args.getQuick(0);
-        if (var.isConstant()) {
-            return new LongConstant(position, var.getTimestamp(null));
-        }
-        return new Func(position, var);
+        return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends LongFunction implements UnaryFunction {
+    private static class Func extends IntFunction implements UnaryFunction {
         private final Function arg;
 
         public Func(int position, Function arg) {
@@ -62,8 +58,9 @@ public class ToLongTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            return arg.getTimestamp(rec);
+        public int getInt(Record rec) {
+            final long value = arg.getLong(rec);
+            return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
         }
     }
 }

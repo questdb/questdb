@@ -2930,7 +2930,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_str(1,1,2) c," +
-                        " to_timestamp(1000000) k," +
+                        " cast(1000000 as timestamp) k," +
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
@@ -2940,7 +2940,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " 852921272," +
                         " 'J'," +
-                        " to_timestamp(1000000) t," +
+                        " 1000000 t," +
                         " 'APPC'" +
                         " from long_sequence(1)" +
                         ") timestamp(t)",

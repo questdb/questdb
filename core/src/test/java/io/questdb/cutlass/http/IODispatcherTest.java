@@ -1475,7 +1475,7 @@ public class IODispatcherTest {
             // insert one record
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+to_timestamp(6000000001))&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                             "Host: localhost:9000\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Accept: */*\r\n" +
@@ -1641,7 +1641,7 @@ public class IODispatcherTest {
             // insert one record
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+to_timestamp(6000000001))&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                             "Host: localhost:9000\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Accept: */*\r\n" +

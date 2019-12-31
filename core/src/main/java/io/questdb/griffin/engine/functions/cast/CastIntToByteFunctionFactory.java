@@ -30,12 +30,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class ToByteIntFunctionFactory implements FunctionFactory {
+public class CastIntToByteFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_byte(I)";
+        return "cast(Ib)";
     }
 
     @Override
@@ -58,7 +59,8 @@ public class ToByteIntFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) arg.getInt(rec);
+            final int value = arg.getInt(rec);
+            return value == Numbers.INT_NaN ? 0 : (byte) value;
         }
     }
 }

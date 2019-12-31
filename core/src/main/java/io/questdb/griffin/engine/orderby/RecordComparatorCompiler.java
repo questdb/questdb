@@ -212,7 +212,7 @@ public class RecordComparatorCompiler {
             String fieldType;
             String getterNameA;
             String getterNameB = null;
-            Class comparatorClass;
+            @SuppressWarnings("rawtypes") Class comparatorClass;
             String comparatorDesc = null;
             int index = keyColumnIndices.getQuick(i);
 

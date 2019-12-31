@@ -1634,7 +1634,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -2250,7 +2250,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
-                    compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))");
+                    compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))");
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -2775,9 +2775,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
                 try {
-                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                    compiler.compile("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
                 } catch (SqlException e) {
                     Assert.assertEquals(14, e.getPosition());
                     Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));

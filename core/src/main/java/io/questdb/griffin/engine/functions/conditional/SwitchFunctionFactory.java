@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.join.NullRecordFactory;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
@@ -188,7 +188,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getElseFunction(int valueType, Function elseBranch) {
-        return elseBranch != null ? elseBranch : NullRecordFactory.getNullFunction(valueType);
+        return elseBranch != null ? elseBranch : Constants.getNullConstant(valueType);
     }
 
     private Function getIfElseFunction(

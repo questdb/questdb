@@ -258,6 +258,33 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoFunctionNameForListOfArgs() {
+        assertFail(
+                "cast((10,20) as short)",
+                11,
+                "no function or operator?"
+        );
+    }
+
+    @Test
+    public void testCastTooManyArgs() {
+        assertFail(
+                "cast(10,20 as short)",
+                7,
+                "',' is not expected here"
+        );
+    }
+
+    @Test
+    public void testCastTooManyArgs2() {
+        assertFail(
+                "cast(10 as short, double)",
+                16,
+                "',' is not expected here"
+        );
+    }
+
+    @Test
     public void testCastLowercase() throws SqlException {
         x("10shortcast", "CAST(10 AS short)");
     }
@@ -316,7 +343,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType() {
         assertFail("cast(1 as)",
                 0,
-                "too few arguments for 'cast'");
+                "too few arguments for 'cast'"
+        );
+    }
+
+    @Test
+    public void testCastMissingType2() {
+        assertFail("cast(1 as 1)",
+                10,
+                "invalid type"
+        );
+    }
+
+    @Test
+    public void testCastMissingType3() {
+        assertFail("cast(1 as binary)",
+                10,
+                "invalid type"
+        );
     }
 
     @Test

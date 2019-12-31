@@ -132,7 +132,7 @@ public class LimitTest extends AbstractGriffinTest {
                 "select * from y limit 5,'ab'",
                 "create table y as (" +
                         "select" +
-                        " to_int(x) i," +
+                        " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym2," +
                         " round(rnd_double(0), 3) price," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -161,7 +161,7 @@ public class LimitTest extends AbstractGriffinTest {
                 "select * from y limit 5 + 0.3",
                 "create table y as (" +
                         "select" +
-                        " to_int(x) i," +
+                        " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym2," +
                         " round(rnd_double(0), 3) price," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -239,7 +239,7 @@ public class LimitTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -428,7 +428,7 @@ public class LimitTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -484,7 +484,7 @@ public class LimitTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -532,7 +532,7 @@ public class LimitTest extends AbstractGriffinTest {
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
-                                " to_int(x) i," +
+                                " cast(x as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
@@ -557,7 +557,7 @@ public class LimitTest extends AbstractGriffinTest {
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
-                                " to_int(x + 30) i," +
+                                " cast(x + 30 as int) i," +
                                 " rnd_symbol('msft','ibm', 'googl') sym2," +
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
