@@ -204,10 +204,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (UnsupportedOperationException ignore) {
                 }
-
-
             }
         }
+//
+//        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+//            testSymbolAPI(factory.getMetadata(), cursor);
+//        }
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
@@ -272,10 +274,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                     int column = symbolIndexes.getQuick(i);
                     SymbolTable symbolTable = cursor.getSymbolTable(column);
-                    CharSequence sym = record.getSym(column);
-                    int value = record.getInt(column);
-                    Assert.assertEquals(value, symbolTable.getQuick(sym));
-                    TestUtils.assertEquals(sym, symbolTable.value(value));
+                    if (symbolTable instanceof StaticSymbolTable) {
+                        CharSequence sym = record.getSym(column);
+                        int value = record.getInt(column);
+                        Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                        TestUtils.assertEquals(sym, symbolTable.valueOf(value));
+                    } else {
+                        final int value = record.getInt(column);
+                        TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
+                    }
                 }
             }
         }

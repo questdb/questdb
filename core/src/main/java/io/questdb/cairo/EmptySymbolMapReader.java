@@ -31,7 +31,7 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     public static final EmptySymbolMapReader INSTANCE = new EmptySymbolMapReader();
 
     @Override
-    public int getQuick(CharSequence value) {
+    public int keyOf(CharSequence value) {
         return SymbolTable.VALUE_NOT_FOUND;
     }
 
@@ -41,7 +41,7 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public CharSequence value(int key) {
+    public CharSequence valueOf(int key) {
         return null;
     }
 

@@ -189,7 +189,7 @@ public class TableReaderRecord implements Record {
         if (index < 0) {
             return null;
         }
-        return reader.getSymbolMapReader(col).value(colA(col).getInt(index * 4));
+        return reader.getSymbolMapReader(col).valueOf(colA(col).getInt(index * 4));
     }
 
     public long getRecordIndex() {

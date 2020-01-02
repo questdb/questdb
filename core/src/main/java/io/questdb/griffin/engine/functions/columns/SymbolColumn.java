@@ -25,15 +25,23 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements StatelessFunction {
     private final int columnIndex;
+    private final boolean symbolTableStatic;
+    private SymbolTable symbolTable;
 
-    public SymbolColumn(int position, int columnIndex) {
+    public SymbolColumn(int position, int columnIndex, boolean symbolTableStatic) {
         super(position);
         this.columnIndex = columnIndex;
+        this.symbolTableStatic = symbolTableStatic;
     }
 
     public int getColumnIndex() {
@@ -48,5 +56,25 @@ public class SymbolColumn extends SymbolFunction implements StatelessFunction {
     @Override
     public CharSequence getSymbol(Record rec) {
         return rec.getSym(columnIndex);
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public @Nullable StaticSymbolTable getStaticSymbolTable() {
+        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
     }
 }

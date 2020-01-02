@@ -54,10 +54,11 @@ class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
                 assert name != null;
                 columnMetadata.add(
                         new TableColumnMetadata(
-                                name.toString(),
+                                Chars.toString(name),
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
-                                TableUtils.getIndexBlockCapacity(metaMem, i)
+                                TableUtils.getIndexBlockCapacity(metaMem, i),
+                                true
                         )
                 );
                 offset += ReadOnlyMemory.getStorageLength(name);
@@ -265,10 +266,11 @@ class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
         }
         assert name != null;
         return new TableColumnMetadata(
-                name.toString(),
+                Chars.toString(name),
                 TableUtils.getColumnType(metaMem, index),
                 TableUtils.isColumnIndexed(metaMem, index),
-                TableUtils.getIndexBlockCapacity(metaMem, index)
+                TableUtils.getIndexBlockCapacity(metaMem, index),
+                true
         );
     }
 }

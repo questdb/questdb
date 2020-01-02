@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -62,7 +63,26 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(rnd.nextPositiveInt() % count);
+            return symbols.getQuick(next());
+        }
+
+        private int next() {
+            return rnd.nextPositiveInt() % count;
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return next();
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
         }
     }
 }

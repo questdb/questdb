@@ -22,26 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.conditional;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.SymbolFunction;
+public interface StaticSymbolTable extends SymbolTable {
+    int size();
 
-class SymbolCaseFunction extends SymbolFunction {
-    private final CaseFunctionPicker picker;
-
-    public SymbolCaseFunction(int position, CaseFunctionPicker picker) {
-        super(position);
-        this.picker = picker;
-    }
-
-    @Override
-    public CharSequence getSymbol(Record rec) {
-        return picker.pick(rec).getSymbol(rec);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return picker.pick(rec).getInt(rec);
-    }
+    int keyOf(CharSequence value);
 }

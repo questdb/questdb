@@ -28,7 +28,6 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class CastTest extends AbstractGriffinTest {
@@ -369,7 +368,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testIntToSymbolIndexBehaviour() throws Exception {
         assertQuery(
                 "b\ta\n" +
@@ -400,4 +398,34 @@ public class CastTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testStrToSymbolIndexBehaviour() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "JWCP\tJWCP\n" +
+                        "\t\n" +
+                        "YRXP\tYRXP\n" +
+                        "NRXGZ\tNRXGZ\n" +
+                        "UXIBB\tUXIBB\n" +
+                        "PGWFF\tPGWFF\n" +
+                        "DEYYQ\tDEYYQ\n" +
+                        "BHFOW\tBHFOW\n" +
+                        "DXYS\tDXYS\n" +
+                        "OUOJ\tOUOJ\n" +
+                        "RUED\tRUED\n" +
+                        "QULO\tQULO\n" +
+                        "GETJ\tGETJ\n" +
+                        "ZSRYR\tZSRYR\n" +
+                        "VTMHG\tVTMHG\n" +
+                        "ZZVD\tZZVD\n" +
+                        "MYICC\tMYICC\n" +
+                        "OUIC\tOUIC\n" +
+                        "KGHV\tKGHV\n" +
+                        "SDOTS\tSDOTS\n",
+                "select cast(a as symbol) b, a from tab",
+                "create table tab as (select rnd_str(4,5,100) a from long_sequence(20))",
+                null,
+                true
+        );
+    }
 }

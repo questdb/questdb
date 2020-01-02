@@ -30,9 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualRecordCursor cursor;
@@ -42,11 +40,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
             ObjList<Function> functions,
-            RecordCursorFactory baseFactory,
-            @Nullable IntList symbolTableCrossIndex) {
+            RecordCursorFactory baseFactory) {
         super(metadata);
         this.functions = functions;
-        this.cursor = new VirtualRecordCursor(functions, symbolTableCrossIndex);
+        this.cursor = new VirtualRecordCursor(functions);
         this.base = baseFactory;
     }
 

@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
-public class BaseRecordMetadata implements RecordMetadata {
+public abstract class BaseRecordMetadata implements RecordMetadata {
     protected ObjList<TableColumnMetadata> columnMetadata;
     protected CharSequenceIntHashMap columnNameIndexMap;
     protected int timestampIndex;
@@ -72,5 +72,10 @@ public class BaseRecordMetadata implements RecordMetadata {
 
     public TableColumnMetadata getColumnQuick(int index) {
         return columnMetadata.getQuick(index);
+    }
+
+    @Override
+    public boolean isSymbolTableStatic(int columnIndex) {
+        return columnMetadata.getQuick(columnIndex).isSymbolTableStatic();
     }
 }

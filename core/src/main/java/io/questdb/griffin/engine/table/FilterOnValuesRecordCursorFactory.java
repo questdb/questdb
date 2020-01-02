@@ -59,7 +59,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
             final CharSequence symbol = keyValues.get(i);
-            final int symbolKey = symbolMapReader.getQuick(symbol);
+            final int symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 addSymbolKey(symbolKey);
             } else {
@@ -107,11 +107,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     private boolean lookupDeferredSymbols(DataFrameCursor dataFrameCursor) {
-        SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         int n = deferredSymbols.size();
         for (int i = 0; i < n; ) {
             CharSequence symbolValue = deferredSymbols.get(i);
-            int symbolKey = symbolTable.getQuick(symbolValue);
+            int symbolKey = symbolTable.keyOf(symbolValue);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 addSymbolKey(symbolKey);
                 deferredSymbols.remove(symbolValue);

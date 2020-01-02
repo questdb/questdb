@@ -139,7 +139,7 @@ class CompactMapRecord implements MapRecord {
 
     @Override
     public CharSequence getSym(int col) {
-        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).value(getInt(col));
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));
     }
 
     @Override

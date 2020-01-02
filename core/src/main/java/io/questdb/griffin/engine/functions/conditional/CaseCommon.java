@@ -45,7 +45,7 @@ public class CaseCommon {
         CaseCommon.constructors.extendAndSet(ColumnType.FLOAT, FloatCaseFunction::new);
         CaseCommon.constructors.extendAndSet(ColumnType.DOUBLE, DoubleCaseFunction::new);
         CaseCommon.constructors.extendAndSet(ColumnType.LONG256, Long256CaseFunction::new);
-        CaseCommon.constructors.extendAndSet(ColumnType.SYMBOL, SymbolCaseFunction::new);
+        CaseCommon.constructors.extendAndSet(ColumnType.SYMBOL, StrCaseFunction::new);
         CaseCommon.constructors.extendAndSet(ColumnType.DATE, DateCaseFunction::new);
         CaseCommon.constructors.extendAndSet(ColumnType.TIMESTAMP, TimestampCaseFunction::new);
         CaseCommon.constructors.extendAndSet(ColumnType.BINARY, BinCaseFunction::new);

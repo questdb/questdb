@@ -33,6 +33,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -152,7 +153,7 @@ class GroupByUtils {
                             break;
                         case ColumnType.SYMBOL:
                             symbolTableIndex.put(i, index);
-                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i);
+                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
                             fun = new DateColumn(node.position, keyColumnIndex - 1);
@@ -180,19 +181,37 @@ class GroupByUtils {
                     }
                     assert type == ColumnType.TIMESTAMP;
                 }
+
+                // and finish with populating metadata for this factory
+                groupByMetadata.add(
+                        new TableColumnMetadata(
+                                Chars.toString(column.getName()),
+                                type,
+                                metadata.isColumnIndexed(index),
+                                metadata.getIndexValueBlockCapacity(index),
+                                metadata.isSymbolTableStatic(index)
+                        )
+                );
+
             } else {
                 // add group-by function as a record function as well
                 // so it can produce column values
                 final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex++);
                 recordFunctions.add(groupByFunction);
                 type = groupByFunction.getType();
+
+                // and finish with populating metadata for this factory
+                groupByMetadata.add(
+                        new TableColumnMetadata(
+                                Chars.toString(column.getName()),
+                                type,
+                                false,
+                                0,
+                                groupByFunction instanceof SymbolFunction && (((SymbolFunction) groupByFunction).isSymbolTableStatic())
+                        )
+                );
             }
 
-            // and finish with populating metadata for this factory
-            groupByMetadata.add(new TableColumnMetadata(
-                    Chars.toString(column.getName()),
-                    type
-            ));
         }
     }
 

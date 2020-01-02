@@ -33,37 +33,35 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 
-public class CastIntToSymbolFunctionFactory implements FunctionFactory {
+public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Ik)";
+        return "cast(Sk)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            final StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, arg.getInt(null));
-            return new SymbolConstant(position, Chars.toString(sink), 0);
+            return new SymbolConstant(position, Chars.toString(arg.getStr(null)), 0);
         }
         return new Func(position, arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final StringSink sink = new StringSink();
-        private final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
-        private final ObjList<String> symbolTable = new ObjList<>();
+        private final CharSequenceIntHashMap lookupMap = new CharSequenceIntHashMap();
+        private final ObjList<CharSequence> symbols = new ObjList<>();
         private int next = 1;
 
         public Func(int position, Function arg) {
             super(position);
             this.arg = arg;
-            symbolTable.add(null);
+            symbols.add(null);
         }
 
         @Override
@@ -73,46 +71,35 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return null;
+            final CharSequence value = arg.getStr(rec);
+            final int keyIndex;
+            if (value != null && (keyIndex = lookupMap.keyIndex(value)) > -1) {
+                final String str = Chars.toString(value);
+                lookupMap.putAt(keyIndex, str, next++);
+                symbols.add(str);
             }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTable.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next++);
-            sink.clear();
-            Numbers.append(sink, value);
-            final String str = Chars.toString(sink);
-            symbolTable.add(Chars.toString(sink));
-            return str;
+            return value;
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolTable.getQuick(TableUtils.toIndexKey(symbolKey));
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         @Override
         public int getInt(Record rec) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            final CharSequence value = arg.getStr(rec);
+            final int keyIndex;
+            if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
             }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTableShortcut.valueAt(keyIndex) - 1;
+            if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
+                final String str = Chars.toString(value);
+                lookupMap.putAt(keyIndex, str, next);
+                symbols.add(str);
+                return next++;
             }
-
-            symbolTableShortcut.putAt(keyIndex, value, next);
-            sink.clear();
-            Numbers.append(sink, value);
-            symbolTable.add(Chars.toString(sink));
-            return next++;
+            return lookupMap.valueAt(keyIndex) - 1;
         }
 
         @Override

@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.SymbolTypeCaster;
 import io.questdb.griffin.engine.TypeCaster;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -49,7 +49,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        Function symbolFunction = args.getQuick(0);
+        SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         Function cursorFunction = args.getQuick(1);
 
         // use first column to create list of values (over multiple records)
@@ -68,25 +68,23 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
                 throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
-        if (symbolFunction instanceof SymbolColumn) {
-            return new SymbolInCursorFunction(position, (SymbolColumn) symbolFunction, cursorFunction, typeCaster);
+        if (symbolFunction.getStaticSymbolTable() != null) {
+            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction, typeCaster);
         }
         return new StrInCursorFunction(position, symbolFunction, cursorFunction, typeCaster);
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
 
-        private final SymbolColumn valueArg;
+        private final SymbolFunction valueArg;
         private final Function cursorArg;
         private final IntHashSet symbolKeys = new IntHashSet();
-        private final int columnIndex;
         private final TypeCaster typeCaster;
 
-        public SymbolInCursorFunction(int position, SymbolColumn valueArg, Function cursorArg, TypeCaster typeCaster) {
+        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg, TypeCaster typeCaster) {
             super(position);
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
-            this.columnIndex = valueArg.getColumnIndex();
             this.typeCaster = typeCaster;
         }
 
@@ -111,21 +109,20 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
             cursorArg.init(symbolTableSource, executionContext);
             symbolKeys.clear();
 
-            final SymbolTable symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+            final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
+            assert symbolTable != null;
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    int key = symbolTable.getQuick(typeCaster.getValue(record, 0));
+                    int key = symbolTable.keyOf(typeCaster.getValue(record, 0));
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         symbolKeys.add(key + 1);
                     }
                 }
             }
         }
-
-
     }
 
     private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {

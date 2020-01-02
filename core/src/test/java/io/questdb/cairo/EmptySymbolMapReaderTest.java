@@ -35,10 +35,10 @@ public class EmptySymbolMapReaderTest {
         Assert.assertTrue(reader.isDeleted());
         reader.updateSymbolCount(1000);
         for (int i = 0; i < 10000; i++) {
-            Assert.assertNull(reader.value(i));
+            Assert.assertNull(reader.valueOf(i));
         }
         Assert.assertEquals(0, reader.size());
-        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("abc"));
+        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("abc"));
 
         Assert.assertEquals(0, reader.getSymbolCapacity());
         Assert.assertFalse(reader.isCached());

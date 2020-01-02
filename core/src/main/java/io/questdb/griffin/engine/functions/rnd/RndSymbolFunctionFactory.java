@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -84,10 +86,14 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
+            return symbols.getQuick(TableUtils.toIndexKey(next()));
+        }
+
+        private int next() {
             if (rnd.nextPositiveInt() % nullRate == 1) {
-                return null;
+                return SymbolTable.VALUE_IS_NULL;
             }
-            return symbols.getQuick(rnd.nextPositiveInt() % count);
+            return rnd.nextPositiveInt() % count;
         }
 
         private void seedFixed() {
@@ -98,6 +104,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         private void seedSymbols() {
             symbols.clear();
+            symbols.add(null);
             if (lo == hi) {
                 seedFixed();
             } else {
@@ -110,6 +117,21 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             for (int i = 0; i < count; i++) {
                 symbols.add(rnd.nextChars(lo + rnd.nextPositiveInt() % range).toString());
             }
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return next();
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
         }
     }
 }

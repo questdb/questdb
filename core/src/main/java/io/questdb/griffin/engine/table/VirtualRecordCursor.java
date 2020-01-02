@@ -25,18 +25,15 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.std.IntList;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 class VirtualRecordCursor implements RecordCursor {
     private final VirtualRecord record;
-    private final IntList symbolTableCrossIndex;
     private RecordCursor baseCursor;
 
-    public VirtualRecordCursor(ObjList<Function> functions, @Nullable IntList symbolTableCrossIndex) {
+    public VirtualRecordCursor(ObjList<Function> functions) {
         this.record = new VirtualRecord(functions);
-        this.symbolTableCrossIndex = symbolTableCrossIndex;
     }
 
     @Override
@@ -51,8 +48,7 @@ class VirtualRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        assert symbolTableCrossIndex != null;
-        return baseCursor.getSymbolTable(symbolTableCrossIndex.getQuick(columnIndex));
+        return ((SymbolFunction) record.getFunctions().getQuick(columnIndex));
     }
 
     @Override

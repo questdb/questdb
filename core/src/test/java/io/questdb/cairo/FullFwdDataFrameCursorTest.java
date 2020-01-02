@@ -48,7 +48,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long rowCount = 0;
         while (cursor.hasNext()) {
@@ -66,7 +66,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
                 RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
-                CharSequence expected = symbolTable.value(i - 1);
+                CharSequence expected = symbolTable.valueOf(i - 1);
                 while (ic.hasNext()) {
                     record.setRecordIndex(ic.next());
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
@@ -933,7 +933,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expecteRowCount, rowCount);
     }
 
-    private long assertIndex(TableReaderRecord record, int columnIndex, SymbolTable symbolTable, long count, DataFrame frame, int direction) {
+    private long assertIndex(TableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, DataFrame frame, int direction) {
 
         BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
 
@@ -952,7 +952,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             long target = record.getRecordIndex();
 
             // Get index cursor for each symbol in data frame
-            RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.getQuick(sym)), frame.getRowLo(), hi - 1);
+            RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf(sym)), frame.getRowLo(), hi - 1);
 
             while (ic.hasNext()) {
                 if (ic.next() == target) {
@@ -992,7 +992,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void assertSymbolFoundInIndex(FullFwdDataFrameCursor cursor, TableReaderRecord record, int columnIndex, int M) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long count = 0;
         while (cursor.hasNext()) {

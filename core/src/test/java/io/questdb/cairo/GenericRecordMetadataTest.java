@@ -38,7 +38,7 @@ public class GenericRecordMetadataTest {
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024, true));
         metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(2);
 
@@ -51,6 +51,7 @@ public class GenericRecordMetadataTest {
         }
 
         Assert.assertEquals(1024, metadata.getIndexValueBlockCapacity("cde"));
+        Assert.assertTrue(metadata.isSymbolTableStatic("cde"));
     }
 
     @Test
@@ -92,7 +93,7 @@ public class GenericRecordMetadataTest {
 
         String expected2 = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"z\",\"type\":\"DATE\"}],\"timestampIndex\":-1}";
         metadata.clear();
-        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL, false, 0, false));
         metadata.add(new TableColumnMetadata("z", ColumnType.DATE));
         sink.clear();
         metadata.toJson(sink);

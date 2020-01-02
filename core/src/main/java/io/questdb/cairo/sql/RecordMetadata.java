@@ -58,7 +58,13 @@ public interface RecordMetadata extends ColumnTypes {
 
     int getTimestampIndex();
 
+    default boolean isSymbolTableStatic(CharSequence columnName) {
+        return isSymbolTableStatic(getColumnIndex(columnName));
+    }
+
     boolean isColumnIndexed(int columnIndex);
+
+    boolean isSymbolTableStatic(int columnIndex);
 
     default void toJson(CharSink sink) {
         sink.put('{');

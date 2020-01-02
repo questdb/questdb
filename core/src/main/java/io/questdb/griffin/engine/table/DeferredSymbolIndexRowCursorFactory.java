@@ -59,7 +59,7 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void prepareCursor(TableReader tableReader) {
-        int symbolKey = tableReader.getSymbolMapReader(columnIndex).getQuick(symbol);
+        int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.symbolKey = TableUtils.toIndexKey(symbolKey);
         }

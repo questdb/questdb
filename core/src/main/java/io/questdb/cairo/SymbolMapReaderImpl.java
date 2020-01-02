@@ -60,16 +60,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public int getQuick(CharSequence symbol) {
-        if (symbol == null) {
+    public int keyOf(CharSequence value) {
+        if (value == null) {
             return SymbolTable.VALUE_IS_NULL;
         }
 
-        int hash = Hash.boundedHash(symbol, maxHash);
+        int hash = Hash.boundedHash(value, maxHash);
         RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
-            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+            if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
                 return SymbolMapWriter.offsetToKey(offsetOffset);
             }
         }
@@ -82,7 +82,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public CharSequence value(int key) {
+    public CharSequence valueOf(int key) {
         if (key > -1 && key < symbolCount) {
             if (cached) {
                 return cachedValue(key);
@@ -182,7 +182,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         String symbol;
         CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
         assert cs != null;
-        cache.extendAndSet(key, symbol = cs.toString());
+        cache.extendAndSet(key, symbol = Chars.toString(cs));
         return symbol;
     }
 

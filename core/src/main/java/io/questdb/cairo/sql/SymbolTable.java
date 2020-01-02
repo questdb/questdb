@@ -30,10 +30,5 @@ public interface SymbolTable {
     int VALUE_NOT_FOUND = -2;
     int VALUE_IS_NULL = Numbers.INT_NaN;
 
-    int getQuick(CharSequence value);
-
-    int size();
-
-    CharSequence value(int key);
-
+    CharSequence valueOf(int key);
 }

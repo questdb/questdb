@@ -27,13 +27,14 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
@@ -45,19 +46,22 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(
+            ObjList<Function> args,
+            int position, CairoConfiguration configuration
+    ) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
         // 2. when one of arguments is constant, save method call and use a field
 
-        Function symFunc = args.getQuick(0);
+        SymbolFunction symFunc = (SymbolFunction) args.getQuick(0);
         Function chrFunc = args.getQuick(1);
 
         if (chrFunc.isConstant()) {
             final char constValue = chrFunc.getChar(null);
-            if (symFunc instanceof SymbolColumn) {
-                return new ConstCheckColumnFunc(position, (SymbolColumn) symFunc, constValue);
+            if (symFunc.getStaticSymbolTable() != null) {
+                return new ConstCheckColumnFunc(position, symFunc, constValue);
             } else {
                 return new ConstCheckFunc(position, symFunc, constValue);
             }
@@ -88,11 +92,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
-        private final SymbolColumn arg;
+        private final SymbolFunction arg;
         private final char constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolColumn arg, char constant) {
+        public ConstCheckColumnFunc(int position, SymbolFunction arg, char constant) {
             super(position);
             this.arg = arg;
             this.constant = constant;
@@ -110,7 +114,10 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            valueIndex = symbolTableSource.getSymbolTable(arg.getColumnIndex()).getQuick(SingleCharCharSequence.get(constant));
+            arg.init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
+            assert symbolTable != null;
+            valueIndex = symbolTable.keyOf(SingleCharCharSequence.get(constant));
         }
     }
 

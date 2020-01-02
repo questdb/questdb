@@ -49,12 +49,22 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
     public int getInt(Record rec) {
         return index;
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
+        return value;
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
         return value;
     }
 }

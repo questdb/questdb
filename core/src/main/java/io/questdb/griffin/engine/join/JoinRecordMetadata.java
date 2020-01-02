@@ -63,7 +63,14 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         this.refCount = 1;
     }
 
-    public void add(CharSequence tableAlias, CharSequence columnName, int columnType) {
+    public void add(
+            CharSequence tableAlias,
+            CharSequence columnName,
+            int columnType,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic
+    ) {
         int dot = Chars.indexOf(columnName, '.');
         // add column with its own alias
         MapKey key = map.withKey();
@@ -85,9 +92,21 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         final CharSink b = Misc.getThreadLocalBuilder();
         TableColumnMetadata cm;
         if (dot == -1) {
-            cm = new TableColumnMetadata(b.put(tableAlias).put('.').put(columnName).toString(), columnType);
+            cm = new TableColumnMetadata(
+                    b.put(tableAlias).put('.').put(columnName).toString(),
+                    columnType,
+                    indexFlag,
+                    indexValueBlockCapacity,
+                    symbolTableStatic
+            );
         } else {
-            cm = new TableColumnMetadata(Chars.toString(columnName), columnType);
+            cm = new TableColumnMetadata(
+                    Chars.toString(columnName),
+                    columnType,
+                    indexFlag,
+                    indexValueBlockCapacity,
+                    symbolTableStatic
+            );
         }
         this.columnMetadata.add(cm);
 
@@ -107,7 +126,14 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
     public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
         for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-            add(alias, fromMetadata.getColumnName(i), fromMetadata.getColumnType(i));
+            add(
+                    alias,
+                    fromMetadata.getColumnName(i),
+                    fromMetadata.getColumnType(i),
+                    fromMetadata.isColumnIndexed(i),
+                    fromMetadata.getIndexValueBlockCapacity(i),
+                    fromMetadata.isSymbolTableStatic(i)
+            );
         }
     }
 

@@ -65,5 +65,9 @@ public interface FunctionFactory {
         return false;
     }
 
-    Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
+    Function newInstance(
+            @Transient ObjList<Function> args,
+            int position,
+            CairoConfiguration configuration
+    ) throws SqlException;
 }

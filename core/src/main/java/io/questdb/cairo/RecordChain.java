@@ -352,7 +352,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public CharSequence getSym(int col) {
-            return symbolTableResolver.getSymbolTable(col).value(getInt(col));
+            return symbolTableResolver.getSymbolTable(col).valueOf(getInt(col));
         }
 
         private long fixedWithColumnOffset(int index) {

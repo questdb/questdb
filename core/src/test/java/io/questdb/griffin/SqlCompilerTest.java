@@ -1711,25 +1711,25 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"a1\",\"type\":\"INT\"},{\"index\":1,\"name\":\"a\",\"type\":\"INT\"},{\"index\":2,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":5,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":6,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":7,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"h\",\"type\":\"TIMESTAMP\"},{\"index\":10,\"name\":\"i\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"j1\",\"type\":\"LONG\"},{\"index\":13,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":14,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":15,\"name\":\"m\",\"type\":\"BINARY\"}],\"timestampIndex\":13}";
 
         assertCast(expectedData, expectedMeta, "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a1', rnd_int()," +
-                " 'a', rnd_int(0, 30, 2)," +
-                " 'b', rnd_boolean()," +
-                " 'c', rnd_str(3,3,2)," +
-                " 'd', rnd_double(2)," +
-                " 'e', rnd_float(2)," +
-                " 'f', rnd_short(10,1024)," +
-                " 'f1', rnd_short()," +
-                " 'g', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                " 'h', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                " 'i', rnd_symbol(4,4,4,2)," +
-                " 'j', rnd_long(100,200,2)," +
-                " 'j1', rnd_long()," +
-                " 'k', timestamp_sequence(0, 1000000000)," +
-                " 'l', rnd_byte(2,50)," +
-                " 'm', rnd_bin(10, 20, 2)" +
-                "))  timestamp(k) partition by DAY");
+                "select" +
+                " rnd_int() a1," +
+                " rnd_int(0, 30, 2) a," +
+                " rnd_boolean() b," +
+                " rnd_str(3,3,2) c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_short() f1," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                " rnd_symbol(4,4,4,2) i," +
+                " rnd_long(100,200,2) j," +
+                " rnd_long() j1," +
+                " timestamp_sequence(0, 1000000000) k," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m" +
+                " from long_sequence(20)" +
+                ")  timestamp(k) partition by DAY");
     }
 
     @Test
@@ -1759,10 +1759,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_symbol(4,4,4,2)" +
-                ")), cast(a as STRING)";
+                "select rnd_symbol(4,4,4,2) a from long_sequence(20)" +
+                "), cast(a as STRING)";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -1809,10 +1807,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             @Override
             public void run() {
                 String sql = "create table y as (" +
-                        "select * from random_cursor(" +
-                        " 10000," + // record count
-                        " 'a', rnd_symbol(4,4,4,2)" +
-                        ")), cast(a as STRING)";
+                        "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
+                        "), cast(a as STRING)";
 
                 final FilesFacade ff = new FilesFacadeImpl() {
                     int mapCount = 0;
@@ -1866,10 +1862,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             @Override
             public void run() {
                 String sql = "create table y as (" +
-                        "select * from random_cursor(" +
-                        " 10000," + // record count
-                        " 'a', rnd_symbol(4,4,4,2)" +
-                        ")), cast(a as STRING)";
+                        "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
+                        "), cast(a as STRING)";
 
                 final FilesFacade ff = new FilesFacadeImpl() {
                     int mapCount = 0;
@@ -3292,13 +3286,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private void assertCastSymbolFail(int castTo) {
         try {
             compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_symbol(4,6,10,2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+                    "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
+                    "), cast(a as " + ColumnType.nameOf(castTo) + ")");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(91, e.getPosition());
+            Assert.assertEquals(84, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }

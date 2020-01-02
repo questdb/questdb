@@ -42,4 +42,7 @@ public interface DataFrameCursor extends ImmutableIterator<DataFrame>, Closeable
     void toTop();
 
     long size();
+
+    @Override
+    StaticSymbolTable getSymbolTable(int columnIndex);
 }

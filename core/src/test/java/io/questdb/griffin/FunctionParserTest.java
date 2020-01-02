@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -302,7 +303,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, false));
         assertFail(5, "unknown function name: xyz(BOOLEAN,SYMBOL)", "a or xyz(a,c)", metadata);
     }
 
@@ -731,17 +732,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
-                return new SymbolFunction(position) {
-                    @Override
-                    public CharSequence getSymbol(Record rec) {
-                        return null;
-                    }
-
-                    @Override
-                    public boolean isConstant() {
-                        return true;
-                    }
-                };
+                return new SymbolConstant(position, null, SymbolTable.VALUE_IS_NULL);
             }
         });
 
@@ -822,17 +813,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
-                return new SymbolFunction(position) {
-                    @Override
-                    public CharSequence getSymbol(Record rec) {
-                        return "xyz";
-                    }
-
-                    @Override
-                    public boolean isConstant() {
-                        return true;
-                    }
-                };
+                return new SymbolConstant(position, "xyz", 0);
             }
         });
 
@@ -925,7 +906,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testInvalidConstant() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, true));
         assertFail(4, "invalid constant: 1c", "a + 1c", metadata);
     }
 
@@ -1091,7 +1072,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, false, 0, false));
 
         Function function = parseFunction("length(b) - length(a)",
                 metadata,

@@ -172,8 +172,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                 create(path, "x", N, true);
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", 0)) {
                     Assert.assertEquals(N, reader.getSymbolCapacity());
-                    Assert.assertNull(reader.value(-1));
-                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.getQuick(null));
+                    Assert.assertNull(reader.valueOf(-1));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.keyOf(null));
                 }
             }
         });
@@ -299,14 +299,14 @@ public class SymbolMapTest extends AbstractCairoTest {
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        TestUtils.assertEquals(cs, reader.value(i));
-                        Assert.assertEquals(i, reader.getQuick(cs));
+                        TestUtils.assertEquals(cs, reader.valueOf(i));
+                        Assert.assertEquals(i, reader.keyOf(cs));
                     }
 
                     Assert.assertEquals(N, reader.size());
-                    Assert.assertNull(reader.value(-1));
-                    Assert.assertNull(reader.value(N));
-                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
+                    Assert.assertNull(reader.valueOf(-1));
+                    Assert.assertNull(reader.valueOf(N));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
                 }
             }
         });
@@ -332,21 +332,21 @@ public class SymbolMapTest extends AbstractCairoTest {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
                         for (int i = 0; i < N; i++) {
                             CharSequence cs = rnd.nextChars(10);
-                            TestUtils.assertEquals(cs, reader.value(i));
-                            Assert.assertEquals(i, reader.getQuick(cs));
+                            TestUtils.assertEquals(cs, reader.valueOf(i));
+                            Assert.assertEquals(i, reader.keyOf(cs));
                         }
 
-                        Assert.assertNull(reader.value(N));
-                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
+                        Assert.assertNull(reader.valueOf(N));
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
                         Assert.assertEquals(N, writer.put("XYZ"));
 
                         // must not be able to read new symbol
-                        Assert.assertNull(reader.value(N));
-                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("XYZ"));
+                        Assert.assertNull(reader.valueOf(N));
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("XYZ"));
 
                         reader.updateSymbolCount(N + 1);
-                        TestUtils.assertEquals("XYZ", reader.value(N));
-                        Assert.assertEquals(N, reader.getQuick("XYZ"));
+                        TestUtils.assertEquals("XYZ", reader.valueOf(N));
+                        Assert.assertEquals(N, reader.keyOf("XYZ"));
                     }
                 }
             }

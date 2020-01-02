@@ -93,12 +93,12 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         symbolKeys.clear();
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                int symbolKey = symbolTable.getQuick(typeCaster.getValue(record, 0));
+                int symbolKey = symbolTable.keyOf(typeCaster.getValue(record, 0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }

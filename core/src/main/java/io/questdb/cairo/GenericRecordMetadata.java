@@ -43,7 +43,8 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     from.getColumnName(i).toString(),
                     from.getColumnType(i),
                     from.isColumnIndexed(i),
-                    from.getIndexValueBlockCapacity(i)
+                    from.getIndexValueBlockCapacity(i),
+                    from.isSymbolTableStatic(i)
             ));
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
@@ -47,10 +48,11 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             int type = TableUtils.getColumnType(metaMem, i);
             columnMetadata.add(
                     new TableColumnMetadata(
-                            name.toString(),
+                            Chars.toString(name),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
-                            TableUtils.getIndexBlockCapacity(metaMem, i)
+                            TableUtils.getIndexBlockCapacity(metaMem, i),
+                            true
                     )
             );
             if (type == ColumnType.SYMBOL) {
@@ -67,7 +69,15 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(new TableColumnMetadata(str, type, indexFlag, indexValueBlockCapacity));
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        str,
+                        type,
+                        indexFlag,
+                        indexValueBlockCapacity,
+                        true
+                )
+        );
         columnCount++;
         if (type == ColumnType.SYMBOL) {
             symbolMapCount++;

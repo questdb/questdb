@@ -25,15 +25,20 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.Nullable;
 
-public abstract class SymbolFunction implements Function {
+/**
+ * Symbol API allows record cursor consumers to store "int" value of symbol function
+ * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
+ * populated by function dynamically, in that values that have not yet been returned via
+ * getInt() are not cached.*
+ */
+
+public abstract class SymbolFunction implements Function, SymbolTable {
 
     private final int position;
 
@@ -78,11 +83,6 @@ public abstract class SymbolFunction implements Function {
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -155,4 +155,11 @@ public abstract class SymbolFunction implements Function {
     public void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
+
+    @Nullable
+    public StaticSymbolTable getStaticSymbolTable() {
+        return null;
+    }
+
+    public abstract boolean isSymbolTableStatic();
 }

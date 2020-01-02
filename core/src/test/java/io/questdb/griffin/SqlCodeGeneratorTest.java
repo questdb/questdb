@@ -282,7 +282,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "88.282283666977\t\t1970-01-17T04:53:20.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where to_symbol(b) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10))",
+                "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -310,13 +310,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where 10 < 8",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 1000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k",
                 "insert into x select * from (" +
@@ -339,13 +337,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where k = '1970-01-01T03:36:40;45m'",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 1000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
     }
@@ -360,13 +356,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where k = '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 1000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        "  timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
 
@@ -381,7 +376,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnIntrinsicFalse() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
                 false);
     }
@@ -390,7 +385,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testInsertMissingQuery() throws Exception {
         assertFailure(
                 "insert into x (a,b)",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 19,
                 "'select' or 'values' expected"
         );
@@ -412,7 +407,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\n";
         assertQuery(expected,
                 "select * from x where b = null",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b from long_sequence(20)), index(b)",
                 null,
                 "insert into x (a,b)" +
                         " select" +
@@ -596,7 +591,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         assertQuery(expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
                 "insert into x (a,b)" +
                         " select" +
@@ -633,9 +628,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
                 "create table x as (" +
                         "select" +
-                        " *" +
-                        " from" +
-                        " random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
                         ")," +
                         " index(b)",
                 null,
@@ -670,13 +666,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where o.b in ('HYRX','PEHN', null) and k = '1970-01-01T03:36:40;45m'",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 1000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
     }
@@ -685,7 +679,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterOnValuesDeferred() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(0, 1000000000))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
                 "insert into x (a,b)" +
                         " select" +
@@ -710,7 +704,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "72.300157631336\tHYRX\n";
         assertQuery(expected,
                 "select * from x where b = 'HYRX'",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
                 "insert into x select" +
                         " rnd_double(0)*100," +
@@ -730,7 +724,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "72.300157631336\tHYRX\n";
         assertQuery(expected,
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
                 "insert into x select" +
                         " rnd_double(0)*100," +
@@ -750,7 +744,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testFilterSingleNonExistingSymbol() throws Exception {
         assertQuery(null,
                 "select * from x where b = 'ABC'",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
                 "insert into x select" +
                         " rnd_double(0)*100," +
@@ -766,7 +760,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestMatchFunctionFactory.clear();
         assertQuery(null,
                 "select * from x where b = 'ABC' and a > 30 and test_match()",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
                 "insert into x select" +
                         " rnd_double(0)*100," +
@@ -950,13 +944,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1051,13 +1043,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where 6 < 10",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1086,13 +1077,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where a > 40",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1121,13 +1111,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1157,13 +1146,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where 5 > 2",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1191,13 +1178,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where a > 40",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1224,13 +1209,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where a > 40",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1269,13 +1253,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 try {
                     compiler.compile(("create table x as " +
                                     "(" +
-                                    "select * from" +
-                                    " random_cursor" +
-                                    "(200," +
-                                    " 'a', rnd_double(0)*100," +
-                                    " 'b', rnd_symbol(5,4,4,1)," +
-                                    " 'k', timestamp_sequence(0, 100000000000)" +
-                                    ")" +
+                                    "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +
+                                    " long_sequence(200)" +
                                     ") timestamp(k) partition by DAY"),
                             sqlExecutionContext);
 
@@ -1309,13 +1288,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where b = 'RXGZ'",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1337,13 +1315,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(200," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(200)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1369,13 +1345,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where b = 'RXGZ'",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -1397,13 +1371,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
                 "create table x as " +
                         "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(200," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
-                        ")" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(200)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
@@ -3096,25 +3068,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "00000010 ab 3f a1 f5\n",
                 "select a,a1,b,c,d,e,f1,f,g,h,i,j,j1,k,l,m from x",
                 "create table x as (" +
-                        "select * from random_cursor(" +
-                        " 20," + // record count
-                        " 'a1', rnd_int()," +
-                        " 'a', rnd_int(0, 30, 2)," +
-                        " 'b', rnd_boolean()," +
-                        " 'c', rnd_str(3,3,2)," +
-                        " 'd', rnd_double(2)," +
-                        " 'e', rnd_float(2)," +
-                        " 'f', rnd_short(10,1024)," +
-                        " 'f1', rnd_short()," +
-                        " 'g', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                        " 'h', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                        " 'i', rnd_symbol(4,4,4,2)," +
-                        " 'j', rnd_long(100,200,2)," +
-                        " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(0, 1000000000)," +
-                        " 'l', rnd_byte(2,50)," +
-                        " 'm', rnd_bin(10, 20, 2)" +
-                        "))  timestamp(k) partition by DAY",
+                        "select" +
+                        "  rnd_int() a1," +
+                        " rnd_int(0, 30, 2) a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(3,3,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_short() f1," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long(100,200,2) j," +
+                        " rnd_long() j1," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m" +
+                        " from long_sequence(20)" +
+                        ")  timestamp(k) partition by DAY",
                 "k");
     }
 
@@ -3143,25 +3115,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "20\t856634079\ttrue\tRJU\t0.108206023861\t0.4565\t13505\t669\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\n",
                 "select a,a1,b,c,d,e,f1,f,g,h,i,j,j1 from x",
                 "create table x as (" +
-                        "select * from random_cursor(" +
-                        " 20," + // record count
-                        " 'a1', rnd_int()," +
-                        " 'a', rnd_int(0, 30, 2)," +
-                        " 'b', rnd_boolean()," +
-                        " 'c', rnd_str(3,3,2)," +
-                        " 'd', rnd_double(2)," +
-                        " 'e', rnd_float(2)," +
-                        " 'f', rnd_short(10,1024)," +
-                        " 'f1', rnd_short()," +
-                        " 'g', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                        " 'h', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                        " 'i', rnd_symbol(4,4,4,2)," +
-                        " 'j', rnd_long(100,200,2)," +
-                        " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(0, 1000000000)," +
-                        " 'l', rnd_byte(2,50)," +
-                        " 'm', rnd_bin(10, 20, 2)" +
-                        "))  timestamp(k) partition by DAY",
+                        "select" +
+                        " rnd_int() a1," +
+                        " rnd_int(0, 30, 2) a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(3,3,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_short() f1," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long(100,200,2) j," +
+                        " rnd_long() j1," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m" +
+                        " from long_sequence(20)" +
+                        ")  timestamp(k) partition by DAY",
                 null);
     }
 
@@ -3212,25 +3184,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "00000010 ab 3f a1 f5\n",
                 "select a,a1,b,c,d+e,f1,f,g,h,i,j,j1,k,l,m from x",
                 "create table x as (" +
-                        "select * from random_cursor(" +
-                        " 20," + // record count
-                        " 'a1', rnd_int()," +
-                        " 'a', rnd_int(0, 30, 2)," +
-                        " 'b', rnd_boolean()," +
-                        " 'c', rnd_str(3,3,2)," +
-                        " 'd', rnd_double(2)," +
-                        " 'e', rnd_float(2)," +
-                        " 'f', rnd_short(10,1024)," +
-                        " 'f1', rnd_short()," +
-                        " 'g', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                        " 'h', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                        " 'i', rnd_symbol(4,4,4,2)," +
-                        " 'j', rnd_long(100,200,2)," +
-                        " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(0, 1000000000)," +
-                        " 'l', rnd_byte(2,50)," +
-                        " 'm', rnd_bin(10, 20, 2)" +
-                        "))  timestamp(k) partition by DAY",
+                        "select" +
+                        "  rnd_int() a1," +
+                        " rnd_int(0, 30, 2) a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(3,3,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_short() f1," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long(100,200,2) j," +
+                        " rnd_long() j1," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m" +
+                        " from long_sequence(20)" +
+                        ")  timestamp(k) partition by DAY",
                 "k");
     }
 
@@ -3259,26 +3231,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "20\t856634079\ttrue\tRJU\t0.564672758270\n",
                 "select a,a1,b,c,d+e from x",
                 "create table x as (" +
-                        "select * from random_cursor(" +
-                        " 20," + // record count
-                        " 'a1', rnd_int()," +
-                        " 'a', rnd_int(0, 30, 2)," +
-                        " 'b', rnd_boolean()," +
-                        " 'c', rnd_str(3,3,2)," +
-                        " 'd', rnd_double(2)," +
-                        " 'e', rnd_float(2)," +
-                        " 'f', rnd_short(10,1024)," +
-                        " 'f1', rnd_short()," +
-                        " 'g', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                        " 'h', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                        " 'i', rnd_symbol(4,4,4,2)," +
-                        " 'j', rnd_long(100,200,2)," +
-                        " 'j1', rnd_long()," +
-                        " 'k', timestamp_sequence(0, 1000000000)," +
-                        " 'l', rnd_byte(2,50)," +
-                        " 'm', rnd_bin(10, 20, 2)" +
-                        "))  timestamp(k) partition by DAY",
+                        "select" +
+                        " rnd_int() a1," +
+                        " rnd_int(0, 30, 2) a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(3,3,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_short() f1," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long(100,200,2) j," +
+                        " rnd_long() j1," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m" +
+                        " from long_sequence(20)" +
+                        ")  timestamp(k) partition by DAY",
                 null);
     }
-
 }

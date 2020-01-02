@@ -40,7 +40,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long rowCount = 0;
         while (cursor.hasNext()) {
@@ -59,7 +59,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
                 RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
-                CharSequence expected = symbolTable.value(i - 1);
+                CharSequence expected = symbolTable.valueOf(i - 1);
                 while (ic.hasNext()) {
                     long row = ic.next();
                     record.setRecordIndex(row);

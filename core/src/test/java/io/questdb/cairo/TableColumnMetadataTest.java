@@ -30,16 +30,18 @@ import org.junit.Test;
 public class TableColumnMetadataTest {
     @Test
     public void testHasIndex() {
-        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, true, 0);
+        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, true, 0, true);
         Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
         Assert.assertTrue(metadata.isIndexed());
+        Assert.assertTrue(metadata.isSymbolTableStatic());
     }
 
     @Test
     public void testNoIndex() {
-        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, false, 0);
+        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, false, 0, false);
         Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
         Assert.assertFalse(metadata.isIndexed());
+        Assert.assertFalse(metadata.isSymbolTableStatic());
     }
 
 }

@@ -25,9 +25,9 @@
 package io.questdb.cairo;
 
 
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.StaticSymbolTable;
 
-public interface SymbolMapReader extends SymbolTable {
+public interface SymbolMapReader extends StaticSymbolTable {
     int getSymbolCapacity();
 
     boolean isCached();

@@ -25,16 +25,13 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
@@ -63,8 +60,9 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
     private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
-        if (varFunc instanceof SymbolColumn) {
-            return new ConstCheckColumnFunc(position, (SymbolColumn) varFunc, constValue);
+        SymbolFunction func = (SymbolFunction) varFunc;
+        if (func.getStaticSymbolTable() != null) {
+            return new ConstCheckColumnFunc(position, func, constValue);
         } else {
             if (constValue == null) {
                 return new NullCheckFunc(position, varFunc);
@@ -114,11 +112,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
-        private final SymbolColumn arg;
+        private final SymbolFunction arg;
         private final CharSequence constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolColumn arg, CharSequence constant) {
+        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant) {
             super(position);
             this.arg = arg;
             this.constant = constant;
@@ -136,7 +134,10 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            valueIndex = symbolTableSource.getSymbolTable(arg.getColumnIndex()).getQuick(constant);
+            arg.init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
+            assert symbolTable != null;
+            valueIndex = symbolTable.keyOf(constant);
         }
 
         @Override

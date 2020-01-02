@@ -83,7 +83,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 RecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
-                    symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
+                    symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);

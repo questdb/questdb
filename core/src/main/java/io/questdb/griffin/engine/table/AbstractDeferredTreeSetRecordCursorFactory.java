@@ -27,10 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
@@ -67,7 +64,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
 
         for (int i = 0; i < nKeyValues; i++) {
             CharSequence symbol = keyValues.get(i);
-            int symbolKey = symbolMapReader.getQuick(symbol);
+            int symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 if (deferredSymbols == null) {
                     deferredSymbols = new CharSequenceHashSet();
@@ -89,10 +86,10 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             SqlExecutionContext executionContext
     ) {
         if (deferredSymbols != null && deferredSymbols.size() > 0) {
-            SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = deferredSymbols.size(); i < n; ) {
                 CharSequence symbol = deferredSymbols.get(i);
-                int symbolKey = symbolTable.getQuick(symbol);
+                int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                     deferredSymbols.remove(symbol);

@@ -29,16 +29,25 @@ public class TableColumnMetadata {
     private final int type;
     private final boolean indexed;
     private final int indexValueBlockCapacity;
+    private final boolean symbolTableStatic;
 
     public TableColumnMetadata(String name, int type) {
-        this(name, type, false, 0);
+        this(name, type, false, 0, false);
+        assert type != ColumnType.SYMBOL;
     }
 
-    public TableColumnMetadata(String name, int type, boolean indexFlag, int indexValueBlockCapacity) {
+    public TableColumnMetadata(
+            String name,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic
+    ) {
         this.name = name;
         this.type = type;
         this.indexed = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
+        this.symbolTableStatic = symbolTableStatic;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -55,5 +64,9 @@ public class TableColumnMetadata {
 
     public boolean isIndexed() {
         return indexed;
+    }
+
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
     }
 }

@@ -39,7 +39,11 @@ public class AbsIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(
+            ObjList<Function> args,
+            int position,
+            CairoConfiguration configuration
+    ) {
         return new AbsIntFunction(position, args.getQuick(0));
     }
 

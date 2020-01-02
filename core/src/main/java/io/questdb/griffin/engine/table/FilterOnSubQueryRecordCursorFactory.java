@@ -89,7 +89,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         IntObjHashMap<RowCursorFactory> targetFactories;
         if (factories == factoriesA) {
             targetFactories = factoriesB;
@@ -104,7 +104,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 final CharSequence symbol = typeCaster.getValue(record, 0);
-                int symbolKey = symbolTable.getQuick(symbol);
+                int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
 
                     final RowCursorFactory rowCursorFactory;

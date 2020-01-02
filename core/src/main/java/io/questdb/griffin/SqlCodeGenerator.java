@@ -29,7 +29,7 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.join.*;
@@ -47,6 +47,14 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 
 public class SqlCodeGenerator {
     private static final IntHashSet limitTypes = new IntHashSet();
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
+    }
+
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -61,6 +69,7 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private boolean fullFatJoins = false;
+
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
@@ -169,7 +178,14 @@ public class SqlCodeGenerator {
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
             if (intHashSet.excludes(i)) {
                 int type = slaveMetadata.getColumnType(i);
-                metadata.add(slaveAlias, slaveMetadata.getColumnName(i), type);
+                metadata.add(
+                        slaveAlias,
+                        slaveMetadata.getColumnName(i),
+                        type,
+                        slaveMetadata.isColumnIndexed(i),
+                        slaveMetadata.getIndexValueBlockCapacity(i),
+                        slaveMetadata.isSymbolTableStatic(i)
+                );
                 listColumnFilterB.add(i);
                 columnIndex.add(i);
                 valueTypes.add(type);
@@ -184,7 +200,14 @@ public class SqlCodeGenerator {
             if (type == ColumnType.SYMBOL) {
                 type = ColumnType.STRING;
             }
-            metadata.add(slaveAlias, slaveMetadata.getColumnName(index), type);
+            metadata.add(
+                    slaveAlias,
+                    slaveMetadata.getColumnName(index),
+                    type,
+                    slaveMetadata.isColumnIndexed(i),
+                    slaveMetadata.getIndexValueBlockCapacity(i),
+                    slaveMetadata.isSymbolTableStatic(i)
+            );
             columnIndex.add(index);
             slaveTypes.add(type);
         }
@@ -404,7 +427,11 @@ public class SqlCodeGenerator {
         if (filter != null) {
             factory = new FilteredRecordCursorFactory(
                     factory,
-                    functionParser.parseFunction(filter, factory.getMetadata(), executionContext)
+                    functionParser.parseFunction(
+                            filter,
+                            factory.getMetadata(),
+                            executionContext
+                    )
             );
         }
 
@@ -629,7 +656,7 @@ public class SqlCodeGenerator {
                     final RowCursorFactory rcf;
                     if (nKeyValues == 1) {
                         final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
-                        final int symbol = symbolMapReader.getQuick(symbolValue);
+                        final int symbol = symbolMapReader.keyOf(symbolValue);
 
                         if (filter == null) {
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -685,7 +712,7 @@ public class SqlCodeGenerator {
                 }
 
                 // we have a single symbol key
-                int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(0));
+                int symbolKey = symbolMapReader.keyOf(intrinsicModel.keyValues.get(0));
                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                     return new LatestByValueDeferredFilteredRecordCursorFactory(
                             copyMetadata(metadata),
@@ -1078,12 +1105,15 @@ public class SqlCodeGenerator {
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 
-            selectMetadata.add(new TableColumnMetadata(
-                    Chars.toString(queryColumn.getName()),
-                    metadata.getColumnType(index),
-                    metadata.isColumnIndexed(index),
-                    metadata.getIndexValueBlockCapacity(index)
-            ));
+            selectMetadata.add(
+                    new TableColumnMetadata(
+                            Chars.toString(queryColumn.getName()),
+                            metadata.getColumnType(index),
+                            metadata.isColumnIndexed(index),
+                            metadata.getIndexValueBlockCapacity(index),
+                            metadata.isSymbolTableStatic(index)
+                    )
+            );
 
             if (index == timestampIndex) {
                 selectMetadata.setTimestampIndex(i);
@@ -1177,8 +1207,6 @@ public class SqlCodeGenerator {
                 timestampColumn = null;
             }
 
-            IntList symbolTableCrossIndex = null;
-
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = model.getColumns().getQuick(i);
                 ExpressionNode node = column.getAst();
@@ -1194,20 +1222,27 @@ public class SqlCodeGenerator {
                 functions.add(function);
 
 
-                virtualMetadata.add(new TableColumnMetadata(
-                        Chars.toString(column.getAlias()),
-                        function.getType()
-                ));
-
-                if (function instanceof SymbolColumn) {
-                    if (symbolTableCrossIndex == null) {
-                        symbolTableCrossIndex = new IntList(columnCount);
-                    }
-                    symbolTableCrossIndex.extendAndSet(i, ((SymbolColumn) function).getColumnIndex());
+                if (function instanceof SymbolFunction) {
+                    virtualMetadata.add(
+                            new TableColumnMetadata(
+                                    Chars.toString(column.getAlias()),
+                                    function.getType(),
+                                    false,
+                                    0,
+                                    ((SymbolFunction) function).isSymbolTableStatic()
+                            )
+                    );
+                } else {
+                    virtualMetadata.add(
+                            new TableColumnMetadata(
+                                    Chars.toString(column.getAlias()),
+                                    function.getType()
+                            )
+                    );
                 }
             }
 
-            return new VirtualRecordCursorFactory(virtualMetadata, functions, factory, symbolTableCrossIndex);
+            return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             factory.close();
             throw e;
@@ -1367,7 +1402,7 @@ public class SqlCodeGenerator {
                     if (nKeyValues == 1) {
                         final RowCursorFactory rcf;
                         final CharSequence symbol = intrinsicModel.keyValues.get(0);
-                        final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(symbol);
+                        final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                             if (filter == null) {
                                 rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true);
@@ -1539,13 +1574,6 @@ public class SqlCodeGenerator {
                     .put(ColumnType.nameOf(firstColumnType));
         }
         return firstColumnType;
-    }
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
     }
 
 }

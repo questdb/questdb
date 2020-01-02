@@ -38,6 +38,21 @@ public class SymbolFunctionTest {
         public CharSequence getSymbol(Record rec) {
             return "XYZ";
         }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return "XYZ";
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)
@@ -73,11 +88,6 @@ public class SymbolFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetFloat() {
         function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetInt() {
-        function.getInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

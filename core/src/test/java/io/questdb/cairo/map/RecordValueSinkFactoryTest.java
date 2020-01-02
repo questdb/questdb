@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -96,7 +96,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
                 rnd.reset();
 
-                SymbolTable symbolTable = reader.getSymbolMapReader(6);
+                StaticSymbolTable symbolTable = reader.getSymbolMapReader(6);
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -110,7 +110,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextDouble(), value.getDouble(3), 0.000001);
                     Assert.assertEquals(rnd.nextFloat(), value.getFloat(4), 0.000001f);
                     Assert.assertEquals(rnd.nextLong(), value.getLong(5));
-                    Assert.assertEquals(symbolTable.getQuick(rnd.nextChars(10)), value.getInt(6));
+                    Assert.assertEquals(symbolTable.keyOf(rnd.nextChars(10)), value.getInt(6));
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
@@ -187,7 +187,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
                 rnd.reset();
 
-                SymbolTable symbolTable = reader.getSymbolMapReader(6);
+                StaticSymbolTable symbolTable = reader.getSymbolMapReader(6);
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -201,7 +201,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     rnd.nextDouble(); // 3
                     rnd.nextFloat(); // 4
                     rnd.nextLong(); // 5
-                    Assert.assertEquals(symbolTable.getQuick(rnd.nextChars(10)), value.getInt(2)); // 6
+                    Assert.assertEquals(symbolTable.keyOf(rnd.nextChars(10)), value.getInt(2)); // 6
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(0)); // 7
                     rnd.nextLong(); // 8
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(1)); // 9
