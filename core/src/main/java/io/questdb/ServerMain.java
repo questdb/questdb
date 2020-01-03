@@ -156,8 +156,7 @@ public class ServerMain {
             );
         }
 
-        workerPool.start(log);
-        lineProtocolReceiver.start();
+        startQuestDb(workerPool, lineProtocolReceiver, log, cairoEngine);
 
         if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
             // suppress HUP signal
@@ -167,14 +166,26 @@ public class ServerMain {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.err.println(new Date() + " QuestDB is shutting down");
-            lineProtocolReceiver.halt();
-            workerPool.halt();
-            Misc.free(pgWireServer);
-            Misc.free(httpServer);
-            Misc.free(cairoEngine);
-            Misc.free(lineProtocolReceiver);
+            shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
             System.err.println(new Date() + " QuestDB is down");
         }));
+    }
+
+    protected void startQuestDb(final WorkerPool workerPool, final AbstractLineProtoReceiver lineProtocolReceiver,
+                                final Log log, final CairoEngine cairoEngine) {
+        workerPool.start(log);
+        lineProtocolReceiver.start();
+    }
+
+    protected void shutdownQuestDb(final WorkerPool workerPool, final CairoEngine cairoEngine,
+                                   final HttpServer httpServer, final PGWireServer pgWireServer,
+                                   final AbstractLineProtoReceiver lineProtocolReceiver) {
+        lineProtocolReceiver.halt();
+        workerPool.halt();
+        Misc.free(pgWireServer);
+        Misc.free(httpServer);
+        Misc.free(cairoEngine);
+        Misc.free(lineProtocolReceiver);
     }
 
     public static void main(String[] args) throws Exception {
