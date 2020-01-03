@@ -1367,7 +1367,7 @@ public final class Numbers {
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
-        if (scale < pow10max && scale > -1) {
+        if (scale < pow10max) {
             return roundDown0(value, scale);
         }
         throw NumericException.INSTANCE;
@@ -1399,7 +1399,7 @@ public final class Numbers {
     }
 
     public static double roundUp(double value, int scale) throws NumericException {
-        if (scale < pow10max && scale > -1) {
+        if (scale < pow10max) {
             return roundUp0(value, scale);
         }
         throw NumericException.INSTANCE;

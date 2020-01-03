@@ -194,6 +194,8 @@ io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
 
 # round()
 io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.RoundDownDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.RoundUpDoubleFunctionFactory
 
 # case conditional statement
 io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
