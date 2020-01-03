@@ -30,9 +30,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.StrTypeCaster;
-import io.questdb.griffin.engine.SymbolTypeCaster;
-import io.questdb.griffin.engine.TypeCaster;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -56,22 +53,14 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         // supported column types are STRING and SYMBOL
 
         final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);
-        final TypeCaster typeCaster;
-        switch (zeroColumnType) {
-            case ColumnType.STRING:
-                typeCaster = StrTypeCaster.INSTANCE;
-                break;
-            case ColumnType.SYMBOL:
-                typeCaster = SymbolTypeCaster.INSTANCE;
-                break;
-            default:
-                throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
+        if (zeroColumnType != ColumnType.STRING && zeroColumnType != ColumnType.SYMBOL) {
+            throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
         if (symbolFunction.getStaticSymbolTable() != null) {
-            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction, typeCaster);
+            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction);
         }
-        return new StrInCursorFunction(position, symbolFunction, cursorFunction, typeCaster);
+        return new StrInCursorFunction(position, symbolFunction, cursorFunction);
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -79,13 +68,11 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         private final SymbolFunction valueArg;
         private final Function cursorArg;
         private final IntHashSet symbolKeys = new IntHashSet();
-        private final TypeCaster typeCaster;
 
-        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg, TypeCaster typeCaster) {
+        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg) {
             super(position);
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
-            this.typeCaster = typeCaster;
         }
 
         @Override
@@ -116,7 +103,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    int key = symbolTable.keyOf(typeCaster.getValue(record, 0));
+                    int key = symbolTable.keyOf(record.getStr(0));
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         symbolKeys.add(key + 1);
                     }
@@ -131,14 +118,12 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         private final Function cursorArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
-        private final TypeCaster typeCaster;
         private CharSequenceHashSet valueSet;
 
-        public StrInCursorFunction(int position, Function valueArg, Function cursorArg, TypeCaster typeCaster) {
+        public StrInCursorFunction(int position, Function valueArg, Function cursorArg) {
             super(position);
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
-            this.typeCaster = typeCaster;
             this.valueSet = valueSetA;
         }
 
@@ -166,7 +151,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    CharSequence value = typeCaster.getValue(record, 0);
+                    CharSequence value = record.getStr(0);
                     if (value == null) {
                         valueSet.addNull();
                     } else {

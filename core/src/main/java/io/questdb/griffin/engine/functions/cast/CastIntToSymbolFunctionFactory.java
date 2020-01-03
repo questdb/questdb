@@ -29,7 +29,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
@@ -57,13 +59,13 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final StringSink sink = new StringSink();
         private final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
-        private final ObjList<String> symbolTable = new ObjList<>();
+        private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
         public Func(int position, Function arg) {
             super(position);
             this.arg = arg;
-            symbolTable.add(null);
+            symbols.add(null);
         }
 
         @Override
@@ -80,20 +82,20 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
 
             final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
-                return symbolTable.getQuick(symbolTableShortcut.valueAt(keyIndex));
+                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
             }
 
             symbolTableShortcut.putAt(keyIndex, value, next++);
             sink.clear();
             Numbers.append(sink, value);
             final String str = Chars.toString(sink);
-            symbolTable.add(Chars.toString(sink));
+            symbols.add(Chars.toString(sink));
             return str;
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolTable.getQuick(TableUtils.toIndexKey(symbolKey));
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         @Override
@@ -111,13 +113,22 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
             symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
             Numbers.append(sink, value);
-            symbolTable.add(Chars.toString(sink));
-            return next++;
+            symbols.add(Chars.toString(sink));
+            return next++ - 1;
         }
 
         @Override
         public boolean isSymbolTableStatic() {
             return false;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            super.init(symbolTableSource, executionContext);
+            symbolTableShortcut.clear();
+            symbols.clear();
+            symbols.add(null);
+            next = 1;
         }
     }
 }

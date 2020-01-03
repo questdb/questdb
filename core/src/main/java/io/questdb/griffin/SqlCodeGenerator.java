@@ -630,7 +630,7 @@ public class SqlCodeGenerator {
                 if (intrinsicModel.keySubQuery != null) {
 
                     final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                    final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+                    validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
                     return new LatestBySubQueryRecordCursorFactory(
                             configuration,
@@ -639,8 +639,7 @@ public class SqlCodeGenerator {
                             latestByIndex,
                             rcf,
                             filter,
-                            indexed,
-                            firstColumnType
+                            indexed
                     );
                 }
 
@@ -1386,15 +1385,14 @@ public class SqlCodeGenerator {
 
                     if (intrinsicModel.keySubQuery != null) {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                        final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+                        validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
                         return new FilterOnSubQueryRecordCursorFactory(
                                 metadata,
                                 dfcFactory,
                                 rcf,
                                 keyColumnIndex,
-                                filter,
-                                firstColumnType
+                                filter
                         );
                     }
                     assert nKeyValues > 0;
@@ -1560,7 +1558,7 @@ public class SqlCodeGenerator {
         }
     }
 
-    private int validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
+    private void validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         final int firstColumnType = metadata.getColumnType(0);
         if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
             assert intrinsicModel.keySubQuery.getColumns() != null;
@@ -1573,7 +1571,5 @@ public class SqlCodeGenerator {
                     .put(": ")
                     .put(ColumnType.nameOf(firstColumnType));
         }
-        return firstColumnType;
     }
-
 }

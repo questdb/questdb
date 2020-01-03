@@ -147,7 +147,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     LOG.debug().$("peer is slow writer").$();
                     dispatcher.registerChannel(this, IOOperation.READ);
                 } catch (ServerDisconnectException ignore) {
-                    LOG.info().$("kicked out [fd=").$(fd).$(']');
+                    LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                     dispatcher.disconnect(this);
                 }
                 break;
@@ -163,7 +163,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this);
                     } catch (ServerDisconnectException ignore) {
-                        LOG.info().$("kicked out [fd=").$(fd).$(']');
+                        LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                         dispatcher.disconnect(this);
                     }
                 } else {

@@ -125,7 +125,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -176,7 +176,7 @@ public class UnionTest extends AbstractGriffinTest {
                     ") partition by NONE");
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false);
+                assertCursor(expected2, factory, false, true);
             }
 
             engine.releaseAllWriters();
@@ -281,7 +281,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -331,15 +331,11 @@ public class UnionTest extends AbstractGriffinTest {
                     " rnd_char() chr" +
                     " from" +
                     " long_sequence(24)" +
-                    ") partition by NONE");
-
-//            try (RecordCursorFactory rcf = compiler.compile("z")) {
-//                assertCursor(expected, rcf, true);
-//            }
-
+                    ") partition by NONE"
+            );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false);
+                assertCursor(expected2, factory, false, true);
             }
 
             engine.releaseAllWriters();
@@ -439,7 +435,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true);
+                assertCursor(expected, rcf, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -467,7 +463,7 @@ public class UnionTest extends AbstractGriffinTest {
                     ") partition by NONE");
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false);
+                assertCursor(expected2, factory, false, true);
             }
 
             engine.releaseAllWriters();

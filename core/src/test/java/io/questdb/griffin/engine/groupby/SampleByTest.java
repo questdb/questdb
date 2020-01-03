@@ -3523,11 +3523,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                             "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                             "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n";
-                    assertCursor(expected, factory, false);
+                    assertCursor(expected, factory, false, true);
                     // make sure we get the same outcome when we get factory to create new cursor
-                    assertCursor(expected, factory, false);
+                    assertCursor(expected, factory, false, true);
                     // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                    assertVariableColumns(factory);
+                    assertVariableColumns(factory, true);
 
                     compiler.compile("truncate table x");
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

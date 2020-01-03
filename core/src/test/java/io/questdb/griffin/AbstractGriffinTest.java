@@ -47,7 +47,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
-    public static void assertVariableColumns(RecordCursorFactory factory) {
+    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
@@ -62,7 +62,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                 Assert.assertNull(b);
                                 Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
                             } else {
-                                Assert.assertNotSame(a, b);
+                                if (checkSameStr) {
+                                    Assert.assertNotSame(a, b);
+                                }
                                 TestUtils.assertEquals(a, b);
                                 Assert.assertEquals(a.length(), record.getStrLen(i));
                             }
@@ -102,7 +104,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         engine.releaseAllWriters();
     }
 
-    protected static void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) {
+    protected static void assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             if (expected == null) {
                 Assert.assertFalse(cursor.hasNext());
@@ -121,7 +128,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             testSymbolAPI(metadata, cursor);
             cursor.toTop();
-            testStringsLong256AndBinary(metadata, cursor);
+            testStringsLong256AndBinary(metadata, cursor, checkSameStr);
 
             // test API where same record is being updated by cursor
             cursor.toTop();
@@ -206,13 +213,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
             }
         }
-//
-//        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-//            testSymbolAPI(factory.getMetadata(), cursor);
-//        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            testSymbolAPI(factory.getMetadata(), cursor);
+        }
     }
 
-    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
+    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor, boolean checkSameStr) {
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -220,7 +227,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     case ColumnType.STRING:
                         CharSequence s = record.getStr(i);
                         if (s != null) {
-                            Assert.assertNotSame(s, record.getStrB(i));
+                            if (checkSameStr) {
+                                Assert.assertNotSame(s, record.getStrB(i));
+                            }
                             TestUtils.assertEquals(s, record.getStrB(i));
                             Assert.assertEquals(s.length(), record.getStrLen(i));
                         } else {
@@ -307,21 +316,22 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence expectedTimestamp,
             CharSequence ddl2,
             CharSequence expected2,
-            boolean supportsRandomAccess
+            boolean supportsRandomAccess,
+            boolean checkSameStr
     ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertTimestamp(expectedTimestamp, factory);
-            assertCursor(expected, factory, supportsRandomAccess);
+            assertCursor(expected, factory, supportsRandomAccess, checkSameStr);
             // make sure we get the same outcome when we get factory to create new cursor
-            assertCursor(expected, factory, supportsRandomAccess);
+            assertCursor(expected, factory, supportsRandomAccess, checkSameStr);
             // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory);
+            assertVariableColumns(factory, checkSameStr);
 
             if (ddl2 != null) {
                 compiler.compile(ddl2, sqlExecutionContext);
-                assertCursor(expected2, factory, supportsRandomAccess);
+                assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
                 // and again
-                assertCursor(expected2, factory, supportsRandomAccess);
+                assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
             }
         }
     }
@@ -334,7 +344,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
+            boolean supportsRandomAccess,
+            boolean checkSameStr
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -342,9 +353,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     compiler.compile(ddl, sqlExecutionContext);
                 }
                 if (verify != null) {
-                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
+                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
                 }
-                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
+                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
@@ -359,7 +370,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence ddl,
             @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true);
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true, true);
     }
 
     protected static void assertQuery(
@@ -367,8 +378,20 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence ddl,
             @Nullable CharSequence expectedTimestamp,
-            boolean supportsRandomAccess) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess);
+            boolean supportsRandomAccess
+    ) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, true);
+    }
+
+    protected static void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr);
     }
 
     protected static void assertQuery(
@@ -378,7 +401,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, true);
+        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, true, true);
     }
 
     protected static void assertQuery(
@@ -389,7 +412,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2,
             boolean supportsRandomAccess) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
+        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true);
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {
@@ -405,11 +428,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) {
         assertTimestamp(expectedTimestamp, factory);
-        assertCursor(expected, factory, supportsRandomAccess);
+        assertCursor(expected, factory, supportsRandomAccess, true);
         // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess);
+        assertCursor(expected, factory, supportsRandomAccess, true);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory);
+        assertVariableColumns(factory, true);
     }
 
     protected void assertFailure(

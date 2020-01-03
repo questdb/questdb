@@ -428,4 +428,36 @@ public class CastTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testStrToSymbolConst() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "abc\tJWCP\n" +
+                        "abc\t\n" +
+                        "abc\tYRXP\n" +
+                        "abc\tNRXGZ\n" +
+                        "abc\tUXIBB\n" +
+                        "abc\tPGWFF\n" +
+                        "abc\tDEYYQ\n" +
+                        "abc\tBHFOW\n" +
+                        "abc\tDXYS\n" +
+                        "abc\tOUOJ\n" +
+                        "abc\tRUED\n" +
+                        "abc\tQULO\n" +
+                        "abc\tGETJ\n" +
+                        "abc\tZSRYR\n" +
+                        "abc\tVTMHG\n" +
+                        "abc\tZZVD\n" +
+                        "abc\tMYICC\n" +
+                        "abc\tOUIC\n" +
+                        "abc\tKGHV\n" +
+                        "abc\tSDOTS\n",
+                "select cast('abc' as symbol) b, a from tab",
+                "create table tab as (select rnd_str(4,5,100) a from long_sequence(20))",
+                null,
+                true,
+                false
+        );
+    }
 }

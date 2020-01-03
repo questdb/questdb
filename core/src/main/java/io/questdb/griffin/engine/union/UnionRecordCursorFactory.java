@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -39,6 +40,7 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final UnionRecordCursor cursor;
+    private final Map map;
 
     public UnionRecordCursorFactory(
             CairoConfiguration configuration,
@@ -50,11 +52,8 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         this.metadata = masterFactory.getMetadata();
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-
-        this.cursor = new UnionRecordCursor(
-                MapFactory.createMap(configuration, metadata, valueTypes),
-                recordSink
-        );
+        this.map = MapFactory.createMap(configuration, metadata, valueTypes);
+        this.cursor = new UnionRecordCursor(map, recordSink);
     }
 
     @Override
@@ -80,5 +79,6 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(map);
     }
 }

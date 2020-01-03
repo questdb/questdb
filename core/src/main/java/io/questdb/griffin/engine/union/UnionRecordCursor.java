@@ -46,9 +46,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
-    public UnionRecordCursor(
-            Map map,
-            RecordSink recordSink) {
+    public UnionRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
     }
@@ -66,7 +64,6 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
-        Misc.free(map);
     }
 
     @Override

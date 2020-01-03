@@ -25,13 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.StrTypeCaster;
-import io.questdb.griffin.engine.SymbolTypeCaster;
-import io.questdb.griffin.engine.TypeCaster;
 import io.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -43,7 +39,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     // symbol keys will be added to this hash set
     private final IntHashSet symbolKeys = new IntHashSet();
     private final RecordCursorFactory recordCursorFactory;
-    private final TypeCaster typeCaster;
     private final Function filter;
 
     public LatestBySubQueryRecordCursorFactory(
@@ -53,8 +48,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
-            boolean indexed,
-            int firstColumnType) {
+            boolean indexed
+    ) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (indexed) {
             if (filter != null) {
@@ -71,11 +66,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
         this.columnIndex = columnIndex;
         this.recordCursorFactory = recordCursorFactory;
-        if (firstColumnType == ColumnType.STRING) {
-            typeCaster = StrTypeCaster.INSTANCE;
-        } else {
-            typeCaster = SymbolTypeCaster.INSTANCE;
-        }
         this.filter = filter;
     }
 
@@ -98,7 +88,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                int symbolKey = symbolTable.keyOf(typeCaster.getValue(record, 0));
+                int symbolKey = symbolTable.keyOf(record.getSym(0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }

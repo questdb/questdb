@@ -72,6 +72,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "1\t10\n" +
                                     "2\t10\n",
                             factory,
+                            true,
                             true
                     );
                 }
@@ -95,6 +96,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "1\t10\n" +
                                     "2\t10\n",
                             factory,
+                            true,
                             true
                     );
                 }
@@ -118,6 +120,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "1\t10\n" +
                                     "2\t10\n",
                             factory,
+                            true,
                             true
                     );
                 }
@@ -140,7 +143,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     assertCursor("x\n" +
                                     "10\n",
                             factory,
+                            true,
                             true
+
                     );
                 }
             }
@@ -248,7 +253,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k");
 
         // these values are assured to be correct for the scenario
-        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
         Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
@@ -301,7 +306,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "97.595346366902\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "33.746104579375\tHYRX\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -367,8 +372,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
-        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -442,7 +447,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -461,7 +466,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "95.400690890497\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tABC\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -511,7 +516,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
                         "and a < 80",
                 "create table x as " +
                         "(" +
@@ -530,16 +535,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(5)" +
                         ") timestamp(t)",
-                expected +
-                        "25.533193397031\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "28.799739396819\tABC\t1971-01-01T00:00:00.000000Z\n" +
-                        "68.068731346264\tABC\t1971-01-01T00:00:00.000000Z\n");
+                expected + "56.594291398612\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "72.300157631336\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "12.105630273556\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "11.585982949541\tABC\t1971-01-01T00:00:00.000000Z\n");
 
         // these value are also ok because ddl2 is present, there is another round of check for that
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
-
     }
 
     @Test
@@ -652,8 +656,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "44.804689668614\t\t\n");
 
         // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(9, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -735,8 +739,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "57.789479151824\tHYRX\n");
 
         // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(9, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -770,8 +774,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "75.881754034549\tABC\n" +
                         "57.789479151824\tABC\n");
         // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(10, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(7, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -795,7 +799,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -814,7 +818,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -837,7 +841,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', 'ABC', null) a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', 'ABC', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -856,7 +860,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "95.400690890497\tABC\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tABC\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -879,7 +883,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -898,7 +902,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1263,8 +1267,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     ).getRecordCursorFactory()) {
                         try {
-                            assertCursor(("a\tb\tk\n" +
-                                    "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory, true);
+                            assertCursor(
+                                    "a\tb\tk\n" +
+                                            "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
+                                    factory,
+                                    true,
+                                    true
+                            );
                             Assert.fail();
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getMessage(), "Cannot open file");
@@ -1333,8 +1342,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.300000000000\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1388,8 +1397,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "11.300000000000\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1472,8 +1481,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "12.105630273556\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1534,8 +1543,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1590,8 +1599,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1645,8 +1654,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
         // good
-        Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1706,8 +1715,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1766,8 +1775,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "88.100000000000\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1795,7 +1804,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1816,7 +1825,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1826,7 +1835,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1848,7 +1857,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tUCLA\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1885,8 +1894,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
 
         // good
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1896,7 +1905,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1918,7 +1927,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tUCLA\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1953,8 +1962,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1990,8 +1999,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -2001,7 +2010,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2022,7 +2031,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -2056,8 +2065,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(16, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(20, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -2174,9 +2183,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 bindVariableService.clear();
                 bindVariableService.setLong("var", 10);
                 try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertCursor("x\n" +
+                    assertCursor(
+                            "x\n" +
                                     "10\n",
                             factory,
+                            true,
                             true
                     );
                 }
@@ -2203,7 +2214,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by b,a,x.a",
                 "create table x as " +
                         "(" +
@@ -2223,7 +2234,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "42.020442539326\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -2848,7 +2859,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " order by k",
                 "create table x as " +
                         "(" +
@@ -2865,10 +2876,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100," +
                         " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
+                        " from long_sequence(3)" +
                         ") timestamp(t)",
                 expected +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
+                        "88.282283666977\tRXGZ\t1971-01-01T00:00:00.000000Z\n" +
+                        "72.300157631336\tRXGZ\t1971-01-01T00:00:00.000000Z\n"
+        );
     }
 
     @Test

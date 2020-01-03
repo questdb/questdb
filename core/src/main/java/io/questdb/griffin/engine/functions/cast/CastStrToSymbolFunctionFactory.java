@@ -29,7 +29,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
@@ -97,7 +99,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
                 final String str = Chars.toString(value);
                 lookupMap.putAt(keyIndex, str, next);
                 symbols.add(str);
-                return next++;
+                return next++ - 1;
             }
             return lookupMap.valueAt(keyIndex) - 1;
         }
@@ -105,6 +107,15 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public boolean isSymbolTableStatic() {
             return false;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            super.init(symbolTableSource, executionContext);
+            lookupMap.clear();
+            symbols.clear();
+            symbols.add(null);
+            next = 1;
         }
     }
 }

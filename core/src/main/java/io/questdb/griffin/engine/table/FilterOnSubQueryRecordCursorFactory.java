@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.StrTypeCaster;
-import io.questdb.griffin.engine.SymbolTypeCaster;
-import io.questdb.griffin.engine.TypeCaster;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -44,7 +40,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final RecordCursorFactory recordCursorFactory;
-    private final TypeCaster typeCaster;
     private IntObjHashMap<RowCursorFactory> factories;
 
     public FilterOnSubQueryRecordCursorFactory(
@@ -52,8 +47,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
-            @Nullable Function filter,
-            int firstColumnType
+            @Nullable Function filter
     ) {
         super(metadata, dataFrameCursorFactory);
         this.recordCursorFactory = recordCursorFactory;
@@ -62,11 +56,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
         this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), filter, false);
-        if (firstColumnType == ColumnType.SYMBOL) {
-            typeCaster = SymbolTypeCaster.INSTANCE;
-        } else {
-            typeCaster = StrTypeCaster.INSTANCE;
-        }
     }
 
     @Override
@@ -103,24 +92,27 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                final CharSequence symbol = typeCaster.getValue(record, 0);
+                final CharSequence symbol = record.getStr(0);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
 
-                    final RowCursorFactory rowCursorFactory;
-                    final int index = factories.keyIndex(symbolKey);
-                    if (index < 0) {
-                        rowCursorFactory = factories.valueAtQuick(index);
-                    } else {
-                        if (filter == null) {
-                            rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
-                        } else {
-                            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
-                        }
-                    }
-
                     final int targetIndex = targetFactories.keyIndex(symbolKey);
                     if (targetIndex > -1) {
+                        final RowCursorFactory rowCursorFactory;
+                        final int index = factories.keyIndex(symbolKey);
+                        if (index < 0) {
+                            rowCursorFactory = factories.valueAtQuick(index);
+                        } else {
+                            // we could be constantly re-hashing factories, which is why
+                            // we cannot reliably tell that one of them could be using cursor that
+                            // belongs to index reader
+                            if (filter == null) {
+                                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false);
+                            } else {
+                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false);
+                            }
+                        }
+
                         targetFactories.putAt(targetIndex, symbolKey, rowCursorFactory);
                         cursorFactories.add(rowCursorFactory);
                     }
