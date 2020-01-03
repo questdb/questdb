@@ -1387,6 +1387,10 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
+    private static double roundHalfUp0(double value, int scale) {
+        return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, scale);
+    }
+
     public static double roundHalfUp(double value, int scale) throws NumericException {
         if (scale + 2 < pow10max) {
             return value > 0 ? roundHalfUp0(value, scale) : -roundHalfUp0(-value, scale);
@@ -1569,9 +1573,14 @@ public final class Numbers {
         return c < '0' || c > '9';
     }
 
-    private static double roundHalfUp0(double value, int scale) {
+    private static double roundHalfUp0PosScale(double value, int scale) {
         long val = (long) (value * pow10[scale + 2] + TOLERANCE);
-        return val % 100 < 50 ? roundDown0(value, scale) : roundUp0(value, scale);
+        return val % 100 < 50 ? roundDown0PosScale(value, scale) : roundUp0PosScale(value, scale);
+    }
+
+    private static double roundHalfUp0NegScale(double value, int scale) {
+        long val = (long) (value / pow10[-scale] * pow10[2] + TOLERANCE);
+        return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
     }
 
     private static double roundHalfEven0(double value, int scale) {
@@ -1602,17 +1611,50 @@ public final class Numbers {
         return value < 0 ? -roundUp00(-value, scale) : roundUp00(value, scale);
     }
 
+    private static double roundDown0PosScale(double value, int scale) {
+        return value < 0 ? -roundDown00PosScale(-value, scale) : roundDown00PosScale(value, scale);
+    }
+
+    private static double roundDown0NegScale(double value, int scale) {
+        return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
+    }
+
+    private static double roundUp0PosScale(double value, int scale) {
+        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
+    }
+
+    private static double roundUp0NegScale(double value, int scale) {
+        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
+    }
+
     private static double roundUp00(double value, int scale) {
+        return scale < 0 ? roundUp00NegScale(value, scale) : roundUp00PosScale(value, scale);
+    }
+
+    private static double roundUp00PosScale(double value, int scale) {
         long powten = pow10[scale];
         return ((double) (long) (value * powten + 1 - TOLERANCE)) / powten;
     }
 
+    private static double roundUp00NegScale(double value, int scale) {
+        long powten = pow10[-scale];
+        return ((double) (long) (value / powten + 1 - TOLERANCE)) * powten;
+    }
 
     //////////////////////
 
     private static double roundDown00(double value, int scale) {
+        return scale < 0 ? roundDown00NegScale(value, scale) : roundDown00PosScale(value, scale);
+    }
+
+    private static double roundDown00PosScale(double value, int scale) {
         long powten = pow10[scale];
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
+    }
+
+    private static double roundDown00NegScale(double value, int scale) {
+        long powten = pow10[-scale];
+        return ((double) (long) (value / powten + TOLERANCE)) * powten;
     }
 
     private static void appendLong10(CharSink sink, long i) {
