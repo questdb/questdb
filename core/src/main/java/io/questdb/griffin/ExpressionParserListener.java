@@ -27,5 +27,5 @@ package io.questdb.griffin;
 import io.questdb.griffin.model.ExpressionNode;
 
 public interface ExpressionParserListener {
-    void onNode(ExpressionNode node);
+    void onNode(ExpressionNode node) throws SqlException;
 }

@@ -37,7 +37,15 @@ final class ExpressionTreeBuilder implements ExpressionParserListener {
     private QueryModel model;
 
     @Override
-    public void onNode(ExpressionNode node) {
+    public void onNode(ExpressionNode node) throws SqlException {
+
+        if (node.type == ExpressionNode.QUERY && node.queryModel == null) {
+            // this is a validation request
+            if (model == null) {
+                throw SqlException.$(node.position, "query is not allowed here");
+            }
+            return;
+        }
 
         if (node.queryModel != null) {
             model.addExpressionModel(node);

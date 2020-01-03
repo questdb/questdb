@@ -949,7 +949,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        assertFail(7, "no signature match", "a or   sysdate(a)", metadata);
+        assertFail(7, "unknown function", "a or   sysdate(a)", metadata);
     }
 
     @Test
@@ -981,7 +981,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "no signature match");
+            TestUtils.assertContains(e.getMessage(), "unknown function");
         }
     }
 
@@ -1006,7 +1006,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "no signature match");
+            TestUtils.assertContains(e.getMessage(), "unknown function");
         }
     }
 

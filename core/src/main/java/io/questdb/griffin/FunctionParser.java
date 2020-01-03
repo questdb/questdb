@@ -616,7 +616,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         if (candidate == null) {
             // no signature match
-            throw invalidFunction("no signature match", node, args);
+            throw invalidFunction("unknown function", node, args);
         }
 
         if (candidateSigVarArgConst) {

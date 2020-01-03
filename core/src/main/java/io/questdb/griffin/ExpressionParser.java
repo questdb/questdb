@@ -551,6 +551,9 @@ class ExpressionParser {
         lexer.unparse();
 
         ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
+        // validate is Query is allowed
+        onNode(listener, node, argStackDepth);
+        // we can compile query if all is well
         node.queryModel = sqlParser.parseSubQuery(lexer);
         argStackDepth = onNode(listener, node, argStackDepth);
 

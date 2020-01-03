@@ -184,6 +184,16 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertValuesAsLambda() throws Exception {
+        assertFailure(
+                "insert into names values(select rnd_str('Tom', 'Anna', 'John', 'Tim', 'Kim', 'Jim'), rnd_str('Smith', 'Mason', 'Johnson', 'Thompson') from long_sequence(8))",
+                null,
+                25,
+                "query is not allowed here"
+        );
+    }
+
+    @Test
     public void testInsertImplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
