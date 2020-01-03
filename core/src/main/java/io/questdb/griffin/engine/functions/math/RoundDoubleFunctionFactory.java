@@ -68,7 +68,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundHalfUp(l, r);
+                return Numbers.roundHalfUp(l, Math.max(0, r));
             } catch (NumericException e) {
                 return Double.NaN;
             }
