@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -44,8 +45,48 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        Function precision = args.getQuick(1);
+        if (precision.isConstant()) {
+            int precisionValue = precision.getInt(null);
+            return (precisionValue != Numbers.INT_NaN && precisionValue * precisionValue <= Numbers.pow10max * Numbers.pow10max) ?
+                    new FuncConst(position, args.getQuick(0), precision) :
+                    new DoubleConstant(position, Double.NaN);
+        }
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
+
+    private static class FuncConst extends DoubleFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        public FuncConst(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = left.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            final int r = right.getInt(null);
+            return (r > 0) ? Numbers.roundDownPosScale(l, r) : Numbers.roundDownNegScale(l, r);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+    }
+
 
     private static class Func extends DoubleFunction implements BinaryFunction {
         private final Function left;
