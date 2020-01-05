@@ -28,9 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-
 class ExpressionParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
@@ -58,7 +55,7 @@ class ExpressionParser {
         caseKeywords.put("else", 2);
     }
 
-    private final Deque<ExpressionNode> opStack = new ArrayDeque<>();
+    private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack castBraceCountStack = new IntStack();
@@ -121,7 +118,7 @@ class ExpressionParser {
                         // pop operators off the stack onto the output queue. If no left
                         // parentheses are encountered, either the separator was misplaced or
                         // parentheses were mismatched.
-                        while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                        while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                             argStackDepth = onNode(listener, node, argStackDepth);
                         }
 
@@ -184,9 +181,9 @@ class ExpressionParser {
                         // Pop the left parenthesis from the stack, but not onto the output queue.
                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                        while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                        while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                             // special case - (*) expression
-                            if (Chars.equals(node.token, '*') && argStackDepth == 0 && opStack.size() == 2 && Chars.equals(opStack.peek().token, '(')) {
+                            if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
                                 argStackDepth = onNode(listener, node, 2);
                             } else {
                                 if (thisWasCast) {
@@ -212,7 +209,7 @@ class ExpressionParser {
                             node.paramCount = localParamCount + (node.paramCount == 2 ? 1 : 0);
                             node.type = ExpressionNode.FUNCTION;
                             argStackDepth = onNode(listener, node, argStackDepth);
-                            opStack.poll();
+                            opStack.pop();
                         } else {
                             // not at function?
                             // peek the op stack to make sure it isn't a repeating brace
@@ -247,7 +244,7 @@ class ExpressionParser {
                                 thisBranch = BRANCH_CAST_AS;
 
                                 // push existing args to the listener
-                                while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                                while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                                     argStackDepth = onNode(listener, node, argStackDepth);
                                 }
 
@@ -353,7 +350,7 @@ class ExpressionParser {
                             if (greaterPrecedence &&
                                     (operatorType != OperatorExpression.UNARY || (operatorType == OperatorExpression.UNARY && other.paramCount == 1))) {
                                 argStackDepth = onNode(listener, other, argStackDepth);
-                                opStack.poll();
+                                opStack.pop();
                             } else {
                                 break;
                             }
@@ -405,7 +402,7 @@ class ExpressionParser {
                                         // Pop the left parenthesis from the stack, but not onto the output queue.
                                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
+                                        while ((node = opStack.pop()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
                                             argStackDepth = onNode(listener, node, argStackDepth);
                                         }
 
@@ -441,7 +438,7 @@ class ExpressionParser {
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
                                         int argCount = 0;
-                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
+                                        while ((node = opStack.pop()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
                                             argStackDepth = onNode(listener, node, argStackDepth);
                                             argCount++;
                                         }
@@ -495,7 +492,7 @@ class ExpressionParser {
                 }
             }
 
-            while ((node = opStack.poll()) != null) {
+            while ((node = opStack.pop()) != null) {
 
                 if (node.token.charAt(0) == '(') {
                     throw SqlException.$(node.position, "unbalanced (");
@@ -528,6 +525,10 @@ class ExpressionParser {
         }
     }
 
+    private boolean isCount() {
+        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && Chars.equals("count", opStack.peek(1).token);
+    }
+
     private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
         // It is highly likely this expression parser will be re-entered when
         // parsing sub-query. To prevent sub-query consuming operation stack we must add a
@@ -554,13 +555,13 @@ class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseSubQuery(lexer);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer);
         argStackDepth = onNode(listener, node, argStackDepth);
 
         // pop our control node if sub-query hasn't done it
         ExpressionNode control = opStack.peek();
         if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
-            opStack.poll();
+            opStack.pop();
         }
 
         backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);

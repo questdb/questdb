@@ -39,6 +39,43 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("left");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("splice");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        tableAliasStop.add(";");
+        tableAliasStop.add("union");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("left", QueryModel.JOIN_INNER);
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
+    }
+
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder = new ExpressionTreeBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
@@ -607,7 +644,7 @@ public final class SqlParser {
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            model.setNestedModel(parseSubQuery(lexer));
+            model.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer));
             model.setNestedModelIsSubQuery(true);
 
             tok = optTok(lexer);
@@ -807,7 +844,7 @@ public final class SqlParser {
         tok = expectTableNameOrSubQuery(lexer);
 
         if (Chars.equals(tok, '(')) {
-            joinModel.setNestedModel(parseSubQuery(lexer));
+            joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer));
         } else {
             lexer.unparse();
             parseSelectFrom(lexer, joinModel, parent);
@@ -1067,7 +1104,13 @@ public final class SqlParser {
         }
     }
 
-    QueryModel parseSubQuery(GenericLexer lexer) throws SqlException {
+    private QueryModel parseAsSubQueryAndExpectClosingBrace(GenericLexer lexer) throws SqlException {
+        final QueryModel model = parseAsSubQuery(lexer);
+        expectTok(lexer, ')');
+        return model;
+    }
+
+    QueryModel parseAsSubQuery(GenericLexer lexer) throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {
@@ -1075,7 +1118,6 @@ public final class SqlParser {
         } finally {
             this.subQueryMode = false;
         }
-        expectTok(lexer, ')');
         return model;
     }
 
@@ -1107,7 +1149,7 @@ public final class SqlParser {
         lexer.goToPosition(wcm.getPosition(), null);
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
-        m = parseSubQuery(lexer);
+        m = parseAsSubQueryAndExpectClosingBrace(lexer);
         lexer.goToPosition(pos, unparsed);
         return m;
     }
@@ -1124,7 +1166,7 @@ public final class SqlParser {
             expectTok(lexer, '(');
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
-            wcm.of(lo + 1, parseSubQuery(lexer));
+            wcm.of(lo + 1, parseAsSubQueryAndExpectClosingBrace(lexer));
             model.addWithClause(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
@@ -1300,41 +1342,5 @@ public final class SqlParser {
                 break;
 
         }
-    }
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("left");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("splice");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        tableAliasStop.add(";");
-        tableAliasStop.add("union");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("left", QueryModel.JOIN_INNER);
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
-        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
     }
 }

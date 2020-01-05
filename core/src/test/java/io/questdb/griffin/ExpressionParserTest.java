@@ -295,6 +295,50 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastLambda() throws SqlException {
+        x("(select-choose a, b, c from (x))1+longcast", "cast((select a,b,c from x)+1 as long)");
+    }
+
+    @Test
+    public void testCastLambda2() throws SqlException {
+        x("(select-choose a, b, c from (x))longcast", "cast((select a,b,c from x) as long)");
+    }
+
+    @Test
+    public void testCastFunctionWithLambda() throws SqlException {
+        x("(select-choose a, b, c from (x))flongcast", "cast(f(select a,b,c from x) as long)");
+    }
+
+    @Test
+    public void testLambdaMiddleParameter() {
+        assertFail(
+                "f(1,2,select a,b,c,d from z, 4)",
+                29,
+                "dangling expression"
+        );
+    }
+
+    @Test
+    public void testLambdaMiddleParameterBraced() throws SqlException {
+        x("12(select-choose a, b, c, d from (z))4f", "f(1,2,(select a,b,c,d from z), 4)");
+    }
+
+    @Test
+    public void testLambdaInOperator() throws SqlException {
+        x("1(select-choose a, b, c from (x))+", "1 + (select a,b,c from x)");
+    }
+
+    @Test
+    public void testLambdaInOperator2() throws SqlException {
+        x("1(select-choose a, b, c from (x))+", "1 + select a,b,c from x");
+    }
+
+    @Test
+    public void testLambdaInOperator3() throws SqlException {
+        x("(select-choose a, b, c from (x))1+", "(select a,b,c from x) + 1");
+    }
+
+    @Test
     public void testCastNested() throws SqlException {
         x("1longcastshortcast", "cast(cast(1 as long) as short)");
     }
@@ -447,7 +491,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNewLambdaUnbalancedBrace() {
-        assertFail("x in (select a,b from T", 23, "')' expected");
+        assertFail("x in (select a,b from T", 5, "unbalanced (");
     }
 
     @Test
@@ -473,6 +517,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCountStar() throws SqlException {
         x("*count", "count(*)");
+    }
+
+    @Test
+    public void testFunctionStar() {
+        assertFail("fun(*)", 4, "too few arguments");
     }
 
     @Test
