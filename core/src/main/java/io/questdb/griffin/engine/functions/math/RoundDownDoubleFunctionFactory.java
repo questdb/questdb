@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -48,45 +49,71 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
         Function precision = args.getQuick(1);
         if (precision.isConstant()) {
             int precisionValue = precision.getInt(null);
-            return (precisionValue != Numbers.INT_NaN && precisionValue * precisionValue <= Numbers.pow10max * Numbers.pow10max) ?
-                    new FuncConst(position, args.getQuick(0), precision) :
-                    new DoubleConstant(position, Double.NaN);
+            if (precisionValue != Numbers.INT_NaN && Math.abs(precisionValue) <= Numbers.pow10max) {
+                if (precisionValue >= 0) {
+                    return new FuncPosConst(position, args.getQuick(0), precisionValue);
+                }
+                return new FuncNegConst(position, args.getQuick(0), precisionValue);
+            }
+            new DoubleConstant(position, Double.NaN);
         }
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class FuncConst extends DoubleFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
 
-        public FuncConst(int position, Function left, Function right) {
+        public FuncPosConst(int position, Function arg, int r) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.arg = arg;
+            this.scale = r;
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double l = left.getDouble(rec);
+            final double l = arg.getDouble(rec);
             if (l != l) {
                 return l;
             }
 
-            final int r = right.getInt(null);
-            return (r > 0) ? Numbers.roundDownPosScale(l, r) : Numbers.roundDownNegScale(l, r);
+            return Numbers.roundDownPosScale(l, scale);
         }
 
         @Override
-        public Function getLeft() {
-            return left;
+        public Function getArg() {
+            return arg;
         }
 
-        @Override
-        public Function getRight() {
-            return right;
-        }
     }
 
+
+    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncNegConst(int position, Function arg, int r) {
+            super(position);
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundDownPosScale(l, scale);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+    }
 
     private static class Func extends DoubleFunction implements BinaryFunction {
         private final Function left;
