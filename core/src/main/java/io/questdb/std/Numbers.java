@@ -1651,12 +1651,14 @@ public final class Numbers {
 
     private static double roundDown00PosScale(double value, int scale) {
         long powten = pow10[scale];
-        return ((double) (long) (value * powten + TOLERANCE)) / powten;
+        double powtenNeg = pow10dNeg[scale];
+        return ((double) (long) (value * powten + TOLERANCE)) * powtenNeg;
     }
 
     private static double roundDown00NegScale(double value, int scale) {
         long powten = pow10[-scale];
-        return ((double) (long) (value / powten + TOLERANCE)) * powten;
+        double powtenNeg = pow10dNeg[scale];
+        return ((double) (long) (value * powtenNeg + TOLERANCE)) * powten;
     }
 
     public static double roundDownPosScale(double value, int scale) {
