@@ -1579,7 +1579,7 @@ public final class Numbers {
     }
 
     private static double roundHalfUp0NegScale(double value, int scale) {
-        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
+        long val = (long) (value * pow10dNeg[-scale] * pow10[2] + TOLERANCE);
         return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
     }
 
@@ -1639,7 +1639,7 @@ public final class Numbers {
 
     private static double roundUp00NegScale(double value, int scale) {
         long powten = pow10[-scale];
-        double powtenNeg = pow10dNeg[scale];
+        double powtenNeg = pow10dNeg[-scale];
         return ((double) (long) (value * powtenNeg + 1 - TOLERANCE)) * powten;
     }
 
@@ -1657,7 +1657,7 @@ public final class Numbers {
 
     private static double roundDown00NegScale(double value, int scale) {
         long powten = pow10[-scale];
-        double powtenNeg = pow10dNeg[scale];
+        double powtenNeg = pow10dNeg[-scale];
         return ((double) (long) (value * powtenNeg + TOLERANCE)) * powten;
     }
 

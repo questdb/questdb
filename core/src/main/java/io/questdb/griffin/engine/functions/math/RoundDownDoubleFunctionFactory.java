@@ -46,14 +46,20 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function precision = args.getQuick(1);
-        if (precision.isConstant()) {
-            int precisionValue = precision.getInt(null);
-            if (precisionValue != Numbers.INT_NaN && Math.abs(precisionValue) <= Numbers.pow10max) {
-                if (precisionValue >= 0) {
-                    return new FuncPosConst(position, args.getQuick(0), precisionValue);
+        Function scale = args.getQuick(1);
+        if (scale.isConstant()) {
+            int scaleValue = scale.getInt(null);
+            if (scaleValue != Numbers.INT_NaN) {
+                if (scaleValue > 0 && scaleValue < Numbers.pow10max) {
+                    return new FuncPosConst(position, args.getQuick(0), scaleValue);
+                } else {
+                    new DoubleConstant(position, Double.NaN);
                 }
-                return new FuncNegConst(position, args.getQuick(0), precisionValue);
+                if (scaleValue < 0 && scaleValue < -Numbers.pow10max) {
+                    return new FuncNegConst(position, args.getQuick(0), scaleValue);
+                } else {
+                    new DoubleConstant(position, 0.0);
+                }
             }
             new DoubleConstant(position, Double.NaN);
         }
@@ -105,7 +111,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
                 return l;
             }
 
-            return Numbers.roundDownPosScale(l, scale);
+            return Numbers.roundDownNegScale(l, scale);
         }
 
         @Override
