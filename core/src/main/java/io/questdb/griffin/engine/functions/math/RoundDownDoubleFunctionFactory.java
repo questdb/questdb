@@ -50,18 +50,14 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
             if (scaleValue != Numbers.INT_NaN) {
-                if (scaleValue > 0 && scaleValue < Numbers.pow10max) {
+                if (scaleValue > -1 && scaleValue < Numbers.pow10max) {
                     return new FuncPosConst(position, args.getQuick(0), scaleValue);
-                } else {
-                    new DoubleConstant(position, Double.NaN);
                 }
                 if (scaleValue < 0 && scaleValue < -Numbers.pow10max) {
                     return new FuncNegConst(position, args.getQuick(0), scaleValue);
-                } else {
-                    new DoubleConstant(position, 0.0);
                 }
+                return new DoubleConstant(position, Double.NaN);
             }
-            new DoubleConstant(position, Double.NaN);
         }
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
