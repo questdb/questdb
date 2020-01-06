@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -53,7 +53,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
                 if (scaleValue > -1 && scaleValue < Numbers.pow10max) {
                     return new FuncPosConst(position, args.getQuick(0), scaleValue);
                 }
-                if (scaleValue < 0 && scaleValue < -Numbers.pow10max) {
+                if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
                     return new FuncNegConst(position, args.getQuick(0), -scaleValue);
                 }
             }

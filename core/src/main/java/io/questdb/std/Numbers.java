@@ -1669,6 +1669,23 @@ public final class Numbers {
         return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
     }
 
+    public static double roundHalfUpNegScale(double value, int scale) {
+        return value < 0 ? -roundHalfUp0NegScale(-value, scale) : roundHalfUp0NegScale(value, scale);
+    }
+
+    public static double roundHalfUpPosScale(double value, int scale) {
+        return value < 0 ? -roundHalfUp0PosScale(-value, scale) : roundHalfUp0PosScale(value, scale);
+    }
+
+    public static double roundUpNegScale(double value, int scale) {
+        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
+    }
+
+    public static double roundUpPosScale(double value, int scale) {
+        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
+    }
+
+
     private static void appendLong10(CharSink sink, long i) {
         long c;
         sink.put((char) ('0' + i / 1000000000L));

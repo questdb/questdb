@@ -43,8 +43,43 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
-    public void testNegScale() throws SqlException {
-        call(14.7778, -1).andAssert(10, 0.0000000001);
+    public void testNegScaleNegValue() throws SqlException {
+        call(-104.9, -1).andAssert(-100.0, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScaleNegValue2() throws SqlException {
+        call(-106.1, -1).andAssert(-110, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScalePosValue() throws SqlException {
+        call(104.9, -1).andAssert(100, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScalePosValue2() throws SqlException {
+        call(106.1, -1).andAssert(110, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScaleNegValue() throws SqlException {
+        call(-100.54, 1).andAssert(-100.5, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScaleNegValue2() throws SqlException {
+        call(-100.56, 1).andAssert(-100.6, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValue() throws SqlException {
+        call(100.44, 1).andAssert(100.4, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValue2() throws SqlException {
+        call(100.45, 1).andAssert(100.5, 0.0000000001);
     }
 
     @Test
