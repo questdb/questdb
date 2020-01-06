@@ -34,9 +34,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testLargeNegScale() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "NaN\n",
-                "select roundup(14.778, -16) from long_sequence(1)",
+                "select round_up(14.778, -16) from long_sequence(1)",
                 null,
                 true
         );
@@ -45,9 +45,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testLargePosScale() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "NaN\n",
-                "select roundup(14.778, 16) from long_sequence(1)",
+                "select round_up(14.778, 16) from long_sequence(1)",
                 null,
                 true
         );
@@ -56,9 +56,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testNegScaleHigherThanNumber() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "-100000.000000000000\n",
-                "select roundup(-14.778, -5) from long_sequence(1)",
+                "select round_up(-14.778, -5) from long_sequence(1)",
                 null,
                 true
         );
@@ -67,9 +67,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testNegScaleNegValue() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "-20.000000000000\n",
-                "select roundup(-14.778, -1) from long_sequence(1)",
+                "select round_up(-14.778, -1) from long_sequence(1)",
                 null,
                 true
         );
@@ -78,9 +78,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testNegScalePosValue() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "20.000000000000\n",
-                "select roundup(14.778, -1) from long_sequence(1)",
+                "select round_up(14.778, -1) from long_sequence(1)",
                 null,
                 true
         );
@@ -89,9 +89,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testPosScaleHigherThanNumber() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "-14.778000100000\n",
-                "select roundup(-14.778, 7) from long_sequence(1)",
+                "select round_up(-14.778, 7) from long_sequence(1)",
                 null,
                 true
         );
@@ -100,9 +100,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testPosScaleNegValue() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "-101.000000000000\n",
-                "select roundup(-100.9999, 1) from long_sequence(1)",
+                "select round_up(-100.9999, 1) from long_sequence(1)",
                 null,
                 true
         );
@@ -111,9 +111,9 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     @Test
     public void testPosScalePosValue() throws SqlException {
         assertQuery(
-                "roundup\n" +
+                "round_up\n" +
                         "100.100000000000\n",
-                "select roundup(100.01, 1) from long_sequence(1)",
+                "select round_up(100.01, 1) from long_sequence(1)",
                 null,
                 true
         );

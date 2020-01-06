@@ -41,7 +41,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "rounddown(DI)";
+        return "round_down(DI)";
     }
 
     @Override
