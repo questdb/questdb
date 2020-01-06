@@ -76,6 +76,11 @@ public final class Constants {
             @Override
             public void getLong256(Record rec, CharSink sink) {
             }
+
+            @Override
+            public boolean isConstant() {
+                return true;
+            }
         });
     }
 

@@ -26,32 +26,12 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Il)";
-    }
-
+public abstract class AbstractEntityCastFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
-    }
-
-    private static class Func extends AbstractUnaryLongFunction {
-        public Func(int position, Function arg) {
-            super(position, arg);
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
-        }
+        return args.getQuick(0);
     }
 }

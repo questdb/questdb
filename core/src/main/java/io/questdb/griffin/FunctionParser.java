@@ -648,7 +648,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(int position, Function function) {
-        // todo: LONG256 missing
         switch (function.getType()) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
@@ -697,6 +696,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return function;
                 } else {
                     return new LongConstant(position, function.getLong(null));
+                }
+            case ColumnType.LONG256:
+                if (function instanceof Long256Constant) {
+                    return function;
+                } else {
+                    return new Long256Constant(position, function.getLong256A(null));
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

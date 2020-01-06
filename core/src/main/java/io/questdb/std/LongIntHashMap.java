@@ -26,115 +26,81 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
+public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
 
-public class LongIntHashMap implements Mutable {
-
-    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
-    private final double loadFactor;
     private int[] values;
-    private long[] keys;
-    private int free;
-    private int mask;
 
     public LongIntHashMap() {
         this(8);
     }
 
-    private LongIntHashMap(int initialCapacity) {
+    public LongIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
     private LongIntHashMap(int initialCapacity, double loadFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
-        this.loadFactor = loadFactor;
-        values = new int[capacity];
-        keys = new long[capacity];
-        free = initialCapacity;
-        mask = capacity - 1;
+        super(initialCapacity, loadFactor);
+        values = new int[keys.length];
         clear();
     }
 
-    public final void clear() {
-        Arrays.fill(values, noEntryValue);
-    }
-
     public int get(long key) {
-        int index = (int) key & mask;
-        if (values[index] == noEntryValue || keys[index] == key) {
-            return values[index];
-        }
-        return probe(key, index);
+        return valueAt(keyIndex(key));
     }
 
     public void put(long key, int value) {
-        insertKey(key, value);
-        if (free == 0) {
-            rehash();
-        }
+        putAt(keyIndex(key), key, value);
     }
 
-    private void insertKey(long key, int value) {
-        int index = (int) key & mask;
-        if (values[index] == noEntryValue) {
+    public void putAt(int index, long key, int value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+        } else {
             keys[index] = key;
             values[index] = value;
-            free--;
-            return;
+            if (--free == 0) {
+                rehash();
+            }
         }
-
-        if (keys[index] == key) {
-            values[index] = value;
-            return;
-        }
-
-        probeInsert(key, index, value);
     }
 
-    private int probe(long key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (values[index] == noEntryValue || keys[index] == key) {
-                return values[index];
-            }
-        } while (true);
+    public int valueAt(int index) {
+        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
-    private void probeInsert(long key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (values[index] == noEntryValue) {
-                keys[index] = key;
-                values[index] = value;
-                free--;
-                return;
-            }
+    @Override
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
 
-            if (key == keys[index]) {
-                values[index] = value;
-                return;
-            }
-        } while (true);
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     private void rehash() {
-        int newCapacity = values.length << 1;
+        int size = size();
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        free = (int) (newCapacity * loadFactor);
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+
         int[] oldValues = values;
         long[] oldKeys = keys;
-        this.keys = new long[newCapacity];
-        this.values = new int[newCapacity];
-        Arrays.fill(values, noEntryValue);
+        this.keys = new long[arrayCapacity];
+        this.values = new int[arrayCapacity];
+        Arrays.fill(keys, noEntryKeyValue);
 
+        free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            int val = oldValues[i];
-            if (val != noEntryValue) {
-                insertKey(oldKeys[i], val);
+            long key = oldKeys[i];
+            if (key != noEntryKeyValue) {
+                final int index = keyIndex(key);
+                keys[index] = key;
+                values[index] = oldValues[i];
             }
         }
     }

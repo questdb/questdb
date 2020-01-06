@@ -28,14 +28,18 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
+public class CastByteToLong256FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Il)";
+        return "cast(Bh)";
     }
 
     @Override
@@ -43,15 +47,36 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
+    private static class Func extends Long256Function implements UnaryFunction {
+        private final Function arg;
+        private final Long256Impl long256a = new Long256Impl();
+        private final Long256Impl long256b = new Long256Impl();
+
         public Func(int position, Function arg) {
-            super(position, arg);
+            super(position);
+            this.arg = arg;
         }
 
         @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            long256a.setLong0(arg.getByte(rec));
+            return long256a;
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            long256b.setLong0(arg.getByte(rec));
+            return long256b;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Numbers.appendLong256(arg.getByte(rec), 0, 0, 0, sink);
         }
     }
 }

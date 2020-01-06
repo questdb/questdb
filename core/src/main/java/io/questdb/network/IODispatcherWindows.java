@@ -97,12 +97,12 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         // collect writes into hash map
         for (int i = 0, n = writeFdSet.getCount(); i < n; i++) {
-            long fd = writeFdSet.get(i);
-            int op = fds.get(fd);
-            if (op == -1) {
-                fds.put(fd, SelectAccessor.FD_WRITE);
+            final long fd = writeFdSet.get(i);
+            final int index = fds.keyIndex(fd);
+            if (fds.valueAt(index) == -1) {
+                fds.putAt(index, fd, SelectAccessor.FD_WRITE);
             } else {
-                fds.put(fd, SelectAccessor.FD_READ | SelectAccessor.FD_WRITE);
+                fds.putAt(index, fd, SelectAccessor.FD_READ | SelectAccessor.FD_WRITE);
             }
         }
     }
@@ -138,9 +138,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
-            long ts = pending.get(i, M_TIMESTAMP);
-            long fd = pending.get(i, M_FD);
-            int _new_op = fds.get(fd);
+            final long ts = pending.get(i, M_TIMESTAMP);
+            final long fd = pending.get(i, M_FD);
+            final int _new_op = fds.get(fd);
 
             if (_new_op == -1) {
 

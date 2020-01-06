@@ -22,36 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.str.CharSink;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Il)";
+public class Long256Constant extends Long256Function implements ConstantFunction {
+    private final Long256Impl value = new Long256Impl();
+
+    public Long256Constant(int position, Long256 that) {
+        this(position, that.getLong0(), that.getLong1(), that.getLong2(), that.getLong3());
+    }
+
+    public Long256Constant(int position, long a, long b, long c, long d) {
+        super(position);
+        value.setLong0(a);
+        value.setLong1(b);
+        value.setLong2(c);
+        value.setLong3(d);
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
+    public Long256 getLong256A(Record rec) {
+        return value;
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
-        public Func(int position, Function arg) {
-            super(position, arg);
-        }
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return value;
+    }
 
-        @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
-        }
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        value.toSink(sink);
     }
 }

@@ -24,19 +24,9 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.std.ObjList;
-
-public class CastIntToIntFunctionFactory implements FunctionFactory {
+public class CastIntToIntFunctionFactory extends AbstractEntityCastFunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ii)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return args.getQuick(0);
     }
 }

@@ -28,14 +28,15 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
+public class CastLongToDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Il)";
+        return "cast(Ld)";
     }
 
     @Override
@@ -43,15 +44,23 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
+    private static class Func extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+
         public Func(int position, Function arg) {
-            super(position, arg);
+            super(position);
+            this.arg = arg;
         }
 
         @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final long value = arg.getLong(rec);
+            return value != Numbers.LONG_NaN ? value : Double.NaN;
         }
     }
 }

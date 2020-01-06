@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-public class Long256Impl implements Long256Sink, Long256 {
+import io.questdb.std.str.CharSink;
+
+public class Long256Impl implements Long256Sink, Long256, Sinkable {
 
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
 
@@ -99,5 +101,10 @@ public class Long256Impl implements Long256Sink, Long256 {
         this.l1 = l1;
         this.l2 = l2;
         this.l3 = l3;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 }

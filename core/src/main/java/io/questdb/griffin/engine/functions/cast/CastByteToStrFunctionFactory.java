@@ -28,30 +28,65 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
+public class CastByteToStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Il)";
+        return "cast(Bs)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        Function intFunc = args.getQuick(0);
+        if (intFunc.isConstant()) {
+            StringSink sink = Misc.getThreadLocalBuilder();
+            Numbers.append(sink, intFunc.getInt(null));
+            return new StrConstant(position, Chars.toString(sink));
+        }
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
+    private static class Func extends StrFunction implements UnaryFunction {
+        private final Function arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
         public Func(int position, Function arg) {
-            super(position, arg);
+            super(position);
+            this.arg = arg;
         }
 
         @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            sinkA.clear();
+            Numbers.append(sinkA, arg.getByte(rec));
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.append(sinkB, arg.getByte(rec));
+            return sinkB;
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            Numbers.append(sink, arg.getByte(rec));
         }
     }
 }

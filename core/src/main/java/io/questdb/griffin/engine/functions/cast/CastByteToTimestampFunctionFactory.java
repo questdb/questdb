@@ -28,14 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastIntToLongFunctionFactory implements FunctionFactory {
+public class CastByteToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Il)";
+        return "cast(Bn)";
     }
 
     @Override
@@ -43,13 +43,13 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
+    private static class Func extends AbstractUnaryTimestampFunction {
         public Func(int position, Function arg) {
             super(position, arg);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public long getTimestamp(Record rec) {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
         }

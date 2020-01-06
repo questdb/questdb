@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToLongFunctionFactory implements FunctionFactory {
@@ -41,11 +40,7 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function var = args.getQuick(0);
-        if (var.isConstant()) {
-            return new LongConstant(position, var.getTimestamp(null));
-        }
-        return new Func(position, var);
+        return new Func(position, args.getQuick(0));
     }
 
     private static class Func extends LongFunction implements UnaryFunction {
