@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLargeScale() throws SqlException {
@@ -44,47 +44,27 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testNegScaleNegValue() throws SqlException {
-        call(-104.9, -1).andAssert(-100.0, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScaleNegValue2() throws SqlException {
-        call(-106.1, -1).andAssert(-110, 0.0000000001);
+        call(-14.7778, -1).andAssert(-20, 0.0000000001);
     }
 
     @Test
     public void testNegScalePosValue() throws SqlException {
-        call(104.9, -1).andAssert(100, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScalePosValue2() throws SqlException {
-        call(106.1, -1).andAssert(110, 0.0000000001);
+        call(14.778, -1).andAssert(20, 0.0000000001);
     }
 
     @Test
     public void testPosScaleNegValue() throws SqlException {
-        call(-100.54, 1).andAssert(-100.5, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScaleNegValue2() throws SqlException {
-        call(-100.56, 1).andAssert(-100.6, 0.0000000001);
+        call(-100.999, 1).andAssert(-101.0, 0.0000000001);
     }
 
     @Test
     public void testPosScalePosValue() throws SqlException {
-        call(100.44, 1).andAssert(100.4, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScalePosValue2() throws SqlException {
-        call(100.45, 1).andAssert(100.5, 0.0000000001);
+        call(100.01, 1).andAssert(100.1, 0.0000000001);
     }
 
     @Test
     public void testNegScaleHigherThanNumber() throws SqlException {
-        call(14.7778, -5).andAssert(0, 0.0000000001);
+        call(14.7778, -5).andAssert(100000, 0.0000000001);
     }
 
     @Test
@@ -104,11 +84,21 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testSimple() throws SqlException {
-        call(14.7778, 3).andAssert(14.778, 0.0000000001);
+        call(100.01, 1).andAssert(100.1, 0.0000000001);
+    }
+
+    @Test
+    public void testSimpleTwo() throws SqlException {
+        call(100.999, 1).andAssert(101.0, 0.0000000001);
+    }
+
+    @Test
+    public void testSimpleThree() throws SqlException {
+        call(100.109, 2).andAssert(100.11, 0.0000000001);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RoundDoubleFunctionFactory();
+        return new RoundUpDoubleFunctionFactory();
     }
 }

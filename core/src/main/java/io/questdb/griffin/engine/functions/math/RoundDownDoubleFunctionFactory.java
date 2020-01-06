@@ -36,10 +36,12 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class RoundDoubleFunctionFactory implements FunctionFactory {
+
+public class RoundDownDoubleFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "round(DI)";
+        return "round_down(DI)";
     }
 
     @Override
@@ -48,7 +50,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
             if (scaleValue != Numbers.INT_NaN) {
-                if (scaleValue > -1 && scaleValue < Numbers.pow10max + 2) {
+                if (scaleValue > -1 && scaleValue < Numbers.pow10max) {
                     return new FuncPosConst(position, args.getQuick(0), scaleValue);
                 }
                 if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
@@ -58,6 +60,61 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             return new DoubleConstant(position, Double.NaN);
         }
         return new Func(position, args.getQuick(0), args.getQuick(1));
+    }
+
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncPosConst(int position, Function arg, int r) {
+            super(position);
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundDownPosScale(l, scale);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+    }
+
+
+    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncNegConst(int position, Function arg, int r) {
+            super(position);
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundDownNegScale(l, scale);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
     }
 
     private static class Func extends DoubleFunction implements BinaryFunction {
@@ -83,7 +140,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundHalfUp(l, r);
+                return Numbers.roundDown(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }
@@ -99,60 +156,5 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             return right;
         }
     }
-
-    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncPosConst(int position, Function arg, int r) {
-            super(position);
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundHalfUpPosScale(l, scale);
-        }
-
-    }
-
-    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncNegConst(int position, Function arg, int r) {
-            super(position);
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundHalfUpNegScale(l, scale);
-        }
-
-    }
-
-
 }
+
