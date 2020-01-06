@@ -1392,7 +1392,7 @@ public final class Numbers {
     }
 
     public static double roundHalfUp(double value, int scale) throws NumericException {
-        if (scale + 2 < pow10max && scale > -pow10max ) {
+        if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfUp0(value, scale) : -roundHalfUp0(-value, scale);
         }
         throw NumericException.INSTANCE;
