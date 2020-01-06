@@ -54,7 +54,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
                     return new FuncPosConst(position, args.getQuick(0), scaleValue);
                 }
                 if (scaleValue < 0 && scaleValue < -Numbers.pow10max) {
-                    return new FuncNegConst(position, args.getQuick(0), scaleValue);
+                    return new FuncNegConst(position, args.getQuick(0), -scaleValue);
                 }
             }
             return new DoubleConstant(position, Double.NaN);

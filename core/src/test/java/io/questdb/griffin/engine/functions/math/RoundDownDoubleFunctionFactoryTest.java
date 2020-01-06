@@ -39,7 +39,7 @@ public class RoundDownDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testLargeNegScale() throws SqlException {
-        call(14.7778, -16).andAssert(0.0, 0.0000000001);
+        call(14.7778, -16).andAssert(Double.NaN, 0.0000000001);
     }
 
     @Test

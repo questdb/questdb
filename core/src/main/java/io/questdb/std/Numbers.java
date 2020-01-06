@@ -1367,14 +1367,14 @@ public final class Numbers {
     }
 
     public static double roundDown(double value, int scale) throws NumericException {
-        if (scale < pow10max) {
+        if (scale < pow10max && scale > -pow10max) {
             return roundDown0(value, scale);
         }
         throw NumericException.INSTANCE;
     }
 
     public static double roundHalfDown(double value, int scale) throws NumericException {
-        if (scale + 2 < pow10max) {
+        if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfDown0(value, scale) : -roundHalfDown0(-value, scale);
         }
         throw NumericException.INSTANCE;
@@ -1388,18 +1388,18 @@ public final class Numbers {
     }
 
     private static double roundHalfUp0(double value, int scale) {
-        return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, scale);
+        return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
 
     public static double roundHalfUp(double value, int scale) throws NumericException {
-        if (scale + 2 < pow10max) {
+        if (scale + 2 < pow10max && scale > -pow10max ) {
             return value > 0 ? roundHalfUp0(value, scale) : -roundHalfUp0(-value, scale);
         }
         throw NumericException.INSTANCE;
     }
 
     public static double roundUp(double value, int scale) throws NumericException {
-        if (scale < pow10max) {
+        if (scale < pow10max && scale > -pow10max) {
             return roundUp0(value, scale);
         }
         throw NumericException.INSTANCE;
@@ -1579,7 +1579,7 @@ public final class Numbers {
     }
 
     private static double roundHalfUp0NegScale(double value, int scale) {
-        long val = (long) (value * pow10dNeg[-scale] * pow10[2] + TOLERANCE);
+        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
         return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
     }
 
@@ -1628,7 +1628,7 @@ public final class Numbers {
     }
 
     private static double roundUp00(double value, int scale) {
-        return scale < 0 ? roundUp00NegScale(value, scale) : roundUp00PosScale(value, scale);
+        return scale < 0 ? roundUp00NegScale(value, -scale) : roundUp00PosScale(value, scale);
     }
 
     private static double roundUp00PosScale(double value, int scale) {
@@ -1638,15 +1638,15 @@ public final class Numbers {
     }
 
     private static double roundUp00NegScale(double value, int scale) {
-        long powten = pow10[-scale];
-        double powtenNeg = pow10dNeg[-scale];
+        long powten = pow10[scale];
+        double powtenNeg = pow10dNeg[scale];
         return ((double) (long) (value * powtenNeg + 1 - TOLERANCE)) * powten;
     }
 
     //////////////////////
 
     private static double roundDown00(double value, int scale) {
-        return scale < 0 ? roundDown00NegScale(value, scale) : roundDown00PosScale(value, scale);
+        return scale < 0 ? roundDown00NegScale(value, -scale) : roundDown00PosScale(value, scale);
     }
 
     private static double roundDown00PosScale(double value, int scale) {
@@ -1656,8 +1656,8 @@ public final class Numbers {
     }
 
     private static double roundDown00NegScale(double value, int scale) {
-        long powten = pow10[-scale];
-        double powtenNeg = pow10dNeg[-scale];
+        long powten = pow10[scale];
+        double powtenNeg = pow10dNeg[scale];
         return ((double) (long) (value * powtenNeg + TOLERANCE)) * powten;
     }
 
