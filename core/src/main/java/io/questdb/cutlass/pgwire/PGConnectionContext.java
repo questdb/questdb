@@ -559,7 +559,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            responseAsciiSink.put(doubleValue, 3);
+            responseAsciiSink.put(doubleValue);
             responseAsciiSink.putLenEx(a);
         }
     }
@@ -1514,6 +1514,14 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
                 sendBufferPtr += len;
             }
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            ensureCapacity(len);
+            Chars.asciiCopyTo(chars, start, len, sendBufferPtr);
+            sendBufferPtr += len;
+            return this;
         }
 
         public void putLen(long start) {

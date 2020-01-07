@@ -105,4 +105,10 @@ public class StringSink extends AbstractCharSink implements CharSequence, Mutabl
         }
         return this;
     }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        builder.append(chars, start, len);
+        return this;
+    }
 }

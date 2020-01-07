@@ -37,7 +37,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
         assertQuery(
                 "round_up\n" +
                         "NaN\n",
-                "select round_up(14.7778, -14) from long_sequence(1)",
+                "select round_up(14.7778, -18) from long_sequence(1)",
                 null,
                 true
         );
@@ -48,7 +48,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
         assertQuery(
                 "round_up\n" +
                         "NaN\n",
-                "select round_up(14.7778, 14) from long_sequence(1)",
+                "select round_up(14.7778, 18) from long_sequence(1)",
                 null,
                 true
         );
@@ -58,8 +58,8 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testOKNegScale() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "0.000000000000\n",
-                "select round_up(14.7778, -13) from long_sequence(1)",
+                        "0.0\n",
+                "select round_up(14.7778, -17) from long_sequence(1)",
                 null,
                 true
         );
@@ -69,8 +69,8 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testOKPosScale() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "14.777800000000\n",
-                "select round_up(14.7778, 13) from long_sequence(1)",
+                        "14.777800000000001\n",
+                "select round_up(14.7778, 17) from long_sequence(1)",
                 null,
                 true
         );
@@ -80,7 +80,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testNegScaleHigherThanNumber() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "-100000.000000000000\n",
+                        "-100000.0\n",
                 "select round_up(-14.778, -5) from long_sequence(1)",
                 null,
                 true
@@ -91,7 +91,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testNegScaleNegValue() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "-20.000000000000\n",
+                        "-20.0\n",
                 "select round_up(-14.778, -1) from long_sequence(1)",
                 null,
                 true
@@ -102,7 +102,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testNegScalePosValue() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "20.000000000000\n",
+                        "20.0\n",
                 "select round_up(14.778, -1) from long_sequence(1)",
                 null,
                 true
@@ -113,7 +113,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testPosScaleHigherThanNumber() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "-14.778000100000\n",
+                        "-14.7780001\n",
                 "select round_up(-14.778, 7) from long_sequence(1)",
                 null,
                 true
@@ -124,7 +124,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testPosScaleNegValue() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "-101.000000000000\n",
+                        "-101.0\n",
                 "select round_up(-100.9999, 1) from long_sequence(1)",
                 null,
                 true
@@ -135,7 +135,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
     public void testPosScalePosValue() throws SqlException {
         assertQuery(
                 "round_up\n" +
-                        "100.100000000000\n",
+                        "100.10000000000001\n",
                 "select round_up(100.01, 1) from long_sequence(1)",
                 null,
                 true

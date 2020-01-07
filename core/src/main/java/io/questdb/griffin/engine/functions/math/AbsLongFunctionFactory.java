@@ -28,8 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
 import io.questdb.std.ObjList;
 
 public class AbsLongFunctionFactory implements FunctionFactory {
@@ -43,22 +42,14 @@ public class AbsLongFunctionFactory implements FunctionFactory {
         return new AbsFunction(position, args.getQuick(0));
     }
 
-    private static class AbsFunction extends LongFunction implements UnaryFunction {
-        final Function function;
-
-        public AbsFunction(int position, Function function) {
-            super(position);
-            this.function = function;
-        }
-
-        @Override
-        public Function getArg() {
-            return function;
+    private static class AbsFunction extends AbstractUnaryLongFunction {
+        public AbsFunction(int position, Function arg) {
+            super(position, arg);
         }
 
         @Override
         public long getLong(Record rec) {
-            long value = function.getLong(rec);
+            long value = arg.getLong(rec);
             return value < 0 ? -value : value;
         }
     }

@@ -343,7 +343,6 @@ public class LineProtoLexer implements Mutable, Closeable {
             if (dstPos == bufferHi) {
                 extend();
             }
-
             Unsafe.getUnsafe().putChar(dstPos, c);
             return this;
         }
@@ -363,6 +362,11 @@ public class LineProtoLexer implements Mutable, Closeable {
             buffer = buf;
             dstPos = buf + offset + (dstPos - dstTop);
             dstTop = buf + offset;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            throw new UnsupportedOperationException();
         }
     }
 

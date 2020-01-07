@@ -69,7 +69,7 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     }
 
     private void cpyz(CharSequence str, int len) {
-        Chars.strcpy(str, len, ptr);
+        Chars.asciiStrCpy(str, len, ptr);
         Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);
         this.len = len;
     }

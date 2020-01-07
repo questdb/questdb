@@ -46,7 +46,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals("max\tavg\tsum\n" +
-                            "10.000000000000\t5.500000000000\t55\n",
+                            "10.0\t5.5\t55\n",
                     sink);
 
             engine.releaseAllWriters();

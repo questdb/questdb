@@ -119,7 +119,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(double x) {
-        sink().put(x, 2);
+        sink().put(x);
         return this;
     }
 
@@ -155,6 +155,7 @@ class Logger implements LogRecord, Log {
         return this;
     }
 
+    @SuppressWarnings("rawtypes")
     @Override
     public LogRecord $(Enum e) {
         sink().put(e != null ? e.name() : "null");

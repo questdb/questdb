@@ -391,7 +391,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             int len = cs.length();
             long p = _wptr;
             if (p + len < limit) {
-                Chars.strcpy(cs, len, p);
+                Chars.asciiStrCpy(cs, len, p);
                 _wptr += len;
             } else {
                 throw NoSpaceLeftInResponseBufferException.INSTANCE;
@@ -404,6 +404,15 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (_wptr < limit) {
                 Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
                 return this;
+            }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            if (_wPtr + len < limit) {
+                Chars.asciiCopyTo(chars, start, len, _wPtr);
+                _wPtr += len;
             }
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
@@ -477,7 +486,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             int len = seq.length();
             long p = _wPtr;
             if (p + len < limit) {
-                Chars.strcpy(seq, len, p);
+                Chars.asciiStrCpy(seq, len, p);
                 _wPtr = p + len;
             } else {
                 throw NoSpaceLeftInResponseBufferException.INSTANCE;
@@ -495,6 +504,16 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public CharSink put(char[] chars, int start, int len) {
+            if (_wPtr + len < limit) {
+                Chars.asciiCopyTo(chars, start, len, _wPtr);
+                _wPtr += len;
+                return this;
+            }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+        }
+
+        @Override
         public CharSink put(float value, int scale) {
             if (Float.isNaN(value)) {
                 put("null");
@@ -504,12 +523,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public CharSink put(double value, int scale) {
+        public CharSink put(double value) {
             if (Double.isNaN(value)) {
                 put("null");
                 return this;
             }
-            return super.put(value, scale);
+            return super.put(value);
         }
 
         @Override

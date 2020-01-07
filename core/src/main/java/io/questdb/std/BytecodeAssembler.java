@@ -73,7 +73,7 @@ public class BytecodeAssembler {
     private static final int O_POOL_COUNT = 8;
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
-    private final ObjIntHashMap<Class> classCache = new ObjIntHashMap<>();
+    private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private ByteBuffer buf;
     private int poolCount;
     private int objectClassIndex;
@@ -406,7 +406,7 @@ public class BytecodeAssembler {
         return poolCount++;
     }
 
-    public int poolClass(Class clazz) {
+    public int poolClass(Class<?> clazz) {
         int index = classCache.keyIndex(clazz);
         if (index > -1) {
             String name = clazz.getName();
@@ -432,7 +432,7 @@ public class BytecodeAssembler {
         return poolRef(0x09, classIndex, nameAndTypeIndex);
     }
 
-    public int poolInterfaceMethod(Class clazz, String name, String sig) {
+    public int poolInterfaceMethod(Class<?> clazz, String name, String sig) {
         return poolInterfaceMethod(poolClass(clazz), poolNameAndType(poolUtf8(name), poolUtf8(sig)));
     }
 
@@ -456,7 +456,7 @@ public class BytecodeAssembler {
         return poolMethod(classIndex, poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));
     }
 
-    public int poolMethod(Class clazz, CharSequence methodName, CharSequence signature) {
+    public int poolMethod(Class<?> clazz, CharSequence methodName, CharSequence signature) {
         return poolMethod(poolClass(clazz), poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));
     }
 
@@ -748,6 +748,15 @@ public class BytecodeAssembler {
         public Utf8Appender put(char c) {
             BytecodeAssembler.this.putByte(c);
             utf8len++;
+            return this;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            for (int i = 0; i < len; i++) {
+                BytecodeAssembler.this.putByte(chars[i + start]);
+            }
+            utf8len += len;
             return this;
         }
 

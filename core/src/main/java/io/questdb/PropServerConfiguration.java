@@ -169,7 +169,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean lineUdpUnicast;
     private boolean lineUdpOwnThread;
     private int jsonQueryFloatScale;
-    private int jsonQueryDoubleScale;
     private int sqlCopyBufferSize;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
@@ -249,7 +248,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
 
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
-            this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
@@ -1139,11 +1137,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return jsonQueryDoubleScale;
         }
 
         @Override

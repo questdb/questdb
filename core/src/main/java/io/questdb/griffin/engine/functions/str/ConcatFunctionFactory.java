@@ -75,7 +75,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkDouble(CharSink sink, Function function, Record record) {
-        sink.put(function.getDouble(record), 5);
+        sink.put(function.getDouble(record));
     }
 
     private static void sinkSymbol(CharSink sink, Function function, Record record) {

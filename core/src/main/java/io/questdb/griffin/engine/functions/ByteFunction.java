@@ -42,17 +42,17 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
-    public Long256 getLong256A(Record rec) {
+    public final Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Long256 getLong256B(Record rec) {
+    public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public char getChar(Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -97,7 +97,7 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
+    public final RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 
@@ -147,7 +147,7 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 

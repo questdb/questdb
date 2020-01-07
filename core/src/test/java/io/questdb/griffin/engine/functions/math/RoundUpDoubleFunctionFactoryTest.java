@@ -34,13 +34,13 @@ public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testLargeNegScale() throws SqlException {
-        call(14.7778, -14).andAssert(Double.NaN, 0.0000000001);
+        call(14.7778, -18).andAssert(Double.NaN, 0.0000000001);
     }
 
     /*Bounds*/
     @Test
     public void testLargePosScale() throws SqlException {
-        call(14.7778, 14).andAssert(Double.NaN, 0.0000000001);
+        call(14.7778, 18).andAssert(Double.NaN, 0.0000000001);
     }
 
     @Test

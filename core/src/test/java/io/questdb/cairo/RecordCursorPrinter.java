@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.time.DateFormatUtils;
 
@@ -82,13 +81,13 @@ public class RecordCursorPrinter {
                 io.questdb.std.microtime.DateFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
                 break;
             case ColumnType.DOUBLE:
-                Numbers.append(sink, r.getDouble(i), 12);
+                sink.put(r.getDouble(i));
                 break;
             case ColumnType.FLOAT:
-                Numbers.append(sink, r.getFloat(i), 4);
+                sink.put(r.getFloat(i), 4);
                 break;
             case ColumnType.INT:
-                Numbers.append(sink, r.getInt(i));
+                sink.put(r.getInt(i));
                 break;
             case ColumnType.STRING:
                 r.getStr(i, sink);
@@ -97,7 +96,7 @@ public class RecordCursorPrinter {
                 sink.put(r.getSym(i));
                 break;
             case ColumnType.SHORT:
-                Numbers.append(sink, r.getShort(i));
+                sink.put(r.getShort(i));
                 break;
             case ColumnType.CHAR:
                 char c = r.getChar(i);
@@ -106,13 +105,13 @@ public class RecordCursorPrinter {
                 }
                 break;
             case ColumnType.LONG:
-                Numbers.append(sink, r.getLong(i));
+                sink.put(r.getLong(i));
                 break;
             case ColumnType.BYTE:
-                Numbers.append(sink, r.getByte(i));
+                sink.put(r.getByte(i));
                 break;
             case ColumnType.BOOLEAN:
-                sink.put(r.getBool(i) ? "true" : "false");
+                sink.put(r.getBool(i));
                 break;
             case ColumnType.BINARY:
                 Chars.toSink(r.getBin(i), sink);

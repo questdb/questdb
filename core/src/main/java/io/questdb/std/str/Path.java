@@ -139,7 +139,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (l + len >= capacity) {
             extend(l + len);
         }
-        Chars.strcpy(str, l, wptr);
+        Chars.asciiStrCpy(str, l, wptr);
         wptr += l;
         len += l;
         return this;
@@ -164,6 +164,16 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
         Unsafe.getUnsafe().putByte(wptr++, (byte) c);
         len++;
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        if (len + this.len >= capacity) {
+            extend(len);
+        }
+        Chars.asciiCopyTo(chars, start, len, wptr);
+        wptr += len;
         return this;
     }
 

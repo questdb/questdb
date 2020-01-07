@@ -500,7 +500,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
         private void of0(CharSequence value) {
             int len = value.length();
-            Chars.strcpy(value, len, _wptr);
+            Chars.asciiStrCpy(value, len, _wptr);
             _wptr += len;
         }
 

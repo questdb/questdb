@@ -85,6 +85,22 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
     }
 
     @Override
+    public CharSink put(char[] chars, int start, int len) {
+        int l2 = len * 2;
+
+        if (lo + l2 >= hi) {
+            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+        }
+
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(lo + i * 2, chars[i + start]);
+        }
+
+        this.lo += l2;
+        return this;
+    }
+
+    @Override
     public CharSink put(char c) {
         if (lo == hi) {
             resize(this.capacity * 2);

@@ -428,7 +428,7 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
-    public static void strcpy(final CharSequence value, final int len, final long address) {
+    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
         }
@@ -711,5 +711,11 @@ public final class Chars {
             }
         }
         return Integer.compare(ll, rl);
+    }
+
+    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
+        }
     }
 }

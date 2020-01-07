@@ -92,6 +92,14 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         return this;
     }
 
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        for (int i = 0; i < len; i++) {
+            put(chars[start + i]);
+        }
+        return this;
+    }
+
     private void resizeAndPut(char c) {
         char[] next = new char[capacity * 2];
         System.arraycopy(chars, 0, next, 0, capacity);

@@ -63,7 +63,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
-    private final int doubleScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final ObjList<ValueWriter> valueWriters = new ObjList<>();
     private final Path path = new Path();
@@ -77,7 +76,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
-        this.doubleScale = configuration.getDoubleScale();
         this.valueWriters.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessor::putBooleanValue);
         this.valueWriters.extendAndSet(ColumnType.BYTE, JsonQueryProcessor::putByteValue);
         this.valueWriters.extendAndSet(ColumnType.DOUBLE, this::putDoubleValue);
@@ -119,7 +117,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context,
             ObjList<ValueWriter> valueWriters
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
+        final JsonQueryProcessorState state = LV.get(context);
         if (state == null || state.cursor == null) {
             return;
         }
@@ -531,7 +529,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getDouble(col), doubleScale);
+        socket.put(rec.getDouble(col));
     }
 
     private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {

@@ -34,6 +34,8 @@ public interface CharSink {
 
     CharSink encodeUtf8AndQuote(CharSequence cs);
 
+    char[] getDoubleDigitsBuffer();
+
     default void flush() {
     }
 
@@ -55,7 +57,7 @@ public interface CharSink {
 
     CharSink put(float value, int scale);
 
-    CharSink put(double value, int scale);
+    CharSink put(double value);
 
     CharSink put(boolean value);
 
@@ -68,4 +70,13 @@ public interface CharSink {
     CharSink putISODateMillis(long value);
 
     CharSink putQuoted(CharSequence cs);
+
+    default CharSink fill(char c, int n) {
+        for (int i = 0; i < n; i++) {
+            put(c);
+        }
+        return this;
+    }
+
+    CharSink put(char[] chars, int start, int len);
 }

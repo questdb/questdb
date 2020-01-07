@@ -134,8 +134,8 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, double value, int scale) {
-        field(name).put(value, scale);
+    public LineProtoSender field(CharSequence name, double value) {
+        field(name).put(value);
         return this;
     }
 
@@ -154,16 +154,32 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     public LineProtoSender put(CharSequence cs) {
         int l = cs.length();
         if (ptr + l < hi) {
-            Chars.strcpy(cs, l, ptr);
+            Chars.asciiStrCpy(cs, l, ptr);
         } else {
             send00();
             if (ptr + l < hi) {
-                Chars.strcpy(cs, l, ptr);
+                Chars.asciiStrCpy(cs, l, ptr);
             } else {
                 throw CairoException.instance(0).put("value too long");
             }
         }
         ptr += l;
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        if (ptr + len < hi) {
+            Chars.asciiCopyTo(chars, start, len, ptr);
+        } else {
+            send00();
+            if (ptr + len < hi) {
+                Chars.asciiCopyTo(chars, start, len, ptr);
+            } else {
+                throw CairoException.instance(0).put("value too long");
+            }
+        }
+        ptr += len;
         return this;
     }
 

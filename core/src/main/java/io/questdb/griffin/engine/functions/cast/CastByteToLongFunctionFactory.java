@@ -49,7 +49,7 @@ public class CastByteToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return arg.getLong(rec);
+            return arg.getByte(rec);
         }
     }
 }

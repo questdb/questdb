@@ -66,7 +66,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
-    private final int doubleScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final MillisecondClock clock;
 
@@ -75,7 +74,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
-        this.doubleScale = configuration.getDoubleScale();
         this.clock = configuration.getClock();
     }
 
@@ -390,7 +388,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == d) {
-                    socket.put(d, doubleScale);
+                    socket.put(d);
                 }
                 break;
             case ColumnType.FLOAT:

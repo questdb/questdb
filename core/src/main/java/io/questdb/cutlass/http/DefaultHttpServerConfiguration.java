@@ -77,11 +77,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public int getDoubleScale() {
-            return 10;
-        }
-
-        @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
         }

@@ -116,9 +116,9 @@ public class JoinTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
-                        "googl\t2000.000000000000\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.200000000000\t100.300000000000\t2018-11-02T10:00:02.000000Z\n" +
-                        "msft\t150.000000000000\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.400000000000\t185.900000000000\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t3000.000000000000\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.200000000000\t100.300000000000\t2018-11-02T10:00:02.000000Z\n",
+                        "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                        "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                        "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
                 "select * from orders asof join quotes on(sym)",
                 null,
                 "timestamp",
@@ -206,575 +206,536 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfFullFatJoinOnStrSubSelect() throws Exception {
-        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join (select c, price, timestamp from y) y on y.c = x.c";
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join (select c, price, timestamp from y) y on y.c = x.c";
 
-                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                        "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "6\tCDE\tCDE\t82.597000000000\t0.240000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
-                        "7\tCDE\tCDE\t98.591000000000\t0.240000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
-                        "8\tABC\tABC\t57.086000000000\t0.590000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
-                        "9\t\t\t81.442000000000\t0.477000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
+            final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tXYZ\t\t50.938\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tABC\tABC\t17.371\t0.673\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tXYZ\tXYZ\t44.805\t0.116\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "5\t\t\t42.956\t0.47700000000000004\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "6\tCDE\tCDE\t82.59700000000001\t0.24\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                    "7\tCDE\tCDE\t98.59100000000001\t0.24\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                    "8\tABC\tABC\t57.086\t0.59\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                    "9\t\t\t81.44200000000001\t0.47700000000000004\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tXYZ\tXYZ\t3.973\t0.867\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                                "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "6\tCDE\tCDE\t82.597000000000\t0.212000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tCDE\tCDE\t98.591000000000\t0.282000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
-                                "8\tABC\tABC\t57.086000000000\t0.453000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "9\t\t\t81.442000000000\t0.624000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
-                                "11\t\t\t85.019000000000\t0.624000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "12\tKZZ\tKZZ\t85.490000000000\t0.528000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "13\tCDE\tCDE\t27.493000000000\t0.401000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tCDE\tCDE\t39.244000000000\t0.401000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "15\tABC\tABC\t55.152000000000\t0.775000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "16\tKZZ\tKZZ\t3.224000000000\t0.528000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "17\t\t\t6.368000000000\t0.624000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "18\tCDE\tCDE\t18.305000000000\t0.401000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "19\tABC\tABC\t16.378000000000\t0.775000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "20\t\t\t4.773000000000\t0.624000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
-                        query,
-                        "timestamp");
+            assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tXYZ\t\t50.938\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tABC\tABC\t17.371\t0.673\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tXYZ\tXYZ\t44.805\t0.116\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "5\t\t\t42.956\t0.47700000000000004\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "6\tCDE\tCDE\t82.59700000000001\t0.212\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tCDE\tCDE\t98.59100000000001\t0.28200000000000003\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                            "8\tABC\tABC\t57.086\t0.453\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "9\t\t\t81.44200000000001\t0.624\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "10\tXYZ\tXYZ\t3.973\t0.867\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
+                            "11\t\t\t85.019\t0.624\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "12\tKZZ\tKZZ\t85.49\t0.528\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "13\tCDE\tCDE\t27.493000000000002\t0.401\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tCDE\tCDE\t39.244\t0.401\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "15\tABC\tABC\t55.152\t0.775\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "16\tKZZ\tKZZ\t3.224\t0.528\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "17\t\t\t6.368\t0.624\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "18\tCDE\tCDE\t18.305\t0.401\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
+                    query,
+                    "timestamp");
 
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
         }));
     }
 
     @Test
     public void testAsOfJoin() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tmsft\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                        "2\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                        "5\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "6\tibm\t76.110000000000\t0.954000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "7\tmsft\t55.992000000000\t0.545000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "8\tibm\t23.905000000000\t0.954000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tgoogl\t67.786000000000\t0.198000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tgoogl\t38.540000000000\t0.198000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "2\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tmsft\t65.086\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                    "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "6\tibm\t76.11\t0.9540000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "7\tmsft\t55.992000000000004\t0.545\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "8\tibm\t23.905\t0.9540000000000001\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
 
-                compiler.compile(
-                        "create table y as (" +
-                                "select cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table y as (" +
+                            "select cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from (" +
-                                "select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from (" +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
 
-                compiler.compile(
-                        "insert into y select * from (" +
-                                "select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into y select * from (" +
+                            "select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tmsft\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                                "2\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                                "5\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "6\tibm\t76.110000000000\t0.337000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tmsft\t55.992000000000\t0.226000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "8\tibm\t23.905000000000\t0.767000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tgoogl\t67.786000000000\t0.101000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tgoogl\t38.540000000000\t0.690000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tmsft\t68.069000000000\t0.051000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "12\tmsft\t24.008000000000\t0.051000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "13\tgoogl\t94.559000000000\t0.690000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t62.474000000000\t0.068000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
-                                "15\tmsft\t39.017000000000\t0.051000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "16\tgoogl\t10.643000000000\t0.690000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tmsft\t7.246000000000\t0.051000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "18\tmsft\t36.798000000000\t0.051000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "19\tmsft\t66.980000000000\t0.051000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "20\tgoogl\t26.369000000000\t0.690000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "2\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tmsft\t65.086\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                            "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "6\tibm\t76.11\t0.337\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tmsft\t55.992000000000004\t0.226\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "8\tibm\t23.905\t0.767\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tgoogl\t67.786\t0.101\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tgoogl\t38.54\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tmsft\t68.069\t0.051000000000000004\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "12\tmsft\t24.008\t0.051000000000000004\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "13\tgoogl\t94.559\t0.6900000000000001\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t62.474000000000004\t0.068\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                            "15\tmsft\t39.017\t0.051000000000000004\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "16\tgoogl\t10.643\t0.6900000000000001\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tmsft\t7.246\t0.051000000000000004\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinNoSelect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "x asof join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "x asof join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
-                        "1\tmsft\t22.463000000000\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
-                        "2\tgoogl\t29.920000000000\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885000000000\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tmsft\t65.086000000000\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.566000000000\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\t98.563000000000\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405000000000\t2018-01-01T00:34:00.000000Z\n" +
-                        "5\tmsft\t50.938000000000\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                        "6\tibm\t76.110000000000\t2018-01-01T01:12:00.000000Z\t28\tibm\t0.954000000000\t2018-01-01T00:56:00.000000Z\n" +
-                        "7\tmsft\t55.992000000000\t2018-01-01T01:24:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                        "8\tibm\t23.905000000000\t2018-01-01T01:36:00.000000Z\t28\tibm\t0.954000000000\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tgoogl\t67.786000000000\t2018-01-01T01:48:00.000000Z\t30\tgoogl\t0.198000000000\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tgoogl\t38.540000000000\t2018-01-01T02:00:00.000000Z\t30\tgoogl\t0.198000000000\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+                    "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
+                    "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\t98.563\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405\t2018-01-01T00:34:00.000000Z\n" +
+                    "5\tmsft\t50.938\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                    "6\tibm\t76.11\t2018-01-01T01:12:00.000000Z\t28\tibm\t0.9540000000000001\t2018-01-01T00:56:00.000000Z\n" +
+                    "7\tmsft\t55.992000000000004\t2018-01-01T01:24:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                    "8\tibm\t23.905\t2018-01-01T01:36:00.000000Z\t28\tibm\t0.9540000000000001\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tgoogl\t67.786\t2018-01-01T01:48:00.000000Z\t30\tgoogl\t0.198\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tgoogl\t38.54\t2018-01-01T02:00:00.000000Z\t30\tgoogl\t0.198\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
 
-                compiler.compile(
-                        "create table y as (" +
-                                "select cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table y as (" +
+                            "select cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from (" +
-                                "select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from (" +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
 
-                compiler.compile(
-                        "insert into y select * from (" +
-                                "select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into y select * from (" +
+                            "select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
-                                "1\tmsft\t22.463000000000\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
-                                "2\tgoogl\t29.920000000000\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885000000000\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tmsft\t65.086000000000\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.566000000000\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\t98.563000000000\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405000000000\t2018-01-01T00:34:00.000000Z\n" +
-                                "5\tmsft\t50.938000000000\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                                "6\tibm\t76.110000000000\t2018-01-01T01:12:00.000000Z\t36\tibm\t0.337000000000\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tmsft\t55.992000000000\t2018-01-01T01:24:00.000000Z\t38\tmsft\t0.226000000000\t2018-01-01T01:16:00.000000Z\n" +
-                                "8\tibm\t23.905000000000\t2018-01-01T01:36:00.000000Z\t48\tibm\t0.767000000000\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tgoogl\t67.786000000000\t2018-01-01T01:48:00.000000Z\t54\tgoogl\t0.101000000000\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tgoogl\t38.540000000000\t2018-01-01T02:00:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tmsft\t68.069000000000\t2018-01-01T02:12:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "12\tmsft\t24.008000000000\t2018-01-01T02:24:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "13\tgoogl\t94.559000000000\t2018-01-01T02:36:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t62.474000000000\t2018-01-01T02:48:00.000000Z\t50\tibm\t0.068000000000\t2018-01-01T01:40:00.000000Z\n" +
-                                "15\tmsft\t39.017000000000\t2018-01-01T03:00:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "16\tgoogl\t10.643000000000\t2018-01-01T03:12:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tmsft\t7.246000000000\t2018-01-01T03:24:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "18\tmsft\t36.798000000000\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "19\tmsft\t66.980000000000\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "20\tgoogl\t26.369000000000\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+                            "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
+                            "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\t98.563\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405\t2018-01-01T00:34:00.000000Z\n" +
+                            "5\tmsft\t50.938\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                            "6\tibm\t76.11\t2018-01-01T01:12:00.000000Z\t36\tibm\t0.337\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tmsft\t55.992000000000004\t2018-01-01T01:24:00.000000Z\t38\tmsft\t0.226\t2018-01-01T01:16:00.000000Z\n" +
+                            "8\tibm\t23.905\t2018-01-01T01:36:00.000000Z\t48\tibm\t0.767\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tgoogl\t67.786\t2018-01-01T01:48:00.000000Z\t54\tgoogl\t0.101\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tgoogl\t38.54\t2018-01-01T02:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tmsft\t68.069\t2018-01-01T02:12:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "12\tmsft\t24.008\t2018-01-01T02:24:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "13\tgoogl\t94.559\t2018-01-01T02:36:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t62.474000000000004\t2018-01-01T02:48:00.000000Z\t50\tibm\t0.068\t2018-01-01T01:40:00.000000Z\n" +
+                            "15\tmsft\t39.017\t2018-01-01T03:00:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "16\tgoogl\t10.643\t2018-01-01T03:12:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tmsft\t7.246\t2018-01-01T03:24:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "18\tmsft\t36.798\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinNoTimestamps() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "(x timestamp(timestamp)) x asof join (y timestamp(timestamp)) y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "(x timestamp(timestamp)) x asof join (y timestamp(timestamp)) y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
-                        "1\tmsft\t22.463000000000\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
-                        "2\tgoogl\t29.920000000000\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885000000000\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tmsft\t65.086000000000\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.566000000000\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\t98.563000000000\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405000000000\t2018-01-01T00:34:00.000000Z\n" +
-                        "5\tmsft\t50.938000000000\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                        "6\tibm\t76.110000000000\t2018-01-01T01:12:00.000000Z\t28\tibm\t0.954000000000\t2018-01-01T00:56:00.000000Z\n" +
-                        "7\tmsft\t55.992000000000\t2018-01-01T01:24:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                        "8\tibm\t23.905000000000\t2018-01-01T01:36:00.000000Z\t28\tibm\t0.954000000000\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tgoogl\t67.786000000000\t2018-01-01T01:48:00.000000Z\t30\tgoogl\t0.198000000000\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tgoogl\t38.540000000000\t2018-01-01T02:00:00.000000Z\t30\tgoogl\t0.198000000000\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+                    "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
+                    "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\t98.563\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405\t2018-01-01T00:34:00.000000Z\n" +
+                    "5\tmsft\t50.938\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                    "6\tibm\t76.11\t2018-01-01T01:12:00.000000Z\t28\tibm\t0.9540000000000001\t2018-01-01T00:56:00.000000Z\n" +
+                    "7\tmsft\t55.992000000000004\t2018-01-01T01:24:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                    "8\tibm\t23.905\t2018-01-01T01:36:00.000000Z\t28\tibm\t0.9540000000000001\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tgoogl\t67.786\t2018-01-01T01:48:00.000000Z\t30\tgoogl\t0.198\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tgoogl\t38.54\t2018-01-01T02:00:00.000000Z\t30\tgoogl\t0.198\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ")"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ")"
+            );
 
-                compiler.compile(
-                        "create table y as (" +
-                                "select cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ")"
-                );
+            compiler.compile(
+                    "create table y as (" +
+                            "select cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ")"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from (" +
-                                "select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from (" +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
 
-                compiler.compile(
-                        "insert into y select * from (" +
-                                "select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into y select * from (" +
+                            "select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
-                                "1\tmsft\t22.463000000000\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
-                                "2\tgoogl\t29.920000000000\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885000000000\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tmsft\t65.086000000000\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.566000000000\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\t98.563000000000\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405000000000\t2018-01-01T00:34:00.000000Z\n" +
-                                "5\tmsft\t50.938000000000\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545000000000\t2018-01-01T00:46:00.000000Z\n" +
-                                "6\tibm\t76.110000000000\t2018-01-01T01:12:00.000000Z\t36\tibm\t0.337000000000\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tmsft\t55.992000000000\t2018-01-01T01:24:00.000000Z\t38\tmsft\t0.226000000000\t2018-01-01T01:16:00.000000Z\n" +
-                                "8\tibm\t23.905000000000\t2018-01-01T01:36:00.000000Z\t48\tibm\t0.767000000000\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tgoogl\t67.786000000000\t2018-01-01T01:48:00.000000Z\t54\tgoogl\t0.101000000000\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tgoogl\t38.540000000000\t2018-01-01T02:00:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tmsft\t68.069000000000\t2018-01-01T02:12:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "12\tmsft\t24.008000000000\t2018-01-01T02:24:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "13\tgoogl\t94.559000000000\t2018-01-01T02:36:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t62.474000000000\t2018-01-01T02:48:00.000000Z\t50\tibm\t0.068000000000\t2018-01-01T01:40:00.000000Z\n" +
-                                "15\tmsft\t39.017000000000\t2018-01-01T03:00:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "16\tgoogl\t10.643000000000\t2018-01-01T03:12:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tmsft\t7.246000000000\t2018-01-01T03:24:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "18\tmsft\t36.798000000000\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "19\tmsft\t66.980000000000\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000\t2018-01-01T01:50:00.000000Z\n" +
-                                "20\tgoogl\t26.369000000000\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.690000000000\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+                            "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tNaN\t\tNaN\t\n" +
+                            "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\t98.563\t2018-01-01T00:48:00.000000Z\t17\tibm\t0.405\t2018-01-01T00:34:00.000000Z\n" +
+                            "5\tmsft\t50.938\t2018-01-01T01:00:00.000000Z\t23\tmsft\t0.545\t2018-01-01T00:46:00.000000Z\n" +
+                            "6\tibm\t76.11\t2018-01-01T01:12:00.000000Z\t36\tibm\t0.337\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tmsft\t55.992000000000004\t2018-01-01T01:24:00.000000Z\t38\tmsft\t0.226\t2018-01-01T01:16:00.000000Z\n" +
+                            "8\tibm\t23.905\t2018-01-01T01:36:00.000000Z\t48\tibm\t0.767\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tgoogl\t67.786\t2018-01-01T01:48:00.000000Z\t54\tgoogl\t0.101\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tgoogl\t38.54\t2018-01-01T02:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tmsft\t68.069\t2018-01-01T02:12:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "12\tmsft\t24.008\t2018-01-01T02:24:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "13\tgoogl\t94.559\t2018-01-01T02:36:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t62.474000000000004\t2018-01-01T02:48:00.000000Z\t50\tibm\t0.068\t2018-01-01T01:40:00.000000Z\n" +
+                            "15\tmsft\t39.017\t2018-01-01T03:00:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "16\tgoogl\t10.643\t2018-01-01T03:12:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tmsft\t7.246\t2018-01-01T03:24:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "18\tmsft\t36.798\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
+                            "20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinAllTypes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tmsft\t50.938000000000\t0.152000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.420000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.911000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "4\tibm\t14.831000000000\t0.540000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "5\tgoogl\t86.772000000000\t0.911000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "6\tmsft\t29.659000000000\t0.087000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "7\tgoogl\t7.594000000000\t0.911000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "8\tibm\t54.253000000000\t0.383000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tmsft\t62.260000000000\t0.087000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tmsft\t50.908000000000\t0.087000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t50.938\t0.152\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.42\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.911\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "4\tibm\t14.831\t0.54\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "5\tgoogl\t86.772\t0.911\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "6\tmsft\t29.659\t0.08700000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "7\tgoogl\t7.594\t0.911\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "8\tibm\t54.253\t0.383\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tmsft\t62.26\t0.08700000000000001\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tmsft\t50.908\t0.08700000000000001\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tmsft\t50.938000000000\t0.152000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.420000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.911000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.540000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.911000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.061000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
-                                "7\tgoogl\t7.594000000000\t0.222000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:14:00.000000Z\n" +
-                                "8\tibm\t54.253000000000\t0.477000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.724000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tmsft\t50.908000000000\t0.209000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tgoogl\t27.493000000000\t0.260000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "12\tgoogl\t39.244000000000\t0.260000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "13\tgoogl\t56.985000000000\t0.260000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "14\tmsft\t49.758000000000\t0.209000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "15\tmsft\t49.108000000000\t0.209000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "16\tmsft\t0.132000000000\t0.209000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tibm\t80.480000000000\t0.732000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "18\tmsft\t57.556000000000\t0.209000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "19\tgoogl\t34.250000000000\t0.260000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "20\tgoogl\t2.675000000000\t0.260000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t50.938\t0.152\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.42\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.911\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.54\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.911\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.061\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                            "7\tgoogl\t7.594\t0.222\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:14:00.000000Z\n" +
+                            "8\tibm\t54.253\t0.47700000000000004\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.724\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tmsft\t50.908\t0.209\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tgoogl\t27.493000000000002\t0.26\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "12\tgoogl\t39.244\t0.26\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "13\tgoogl\t56.985\t0.26\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "14\tmsft\t49.758\t0.209\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "15\tmsft\t49.108000000000004\t0.209\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "16\tmsft\t0.132\t0.209\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tibm\t80.48\t0.732\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "18\tmsft\t57.556000000000004\t0.209\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "19\tgoogl\t34.25\t0.26\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "20\tgoogl\t2.6750000000000003\t0.26\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
@@ -835,624 +796,584 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfJoinNoStrings() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.215000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\t14.831000000000\t0.404000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
-                        "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "6\tmsft\t29.659000000000\t0.537000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
-                        "7\tgoogl\t7.594000000000\t0.092000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "8\tibm\t54.253000000000\t0.404000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
-                        "9\tmsft\t62.260000000000\t0.537000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
-                        "10\tmsft\t50.908000000000\t0.537000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:54:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.215\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\t14.831\t0.404\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
+                    "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "6\tmsft\t29.659\t0.537\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
+                    "7\tgoogl\t7.594\t0.092\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "8\tibm\t54.253\t0.404\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
+                    "9\tmsft\t62.26\t0.537\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
+                    "10\tmsft\t50.908\t0.537\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:54:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)");
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.215000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.404000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.098000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:08:00.000000Z\n" +
-                                "7\tgoogl\t7.594000000000\t0.036000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "8\tibm\t54.253000000000\t0.740000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.032000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
-                                "10\tmsft\t50.908000000000\t0.912000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "11\tmsft\t25.604000000000\t0.912000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "12\tgoogl\t89.220000000000\t0.148000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "13\tgoogl\t64.536000000000\t0.148000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t33.000000000000\t0.388000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "15\tmsft\t67.285000000000\t0.912000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "16\tgoogl\t17.310000000000\t0.148000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tibm\t23.957000000000\t0.388000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "18\tibm\t60.678000000000\t0.388000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "19\tmsft\t4.727000000000\t0.912000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "20\tgoogl\t26.222000000000\t0.148000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.215\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.404\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.098\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:08:00.000000Z\n" +
+                            "7\tgoogl\t7.594\t0.036000000000000004\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "8\tibm\t54.253\t0.74\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.032\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
+                            "10\tmsft\t50.908\t0.912\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "11\tmsft\t25.604\t0.912\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "12\tgoogl\t89.22\t0.148\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "13\tgoogl\t64.536\t0.148\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t33.0\t0.388\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "15\tmsft\t67.285\t0.912\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "16\tgoogl\t17.31\t0.148\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tibm\t23.957\t0.388\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinNoKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.044000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\t14.831000000000\t0.005000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
-                        "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "6\tmsft\t29.659000000000\t0.092000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "7\tgoogl\t7.594000000000\t0.092000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "8\tibm\t54.253000000000\t0.092000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "9\tmsft\t62.260000000000\t0.092000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tmsft\t50.908000000000\t0.092000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.044\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\t14.831\t0.005\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                    "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "6\tmsft\t29.659\t0.092\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "7\tgoogl\t7.594\t0.092\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "8\tibm\t54.253\t0.092\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "9\tmsft\t62.26\t0.092\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tmsft\t50.908\t0.092\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)");
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.044000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.005000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.544000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tgoogl\t7.594000000000\t0.036000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "8\tibm\t54.253000000000\t0.544000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.683000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tmsft\t50.908000000000\t0.148000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tmsft\t25.604000000000\t0.148000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "12\tgoogl\t89.220000000000\t0.148000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "13\tgoogl\t64.536000000000\t0.148000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t33.000000000000\t0.148000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "15\tmsft\t67.285000000000\t0.148000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "16\tgoogl\t17.310000000000\t0.148000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tibm\t23.957000000000\t0.148000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "18\tibm\t60.678000000000\t0.148000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "19\tmsft\t4.727000000000\t0.148000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "20\tgoogl\t26.222000000000\t0.148000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.044\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.005\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.544\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tgoogl\t7.594\t0.036000000000000004\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "8\tibm\t54.253\t0.544\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.683\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tmsft\t50.908\t0.148\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tmsft\t25.604\t0.148\t2018-01-01T02:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "12\tgoogl\t89.22\t0.148\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "13\tgoogl\t64.536\t0.148\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t33.0\t0.148\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "15\tmsft\t67.285\t0.148\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "16\tgoogl\t17.31\t0.148\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tibm\t23.957\t0.148\t2018-01-01T03:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "18\tibm\t60.678000000000004\t0.148\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "19\tmsft\t4.727\t0.148\t2018-01-01T03:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinOnStr() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
 
-                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                        "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "6\tCDE\tCDE\t82.597000000000\t0.240000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
-                        "7\tCDE\tCDE\t98.591000000000\t0.240000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
-                        "8\tABC\tABC\t57.086000000000\t0.590000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
-                        "9\t\t\t81.442000000000\t0.477000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
+            final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tXYZ\t\t50.938\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tABC\tABC\t17.371\t0.673\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tXYZ\tXYZ\t44.805\t0.116\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "5\t\t\t42.956\t0.47700000000000004\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "6\tCDE\tCDE\t82.59700000000001\t0.24\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                    "7\tCDE\tCDE\t98.59100000000001\t0.24\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                    "8\tABC\tABC\t57.086\t0.59\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                    "9\t\t\t81.44200000000001\t0.47700000000000004\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tXYZ\tXYZ\t3.973\t0.867\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)");
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)");
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)");
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)");
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)");
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)");
 
-                assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                                "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "6\tCDE\tCDE\t82.597000000000\t0.212000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tCDE\tCDE\t98.591000000000\t0.282000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
-                                "8\tABC\tABC\t57.086000000000\t0.453000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "9\t\t\t81.442000000000\t0.624000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
-                                "11\t\t\t85.019000000000\t0.624000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "12\tKZZ\tKZZ\t85.490000000000\t0.528000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "13\tCDE\tCDE\t27.493000000000\t0.401000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tCDE\tCDE\t39.244000000000\t0.401000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "15\tABC\tABC\t55.152000000000\t0.775000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "16\tKZZ\tKZZ\t3.224000000000\t0.528000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "17\t\t\t6.368000000000\t0.624000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "18\tCDE\tCDE\t18.305000000000\t0.401000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "19\tABC\tABC\t16.378000000000\t0.775000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "20\t\t\t4.773000000000\t0.624000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tXYZ\t\t50.938\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tABC\tABC\t17.371\t0.673\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tXYZ\tXYZ\t44.805\t0.116\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "5\t\t\t42.956\t0.47700000000000004\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "6\tCDE\tCDE\t82.59700000000001\t0.212\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tCDE\tCDE\t98.59100000000001\t0.28200000000000003\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                            "8\tABC\tABC\t57.086\t0.453\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "9\t\t\t81.44200000000001\t0.624\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "10\tXYZ\tXYZ\t3.973\t0.867\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
+                            "11\t\t\t85.019\t0.624\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "12\tKZZ\tKZZ\t85.49\t0.528\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "13\tCDE\tCDE\t27.493000000000002\t0.401\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tCDE\tCDE\t39.244\t0.401\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "15\tABC\tABC\t55.152\t0.775\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "16\tKZZ\tKZZ\t3.224\t0.528\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "17\t\t\t6.368\t0.624\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "18\tCDE\tCDE\t18.305\t0.401\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinOnStrNoVar() throws Exception {
         // there are no variable length columns in slave table other than the one we join on
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
 
-                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tXYZ\tXYZ\t50.938000000000\t0.294000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
-                        "2\tABC\tABC\t42.281000000000\t0.167000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
-                        "3\tABC\tABC\t17.371000000000\t0.167000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
-                        "4\tXYZ\tXYZ\t44.805000000000\t0.790000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "5\t\t\t42.956000000000\t0.288000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
-                        "6\tCDE\tCDE\t82.597000000000\t0.820000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "7\tCDE\tCDE\t98.591000000000\t0.820000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "8\tABC\tABC\t57.086000000000\t0.319000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
-                        "9\t\t\t81.442000000000\t0.288000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
-                        "10\tXYZ\tXYZ\t3.973000000000\t0.160000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n";
+            final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                    "2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                    "3\tABC\tABC\t17.371\t0.167\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                    "4\tXYZ\tXYZ\t44.805\t0.79\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "5\t\t\t42.956\t0.28800000000000003\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                    "6\tCDE\tCDE\t82.59700000000001\t0.8200000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "7\tCDE\tCDE\t98.59100000000001\t0.8200000000000001\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "8\tABC\tABC\t57.086\t0.319\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
+                    "9\t\t\t81.44200000000001\t0.28800000000000003\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                    "10\tXYZ\tXYZ\t3.973\t0.16\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)");
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)");
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)");
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)");
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)");
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)");
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)");
 
-                assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tXYZ\tXYZ\t50.938000000000\t0.294000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
-                                "2\tABC\tABC\t42.281000000000\t0.167000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
-                                "3\tABC\tABC\t17.371000000000\t0.167000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
-                                "4\tXYZ\tXYZ\t44.805000000000\t0.790000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "5\t\t\t42.956000000000\t0.288000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
-                                "6\tCDE\tCDE\t82.597000000000\t0.190000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
-                                "7\tCDE\tCDE\t98.591000000000\t0.201000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
-                                "8\tABC\tABC\t57.086000000000\t0.359000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "9\t\t\t81.442000000000\t0.920000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tXYZ\tXYZ\t3.973000000000\t0.160000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
-                                "11\tABC\tABC\t22.372000000000\t0.359000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "12\tABC\tABC\t48.423000000000\t0.359000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "13\tKZZ\tKZZ\t74.174000000000\t0.853000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "14\t\t\t87.184000000000\t0.469000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
-                                "15\tABC\tABC\t66.993000000000\t0.359000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "16\tABC\tABC\t19.968000000000\t0.359000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "17\tABC\tABC\t34.368000000000\t0.359000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "18\t\t\t1.869000000000\t0.469000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
-                                "19\tABC\tABC\t85.427000000000\t0.359000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "20\tABC\tABC\t54.586000000000\t0.359000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                            "2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                            "3\tABC\tABC\t17.371\t0.167\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                            "4\tXYZ\tXYZ\t44.805\t0.79\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "5\t\t\t42.956\t0.28800000000000003\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                            "6\tCDE\tCDE\t82.59700000000001\t0.19\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                            "7\tCDE\tCDE\t98.59100000000001\t0.201\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
+                            "8\tABC\tABC\t57.086\t0.359\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "9\t\t\t81.44200000000001\t0.92\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tXYZ\tXYZ\t3.973\t0.16\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
+                            "11\tABC\tABC\t22.372\t0.359\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "12\tABC\tABC\t48.423\t0.359\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "13\tKZZ\tKZZ\t74.174\t0.853\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "14\t\t\t87.184\t0.46900000000000003\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                            "15\tABC\tABC\t66.993\t0.359\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "16\tABC\tABC\t19.968\t0.359\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "17\tABC\tABC\t34.368\t0.359\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "18\t\t\t1.869\t0.46900000000000003\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                            "19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
     @Test
     public void testAsOfJoinSlaveSymbol() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, sym2, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, sym2, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "1\tmsft\t\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                        "2\tgoogl\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                        "3\tmsft\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "4\tibm\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                        "5\tmsft\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "6\tibm\tibm\t76.110000000000\t0.954000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "7\tmsft\tmsft\t55.992000000000\t0.545000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                        "8\tibm\tibm\t23.905000000000\t0.954000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tgoogl\tgoogl\t67.786000000000\t0.198000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tgoogl\tgoogl\t38.540000000000\t0.198000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "2\tgoogl\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                    "3\tmsft\tmsft\t65.086\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "4\tibm\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                    "5\tmsft\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "6\tibm\tibm\t76.11\t0.9540000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "7\tmsft\tmsft\t55.992000000000004\t0.545\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "8\tibm\tibm\t23.905\t0.9540000000000001\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tgoogl\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tgoogl\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)");
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)");
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
-                compiler.compile("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
+            compiler.compile("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+            compiler.compile("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
-                assertQuery("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "1\tmsft\t\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
-                                "2\tgoogl\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
-                                "3\tmsft\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "4\tibm\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                                "5\tmsft\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
-                                "6\tibm\tibm\t76.110000000000\t0.337000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
-                                "7\tmsft\tmsft\t55.992000000000\t0.226000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "8\tibm\tibm\t23.905000000000\t0.767000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
-                                "9\tgoogl\tgoogl\t67.786000000000\t0.101000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "10\tgoogl\tgoogl\t38.540000000000\t0.690000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tmsft\tmsft\t68.069000000000\t0.051000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "12\tmsft\tmsft\t24.008000000000\t0.051000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "13\tgoogl\tgoogl\t94.559000000000\t0.690000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\tibm\t62.474000000000\t0.068000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
-                                "15\tmsft\tmsft\t39.017000000000\t0.051000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "16\tgoogl\tgoogl\t10.643000000000\t0.690000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tmsft\tmsft\t7.246000000000\t0.051000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "18\tmsft\tmsft\t36.798000000000\t0.051000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "19\tmsft\tmsft\t66.980000000000\t0.051000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "20\tgoogl\tgoogl\t26.369000000000\t0.690000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        "timestamp");
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "2\tgoogl\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                            "3\tmsft\tmsft\t65.086\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "4\tibm\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                            "5\tmsft\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "6\tibm\tibm\t76.11\t0.337\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                            "7\tmsft\tmsft\t55.992000000000004\t0.226\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "8\tibm\tibm\t23.905\t0.767\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                            "9\tgoogl\tgoogl\t67.786\t0.101\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "10\tgoogl\tgoogl\t38.54\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tmsft\tmsft\t68.069\t0.051000000000000004\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "12\tmsft\tmsft\t24.008\t0.051000000000000004\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "13\tgoogl\tgoogl\t94.559\t0.6900000000000001\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\tibm\t62.474000000000004\t0.068\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                            "15\tmsft\tmsft\t39.017\t0.051000000000000004\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "16\tgoogl\tgoogl\t10.643\t0.6900000000000001\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tmsft\tmsft\t7.246\t0.051000000000000004\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "18\tmsft\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "19\tmsft\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "20\tgoogl\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
         });
     }
 
@@ -1466,14 +1387,14 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.8828228366697741\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.9441658975532605\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                         "00000010 38 e1\tVLTOVLJ\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.9820662735672192\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.8828228366697741\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.9441658975532605\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
                         "00000010 38 e1\tVLTOVLJ\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.9820662735672192\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
                 compiler.compile("create table x as (select" +
                         " cast(x as int) kk, " +
@@ -1524,62 +1445,55 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testCrossJoinTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
-                        "00000010 38 e1\tVLTOVLJ\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
-                        "00000010 38 e1\tVLTOVLJ\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
+        assertMemoryLeak(() -> {
+            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.8828228366697741\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.9441658975532605\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                    "00000010 38 e1\tVLTOVLJ\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.9820662735672192\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.8828228366697741\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.9441658975532605\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                    "00000010 38 e1\tVLTOVLJ\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.9820662735672192\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
-                compiler.compile("create table x as (select" +
-                        " cast(x as int) kk, " +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(2)) timestamp(k)"
-                );
+            compiler.compile("create table x as (select" +
+                    " cast(x as int) kk, " +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n" +
+                    " from long_sequence(2)) timestamp(k)"
+            );
 
-                compiler.compile("create table y as (select" +
-                        " cast((x-1)/4 + 1 as int) kk," +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(3))"
-                );
+            compiler.compile("create table y as (select" +
+                    " cast((x-1)/4 + 1 as int) kk," +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0, 1000000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n" +
+                    " from long_sequence(3))"
+            );
 
-                // filter is applied to final join result
-                assertQuery(expected, "select * from x cross join y", "k");
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            // filter is applied to final join result
+            assertQuery(expected, "select * from x cross join y", "k");
         });
     }
 
@@ -1708,36 +1622,36 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1389971928\tfalse\tH\t0.599254849305\t0.6456\t632\t2015-01-23T07:09:43.557Z\tPHRI\t-5103414617212558357\t1970-01-01T00:00:00.000000Z\t25\t00000000 6a 71 34 e0 b0 e9 98 f7 67 62 28 60 b0 ec\tLUOHNZH\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1389971928\tfalse\tH\t0.5992548493051852\t0.6456\t632\t2015-01-23T07:09:43.557Z\tPHRI\t-5103414617212558357\t1970-01-01T00:00:00.000000Z\t25\t00000000 6a 71 34 e0 b0 e9 98 f7 67 62 28 60 b0 ec\tLUOHNZH\n" +
                         "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-210935524\tfalse\tL\tNaN\t0.0516\t285\t\tPHRI\t3527911398466283309\t1970-01-01T00:16:40.000000Z\t9\t00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                         "00000010 ea 4e ea 8b\tHTWNWIFFLRBROMNX\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1180113884\tfalse\tZ\t0.041732636309\t0.5677\t16\t2015-11-23T00:35:00.838Z\t\t5953039264407551685\t1970-01-01T00:33:20.000000Z\t24\t00000000 ce 5f b2 8b 5c 54 90 25 c2 20 ff 70 3a c7 8a b3\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1180113884\tfalse\tZ\t0.04173263630897883\t0.5677\t16\t2015-11-23T00:35:00.838Z\t\t5953039264407551685\t1970-01-01T00:33:20.000000Z\t24\t00000000 ce 5f b2 8b 5c 54 90 25 c2 20 ff 70 3a c7 8a b3\n" +
                         "00000010 14 cd 47\t\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t2067844108\tfalse\tF\t0.089094427039\t0.8439\t111\t2015-11-01T18:55:38.528Z\t\t8798087869168938593\t1970-01-01T00:50:00.000000Z\t15\t00000000 93 e5 57 a5 db a1 76 1c 1c 26 fb 2e 42 fa f5 6e\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t2067844108\tfalse\tF\t0.08909442703907178\t0.8439\t111\t2015-11-01T18:55:38.528Z\t\t8798087869168938593\t1970-01-01T00:50:00.000000Z\t15\t00000000 93 e5 57 a5 db a1 76 1c 1c 26 fb 2e 42 fa f5 6e\n" +
                         "00000010 8f 80 e3 54\tLPBNHG\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t-950108024\tfalse\tC\t0.472902235737\t0.7665\t179\t2015-02-08T12:28:36.066Z\t\t7036584259400395476\t1970-01-01T01:06:40.000000Z\t38\t00000000 49 40 44 49 96 cf 2b b3 71 a7 d5\tIGQZVKHT\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t-779364310\tfalse\t\t0.291509800820\tNaN\t277\t2015-02-20T01:54:36.644Z\tPZIM\t-4036499202601723677\t1970-01-01T01:23:20.000000Z\t23\t00000000 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e 44\tNFKPEVMCGFNW\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t495047580\ttrue\tD\t0.140225804223\t0.1105\t433\t2015-09-01T17:07:49.293Z\tPZIM\t-8768558643112932333\t1970-01-01T01:40:00.000000Z\t31\t00000000 4b af 8f 89 df 35 8f da fe 33 98 80 85 20 53 3b\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t-950108024\tfalse\tC\t0.4729022357373792\t0.7665\t179\t2015-02-08T12:28:36.066Z\t\t7036584259400395476\t1970-01-01T01:06:40.000000Z\t38\t00000000 49 40 44 49 96 cf 2b b3 71 a7 d5\tIGQZVKHT\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t-779364310\tfalse\t\t0.29150980082006395\tNaN\t277\t2015-02-20T01:54:36.644Z\tPZIM\t-4036499202601723677\t1970-01-01T01:23:20.000000Z\t23\t00000000 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3 24 4e 44\tNFKPEVMCGFNW\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t495047580\ttrue\tD\t0.1402258042231984\t0.1105\t433\t2015-09-01T17:07:49.293Z\tPZIM\t-8768558643112932333\t1970-01-01T01:40:00.000000Z\t31\t00000000 4b af 8f 89 df 35 8f da fe 33 98 80 85 20 53 3b\n" +
                         "00000010 51 9d 5d\tENNEBQQEM\n" +
                         "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t-1763054372\tfalse\tX\tNaN\t0.9998\t184\t2015-05-16T03:27:28.517Z\tPHRI\t-8441475391834338900\t1970-01-01T01:56:40.000000Z\t13\t00000000 47 3c e1 72 3b 9d ef c4 4a c9 cf fb 9d 63 ca 94\n" +
                         "00000010 00 6b dd 18\tHGGIWH\n" +
-                        "3\t161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
-                        "00000010 8e e5 61 2f\tQOLYXWC\t3\t1159512064\ttrue\tH\t0.812430684497\t0.0033\t432\t2015-09-12T17:45:31.519Z\tPZIM\t7964539812331152681\t1970-01-01T02:13:20.000000Z\t8\t\tWLEVMLKC\n" +
-                        "3\t161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
-                        "00000010 8e e5 61 2f\tQOLYXWC\t3\t-1751905058\tfalse\tV\t0.897795794206\t0.1897\t262\t2015-06-14T03:59:52.156Z\tPZIM\t8231256356538221412\t1970-01-01T02:30:00.000000Z\t13\t\tXFSUWPNXH\n" +
-                        "3\t161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "3\t161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "00000010 8e e5 61 2f\tQOLYXWC\t3\t1159512064\ttrue\tH\t0.8124306844969832\t0.0033\t432\t2015-09-12T17:45:31.519Z\tPZIM\t7964539812331152681\t1970-01-01T02:13:20.000000Z\t8\t\tWLEVMLKC\n" +
+                        "3\t161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "00000010 8e e5 61 2f\tQOLYXWC\t3\t-1751905058\tfalse\tV\t0.8977957942059742\t0.1897\t262\t2015-06-14T03:59:52.156Z\tPZIM\t8231256356538221412\t1970-01-01T02:30:00.000000Z\t13\t\tXFSUWPNXH\n" +
+                        "3\t161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
                         "00000010 8e e5 61 2f\tQOLYXWC\t3\t882350590\ttrue\tZ\tNaN\t0.0331\t575\t2015-08-28T02:22:07.682Z\tPZIM\t-6342128731155487317\t1970-01-01T02:46:40.000000Z\t26\t00000000 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a 0c\tVFDBZW\n" +
-                        "3\t161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "3\t161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
                         "00000010 8e e5 61 2f\tQOLYXWC\t3\t450540087\tfalse\t\tNaN\t0.1354\t932\t\t\t-6426355179359373684\t1970-01-01T03:03:20.000000Z\t30\t\tKVSBEGM\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t815018557\tfalse\t\t0.073834641749\t0.8791\t187\t\tMFMB\t8725895078168602870\t1970-01-01T03:20:00.000000Z\t36\t\tVLOMPBETTTKRIV\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-682294338\ttrue\tG\t0.915304483996\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T03:36:40.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tMFMB\t8196152051414471878\t1970-01-01T03:53:20.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-267213623\ttrue\tG\t0.522178146784\t0.6246\t263\t2015-07-07T21:30:05.180Z\tNZZR\t6868735889622839219\t1970-01-01T04:10:00.000000Z\t31\t00000000 78 09 1c 5d 88 f5 52 fd 36 02 50\t\n" +
-                        "5\t-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t350233248\tfalse\tT\tNaN\tNaN\t542\t2015-10-10T12:23:35.567Z\tMFMB\t7638330131199319038\t1970-01-01T04:26:40.000000Z\t27\t00000000 fd a9 d7 0e 39 5a 28 ed 97 99\tVMKPYV\n" +
-                        "5\t-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t1911638855\tfalse\tK\tNaN\t0.3505\t384\t2015-05-09T06:21:47.768Z\t\t-6966377555709737822\t1970-01-01T04:43:20.000000Z\t3\t\t\n" +
-                        "5\t-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t-958065826\ttrue\tU\t0.344821709198\t0.5708\t1001\t2015-11-04T17:03:03.434Z\tPZIM\t-2022828060719876991\t1970-01-01T05:00:00.000000Z\t42\t00000000 22 35 3b 1c 9c 1d 5c c1 5d 2d 44 ea 00 81 c4 19\n" +
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t815018557\tfalse\t\t0.07383464174908916\t0.8791\t187\t\tMFMB\t8725895078168602870\t1970-01-01T03:20:00.000000Z\t36\t\tVLOMPBETTTKRIV\n" +
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T03:36:40.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tMFMB\t8196152051414471878\t1970-01-01T03:53:20.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t-267213623\ttrue\tG\t0.5221781467839528\t0.6246\t263\t2015-07-07T21:30:05.180Z\tNZZR\t6868735889622839219\t1970-01-01T04:10:00.000000Z\t31\t00000000 78 09 1c 5d 88 f5 52 fd 36 02 50\t\n" +
+                        "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t350233248\tfalse\tT\tNaN\tNaN\t542\t2015-10-10T12:23:35.567Z\tMFMB\t7638330131199319038\t1970-01-01T04:26:40.000000Z\t27\t00000000 fd a9 d7 0e 39 5a 28 ed 97 99\tVMKPYV\n" +
+                        "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t1911638855\tfalse\tK\tNaN\t0.3505\t384\t2015-05-09T06:21:47.768Z\t\t-6966377555709737822\t1970-01-01T04:43:20.000000Z\t3\t\t\n" +
+                        "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t-958065826\ttrue\tU\t0.3448217091983955\t0.5708\t1001\t2015-11-04T17:03:03.434Z\tPZIM\t-2022828060719876991\t1970-01-01T05:00:00.000000Z\t42\t00000000 22 35 3b 1c 9c 1d 5c c1 5d 2d 44 ea 00 81 c4 19\n" +
                         "00000010 a1 ec 74 f8\tIFDYPDKOEZBRQ\n" +
-                        "5\t-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t77821642\tfalse\tG\t0.221227479480\t0.4873\t322\t2015-10-22T18:19:01.452Z\tNZZR\t-4117907293110263427\t1970-01-01T05:16:40.000000Z\t28\t00000000 25 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81\n" +
+                        "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\t5\t77821642\tfalse\tG\t0.22122747948030208\t0.4873\t322\t2015-10-22T18:19:01.452Z\tNZZR\t-4117907293110263427\t1970-01-01T05:16:40.000000Z\t28\t00000000 25 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81\n" +
                         "00000010 b8 06\tQSPZPBHLNEJ\n";
 
                 compiler.compile("create table x as (select" +
@@ -2401,21 +2315,21 @@ public class JoinTest extends AbstractGriffinTest {
             try {
                 final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
                         "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t415709351\tfalse\tM\t0.562637029406\t0.7653\t712\t\tGGLN\t6235849401126045090\t1970-01-01T00:00:00.000000Z\t36\t00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43\tIZJSVTNP\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t1704158532\tfalse\tN\t0.434932466638\t0.9612\t344\t2015-09-09T21:39:05.530Z\tHHIU\t-4645139889518544281\t1970-01-01T00:16:40.000000Z\t47\t\tGGIJYDV\n" +
-                        "3\t161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t415709351\tfalse\tM\t0.5626370294064983\t0.7653\t712\t\tGGLN\t6235849401126045090\t1970-01-01T00:00:00.000000Z\t36\t00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43\tIZJSVTNP\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t2\t1704158532\tfalse\tN\t0.43493246663794993\t0.9612\t344\t2015-09-09T21:39:05.530Z\tHHIU\t-4645139889518544281\t1970-01-01T00:16:40.000000Z\t47\t\tGGIJYDV\n" +
+                        "3\t161592763\ttrue\tZ\t0.18769708157331322\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
                         "00000010 8e e5 61 2f\tQOLYXWC\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t325316\tfalse\tG\t0.270685354467\t0.0031\t809\t2015-02-24T12:10:43.199Z\t\t-4990885278588247665\t1970-01-01T00:33:20.000000Z\t8\t00000000 98 80 85 20 53 3b 51 9d 5d 28 ac 02 2e fe\tQQEMXDKXEJCTIZ\n" +
-                        "4\t-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t263487884\ttrue\t\tNaN\t0.9483\t59\t2015-01-20T06:18:18.583Z\t\t-5873213601796545477\t1970-01-01T00:50:00.000000Z\t26\t00000000 4a c9 cf fb 9d 63 ca 94 00 6b dd\tHHGGIWH\n" +
-                        "5\t-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
-                        "6\t1431425139\tfalse\t\t0.307166678100\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\t6\t1159512064\ttrue\tH\t0.812430684497\t0.0033\t432\t2015-09-12T17:45:31.519Z\tHHIU\t7964539812331152681\t1970-01-01T01:06:40.000000Z\t8\t\tWLEVMLKC\n" +
-                        "6\t1431425139\tfalse\t\t0.307166678100\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\t6\t-1751905058\tfalse\tV\t0.897795794206\t0.1897\t262\t2015-06-14T03:59:52.156Z\tHHIU\t8231256356538221412\t1970-01-01T01:23:20.000000Z\t13\t\tXFSUWPNXH\n" +
-                        "7\t-2077041000\ttrue\tM\t0.734065626073\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
-                        "8\t-1234141625\tfalse\tC\t0.063816578702\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\t8\t882350590\ttrue\tZ\tNaN\t0.0331\t575\t2015-08-28T02:22:07.682Z\tHHIU\t-6342128731155487317\t1970-01-01T01:40:00.000000Z\t26\t00000000 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a 0c\tVFDBZW\n" +
-                        "8\t-1234141625\tfalse\tC\t0.063816578702\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\t8\t450540087\tfalse\t\tNaN\t0.1354\t932\t\t\t-6426355179359373684\t1970-01-01T01:56:40.000000Z\t30\t\tKVSBEGM\n" +
-                        "9\t976011946\ttrue\tU\t0.240014590077\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
-                        "10\t-1915752164\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\t10\t815018557\tfalse\t\t0.073834641749\t0.8791\t187\t\tYRZL\t8725895078168602870\t1970-01-01T02:13:20.000000Z\t36\t\tVLOMPBETTTKRIV\n" +
-                        "10\t-1915752164\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\t10\t-682294338\ttrue\tG\t0.915304483996\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T02:30:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n";
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t325316\tfalse\tG\t0.27068535446692277\t0.0031\t809\t2015-02-24T12:10:43.199Z\t\t-4990885278588247665\t1970-01-01T00:33:20.000000Z\t8\t00000000 98 80 85 20 53 3b 51 9d 5d 28 ac 02 2e fe\tQQEMXDKXEJCTIZ\n" +
+                        "4\t-1172180184\tfalse\tS\t0.5891216483879789\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\t4\t263487884\ttrue\t\tNaN\t0.9483\t59\t2015-01-20T06:18:18.583Z\t\t-5873213601796545477\t1970-01-01T00:50:00.000000Z\t26\t00000000 4a c9 cf fb 9d 63 ca 94 00 6b dd\tHHGGIWH\n" +
+                        "5\t-2088317486\tfalse\tU\t0.7446000371089992\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
+                        "6\t1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\t6\t1159512064\ttrue\tH\t0.8124306844969832\t0.0033\t432\t2015-09-12T17:45:31.519Z\tHHIU\t7964539812331152681\t1970-01-01T01:06:40.000000Z\t8\t\tWLEVMLKC\n" +
+                        "6\t1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\t6\t-1751905058\tfalse\tV\t0.8977957942059742\t0.1897\t262\t2015-06-14T03:59:52.156Z\tHHIU\t8231256356538221412\t1970-01-01T01:23:20.000000Z\t13\t\tXFSUWPNXH\n" +
+                        "7\t-2077041000\ttrue\tM\t0.7340656260730631\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
+                        "8\t-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\t8\t882350590\ttrue\tZ\tNaN\t0.0331\t575\t2015-08-28T02:22:07.682Z\tHHIU\t-6342128731155487317\t1970-01-01T01:40:00.000000Z\t26\t00000000 75 10 b3 4c 0e 8f f1 0c c5 60 b7 d1 5a 0c\tVFDBZW\n" +
+                        "8\t-1234141625\tfalse\tC\t0.06381657870188628\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\t8\t450540087\tfalse\t\tNaN\t0.1354\t932\t\t\t-6426355179359373684\t1970-01-01T01:56:40.000000Z\t30\t\tKVSBEGM\n" +
+                        "9\t976011946\ttrue\tU\t0.24001459007748394\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\tNaN\tNaN\tfalse\t\tNaN\tNaN\t0\t\t\tNaN\t\t0\t\t\n" +
+                        "10\t-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\t10\t815018557\tfalse\t\t0.07383464174908916\t0.8791\t187\t\tYRZL\t8725895078168602870\t1970-01-01T02:13:20.000000Z\t36\t\tVLOMPBETTTKRIV\n" +
+                        "10\t-1915752164\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\t10\t-682294338\ttrue\tG\t0.9153044839960652\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T02:30:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n";
 
                 compiler.compile("create table x as (select" +
                         " cast(x as int) kk, " +
@@ -2755,13 +2669,13 @@ public class JoinTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
-                        "\tNaN\t0\t\tgoogl\t100.200000000000\t100.300000000000\t2018-11-02T10:00:02.000000Z\n" +
-                        "\tNaN\t0\t\tmsft\t185.900000000000\t187.300000000000\t2018-11-02T10:00:02.000001Z\n" +
-                        "\tNaN\t0\t\tmsft\t186.100000000000\t187.800000000000\t2018-11-02T10:00:02.000002Z\n" +
-                        "\tNaN\t0\t\tmsft\t183.400000000000\t185.900000000000\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t2000.000000000000\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.200000000000\t100.300000000000\t2018-11-02T10:00:02.000000Z\n" +
-                        "msft\t150.000000000000\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.400000000000\t185.900000000000\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t3000.000000000000\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.200000000000\t100.300000000000\t2018-11-02T10:00:02.000000Z\n",
+                        "\tNaN\t0\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                        "\tNaN\t0\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z\n" +
+                        "\tNaN\t0\t\tmsft\t186.1\t187.8\t2018-11-02T10:00:02.000002Z\n" +
+                        "\tNaN\t0\t\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                        "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                        "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                        "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
                 "select * from orders splice join quotes on(sym)",
                 null,
                 null,
@@ -2771,219 +2685,211 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testSpliceJoinAllTypes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "NaN\t\tNaN\t0.032000000000\t\t2018-01-01T00:02:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.043000000000\t\t2018-01-01T00:04:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.986000000000\t\t2018-01-01T00:06:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.139000000000\t\t2018-01-01T00:08:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.152000000000\t\t2018-01-01T00:10:00.000000Z\n" +
-                        "1\tmsft\t50.938000000000\t0.043000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:04:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.707000000000\t\t2018-01-01T00:14:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.937000000000\t\t2018-01-01T00:16:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.420000000000\t\t2018-01-01T00:18:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.830000000000\t\t2018-01-01T00:20:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.392000000000\t\t2018-01-01T00:22:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.937000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.834000000000\t\t2018-01-01T00:26:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.479000000000\t\t2018-01-01T00:28:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.911000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.941000000000\t\t2018-01-01T00:32:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.736000000000\t\t2018-01-01T00:34:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.420000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.437000000000\t\t2018-01-01T00:38:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.109000000000\t\t2018-01-01T00:40:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.840000000000\t\t2018-01-01T00:42:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.252000000000\t\t2018-01-01T00:44:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.540000000000\t\t2018-01-01T00:46:00.000000Z\n" +
-                        "4\tibm\t14.831000000000\t0.252000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:44:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.621000000000\t\t2018-01-01T00:50:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.963000000000\t\t2018-01-01T00:52:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.359000000000\t\t2018-01-01T00:54:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.383000000000\t\t2018-01-01T00:56:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.009000000000\t\t2018-01-01T00:58:00.000000Z\n" +
-                        "5\tgoogl\t86.772000000000\t0.420000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                        "6\tmsft\t29.659000000000\t0.087000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "7\tgoogl\t7.594000000000\t0.911000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "8\tibm\t54.253000000000\t0.383000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "9\tmsft\t62.260000000000\t0.087000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "10\tmsft\t50.908000000000\t0.087000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "NaN\t\tNaN\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.043000000000000003\t\t2018-01-01T00:04:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.986\t\t2018-01-01T00:06:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.139\t\t2018-01-01T00:08:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.152\t\t2018-01-01T00:10:00.000000Z\n" +
+                    "1\tmsft\t50.938\t0.043000000000000003\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:04:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.707\t\t2018-01-01T00:14:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.937\t\t2018-01-01T00:16:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.42\t\t2018-01-01T00:18:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.8300000000000001\t\t2018-01-01T00:20:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.392\t\t2018-01-01T00:22:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.937\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.834\t\t2018-01-01T00:26:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.47900000000000004\t\t2018-01-01T00:28:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.911\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.9410000000000001\t\t2018-01-01T00:32:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.736\t\t2018-01-01T00:34:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.42\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.437\t\t2018-01-01T00:38:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.109\t\t2018-01-01T00:40:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.84\t\t2018-01-01T00:42:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.252\t\t2018-01-01T00:44:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.54\t\t2018-01-01T00:46:00.000000Z\n" +
+                    "4\tibm\t14.831\t0.252\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:44:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.621\t\t2018-01-01T00:50:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.963\t\t2018-01-01T00:52:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.359\t\t2018-01-01T00:54:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.383\t\t2018-01-01T00:56:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.009000000000000001\t\t2018-01-01T00:58:00.000000Z\n" +
+                    "5\tgoogl\t86.772\t0.42\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                    "6\tmsft\t29.659\t0.08700000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "7\tgoogl\t7.594\t0.911\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "8\tibm\t54.253\t0.383\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tmsft\t62.26\t0.08700000000000001\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tmsft\t50.908\t0.08700000000000001\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, null);
+            assertQueryAndCache(expected, query, null);
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "NaN\t\tNaN\t0.032000000000\t\t2018-01-01T00:02:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.043000000000\t\t2018-01-01T00:04:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.986000000000\t\t2018-01-01T00:06:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.139000000000\t\t2018-01-01T00:08:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.152000000000\t\t2018-01-01T00:10:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.043000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:04:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.707000000000\t\t2018-01-01T00:14:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.937000000000\t\t2018-01-01T00:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.420000000000\t\t2018-01-01T00:18:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.830000000000\t\t2018-01-01T00:20:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.392000000000\t\t2018-01-01T00:22:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.937000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.834000000000\t\t2018-01-01T00:26:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.479000000000\t\t2018-01-01T00:28:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.911000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.941000000000\t\t2018-01-01T00:32:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.736000000000\t\t2018-01-01T00:34:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.420000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.437000000000\t\t2018-01-01T00:38:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.109000000000\t\t2018-01-01T00:40:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.840000000000\t\t2018-01-01T00:42:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.252000000000\t\t2018-01-01T00:44:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.540000000000\t\t2018-01-01T00:46:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.252000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:44:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.621000000000\t\t2018-01-01T00:50:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.963000000000\t\t2018-01-01T00:52:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.359000000000\t\t2018-01-01T00:54:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.383000000000\t\t2018-01-01T00:56:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.009000000000\t\t2018-01-01T00:58:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.420000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.687000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:02:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.215000000000\t\t2018-01-01T01:04:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.061000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.554000000000\t\t2018-01-01T01:08:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.332000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:10:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.087000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.222000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:14:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.305000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.403000000000\t\t2018-01-01T01:18:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.323000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.297000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
-                                "7\tgoogl\t7.594000000000\t0.332000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:10:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.372000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:26:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.446000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:28:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.231000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.239000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.067000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "8\tibm\t54.253000000000\t0.477000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.877000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:38:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.432000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.670000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:42:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.264000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:44:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.782000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:46:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.724000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.252000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.696000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.904000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.732000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.260000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "10\tmsft\t50.908000000000\t0.209000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "11\tgoogl\t27.493000000000\t0.260000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "12\tgoogl\t39.244000000000\t0.260000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "13\tgoogl\t56.985000000000\t0.260000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "14\tmsft\t49.758000000000\t0.209000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "15\tmsft\t49.108000000000\t0.209000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "16\tmsft\t0.132000000000\t0.209000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tibm\t80.480000000000\t0.732000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "18\tmsft\t57.556000000000\t0.209000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "19\tgoogl\t34.250000000000\t0.260000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "20\tgoogl\t2.675000000000\t0.260000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
-                        query,
-                        null);
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "NaN\t\tNaN\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.043000000000000003\t\t2018-01-01T00:04:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.986\t\t2018-01-01T00:06:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.139\t\t2018-01-01T00:08:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.152\t\t2018-01-01T00:10:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.043000000000000003\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:04:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.707\t\t2018-01-01T00:14:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.937\t\t2018-01-01T00:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.42\t\t2018-01-01T00:18:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.8300000000000001\t\t2018-01-01T00:20:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.392\t\t2018-01-01T00:22:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.937\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.834\t\t2018-01-01T00:26:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.47900000000000004\t\t2018-01-01T00:28:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.911\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.9410000000000001\t\t2018-01-01T00:32:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.736\t\t2018-01-01T00:34:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.42\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.437\t\t2018-01-01T00:38:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.109\t\t2018-01-01T00:40:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.84\t\t2018-01-01T00:42:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.252\t\t2018-01-01T00:44:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.54\t\t2018-01-01T00:46:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.252\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:44:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.621\t\t2018-01-01T00:50:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.963\t\t2018-01-01T00:52:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.359\t\t2018-01-01T00:54:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.383\t\t2018-01-01T00:56:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.009000000000000001\t\t2018-01-01T00:58:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.42\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.687\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:02:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.215\t\t2018-01-01T01:04:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.061\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.554\t\t2018-01-01T01:08:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.332\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:10:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.08700000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.222\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:14:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.305\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.403\t\t2018-01-01T01:18:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.323\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.297\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                            "7\tgoogl\t7.594\t0.332\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:10:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.372\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:26:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.446\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:28:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.231\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.23900000000000002\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.067\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "8\tibm\t54.253\t0.47700000000000004\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.877\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:38:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.432\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.67\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:42:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.264\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:44:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.782\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:46:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.724\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.252\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.6960000000000001\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.904\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.732\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.26\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "10\tmsft\t50.908\t0.209\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "11\tgoogl\t27.493000000000002\t0.26\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "12\tgoogl\t39.244\t0.26\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "13\tgoogl\t56.985\t0.26\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "14\tmsft\t49.758\t0.209\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "15\tmsft\t49.108000000000004\t0.209\t2018-01-01T03:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "16\tmsft\t0.132\t0.209\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tibm\t80.48\t0.732\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "18\tmsft\t57.556000000000004\t0.209\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "19\tgoogl\t34.25\t0.26\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "20\tgoogl\t2.6750000000000003\t0.26\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
+                    query,
+                    null);
         });
     }
 
@@ -3039,213 +2945,205 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testSpliceJoinNoStrings() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
 
-                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                        "NaN\t\tNaN\t0.032000000000\t\t2018-01-01T00:02:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.113000000000\t\t2018-01-01T00:04:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.110000000000\t\t2018-01-01T00:06:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.210000000000\t\t2018-01-01T00:08:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.934000000000\t\t2018-01-01T00:10:00.000000Z\n" +
-                        "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.846000000000\t\t2018-01-01T00:14:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.605000000000\t\t2018-01-01T00:16:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.215000000000\t\t2018-01-01T00:18:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.223000000000\t\t2018-01-01T00:20:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.781000000000\t\t2018-01-01T00:22:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.605000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.108000000000\t\t2018-01-01T00:26:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.910000000000\t\t2018-01-01T00:28:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.373000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.024000000000\t\t2018-01-01T00:32:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.301000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                        "2\tgoogl\t42.281000000000\t0.419000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.864000000000\t\t2018-01-01T00:40:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.404000000000\t\t2018-01-01T00:42:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.982000000000\t\t2018-01-01T00:44:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.586000000000\t\t2018-01-01T00:46:00.000000Z\n" +
-                        "4\tibm\t14.831000000000\t0.910000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:28:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.539000000000\t\t2018-01-01T00:50:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.989000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
-                        "NaN\t\tNaN\t0.537000000000\t\t2018-01-01T00:54:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.571000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                        "3\tgoogl\t17.371000000000\t0.760000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
-                        "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "6\tmsft\t29.659000000000\t0.537000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
-                        "7\tgoogl\t7.594000000000\t0.092000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                        "8\tibm\t54.253000000000\t0.404000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
-                        "9\tmsft\t62.260000000000\t0.537000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
-                        "10\tmsft\t50.908000000000\t0.537000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:54:00.000000Z\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "NaN\t\tNaN\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.113\t\t2018-01-01T00:04:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.11\t\t2018-01-01T00:06:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.21\t\t2018-01-01T00:08:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.934\t\t2018-01-01T00:10:00.000000Z\n" +
+                    "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.846\t\t2018-01-01T00:14:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.605\t\t2018-01-01T00:16:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.215\t\t2018-01-01T00:18:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.223\t\t2018-01-01T00:20:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.781\t\t2018-01-01T00:22:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.605\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.108\t\t2018-01-01T00:26:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.91\t\t2018-01-01T00:28:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.373\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.024\t\t2018-01-01T00:32:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.301\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                    "2\tgoogl\t42.281\t0.419\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.864\t\t2018-01-01T00:40:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.404\t\t2018-01-01T00:42:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.982\t\t2018-01-01T00:44:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.586\t\t2018-01-01T00:46:00.000000Z\n" +
+                    "4\tibm\t14.831\t0.91\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:28:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.539\t\t2018-01-01T00:50:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.989\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
+                    "NaN\t\tNaN\t0.537\t\t2018-01-01T00:54:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.5710000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "3\tgoogl\t17.371\t0.76\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                    "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "6\tmsft\t29.659\t0.537\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
+                    "7\tgoogl\t7.594\t0.092\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "8\tibm\t54.253\t0.404\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:42:00.000000Z\n" +
+                    "9\tmsft\t62.26\t0.537\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:54:00.000000Z\n" +
+                    "10\tmsft\t50.908\t0.537\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:54:00.000000Z\n";
 
-                compiler.compile(
-                        "create table x as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp (timestamp)"
-                );
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " cast(x as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQueryAndCache(expected, query, null);
+            assertQueryAndCache(expected, query, null);
 
-                compiler.compile(
-                        "insert into x select * from " +
-                                "(select" +
-                                " cast(x + 10 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym," +
-                                " round(rnd_double(0)*100, 3) amt," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                );
-                compiler.compile(
-                        "insert into y select * from " +
-                                "(select" +
-                                " cast(x + 30 as int) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(0, 1000000000) k," +
-                                " rnd_byte(2,50) l" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                );
+            compiler.compile(
+                    "insert into x select * from " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)"
+            );
+            compiler.compile(
+                    "insert into y select * from " +
+                            "(select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)"
+            );
 
-                assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                                "NaN\t\tNaN\t0.032000000000\t\t2018-01-01T00:02:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.113000000000\t\t2018-01-01T00:04:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.110000000000\t\t2018-01-01T00:06:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.210000000000\t\t2018-01-01T00:08:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.934000000000\t\t2018-01-01T00:10:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.523000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.846000000000\t\t2018-01-01T00:14:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.605000000000\t\t2018-01-01T00:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.215000000000\t\t2018-01-01T00:18:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.223000000000\t\t2018-01-01T00:20:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.781000000000\t\t2018-01-01T00:22:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.605000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.108000000000\t\t2018-01-01T00:26:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.910000000000\t\t2018-01-01T00:28:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.373000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.024000000000\t\t2018-01-01T00:32:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.301000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.915000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
-                                "2\tgoogl\t42.281000000000\t0.419000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.864000000000\t\t2018-01-01T00:40:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.404000000000\t\t2018-01-01T00:42:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.982000000000\t\t2018-01-01T00:44:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.586000000000\t\t2018-01-01T00:46:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.910000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:28:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.539000000000\t\t2018-01-01T00:50:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.989000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.537000000000\t\t2018-01-01T00:54:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.571000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.760000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.092000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.252000000000\t\t2018-01-01T01:02:00.000000Z\n" +
-                                "3\tgoogl\t17.371000000000\t0.122000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:04:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.962000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.098000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:08:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.705000000000\t\t2018-01-01T01:10:00.000000Z\n" +
-                                "6\tmsft\t29.659000000000\t0.962000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.489000000000\t\t2018-01-01T01:14:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.105000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.892000000000\t\t2018-01-01T01:18:00.000000Z\n" +
-                                "NaN\t\tNaN\t0.740000000000\t\t2018-01-01T01:20:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.380000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
-                                "7\tgoogl\t7.594000000000\t0.036000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.395000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:26:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.882000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:28:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.301000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
-                                "1\tmsft\t50.938000000000\t0.032000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.308000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
-                                "8\tibm\t54.253000000000\t0.892000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:18:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.667000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:38:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.594000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.087000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:42:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.855000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:44:00.000000Z\n" +
-                                "5\tgoogl\t86.772000000000\t0.786000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:46:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.301000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.644000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.550000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.434000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "4\tibm\t14.831000000000\t0.388000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "9\tmsft\t62.260000000000\t0.912000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "10\tmsft\t50.908000000000\t0.434000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
-                                "11\tmsft\t25.604000000000\t0.912000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "12\tgoogl\t89.220000000000\t0.148000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "13\tgoogl\t64.536000000000\t0.148000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "14\tibm\t33.000000000000\t0.388000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "15\tmsft\t67.285000000000\t0.912000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "16\tgoogl\t17.310000000000\t0.148000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
-                                "17\tibm\t23.957000000000\t0.388000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "18\tibm\t60.678000000000\t0.388000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
-                                "19\tmsft\t4.727000000000\t0.912000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
-                                "20\tgoogl\t26.222000000000\t0.148000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
-                        query,
-                        null);
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "NaN\t\tNaN\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.113\t\t2018-01-01T00:04:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.11\t\t2018-01-01T00:06:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.21\t\t2018-01-01T00:08:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.934\t\t2018-01-01T00:10:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.846\t\t2018-01-01T00:14:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.605\t\t2018-01-01T00:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.215\t\t2018-01-01T00:18:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.223\t\t2018-01-01T00:20:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.781\t\t2018-01-01T00:22:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.605\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.108\t\t2018-01-01T00:26:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.91\t\t2018-01-01T00:28:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.373\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:30:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.024\t\t2018-01-01T00:32:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.301\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                            "2\tgoogl\t42.281\t0.419\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.864\t\t2018-01-01T00:40:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.404\t\t2018-01-01T00:42:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.982\t\t2018-01-01T00:44:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.586\t\t2018-01-01T00:46:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.91\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:28:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.539\t\t2018-01-01T00:50:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.989\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.537\t\t2018-01-01T00:54:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.5710000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.76\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.092\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.252\t\t2018-01-01T01:02:00.000000Z\n" +
+                            "3\tgoogl\t17.371\t0.122\t2018-01-01T00:36:00.000000Z\t2018-01-01T01:04:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.962\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.098\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:08:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.705\t\t2018-01-01T01:10:00.000000Z\n" +
+                            "6\tmsft\t29.659\t0.962\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.489\t\t2018-01-01T01:14:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.105\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.892\t\t2018-01-01T01:18:00.000000Z\n" +
+                            "NaN\t\tNaN\t0.74\t\t2018-01-01T01:20:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.38\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                            "7\tgoogl\t7.594\t0.036000000000000004\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.395\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:26:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.882\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:28:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.301\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
+                            "1\tmsft\t50.938\t0.032\t2018-01-01T00:12:00.000000Z\t2018-01-01T01:32:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.308\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "8\tibm\t54.253\t0.892\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:18:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.667\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:38:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.594\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.08700000000000001\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:42:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.855\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:44:00.000000Z\n" +
+                            "5\tgoogl\t86.772\t0.786\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:46:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.301\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:30:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.644\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.55\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.434\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "4\tibm\t14.831\t0.388\t2018-01-01T00:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "9\tmsft\t62.26\t0.912\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "10\tmsft\t50.908\t0.434\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                            "11\tmsft\t25.604\t0.912\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "12\tgoogl\t89.22\t0.148\t2018-01-01T02:24:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "13\tgoogl\t64.536\t0.148\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t33.0\t0.388\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "15\tmsft\t67.285\t0.912\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "16\tgoogl\t17.31\t0.148\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tibm\t23.957\t0.388\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                            "19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    null);
         });
     }
 

@@ -61,7 +61,7 @@ public class TextException extends Exception implements Sinkable {
     }
 
     public TextException put(double c) {
-        message.put(c, 6);
+        message.put(c);
         return this;
     }
 

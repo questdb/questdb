@@ -227,16 +227,16 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertReceive(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n";
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
 
@@ -262,7 +262,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
-                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000000L);
+                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4).$(100000000000L);
                         }
                         sender.flush();
                     }

@@ -28,8 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToLongFunctionFactory implements FunctionFactory {
@@ -43,17 +42,9 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends LongFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractUnaryLongFunction {
         public Func(int position, Function arg) {
-            super(position);
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(position, arg);
         }
 
         @Override

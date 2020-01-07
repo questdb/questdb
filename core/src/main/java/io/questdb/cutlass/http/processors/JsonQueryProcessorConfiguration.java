@@ -33,8 +33,6 @@ public interface JsonQueryProcessorConfiguration {
 
     int getConnectionCheckFrequency();
 
-    int getDoubleScale();
-
     FilesFacade getFilesFacade();
 
     int getFloatScale();

@@ -47,7 +47,7 @@ public class DirectUnboundedByteSink extends AbstractCharSink {
     @Override
     public CharSink put(CharSequence cs) {
         int len = cs.length();
-        Chars.strcpy(cs, len, _wptr);
+        Chars.asciiStrCpy(cs, len, _wptr);
         _wptr += len;
         return this;
     }
@@ -55,6 +55,13 @@ public class DirectUnboundedByteSink extends AbstractCharSink {
     @Override
     public CharSink put(char c) {
         Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        Chars.asciiCopyTo(chars, start, len, _wptr);
+        _wptr += len;
         return this;
     }
 

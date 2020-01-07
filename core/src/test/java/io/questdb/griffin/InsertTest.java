@@ -120,8 +120,8 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
-                            "1\tGBP\t150.400000000000\n" +
-                            "1\tGBP\t56.400000000000\n",
+                            "1\tGBP\t150.4\n" +
+                            "1\tGBP\t56.4\n",
                     sink
             );
         });
@@ -173,7 +173,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             String expected = "timestamp\tfield\tvalue\n" +
-                    "2019-12-04T13:20:49.000000Z\tX\t123.330000000000\n";
+                    "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
@@ -206,7 +206,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             String expected = "timestamp\tfield\tvalue\n" +
-                    "2019-12-04T13:20:49.000000Z\tX\t123.330000000000\n";
+                    "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
@@ -229,7 +229,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             String expected = "cust_id\tccy\tbalance\n" +
-                    "1\tUSD\t356.120000000000\n";
+                    "1\tUSD\t356.12\n";
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {

@@ -43,35 +43,35 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         final String expected = "a\tb\tc\n" +
-                "TJ\tCP\t0.084383207626\n" +
-                "RX\tEH\t0.224523408561\n" +
-                "ZS\t\t0.462183542913\n" +
-                "BT\tPG\t0.422435666165\n" +
-                "UD\tYY\t0.003598367215\n" +
-                "HF\t\t0.977110314605\n" +
-                "XY\tBE\t0.125030421903\n" +
-                "SH\tUE\t0.891258753660\n" +
-                "UL\t\t0.810161274171\n" +
-                "TJ\t\t0.844525817721\n" +
-                "YR\tBV\t0.490051044989\n" +
-                "OO\tZV\t0.920500394699\n" +
-                "YI\t\t0.228223359653\n" +
-                "UI\tWE\t0.682166086100\n" +
-                "UV\tDO\t0.540670984654\n" +
-                "YY\t\t0.544915502152\n" +
-                "LY\tWC\t0.713391027156\n" +
-                "\tWD\t0.282002071667\n" +
-                "\tHO\t0.255331933970\n" +
-                "\tQB\t0.944165897553\n" +
-                "VI\t\t0.579744709631\n" +
-                "SU\tSR\t0.304525331063\n" +
-                "\tSJ\t0.497651932297\n" +
-                "HZ\tPI\t0.823124946199\n" +
-                "OV\t\t0.589339848805\n" +
-                "GL\tML\t0.324245626540\n" +
-                "ZI\tNZ\t0.337470756550\n" +
-                "MB\tZG\t0.282558271278\n" +
-                "KF\tOP\t0.679756299095\n";
+                "TJ\tCP\t0.0843832076262595\n" +
+                "RX\tEH\t0.22452340856088226\n" +
+                "ZS\t\t0.4621835429127854\n" +
+                "BT\tPG\t0.4224356661645131\n" +
+                "UD\tYY\t0.0035983672154330515\n" +
+                "HF\t\t0.9771103146051203\n" +
+                "XY\tBE\t0.12503042190293423\n" +
+                "SH\tUE\t0.8912587536603974\n" +
+                "UL\t\t0.810161274171258\n" +
+                "TJ\t\t0.8445258177211064\n" +
+                "YR\tBV\t0.4900510449885239\n" +
+                "OO\tZV\t0.92050039469858\n" +
+                "YI\t\t0.2282233596526786\n" +
+                "UI\tWE\t0.6821660861001273\n" +
+                "UV\tDO\t0.5406709846540508\n" +
+                "YY\t\t0.5449155021518948\n" +
+                "LY\tWC\t0.7133910271555843\n" +
+                "\tWD\t0.2820020716674768\n" +
+                "\tHO\t0.2553319339703062\n" +
+                "\tQB\t0.9441658975532605\n" +
+                "VI\t\t0.5797447096307482\n" +
+                "SU\tSR\t0.3045253310626277\n" +
+                "\tSJ\t0.49765193229684157\n" +
+                "HZ\tPI\t0.8231249461985348\n" +
+                "OV\t\t0.5893398488053903\n" +
+                "GL\tML\t0.32424562653969957\n" +
+                "ZI\tNZ\t0.33747075654972813\n" +
+                "MB\tZG\t0.2825582712777682\n" +
+                "KF\tOP\t0.6797562990945702\n";
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
@@ -101,15 +101,15 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testStrEqualsConstant() throws Exception {
         final String expected = "a\tb\tc\n" +
-                "RX\tEH\t0.224523408561\n" +
-                "ZS\tUX\t0.421776884197\n" +
-                "GP\tWF\t0.677856455884\n" +
-                "EY\tQE\t0.524932106269\n" +
-                "OW\tPD\t0.157866355996\n" +
-                "EO\tOJ\t0.968742327694\n" +
-                "ED\tQQ\t0.422813427274\n" +
-                "JG\tTJ\t0.022965637513\n" +
-                "RY\tFB\t0.001107536108\n";
+                "RX\tEH\t0.22452340856088226\n" +
+                "ZS\tUX\t0.4217768841969397\n" +
+                "GP\tWF\t0.6778564558839208\n" +
+                "EY\tQE\t0.5249321062686694\n" +
+                "OW\tPD\t0.15786635599554755\n" +
+                "EO\tOJ\t0.9687423276940171\n" +
+                "ED\tQQ\t0.42281342727402726\n" +
+                "JG\tTJ\t0.022965637512889825\n" +
+                "RY\tFB\t0.0011075361080621349\n";
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
@@ -138,15 +138,15 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testStrEqualsConstant2() throws Exception {
         final String expected = "a\tb\tc\n" +
-                "RX\tEH\t0.224523408561\n" +
-                "ZS\tUX\t0.421776884197\n" +
-                "GP\tWF\t0.677856455884\n" +
-                "EY\tQE\t0.524932106269\n" +
-                "OW\tPD\t0.157866355996\n" +
-                "EO\tOJ\t0.968742327694\n" +
-                "ED\tQQ\t0.422813427274\n" +
-                "JG\tTJ\t0.022965637513\n" +
-                "RY\tFB\t0.001107536108\n";
+                "RX\tEH\t0.22452340856088226\n" +
+                "ZS\tUX\t0.4217768841969397\n" +
+                "GP\tWF\t0.6778564558839208\n" +
+                "EY\tQE\t0.5249321062686694\n" +
+                "OW\tPD\t0.15786635599554755\n" +
+                "EO\tOJ\t0.9687423276940171\n" +
+                "ED\tQQ\t0.42281342727402726\n" +
+                "JG\tTJ\t0.022965637512889825\n" +
+                "RY\tFB\t0.0011075361080621349\n";
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
@@ -175,22 +175,22 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testStrEqualsNull() throws Exception {
         final String expected = "a\tb\tc\n" +
-                "TJ\tCP\t0.084383207626\n" +
-                "RX\tEH\t0.224523408561\n" +
-                "ZS\tUX\t0.421776884197\n" +
-                "GP\tWF\t0.677856455884\n" +
-                "EY\tQE\t0.524932106269\n" +
-                "OW\tPD\t0.157866355996\n" +
-                "EO\tOJ\t0.968742327694\n" +
-                "ED\tQQ\t0.422813427274\n" +
-                "JG\tTJ\t0.022965637513\n" +
-                "RY\tFB\t0.001107536108\n" +
-                "GO\tZZ\t0.187697081573\n" +
-                "MY\tCC\t0.404554697479\n" +
-                "SE\tYY\t0.910141759290\n" +
-                "OL\tXW\t0.494289051196\n" +
-                "SU\tDS\t0.675250954711\n" +
-                "HO\tNV\t0.894091712658\n";
+                "TJ\tCP\t0.0843832076262595\n" +
+                "RX\tEH\t0.22452340856088226\n" +
+                "ZS\tUX\t0.4217768841969397\n" +
+                "GP\tWF\t0.6778564558839208\n" +
+                "EY\tQE\t0.5249321062686694\n" +
+                "OW\tPD\t0.15786635599554755\n" +
+                "EO\tOJ\t0.9687423276940171\n" +
+                "ED\tQQ\t0.42281342727402726\n" +
+                "JG\tTJ\t0.022965637512889825\n" +
+                "RY\tFB\t0.0011075361080621349\n" +
+                "GO\tZZ\t0.18769708157331322\n" +
+                "MY\tCC\t0.40455469747939254\n" +
+                "SE\tYY\t0.910141759290032\n" +
+                "OL\tXW\t0.49428905119584543\n" +
+                "SU\tDS\t0.6752509547112409\n" +
+                "HO\tNV\t0.8940917126581895\n";
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
@@ -219,22 +219,22 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testStrEqualsNull2() throws Exception {
         final String expected = "a\tb\tc\n" +
-                "TJ\tCP\t0.084383207626\n" +
-                "RX\tEH\t0.224523408561\n" +
-                "ZS\tUX\t0.421776884197\n" +
-                "GP\tWF\t0.677856455884\n" +
-                "EY\tQE\t0.524932106269\n" +
-                "OW\tPD\t0.157866355996\n" +
-                "EO\tOJ\t0.968742327694\n" +
-                "ED\tQQ\t0.422813427274\n" +
-                "JG\tTJ\t0.022965637513\n" +
-                "RY\tFB\t0.001107536108\n" +
-                "GO\tZZ\t0.187697081573\n" +
-                "MY\tCC\t0.404554697479\n" +
-                "SE\tYY\t0.910141759290\n" +
-                "OL\tXW\t0.494289051196\n" +
-                "SU\tDS\t0.675250954711\n" +
-                "HO\tNV\t0.894091712658\n";
+                "TJ\tCP\t0.0843832076262595\n" +
+                "RX\tEH\t0.22452340856088226\n" +
+                "ZS\tUX\t0.4217768841969397\n" +
+                "GP\tWF\t0.6778564558839208\n" +
+                "EY\tQE\t0.5249321062686694\n" +
+                "OW\tPD\t0.15786635599554755\n" +
+                "EO\tOJ\t0.9687423276940171\n" +
+                "ED\tQQ\t0.42281342727402726\n" +
+                "JG\tTJ\t0.022965637512889825\n" +
+                "RY\tFB\t0.0011075361080621349\n" +
+                "GO\tZZ\t0.18769708157331322\n" +
+                "MY\tCC\t0.40455469747939254\n" +
+                "SE\tYY\t0.910141759290032\n" +
+                "OL\tXW\t0.49428905119584543\n" +
+                "SU\tDS\t0.6752509547112409\n" +
+                "HO\tNV\t0.8940917126581895\n";
 
         TestUtils.assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +

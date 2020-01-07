@@ -35,6 +35,12 @@ import java.util.Set;
 public abstract class AbstractCharSink implements CharSink {
 
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
+    private final char[] doubleDigits = new char[21];
+
+    @Override
+    public char[] getDoubleDigitsBuffer() {
+        return doubleDigits;
+    }
 
     @Override
     public CharSink encodeUtf8(CharSequence cs) {
@@ -94,8 +100,8 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink put(double value, int scale) {
-        Numbers.append(this, value, scale);
+    public CharSink put(double value) {
+        Numbers.append(this, value);
         return this;
     }
 

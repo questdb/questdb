@@ -64,6 +64,14 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
     }
 
     @Override
+    public CharSink put(char[] chars, int start, int len) {
+        for (int i = 0; i < len; i++) {
+            put(chars[i + start]);
+        }
+        return this;
+    }
+
+    @Override
     public CharSink put(char c) {
         if (ptr == limit) {
             flush();

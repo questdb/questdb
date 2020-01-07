@@ -43,10 +43,10 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testAddColumn() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                "abc\txyz\t10000\t9.034000000000\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "woopsie\tdaisy\t2000\t3.088910000000\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "444\td555\t510\t1.400000000000\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
-                "666\t777\t410\t1.100000000000\tcomment X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n";
+                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t510\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "666\t777\t410\t1.1\tcomment X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
@@ -68,8 +68,8 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testAppendExistingTable() throws Exception {
         final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n" +
-                "1.600000000000\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +
-                "1.300000000000\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z\n";
+                "1.6\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +
+                "1.3\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z\n";
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("double", ColumnType.DOUBLE)
@@ -102,13 +102,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadDouble1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
                 "x,sym1=abc double=1x.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" + // <-- error here
@@ -123,13 +123,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadDouble2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6x,int=15i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -144,13 +144,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadInt1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
                 "x,sym1=abc double=1.3,int=1s1i,bool=false,str=\"string2\" 1500000000000\n" + // <-- error here
@@ -165,13 +165,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadInt2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -186,13 +186,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testLong() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -207,13 +207,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadTimestamp1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234ab\n" + // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -228,13 +228,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadTimestamp2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000000Z\n";
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234000000\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
@@ -303,7 +303,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         };
 
         final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "zzz\t1.300000000000\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z\n";
+                "zzz\t1.3\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
@@ -337,8 +337,8 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testCreateAndAppend() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
-                "abc\txyz\t10000\t9.034000000000\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n" +
-                "woopsie\tdaisy\t2000\t3.088910000000\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
+                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n" +
+                "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
@@ -350,14 +350,14 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testCreateAndAppendTwoTables() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.900000000000\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
+                "\t0.9\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.040000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.040000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=t,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=f,str=\"string2\"\n" +
@@ -372,7 +372,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testCreateTable() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
-                "abc\txyz\t10000\t9.034000000000\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n";
+                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n";
         final String lines = "measurement,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n";
         assertThat(expected, lines, "measurement");
     }
@@ -380,7 +380,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testReservedName() throws Exception {
         final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "ok\t2.100000000000\t11\tfalse\tdone\t2017-10-03T10:00:00.000000Z\n";
+                "ok\t2.1\t11\tfalse\tdone\t2017-10-03T10:00:00.000000Z\n";
 
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
@@ -408,13 +408,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testSyntaxError() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.030000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
@@ -429,13 +429,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testTypeMismatch1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.030000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
@@ -450,13 +450,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testTypeMismatch2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t1.300000000000\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.030000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
@@ -471,13 +471,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testUnquotedString1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.600000000000\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
-                "\t9.400000000000\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3\n" +
-                "\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
+                "\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.010000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.030000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=string2\"\n" + // <-- error here
@@ -492,13 +492,13 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testUnquotedString2() throws Exception {
         final String expected1 = "sym1\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "abc\t1.300000000000\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z\n" +
-                "row3\t9.400000000000\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\n" +
-                "row4\t0.300000000000\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
+                "abc\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z\n" +
+                "row3\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\n" +
+                "row4\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.900000000000\t2017-10-03T10:00:00.010000Z\n" +
-                "66\tbox\t7.900000000000\t2017-10-03T10:00:00.030000Z\n";
+                "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
+                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=string1\"\n" + // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +

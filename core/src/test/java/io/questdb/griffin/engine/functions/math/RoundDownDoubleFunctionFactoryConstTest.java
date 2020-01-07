@@ -37,7 +37,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
         assertQuery(
                 "round_down\n" +
                         "NaN\n",
-                "select round_down(14.7778, -14) from long_sequence(1)",
+                "select round_down(14.7778, -18) from long_sequence(1)",
                 null,
                 true
         );
@@ -48,7 +48,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
         assertQuery(
                 "round_down\n" +
                         "NaN\n",
-                "select round_down(14.7778, 14) from long_sequence(1)",
+                "select round_down(14.7778, 18) from long_sequence(1)",
                 null,
                 true
         );
@@ -58,7 +58,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testOKNegScale() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "0.000000000000\n",
+                        "0.0\n",
                 "select round_down(14.7778, -13) from long_sequence(1)",
                 null,
                 true
@@ -69,7 +69,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testOKPosScale() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "14.777800000000\n",
+                        "14.777800000000001\n",
                 "select round_down(14.7778, 13) from long_sequence(1)",
                 null,
                 true
@@ -80,7 +80,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testNegScaleHigherThanNumber() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "0.000000000000\n",
+                        "-0.0\n",
                 "select round_down(-14.778, -5) from long_sequence(1)",
                 null,
                 true
@@ -91,7 +91,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testNegScaleNegValue() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "-10.000000000000\n",
+                        "-10.0\n",
                 "select round_down(-14.778, -1) from long_sequence(1)",
                 null,
                 true
@@ -102,7 +102,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testNegScalePosValue() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "10.000000000000\n",
+                        "10.0\n",
                 "select round_down(14.778, -1) from long_sequence(1)",
                 null,
                 true
@@ -113,7 +113,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testPosScaleHigherThanNumber() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "-14.778000000000\n",
+                        "-14.777999999999999\n",
                 "select round_down(-14.778, 7) from long_sequence(1)",
                 null,
                 true
@@ -124,7 +124,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testPosScaleNegValue() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "-100.900000000000\n",
+                        "-100.9\n",
                 "select round_down(-100.9999, 1) from long_sequence(1)",
                 null,
                 true
@@ -135,7 +135,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
     public void testPosScalePosValue() throws SqlException {
         assertQuery(
                 "round_down\n" +
-                        "100.000000000000\n",
+                        "100.0\n",
                 "select round_down(100.01, 1) from long_sequence(1)",
                 null,
                 true
