@@ -1387,36 +1387,6 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
-    public static double roundHalfEven0NegValueNegScale(double value, int scale) {
-        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
-        long remainder = val % 100;
-
-        if (remainder < 50) {
-            return roundDown0NegScale(value, scale);
-        }
-
-        if (remainder == 50 && ((long) (value * pow10dNeg[scale]) & 1) == 0) {
-            return roundDown0NegScale(value, scale);
-        }
-
-        return roundUp0NegScale(value, scale);
-    }
-
-    public static double roundHalfEven0NegValuePosScale(double value, int scale) {
-        long val = (long) (value * pow10[scale] * pow10[2] + TOLERANCE);
-        long remainder = val % 100;
-
-        if (remainder < 50) {
-            return roundDown0PosScale(value, scale);
-        }
-
-        if (remainder == 50 && ((long) (value * pow10[scale]) & 1) == 0) {
-            return roundDown0PosScale(value, scale);
-        }
-
-        return roundUp0PosScale(value, scale);
-    }
-
     private static double roundHalfUp0(double value, int scale) {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
@@ -1613,7 +1583,7 @@ public final class Numbers {
         return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
     }
 
-    public static double roundHalfEven0PosValueNegScale(double value, int scale) {
+    public static double roundHalfEven0NegScale(double value, int scale) {
         long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
         long remainder = val % 100;
 
@@ -1628,7 +1598,7 @@ public final class Numbers {
         return roundUp0NegScale(value, scale);
     }
 
-    public static double roundHalfEven0PosValuePosScale(double value, int scale) {
+    public static double roundHalfEven0PosScale(double value, int scale) {
         long val = (long) (value * pow10[scale] * pow10[2] + TOLERANCE);
         long remainder = val % 100;
 
@@ -1645,27 +1615,25 @@ public final class Numbers {
 
     public static double roundHalfEvenNegScale(double value, int scale) {
         if (scale + 2 < pow10max && scale > -pow10max) {
-            return value > 0 ? roundHalfEven0PosValueNegScale(value, scale) : -roundHalfEven0NegValueNegScale(-value, scale);
+            return value > 0 ? roundHalfEven0NegScale(value, scale) : -roundHalfEven0NegScale(-value, scale);
         }
         return Double.NaN;
     }
 
     public static double roundHalfEvenPosScale(double value, int scale) {
         if (scale + 2 < pow10max && scale > -pow10max) {
-            return value > 0 ? roundHalfEven0PosValuePosScale(value, scale) : -roundHalfEven0NegValuePosScale(-value, scale);
+            return value > 0 ? roundHalfEven0PosScale(value, scale) : -roundHalfEven0PosScale(-value, scale);
         }
         return Double.NaN;
     }
 
     private static double roundHalfEven0PosValue(double value, int scale) {
-        return scale > 0 ? roundHalfEven0PosValuePosScale(value, scale) : roundHalfEven0PosValueNegScale(value, -scale);
+        return scale > 0 ? roundHalfEven0PosScale(value, scale) : roundHalfEven0NegScale(value, -scale);
     }
 
     private static double roundHalfEven0NegValue(double value, int scale) {
-        return scale > 0 ? roundHalfEven0NegValuePosScale(value, scale) : roundHalfEven0NegValueNegScale(value, -scale);
+        return scale > 0 ? roundHalfEven0PosScale(value, scale) : roundHalfEven0NegScale(value, -scale);
     }
-
-
 
     private static double roundHalfDown0(double value, int scale) {
         long val = (long) (value * pow10[scale + 2] + TOLERANCE);

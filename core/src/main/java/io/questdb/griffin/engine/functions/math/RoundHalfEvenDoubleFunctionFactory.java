@@ -149,7 +149,7 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
                 return l;
             }
 
-            return Numbers.roundHalfEvenNegScale(l, -scale);
+            return Numbers.roundHalfEvenNegScale(l, scale);
         }
 
     }
