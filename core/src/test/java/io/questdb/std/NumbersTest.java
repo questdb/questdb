@@ -571,6 +571,10 @@ public class NumbersTest {
         Assert.assertEquals(1.2349, Numbers.roundHalfEven(1.234895, 5), Numbers.TOLERANCE);
         Assert.assertEquals(1.0008, Numbers.roundHalfEven(1.00075, 4), Numbers.TOLERANCE);
         Assert.assertEquals(1.0008, Numbers.roundHalfEven(1.00085, 4), Numbers.TOLERANCE);
+        Assert.assertEquals(24, Numbers.roundHalfEven(23.5, 0), Numbers.TOLERANCE);
+        Assert.assertEquals(24, Numbers.roundHalfEven(24.5, 0), Numbers.TOLERANCE);
+        Assert.assertEquals(-24, Numbers.roundHalfEven(-23.5, 0), Numbers.TOLERANCE);
+        Assert.assertEquals(-24, Numbers.roundHalfEven(-24.5, 0), Numbers.TOLERANCE);
     }
 
     @Test
