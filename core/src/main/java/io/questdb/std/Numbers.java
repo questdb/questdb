@@ -1381,7 +1381,7 @@ public final class Numbers {
     }
 
     public static double roundHalfEven(double value, int scale) throws NumericException {
-        if (scale + 2 < pow10max && scale > -1) {
+        if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfEven0(value, scale) : -roundHalfEven0(-value, scale);
         }
         throw NumericException.INSTANCE;
@@ -1583,19 +1583,46 @@ public final class Numbers {
         return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
     }
 
-    private static double roundHalfEven0(double value, int scale) {
-        long val = (long) (value * pow10[scale + 2] + TOLERANCE);
+    public static double roundHalfEven0NegScale(double value, int scale) {
+        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
         long remainder = val % 100;
 
         if (remainder < 50) {
-            return roundDown0(value, scale);
+            return roundDown00NegScale(value, scale);
+        }
+
+        if (remainder == 50 && ((long) (value * pow10dNeg[scale]) & 1) == 0) {
+            return roundDown00NegScale(value, scale);
+        }
+
+        return roundUp00NegScale(value, scale);
+    }
+
+    public static double roundHalfEven0PosScale(double value, int scale) {
+        long val = (long) (value * pow10[scale] * pow10[2] + TOLERANCE);
+        long remainder = val % 100;
+
+        if (remainder < 50) {
+            return roundDown00PosScale(value, scale);
         }
 
         if (remainder == 50 && ((long) (value * pow10[scale]) & 1) == 0) {
-            return roundDown0(value, scale);
+            return roundDown00PosScale(value, scale);
         }
 
-        return roundUp0(value, scale);
+        return roundUp00PosScale(value, scale);
+    }
+
+    public static double roundHalfEvenNegScale(double value, int scale) {
+        return value > 0 ? roundHalfEven0NegScale(value, scale) : -roundHalfEven0NegScale(-value, scale);
+    }
+
+    public static double roundHalfEvenPosScale(double value, int scale) {
+        return value > 0 ? roundHalfEven0PosScale(value, scale) : -roundHalfEven0PosScale(-value, scale);
+    }
+
+    private static double roundHalfEven0(double value, int scale) {
+        return scale > 0 ? roundHalfEven0PosScale(value, scale) : roundHalfEven0NegScale(value, -scale);
     }
 
     private static double roundHalfDown0(double value, int scale) {

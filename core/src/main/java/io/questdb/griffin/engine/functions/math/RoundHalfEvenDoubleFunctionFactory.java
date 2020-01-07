@@ -36,10 +36,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class RoundDoubleFunctionFactory implements FunctionFactory {
+public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "round(DI)";
+        return "round_half_even(DI)";
     }
 
     @Override
@@ -83,7 +83,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             try {
-                return Numbers.roundHalfUp(l, r);
+                return Numbers.roundHalfEven(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }
@@ -122,7 +122,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
                 return l;
             }
 
-            return Numbers.roundHalfUpPosScale(l, scale);
+            return Numbers.roundHalfEvenPosScale(l, scale);
         }
 
     }
@@ -149,7 +149,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
                 return l;
             }
 
-            return Numbers.roundHalfUpNegScale(l, scale);
+            return Numbers.roundHalfEvenNegScale(l, scale);
         }
 
     }

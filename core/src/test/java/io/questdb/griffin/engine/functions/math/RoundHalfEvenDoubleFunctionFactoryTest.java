@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLargeNegScale() throws SqlException {
@@ -53,44 +53,15 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(14.7778, 11).andAssert(14.7778, 0.0000000001);
     }
 
+    /*Sanity*/
     @Test
-    public void testNegScaleNegValue() throws SqlException {
-        call(-104.9, -1).andAssert(-100.0, 0.0000000001);
+    public void testLeftNan() throws SqlException {
+        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
-    public void testNegScaleNegValue2() throws SqlException {
-        call(-106.1, -1).andAssert(-110, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScalePosValue() throws SqlException {
-        call(104.9, -1).andAssert(100, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScalePosValue2() throws SqlException {
-        call(106.1, -1).andAssert(110, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScaleNegValue() throws SqlException {
-        call(-100.54, 1).andAssert(-100.5, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScaleNegValue2() throws SqlException {
-        call(-100.56, 1).andAssert(-100.6, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScalePosValue() throws SqlException {
-        call(100.44, 1).andAssert(100.4, 0.0000000001);
-    }
-
-    @Test
-    public void testPosScalePosValue2() throws SqlException {
-        call(100.45, 1).andAssert(100.5, 0.0000000001);
+    public void testNegScaleNegValueRoundsDown() throws SqlException {
+        call(-145, -1).andAssert(-140, 0.0000000001);
     }
 
     @Test
@@ -98,14 +69,43 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(14.7778, -5).andAssert(0, 0.0000000001);
     }
 
+    /*Negative Scale*/
+
     @Test
-    public void testPosScaleHigherThanNumber() throws SqlException {
-        call(14.7778, 7).andAssert(14.7778, 0.000001);
+    public void testPosScaleNegValueRoundDown() throws SqlException {
+        call(-23.45, 1).andAssert(-23.4, 0.0000000001);
     }
 
     @Test
-    public void testLeftNan() throws SqlException {
-        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
+    public void testNegScaleNegValueRoundsUp() throws SqlException {
+        call(-135, -1).andAssert(-140, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScalePosValueRoundsDown() throws SqlException {
+        call(145, -1).andAssert(140, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScalePosValueRoundsUp() throws SqlException {
+        call(135, -1).andAssert(140, 0.0000000001);
+    }
+
+
+    /*Positive Scale*/
+    @Test
+    public void testPosScaleNegValueRoundUp() throws SqlException {
+        call(-23.35, 1).andAssert(-23.4, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValueRoundDown() throws SqlException {
+        call(23.45, 1).andAssert(23.4, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValueRoundUp() throws SqlException {
+        call(23.35, 1).andAssert(23.4, 0.0000000001);
     }
 
     @Test
@@ -113,13 +113,29 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(123.65, Numbers.INT_NaN).andAssert(Double.NaN, 0.0001);
     }
 
+    /*ZeroScale*/
     @Test
-    public void testSimple() throws SqlException {
-        call(14.7778, 3).andAssert(14.778, 0.0000000001);
+    public void testZeroScalePosValueRoundsDown() throws SqlException {
+        call(24.5, 0).andAssert(24, 0.0000000001);
+    }
+
+    @Test
+    public void testZeroScalePosValueRoundsUp() throws SqlException {
+        call(23.5, 0).andAssert(24, 0.0000000001);
+    }
+
+    @Test
+    public void testZeroScaleScaleNegValueRoundsDown() throws SqlException {
+        call(-24.5, 0).andAssert(-24, 0.0000000001);
+    }
+
+    @Test
+    public void testZeroScaleScaleNegValueRoundsUp() throws SqlException {
+        call(-23.5, 0).andAssert(-24, 0.0000000001);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RoundDoubleFunctionFactory();
+        return new RoundHalfEvenDoubleFunctionFactory();
     }
 }
