@@ -31,12 +31,13 @@ import org.junit.Test;
 public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
 
 
+
     @Test
     public void testLargeNegScale() throws SqlException {
         assertQuery(
                 "round\n" +
                         "NaN\n",
-                "select round(14.778, -16) from long_sequence(1)",
+                "select round(14.7778, -14) from long_sequence(1)",
                 null,
                 true
         );
@@ -47,7 +48,29 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
         assertQuery(
                 "round\n" +
                         "NaN\n",
-                "select round(14.778, 16) from long_sequence(1)",
+                "select round(14.7778, 12) from long_sequence(1)",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testOKNegScale() throws SqlException {
+        assertQuery(
+                "round\n" +
+                        "0.000000000000\n",
+                "select round(14.7778, -13) from long_sequence(1)",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        assertQuery(
+                "round\n" +
+                        "14.777800000000\n",
+                "select round(14.7778, 11) from long_sequence(1)",
                 null,
                 true
         );

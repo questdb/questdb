@@ -48,7 +48,7 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
             if (scaleValue != Numbers.INT_NaN) {
-                if (scaleValue > -1 && scaleValue < Numbers.pow10max + 2) {
+                if (scaleValue > -1 && scaleValue + 2 < Numbers.pow10max) {
                     return new FuncPosConst(position, args.getQuick(0), scaleValue);
                 }
                 if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {

@@ -33,13 +33,24 @@ import org.junit.Test;
 public class RoundDownDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testLargeNegScale() throws SqlException {
+        call(14.7778, -14).andAssert(Double.NaN, 0.0000000001);
+    }
+
+    /*Bounds*/
+    @Test
     public void testLargePosScale() throws SqlException {
-        call(14.7778, 16).andAssert(Double.NaN, 0.0000000001);
+        call(14.7778, 14).andAssert(Double.NaN, 0.0000000001);
     }
 
     @Test
-    public void testLargeNegScale() throws SqlException {
-        call(14.7778, -16).andAssert(Double.NaN, 0.0000000001);
+    public void testOKNegScale() throws SqlException {
+        call(14.7778, -13).andAssert(0.0, 0.0000000001);
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        call(14.7778, 13).andAssert(14.7778, 0.0000000001);
     }
 
     @Test
