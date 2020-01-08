@@ -26,6 +26,21 @@
 <!--suppress HtmlUnknownTag -->
 <html>
 <head>
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-145747842-2"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+
+        function gtag() {
+            dataLayer.push(arguments);
+        }
+
+        gtag('js', new Date());
+        gtag('config', 'UA-145747842-2');
+    </script>
+
+
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuestDB - Console</title>
@@ -127,7 +142,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
-    <div class="col-lg-12">
+    <div class="col-lg-10">
         <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
         <div class="m-b-sm m-t-sm section-nav">
             <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
@@ -159,6 +174,12 @@
                     class="btn btn-white btn-sm js-editor-toggle-invisible"><i
                     class="fa fa-paragraph"></i>
             </button>
+        </div>
+    </div>
+    <div class="col-lg-2">
+        <div class="m-b-sm m-t-sm section-nav">
+            <input class="js-help-input" id="help-input" placeholder="Search docs..." title="Search..."
+                   type="text"/>
         </div>
     </div>
 </div>
@@ -887,7 +908,7 @@
 
         <div class="footer">
             <div>
-                <strong>Copyright</strong> QuestDB Ltd. &copy; 2014-2019
+                <strong>Copyright</strong> QuestDB Ltd. &copy; 2014-2020
             </div>
         </div>
 
