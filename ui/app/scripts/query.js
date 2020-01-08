@@ -445,6 +445,7 @@
 
         function bind() {
             bus.on('editor.execute', submitQuery);
+            bus.on('editor.execute.alt', submitQuery);
             bus.on('editor.show.error', showError);
             bus.on('editor.toggle.invisibles', toggleInvisibles);
             bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
@@ -458,6 +459,17 @@
             edit.commands.addCommand({
                 name: 'editor.execute',
                 bindKey: 'F9',
+                exec: submitQuery
+            });
+
+
+            edit.commands.addCommand({
+                name: 'editor.execute.alt',
+                bindKey:
+                    {
+                        mac: 'Command-Enter',
+                        win: 'Ctrl-Enter'
+                    },
                 exec: submitQuery
             });
 
