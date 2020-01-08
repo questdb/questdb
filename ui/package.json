@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "bower": "^1.8.8",
+    "docsearch.js": "^2.6.3",
     "gulp-file-include": "1.0.0"
   }
 }
