@@ -26,6 +26,21 @@
 <!--suppress HtmlUnknownTag -->
 <html>
 <head>
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-145747842-2"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+
+        function gtag() {
+            dataLayer.push(arguments);
+        }
+
+        gtag('js', new Date());
+        gtag('config', 'UA-145747842-2');
+    </script>
+
+
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuestDB - Console</title>
@@ -40,6 +55,7 @@
     <link rel="stylesheet" href="../bower_components/selectize/dist/css/selectize.css">
     <link rel="stylesheet" href="../bower_components/selectize/dist/css/selectize.bootstrap3.css">
     <link rel="stylesheet" href="../bower_components/jquery-minicolors/jquery.minicolors.css">
+    <link href="../node_modules/docsearch.js/dist/cdn/docsearch.min.css" rel="stylesheet">
     <!-- endbower -->
     <!--suppress HtmlUnknownTarget -->
     <link rel="stylesheet" href="styles/main.css">
@@ -76,7 +92,7 @@
 
         <div class="footer">
             <div>
-                <strong>Copyright</strong> QuestDB Ltd. &copy; 2014-2019
+                <strong>Copyright</strong> QuestDB Ltd. &copy; 2014-2020
             </div>
         </div>
 
@@ -96,6 +112,7 @@
 <script src="../bower_components/sifter/sifter.js"></script>
 <script src="../bower_components/selectize/dist/js/selectize.js"></script>
 <script src="../bower_components/jquery-minicolors/jquery.minicolors.js"></script>
+<script src="../node_modules/docsearch.js/dist/cdn/docsearch.min.js"></script>
 <!-- endbower -->
 <script src="thirdparty/mode-questdb.js"></script>
 <script src="scripts/globals.js"></script>
@@ -113,6 +130,7 @@
 <script src="scripts/vis-axis-form.js"></script>
 <script src="scripts/vis-controller.js"></script>
 <script src="scripts/vis-builder.js"></script>
+<script src="scripts/docsearch.js"></script>
 <script src="scripts/main.js"></script>
 <!-- bower:js -->
 <script src="../bower_components/echarts/dist/echarts.js"></script>
