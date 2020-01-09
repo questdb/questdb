@@ -69,11 +69,11 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
     private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final ClassCatalogueCursor cursor;
+        private final TableCatalogueCursor cursor;
 
         public ClassCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.cursor = new ClassCatalogueCursor(configuration, path);
+            this.cursor = new TableCatalogueCursor(configuration, path);
         }
 
         @Override
@@ -93,16 +93,16 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
+    private static class TableCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
         private final CairoConfiguration configuration;
-        private final ClassCatalogueRecord record = new ClassCatalogueRecord();
+        private final TableCatalogueRecord record = new TableCatalogueRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private long findFileStruct = 0;
 
-        public ClassCatalogueCursor(CairoConfiguration configuration, Path path) {
+        public TableCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
             this.configuration = configuration;
             this.path = path;
@@ -176,7 +176,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private class ClassCatalogueRecord implements Record {
+        private class TableCatalogueRecord implements Record {
             private final StringSink utf8SinkA = new StringSink();
             private final StringSink utf8SinkB = new StringSink();
 
