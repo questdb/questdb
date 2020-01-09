@@ -2,6 +2,8 @@
 .idea
 benchmarks/target
 core/target
+benchmarks/benchmarks.iml
+core/core.iml
 deploy*.bat
 win64svc/cmake-build-debug
 core/cmake-build-debug

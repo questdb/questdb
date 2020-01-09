@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <processthreadsapi.h>
 #include <rpc.h>
+#include <time.h>
 #include "common.h"
 
 #define CMD_START   1
@@ -235,7 +236,14 @@ FILE *redirectStdout(CONFIG *config) {
     if (!makeDir(log)) {
         return NULL;
     }
-    strcat(log, "\\stdout.txt");
+
+    char time[64];
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strftime(time, sizeof(time) - 1, "%Y-%m-%dT%H-%M-%S", t);
+    strcat(log, "\\stdout-");
+    strcat(log, time);
+    strcat(log, ".txt");
 
     FILE *stream;
     if ((stream = freopen(log, "w", stdout)) == NULL) {
