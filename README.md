@@ -17,7 +17,7 @@
 
 QuestDB is an open-source NewSQL relational database designed to process time-series data, faster. Our approach comes from low-latency trading; QuestDB’s stack is engineered from scratch, zero-GC Java and dependency-free.
 
-QuestDB ingests data via HTTP, PostgresSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP, 
+QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP, 
 PostgreSQL wire protocol or via Java API. The whole database and console fits in a 3.5Mb package.
 
 ## Project goals
