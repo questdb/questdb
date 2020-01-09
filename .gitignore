@@ -1,11 +1,16 @@
 
 .idea
+out
 benchmarks/target
 core/target
-benchmarks/benchmarks.iml
-core/core.iml
+*.iml
 deploy*.bat
 win64svc/cmake-build-debug
+win64svc/build
+win64svc/CMakeFiles
+win64svc/CMakeCache.txt
 core/cmake-build-debug
 core/cmake-build-release
 core/cmake-build-minsizerel
+core/CMakeFiles
+core/CMakeCache.txt
