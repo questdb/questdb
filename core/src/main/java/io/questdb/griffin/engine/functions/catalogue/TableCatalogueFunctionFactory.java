@@ -185,10 +185,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
                 CharSequence table = getStr(0);
                 if (table != null) {
                     TableReader reader = new TableReader(configuration, getStr(0));
-                    if (col == 1)
-                        return reader.getPartitionCount();
-                    else
-                        return reader.getPartitionedBy();
+                    return reader.getPartitionCount();
                 } else {
                     return -1;
                 }
