@@ -183,7 +183,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public int getInt(int col) {
                 CharSequence table = getStr(0);
-                if (table.length() > 0) {
+                if (table != null) {
                     TableReader reader = new TableReader(configuration, getStr(0));
                     if (col == 1)
                         return reader.getPartitionCount();
@@ -233,7 +233,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public long getLong(int col) {
                 CharSequence table = getStr(0);
-                if (table.length() > 0) {
+                if (table != null) {
                     TableReader reader = new TableReader(configuration, getStr(0));
                     if (col == 3)
                         return reader.getMinTimestamp();
