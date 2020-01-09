@@ -49,7 +49,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, arg.getInt(null));
+            sink.put(arg.getInt(null));
             return new SymbolConstant(position, Chars.toString(sink), 0);
         }
         return new Func(position, arg);
@@ -112,7 +112,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
-            Numbers.append(sink, value);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }

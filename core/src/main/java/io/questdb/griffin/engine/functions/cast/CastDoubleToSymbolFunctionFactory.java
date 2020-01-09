@@ -35,7 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.LongIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
@@ -49,7 +52,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, arg.getDouble(null));
+            sink.put(arg.getDouble(null));
             return new SymbolConstant(position, Chars.toString(sink), 0);
         }
         return new Func(position, arg);
@@ -88,7 +91,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next++);
             sink.clear();
-            Numbers.append(sink, value);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(Chars.toString(sink));
             return str;
@@ -114,7 +117,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next);
             sink.clear();
-            Numbers.append(sink, value);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }

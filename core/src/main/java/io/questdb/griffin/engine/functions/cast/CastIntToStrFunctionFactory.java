@@ -49,7 +49,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, intFunc.getInt(null));
+            sink.put(intFunc.getInt(null));
             return new StrConstant(position, Chars.toString(sink));
         }
         return new Func(position, args.getQuick(0));
@@ -77,7 +77,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            Numbers.append(sinkA, value);
+            sinkA.put(value);
             return sinkA;
         }
 
@@ -88,7 +88,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            Numbers.append(sinkB, value);
+            sinkB.put(value);
             return sinkB;
         }
 
@@ -98,8 +98,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.INT_NaN) {
                 return;
             }
-
-            Numbers.append(sink, value);
+            sink.put(value);
         }
     }
 }

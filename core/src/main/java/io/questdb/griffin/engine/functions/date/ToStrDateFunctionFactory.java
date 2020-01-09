@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.NullStrConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -66,7 +66,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         if (var.isConstant()) {
             long value = var.getDate(null);
             if (value == Numbers.LONG_NaN) {
-                return new NullConstant(position);
+                return new NullStrConstant(position);
             }
 
             StringSink sink = tlSink.get();

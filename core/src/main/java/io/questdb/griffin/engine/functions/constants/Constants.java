@@ -25,17 +25,14 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
 public final class Constants {
-    public static final ObjList<Function> nullConstants = new ObjList<>();
+    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
+    private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     static {
         Constants.nullConstants.extendAndSet(ColumnType.INT, new IntConstant(0, Numbers.INT_NaN));
@@ -50,41 +47,30 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.BOOLEAN, new BooleanConstant(0, false));
         Constants.nullConstants.extendAndSet(ColumnType.DOUBLE, new DoubleConstant(0, Double.NaN));
         Constants.nullConstants.extendAndSet(ColumnType.FLOAT, new FloatConstant(0, Float.NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.BINARY, new BinFunction(0) {
-            @Override
-            public BinarySequence getBin(Record rec) {
-                return null;
-            }
+        Constants.nullConstants.extendAndSet(ColumnType.BINARY, new NullBinConstant());
+        Constants.nullConstants.extendAndSet(ColumnType.LONG256, new Long256NullConstant());
 
-            @Override
-            public long getBinLen(Record rec) {
-                return TableUtils.NULL_LEN;
-            }
-        });
-
-        Constants.nullConstants.extendAndSet(ColumnType.LONG256, new Long256Function(0) {
-            @Override
-            public Long256 getLong256A(Record rec) {
-                return Long256Impl.NULL_LONG256;
-            }
-
-            @Override
-            public Long256 getLong256B(Record rec) {
-                return Long256Impl.NULL_LONG256;
-            }
-
-            @Override
-            public void getLong256(Record rec, CharSink sink) {
-            }
-
-            @Override
-            public boolean isConstant() {
-                return true;
-            }
-        });
+        Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
     }
 
-    public static Function getNullConstant(int columnType) {
+    public static ConstantFunction getNullConstant(int columnType) {
         return nullConstants.getQuick(columnType);
+    }
+
+    public static TypeConstant getTypeConstant(int columnType) {
+        return typeConstants.getQuick(columnType);
     }
 }

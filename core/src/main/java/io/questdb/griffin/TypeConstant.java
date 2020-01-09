@@ -22,25 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 
-public class NullRecordFactory {
-
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
-
-        return new VirtualRecord(functions);
-    }
+/**
+ * Marker interface to indicate that constant is actually a TYPE and not a VALUE.
+ */
+public interface TypeConstant extends ConstantFunction {
 }

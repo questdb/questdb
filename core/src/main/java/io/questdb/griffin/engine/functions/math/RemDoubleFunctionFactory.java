@@ -22,34 +22,50 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
-public class CastShortToTimestampFunctionFactory implements FunctionFactory {
+public class RemDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(En)";
+        return "%(DD)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
-        public Func(int position, Function arg) {
-            super(position, arg);
+    private static class Func extends DoubleFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        public Func(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return arg.getShort(rec);
+        public double getDouble(Record rec) {
+            return left.getDouble(rec) % right.getDouble(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

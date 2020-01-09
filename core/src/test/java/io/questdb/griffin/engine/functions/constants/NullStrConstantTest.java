@@ -28,10 +28,10 @@ import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NullConstantTest {
+public class NullStrConstantTest {
     @Test
     public void testConstant() {
-        NullConstant constant = new NullConstant(0);
+        NullStrConstant constant = new NullStrConstant(0);
         Assert.assertTrue(constant.isConstant());
         Assert.assertNull(constant.getStr(null));
         Assert.assertNull(constant.getStrB(null));

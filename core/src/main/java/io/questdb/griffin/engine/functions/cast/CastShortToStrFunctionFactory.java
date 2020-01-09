@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -48,8 +47,8 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
-            StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, intFunc.getInt(null));
+            final StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(intFunc.getShort(null));
             return new StrConstant(position, Chars.toString(sink));
         }
         return new Func(position, args.getQuick(0));
@@ -73,20 +72,20 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            Numbers.append(sinkA, arg.getShort(rec));
+            sinkA.put(arg.getShort(rec));
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            Numbers.append(sinkB, arg.getShort(rec));
+            sinkB.put(arg.getShort(rec));
             return sinkB;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            Numbers.append(sink, arg.getShort(rec));
+            sink.put(arg.getShort(rec));
         }
     }
 }

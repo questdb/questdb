@@ -22,25 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.str.CharSink;
 
-public class NullRecordFactory {
+public class Long256TypeConstant extends Long256Function implements TypeConstant {
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
+    public static final Long256TypeConstant INSTANCE = new Long256TypeConstant();
 
-        return new VirtualRecord(functions);
+    private Long256TypeConstant() {
+        super(0);
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        Long256Impl.NULL_LONG256.toSink(sink);
     }
 }

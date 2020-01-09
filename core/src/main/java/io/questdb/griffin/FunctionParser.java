@@ -401,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private Function createConstant(ExpressionNode node) throws SqlException {
 
         if (Chars.equalsLowerCaseAscii(node.token, "null")) {
-            return new NullConstant(node.position);
+            return new NullStrConstant(node.position);
         }
 
         if (Chars.isQuoted(node.token)) {
@@ -450,7 +450,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         final int columnType = ColumnType.columnTypeOf(node.token);
 
         if (columnType > -1) {
-            return Constants.getNullConstant(columnType);
+            return Constants.getTypeConstant(columnType);
         }
 
         throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
@@ -547,18 +547,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final boolean overloadPossible = (
-                            arg.getType() >= ColumnType.BYTE
-                                    && arg.getType() <= ColumnType.DOUBLE
-                                    && sigArgType >= ColumnType.BYTE
-                                    && sigArgType <= ColumnType.DOUBLE
-                                    && arg.getType() < sigArgType
-                    )
-                            || (
-                            arg.getType() == ColumnType.DOUBLE
+                            (arg.getType() >= ColumnType.BYTE)
+                                    && (arg.getType() <= ColumnType.DOUBLE)
+                                    && (sigArgType >= ColumnType.BYTE)
+                                    && (sigArgType <= ColumnType.DOUBLE)
+                                    && (arg.getType() < sigArgType)
+                    ) || ((
+                            (arg.getType() == ColumnType.DOUBLE)
                                     && arg.isConstant()
                                     && Double.isNaN(arg.getDouble(null))
-                                    && (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT)
-                    );
+                                    && ((sigArgType == ColumnType.LONG) || (sigArgType == ColumnType.INT))
+                    ) && (!(arg instanceof TypeConstant) || (arg.getType() != sigArgType)));
 
                     // can we use overload mechanism?
 
@@ -710,19 +709,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return new DateConstant(position, function.getDate(null));
                 }
             case ColumnType.STRING:
-                if (function instanceof StrConstant || function instanceof NullConstant) {
+                if (function instanceof StrConstant || function instanceof NullStrConstant) {
                     return function;
                 } else {
                     final CharSequence value = function.getStr(null);
                     if (value == null) {
-                        return new NullConstant(position);
+                        return new NullStrConstant(position);
                     }
                     return new StrConstant(position, value);
                 }
             case ColumnType.SYMBOL:
                 CharSequence value = function.getSymbol(null);
                 if (value == null) {
-                    return new NullConstant(position);
+                    return new NullStrConstant(position);
                 }
                 return new StrConstant(position, value);
             case ColumnType.TIMESTAMP:

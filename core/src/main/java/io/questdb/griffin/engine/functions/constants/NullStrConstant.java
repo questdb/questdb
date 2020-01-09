@@ -28,9 +28,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.str.CharSink;
 
-public class NullConstant extends StrFunction implements ConstantFunction {
+public class NullStrConstant extends StrFunction implements ConstantFunction {
 
-    public NullConstant(int position) {
+    public NullStrConstant(int position) {
         super(position);
     }
 

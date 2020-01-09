@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -49,8 +48,8 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
-            StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, intFunc.getDouble(null));
+            final StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(intFunc.getDouble(null));
             return new StrConstant(position, Chars.toString(sink));
         }
         return new Func(position, args.getQuick(0));
@@ -78,7 +77,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            Numbers.append(sinkA, value);
+            sinkA.put(value);
             return sinkA;
         }
 
@@ -89,7 +88,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            Numbers.append(sinkB, value);
+            sinkB.put(value);
             return sinkB;
         }
 
@@ -99,7 +98,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
             if (Double.isNaN(value)) {
                 return;
             }
-            Numbers.append(sink, value);
+            sink.put(value);
         }
     }
 }

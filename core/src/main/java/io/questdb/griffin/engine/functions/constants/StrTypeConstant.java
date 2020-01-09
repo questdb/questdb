@@ -22,25 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.str.CharSink;
 
-public class NullRecordFactory {
+public class StrTypeConstant extends StrFunction implements TypeConstant {
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
+    public static final StrTypeConstant INSTANCE = new StrTypeConstant();
 
-        return new VirtualRecord(functions);
+    private StrTypeConstant() {
+        super(0);
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return null;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return null;
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return -1;
     }
 }

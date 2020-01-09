@@ -22,31 +22,6 @@
 #
 ################################################################################
 
-################################################################################
-#     ___                  _   ____  ____
-#    / _ \ _   _  ___  ___| |_|  _ \| __ )
-#   | | | | | | |/ _ \/ __| __| | | |  _ \
-#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#    \__\_\\__,_|\___||___/\__|____/|____/
-#
-#  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2020 QuestDB
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-################################################################################
-
-
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
 io.questdb.griffin.engine.functions.bool.AndFunctionFactory
@@ -95,6 +70,7 @@ io.questdb.griffin.engine.functions.math.DivLongFunctionFactory
 # '%' operator
 io.questdb.griffin.engine.functions.math.RemIntFunctionFactory
 io.questdb.griffin.engine.functions.math.RemLongFunctionFactory
+io.questdb.griffin.engine.functions.math.RemDoubleFunctionFactory
 
 # '*' operator
 io.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
@@ -164,11 +140,35 @@ io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 
 # cast functions
+
 # cast double to ...
 io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory
-#io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToLong256FunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToShortFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToByteFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToSymbolFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToCharFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToDateFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToTimestampFunctionFactory
 
-io.questdb.griffin.engine.functions.cast.CastTimestampToLongFunctionFactory
+# cast int to ...
+io.questdb.griffin.engine.functions.cast.CastShortToShortFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToByteFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToCharFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToFloatFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToDoubleFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToDateFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToSymbolFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory
+io.questdb.griffin.engine.functions.cast.CastShortToBooleanFunctionFactory
 
 # cast int to ...
 io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory
@@ -215,8 +215,22 @@ io.questdb.griffin.engine.functions.cast.CastByteToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastByteToBooleanFunctionFactory
 
-io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory
+# cast char to ...
+io.questdb.griffin.engine.functions.cast.CastCharToShortFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToByteFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToCharFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToLongFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToFloatFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToDoubleFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToDateFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory
+
 io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastTimestampToLongFunctionFactory
 
 # 'in'
 io.questdb.griffin.engine.functions.str.SymbolInCursorFunctionFactory

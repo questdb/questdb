@@ -49,7 +49,7 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, arg.getLong(null));
+            sink.put(arg.getLong(null));
             return new SymbolConstant(position, Chars.toString(sink), 0);
         }
         return new Func(position, arg);
@@ -87,7 +87,7 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, value, next++);
             sink.clear();
-            Numbers.append(sink, value);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(Chars.toString(sink));
             return str;
@@ -112,7 +112,7 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
-            Numbers.append(sink, value);
+            sink.put(value);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }

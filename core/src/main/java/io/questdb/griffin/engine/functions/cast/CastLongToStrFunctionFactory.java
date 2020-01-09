@@ -49,7 +49,7 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            Numbers.append(sink, func.getLong(null));
+            sink.put(func.getLong(null));
             return new StrConstant(position, Chars.toString(sink));
         }
         return new Func(position, args.getQuick(0));
@@ -77,7 +77,7 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            Numbers.append(sinkA, value);
+            sinkA.put(value);
             return sinkA;
         }
 
@@ -88,7 +88,7 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            Numbers.append(sinkB, value);
+            sinkB.put(value);
             return sinkB;
         }
 
@@ -99,7 +99,7 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
                 return;
             }
 
-            Numbers.append(sink, value);
+            sink.put(value);
         }
     }
 }

@@ -35,7 +35,7 @@ import io.questdb.std.ObjList;
 public class CastShortToByteFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Ea)";
+        return "cast(Eb)";
     }
 
     @Override

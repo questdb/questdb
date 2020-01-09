@@ -22,25 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 
-public class NullRecordFactory {
+public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
+    public static SymbolTypeConstant INSTANCE = new SymbolTypeConstant();
 
-        return new VirtualRecord(functions);
+    private SymbolTypeConstant() {
+        super(0);
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return SymbolTable.VALUE_IS_NULL;
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        return null;
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
+        return null;
     }
 }

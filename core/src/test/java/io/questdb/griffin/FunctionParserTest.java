@@ -266,7 +266,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantNull() throws SqlException {
-        testConstantPassThru(new NullConstant(0));
+        testConstantPassThru(new NullStrConstant(0));
     }
 
     @Test
@@ -719,7 +719,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof NullConstant);
+        Assert.assertTrue(function instanceof NullStrConstant);
     }
 
     @Test
@@ -737,7 +737,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof NullConstant);
+        Assert.assertTrue(function instanceof NullStrConstant);
     }
 
     @Test

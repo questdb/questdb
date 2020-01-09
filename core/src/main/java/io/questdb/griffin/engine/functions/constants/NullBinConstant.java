@@ -22,25 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.BinFunction;
+import io.questdb.std.BinarySequence;
 
-public class NullRecordFactory {
+public final class NullBinConstant extends BinFunction implements ConstantFunction {
+    NullBinConstant() {
+        super(0);
+    }
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
+    @Override
+    public BinarySequence getBin(Record rec) {
+        return null;
+    }
 
-        return new VirtualRecord(functions);
+    @Override
+    public long getBinLen(Record rec) {
+        return TableUtils.NULL_LEN;
     }
 }

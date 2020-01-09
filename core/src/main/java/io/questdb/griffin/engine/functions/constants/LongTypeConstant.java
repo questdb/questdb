@@ -22,25 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Numbers;
 
-public class NullRecordFactory {
+public class LongTypeConstant extends LongFunction implements TypeConstant {
+    public static final LongTypeConstant INSTANCE = new LongTypeConstant();
 
-    public static Record getInstance(ColumnTypes types) {
-        final ObjList<Function> functions = new ObjList<>(types.getColumnCount());
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            Function function = Constants.getNullConstant(types.getColumnType(i));
-            assert function != null;
-            functions.add(function);
-        }
+    private LongTypeConstant() {
+        super(0);
+    }
 
-        return new VirtualRecord(functions);
+    @Override
+    public long getLong(Record rec) {
+        return Numbers.LONG_NaN;
     }
 }
