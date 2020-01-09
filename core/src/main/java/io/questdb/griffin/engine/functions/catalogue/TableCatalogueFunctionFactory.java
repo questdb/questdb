@@ -43,8 +43,8 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitioncount", ColumnType.INT));
         metadata.add(new TableColumnMetadata("partitionby", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("mintimestamp", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("maxtimestamp", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("mintimestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("maxtimestamp", ColumnType.TIMESTAMP));
         metadata.add(new TableColumnMetadata("version", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("dataversion", ColumnType.LONG));
         METADATA = metadata;
