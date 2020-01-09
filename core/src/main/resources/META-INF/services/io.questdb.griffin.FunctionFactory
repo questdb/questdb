@@ -266,6 +266,7 @@ io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.TableCatalogueFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
