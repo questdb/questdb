@@ -24,13 +24,7 @@ int svcInstall(CONFIG *config) {
     }
 
     // put together service name
-
-    size_t size = strlen(config->exeName) + 64;
-    if (config->forceCopy) {
-        size += 3;
-    }
-    size += strlen(config->dir) + 1;
-    char szPath[size];
+    char szPath[MAX_PATH];
     strcpy(szPath, config->exeName);
     strcat(szPath, " service -d ");
     strcat(szPath, config->dir);
