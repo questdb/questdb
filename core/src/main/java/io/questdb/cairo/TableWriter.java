@@ -88,8 +88,8 @@ public class TableWriter implements Closeable {
     private final CairoWorkScheduler workScheduler;
     private final boolean parallelIndexerEnabled;
     private final LongHashSet removedPartitions = new LongHashSet();
-    private final TableReader.TimestampFloorMethod timestampFloorMethod;
-    private final TableReader.PartitionTimestampCalculatorMethod nextTimestampMethod;
+    private final TimestampFloorMethod timestampFloorMethod;
+    private final TableMetadata.PartitionTimestampCalculatorMethod nextTimestampMethod;
     private final int defaultCommitMode;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -1272,8 +1272,8 @@ public class TableWriter implements Closeable {
     }
 
     private long getNextMinTimestamp(
-            TableReader.TimestampFloorMethod timestampFloorMethod,
-            TableReader.PartitionTimestampCalculatorMethod nextTimestampMethod
+            TimestampFloorMethod timestampFloorMethod,
+            TableMetadata.PartitionTimestampCalculatorMethod nextTimestampMethod
     ) {
         long nextMinTimestamp = minTimestamp;
         while (nextMinTimestamp < maxTimestamp) {

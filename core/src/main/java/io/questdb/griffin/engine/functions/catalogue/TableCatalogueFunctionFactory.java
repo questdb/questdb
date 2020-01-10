@@ -41,12 +41,13 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("columncount", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("partitioncount", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("partitionby", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("mintimestamp", ColumnType.TIMESTAMP));
         metadata.add(new TableColumnMetadata("maxtimestamp", ColumnType.TIMESTAMP));
-        metadata.add(new TableColumnMetadata("version", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("rowcount", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("columncount", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("partitionby", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("partitioncount", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("structversion", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("dataversion", ColumnType.LONG));
         METADATA = metadata;
     }
@@ -101,9 +102,8 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
         private final TableCatalogueRecord record = new TableCatalogueRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
-        private final StringSink utf8Sink = new StringSink();
         private long findFileStruct = 0;
-        private TableReader reader;
+        private TableMetadata metadata;
 
         public TableCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
@@ -135,14 +135,14 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
                 }
 
                 findFileStruct = 0;
-                reader = null;
+                metadata = null;
                 return false;
             }
 
             if (ff.findNext(findFileStruct) > 0) {
                 return next0();
             }
-            reader = null;
+            metadata = null;
             return false;
         }
 
@@ -174,7 +174,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
                         StringSink utf8Sink = new StringSink();
                         utf8Sink.clear();
                         Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8Sink);
-                        reader = new TableReader(configuration, utf8Sink);
+                        metadata = new TableMetadata(configuration, utf8Sink, null, null);
                         return true;
                     }
                 }
@@ -182,18 +182,18 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             ff.findClose(findFileStruct);
             findFileStruct = 0;
-            reader = null;
+            metadata = null;
             return false;
         }
 
         private class TableCatalogueRecord implements Record {
             @Override
             public int getInt(int col) {
-                if (reader != null) {
-                    if (col == 1)
-                        return reader.getMetadata().getColumnCount();
+                if (metadata != null) {
+                    if (col == 4)
+                        return metadata.getColumnCount();
                     else
-                        return reader.getPartitionCount();
+                        return metadata.getPartitionCount();
                 } else {
                     return -1;
                 }
@@ -201,11 +201,11 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                if (reader != null) {
+                if (metadata != null) {
                     if (col == 0)
-                        return reader.getTableName();
+                        return metadata.getTableName();
                     else
-                        return PartitionBy.toString(reader.getPartitionedBy());
+                        return PartitionBy.toString(metadata.getPartitionedBy());
                 } else {
                     return null;
                 }
@@ -213,11 +213,11 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                if (reader != null) {
+                if (metadata != null) {
                     if (col == 0)
-                        return reader.getTableName();
+                        return metadata.getTableName();
                     else
-                        return PartitionBy.toString(reader.getPartitionedBy());
+                        return PartitionBy.toString(metadata.getPartitionedBy());
                 } else {
                     return null;
                 }
@@ -225,15 +225,17 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public long getLong(int col) {
-                if (reader != null) {
-                    if (col == 3)
-                        return reader.getMinTimestamp();
-                    else if (col == 4)
-                        return reader.getMaxTimestamp();
-                    else if (col == 5)
-                        return reader.getVersion();
+                if (metadata != null) {
+                    if (col == 1)
+                        return metadata.getMinTimestamp();
+                    else if (col == 2)
+                        return metadata.getMaxTimestamp();
+                    else if (col == 3)
+                        return metadata.getRowCount();
+                    else if (col == 7)
+                        return metadata.getStructVersion();
                     else
-                        return reader.getDataVersion();
+                        return metadata.getDataVersion();
                 } else {
                     return -1;
                 }

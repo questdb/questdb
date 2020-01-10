@@ -33,9 +33,6 @@ import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
 
 public class TableReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
@@ -47,41 +44,29 @@ public class TableReader implements Closeable {
     private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
-    private static final TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
+    private final IntList symbolCountSnapshot = new IntList();
+    private final LongHashSet removedPartitions = new LongHashSet();
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
     private final int rootLen;
-    private final ReadOnlyMemory txMem;
-    private final TableReaderMetadata metadata;
-    private final LongList partitionRowCounts;
+    private final TableMetadata meta;
     private final PartitionPathGenerator partitionPathGenerator;
+    private final LongList partitionRowCounts;
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final TimestampFloorMethod timestampFloorMethod;
-    private final IntervalLengthMethod intervalLengthMethod;
-    private final PartitionTimestampCalculatorMethod partitionTimestampCalculatorMethod;
     private final String tableName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final IntList symbolCountSnapshot = new IntList();
-    private final LongHashSet removedPartitions = new LongHashSet();
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountBits;
-    private long transientRowCount;
-    private long structVersion;
-    private long dataVersion;
-    private long prevStructVersion;
-    private long partitionTableVersion;
-    private long prevPartitionTableVersion;
-    private long rowCount;
-    private long txn = TableUtils.INITIAL_TXN;
-    private long maxTimestamp = Numbers.LONG_NaN;
-    private int partitionCount;
-    private long minTimestamp = Long.MAX_VALUE;
+    private long initialStructVersion;
+    private long initialPartitionTableVersion;
     private long prevMinTimestamp = Long.MAX_VALUE;
+
+    private int partitionCount;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
 
@@ -94,48 +79,34 @@ public class TableReader implements Closeable {
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
-            this.txMem = openTxnFile();
-            this.metadata = openMetaFile();
-            this.columnCount = this.metadata.getColumnCount();
-            this.columnCountBits = getColumnBits(columnCount);
-            switch (this.metadata.getPartitionBy()) {
+            meta = new TableMetadata(configuration, tableName, symbolCountSnapshot, removedPartitions);
+            switch (meta.getPartitionBy()) {
                 case PartitionBy.DAY:
                     partitionPathGenerator = DAY_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Timestamps::floorDD;
-                    intervalLengthMethod = Timestamps::getDaysBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addDays;
                     break;
                 case PartitionBy.MONTH:
                     partitionPathGenerator = MONTH_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Timestamps::floorMM;
-                    intervalLengthMethod = Timestamps::getMonthsBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addMonths;
                     break;
                 case PartitionBy.YEAR:
                     partitionPathGenerator = YEAR_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = Timestamps::floorYYYY;
-                    intervalLengthMethod = Timestamps::getYearsBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addYear;
                     break;
                 default:
                     partitionPathGenerator = DEFAULT_GEN;
                     reloadMethod = FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = ENTITY_FLOOR_METHOD;
-                    intervalLengthMethod = null;
-                    partitionTimestampCalculatorMethod = null;
                     break;
             }
-            readTxn();
             openSymbolMaps();
-            this.prevStructVersion = structVersion;
-            this.prevPartitionTableVersion = partitionTableVersion;
-            if (metadata.getPartitionBy() == PartitionBy.NONE) {
+            this.columnCount = this.meta.getColumnCount();
+            this.columnCountBits = getColumnBits(columnCount);
+            this.initialStructVersion = meta.getStructVersion();
+            this.initialPartitionTableVersion = meta.getPartitionTableVersion();
+            if (meta.getPartitionBy() == PartitionBy.NONE) {
                 checkDefaultPartitionExistsAndUpdatePartitionCount();
             } else {
-                partitionCount = calculatePartitionCount();
+                partitionCount = meta.getPartitionCount();
             }
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
@@ -159,8 +130,7 @@ public class TableReader implements Closeable {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(path);
-            Misc.free(metadata);
-            Misc.free(txMem);
+            Misc.free(meta);
             freeColumns();
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -183,7 +153,7 @@ public class TableReader implements Closeable {
             closeColumn(getColumnBase(partitionIndex), columnIndex);
         }
 
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
             // same goes for symbol map reader - replace object with maker instance
             Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
@@ -196,11 +166,11 @@ public class TableReader implements Closeable {
      * @param columnName name of column to be closed.
      */
     public void closeColumnForRemove(CharSequence columnName) {
-        closeColumnForRemove(metadata.getColumnIndex(columnName));
+        closeColumnForRemove(getMetadata().getColumnIndex(columnName));
     }
 
     public long floorToPartitionTimestamp(long timestamp) {
-        return timestampFloorMethod.floor(timestamp);
+        return meta.floorToPartitionTimestamp(timestamp);
     }
 
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex, int direction) {
@@ -215,31 +185,25 @@ public class TableReader implements Closeable {
     }
 
     public long getDataVersion() {
-        return dataVersion;
+        return meta.getDataVersion();
     }
 
-    public long getMaxTimestamp() {
-        return maxTimestamp;
-    }
+    public long getMaxTimestamp() { return meta.getMaxTimestamp(); }
 
     public RecordMetadata getMetadata() {
-        return metadata;
+        return meta.getMetadata();
     }
 
     public long getMinTimestamp() {
-        return minTimestamp;
+        return meta.getMinTimestamp();
     }
 
     public int getPartitionCount() {
         return partitionCount;
     }
 
-    public int getPartitionCountBetweenTimestamps(long partitionTimestamp1, long partitionTimestamp2) {
-        return (int) intervalLengthMethod.calculate(partitionTimestamp1, partitionTimestamp2);
-    }
-
     public int getPartitionedBy() {
-        return metadata.getPartitionBy();
+        return meta.getPartitionBy();
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -251,7 +215,7 @@ public class TableReader implements Closeable {
     }
 
     public long getVersion() {
-        return this.structVersion;
+        return meta.getStructVersion();
     }
 
     public boolean isOpen() {
@@ -334,7 +298,7 @@ public class TableReader implements Closeable {
     }
 
     public long size() {
-        return rowCount;
+        return meta.getRowCount();
     }
 
     private static int getColumnBits(int columnCount) {
@@ -410,25 +374,14 @@ public class TableReader implements Closeable {
             }
         }
         reloadSymbolMapCounts();
-        partitionCount = calculatePartitionCount();
+        partitionCount = meta.calculatePartitionCount();
         if (partitionCount > 0) {
             updateCapacities();
         }
     }
 
-    private int calculatePartitionCount() {
-        if (minTimestamp == Long.MAX_VALUE) {
-            return 0;
-        } else {
-            return maxTimestamp == Long.MIN_VALUE ? 1 : getPartitionCountBetweenTimestamps(
-                    minTimestamp,
-                    floorToPartitionTimestamp(maxTimestamp)
-            ) + 1;
-        }
-    }
-
     private void checkDefaultPartitionExistsAndUpdatePartitionCount() {
-        if (maxTimestamp == Numbers.LONG_NaN) {
+        if (getMaxTimestamp() == Numbers.LONG_NaN) {
             partitionCount = 0;
         } else {
             Path path = pathGenDefault();
@@ -471,14 +424,18 @@ public class TableReader implements Closeable {
             }
 
             // adjust columns list when leading partitions have been removed
-            if (prevMinTimestamp != minTimestamp) {
-                assert prevMinTimestamp < minTimestamp;
-                int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
+            if (prevMinTimestamp != getMinTimestamp()) {
+                assert prevMinTimestamp < getMinTimestamp();
+                int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, getMinTimestamp());
                 columns.remove(0, getColumnBase(delta) - 1);
-                prevMinTimestamp = minTimestamp;
+                prevMinTimestamp = getMinTimestamp();
                 partitionCount -= delta;
             }
         }
+    }
+
+    public int getPartitionCountBetweenTimestamps(long partitionTimestamp1, long partitionTimestamp2) {
+        return meta.getPartitionCountBetweenTimestamps(partitionTimestamp1, partitionTimestamp2);
     }
 
     private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
@@ -504,8 +461,8 @@ public class TableReader implements Closeable {
 
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, int direction) {
         BitmapIndexReader reader;
-        if (!metadata.isColumnIndexed(columnIndex)) {
-            throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
+        if (!meta.isColumnIndexed(columnIndex)) {
+            throw CairoException.instance(0).put("Not indexed: ").put(meta.getColumnName(columnIndex));
         }
 
         ReadOnlyColumn col = columns.getQuick(globalIndex);
@@ -521,10 +478,10 @@ public class TableReader implements Closeable {
             Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
             try {
                 if (direction == BitmapIndexReader.DIR_BACKWARD) {
-                    reader = new BitmapIndexBwdReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
+                    reader = new BitmapIndexBwdReader(configuration, path.chopZ(), meta.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
                     bitmapIndexes.setQuick(globalIndex, reader);
                 } else {
-                    reader = new BitmapIndexFwdReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
+                    reader = new BitmapIndexFwdReader(configuration, path.chopZ(), meta.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
                     bitmapIndexes.setQuick(globalIndex + 1, reader);
                 }
             } finally {
@@ -644,11 +601,11 @@ public class TableReader implements Closeable {
     }
 
     long getTransientRowCount() {
-        return transientRowCount;
+        return meta.getTransientRowCount();
     }
 
     long getTxn() {
-        return txn;
+        return meta.getTx().getTxn();
     }
 
     private void incrementPartitionCountBy(int delta) {
@@ -661,14 +618,6 @@ public class TableReader implements Closeable {
         return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
-    private TableReaderMetadata openMetaFile() {
-        try {
-            return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
@@ -678,16 +627,16 @@ public class TableReader implements Closeable {
     }
 
     private long openPartition0(int partitionIndex) {
-        // is this table is partitioned?
-        if (partitionTimestampCalculatorMethod != null
-                && removedPartitions.contains(partitionTimestampCalculatorMethod.calculate(
-                minTimestamp, partitionIndex
+        // is this table partitioned?
+        if (meta.getPartitionBy() != PartitionBy.NONE
+                && removedPartitions.contains(meta.addPartitionToTimestamp(
+                getMinTimestamp(), partitionIndex
         ))) {
             return -1;
         }
 
         // todo: this may not be the best place to check if partition is out of range
-        if (maxTimestamp == Long.MIN_VALUE) {
+        if (getMaxTimestamp() == Long.MIN_VALUE) {
             return -1;
         }
 
@@ -697,12 +646,14 @@ public class TableReader implements Closeable {
 
                 path.chopZ();
 
-                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
+                final long partitionSize = partitionIndex == partitionCount - 1
+                        ? meta.getTransientRowCount()
+                        : TableUtils.readPartitionSize(ff, path, tempMem8b);
 
                 LOG.info()
                         .$("open partition ").utf8(path.$())
                         .$(" [rowCount=").$(partitionSize)
-                        .$(", transientRowCount=").$(transientRowCount)
+                        .$(", transientRowCount=").$(meta.getTransientRowCount())
                         .$(", partitionIndex=").$(partitionIndex)
                         .$(", partitionCount=").$(partitionCount)
                         .$(']').$();
@@ -710,7 +661,7 @@ public class TableReader implements Closeable {
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
                     partitionRowCounts.setQuick(partitionIndex, partitionSize);
-                    if (maxTimestamp != Numbers.LONG_NaN) {
+                    if (getMaxTimestamp() != Numbers.LONG_NaN) {
                         if (reloadMethod == FIRST_TIME_PARTITIONED_RELOAD_METHOD) {
                             reloadMethod = PARTITIONED_RELOAD_METHOD;
                         } else if (reloadMethod == FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD) {
@@ -735,148 +686,20 @@ public class TableReader implements Closeable {
 
     private void openSymbolMaps() {
         int symbolColumnIndex = 0;
-        final int columnCount = metadata.getColumnCount();
+        final int columnCount = meta.getColumnCount();
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
-                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
+            if (meta.getColumnType(i) == ColumnType.SYMBOL) {
+                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, meta.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
-        }
-    }
-
-    private ReadOnlyMemory openTxnFile() {
-        try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private Path pathGenDay(int partitionIndex) {
-        TableUtils.fmtDay.format(
-                Timestamps.addDays(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
-                null,
-                path.put(Files.SEPARATOR)
-        );
-        return path.$();
-    }
-
-    private Path pathGenDefault() {
-        return path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
-    }
-
-    private Path pathGenMonth(int partitionIndex) {
-        TableUtils.fmtMonth.format(
-                Timestamps.addMonths(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
-                null,
-                path.put(Files.SEPARATOR)
-        );
-        return path.$();
-    }
-
-    private Path pathGenYear(int partitionIndex) {
-        TableUtils.fmtYear.format(
-                Timestamps.addYear(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
-                null,
-                path.put(Files.SEPARATOR)
-        );
-        return path.$();
-    }
-
-    private boolean readTxn() {
-        int count = 0;
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-        while (true) {
-            long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
-
-            // exit if this is the same as we already have
-            if (txn == this.txn) {
-                return false;
-            }
-
-            // make sure this isn't re-ordered
-            Unsafe.getUnsafe().loadFence();
-
-            // do start and end sequences match? if so we have a chance at stable read
-            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) {
-                // great, we seem to have got stable read, lets do some reading
-                // and check later if it was worth it
-
-                Unsafe.getUnsafe().loadFence();
-                final long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
-                final long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
-                final long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-                final long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
-                final long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
-                final long dataVersion = txMem.getLong(TableUtils.TX_OFFSET_DATA_VERSION);
-                final long partitionTableVersion = txMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-
-                this.symbolCountSnapshot.clear();
-                int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-                if (symbolMapCount > 0) {
-                    txMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
-                    for (int i = 0; i < symbolMapCount; i++) {
-                        symbolCountSnapshot.add(txMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
-                    }
-                }
-
-                txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, 0));
-
-                this.removedPartitions.clear();
-                int partitionTableSize = txMem.getInt(TableUtils.getPartitionTableSizeOffset(symbolMapCount));
-                if (partitionTableSize > 0) {
-                    txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, partitionTableSize));
-                    for (int i = 0; i < partitionTableSize; i++) {
-                        this.removedPartitions.add(txMem.getLong(TableUtils.getPartitionTableIndexOffset(symbolMapCount, i)));
-                    }
-                }
-
-                Unsafe.getUnsafe().loadFence();
-                // ok, we have snapshot, check if our snapshot is stable
-                if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
-                    // good, very stable, congrats
-                    this.txn = txn;
-                    this.transientRowCount = transientRowCount;
-                    this.rowCount = fixedRowCount + transientRowCount;
-                    this.prevMinTimestamp = this.minTimestamp;
-                    if (minTimestamp == Long.MAX_VALUE) {
-                        this.minTimestamp = Long.MAX_VALUE;
-                    } else {
-                        this.minTimestamp = timestampFloorMethod.floor(minTimestamp);
-                    }
-                    this.maxTimestamp = maxTimestamp;
-                    this.structVersion = structVersion;
-                    this.dataVersion = dataVersion;
-                    this.partitionTableVersion = partitionTableVersion;
-                    LOG.info()
-                            .$("new transaction [txn=").$(txn)
-                            .$(", transientRowCount=").$(transientRowCount)
-                            .$(", fixedRowCount=").$(fixedRowCount)
-                            .$(", maxTimestamp=").$(maxTimestamp)
-                            .$(", attempts=").$(count)
-                            .$(']').$();
-                    return true;
-                }
-                // This is unlucky, sequences have changed while we were reading transaction data
-                // We must discard and try again
-            }
-            count++;
-            if (configuration.getMicrosecondClock().getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
-                throw CairoException.instance(0).put("Transaction read timeout");
-            }
-            LockSupport.parkNanos(1);
         }
     }
 
     private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
         int plen = path.length();
         try {
-            final CharSequence name = metadata.getColumnName(columnIndex);
+            final CharSequence name = meta.getColumnName(columnIndex);
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
@@ -893,7 +716,7 @@ public class TableReader implements Closeable {
                 }
 
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
-                final int type = metadata.getColumnType(columnIndex);
+                final int type = meta.getColumnType(columnIndex);
 
                 switch (type) {
                     case ColumnType.BINARY:
@@ -915,7 +738,7 @@ public class TableReader implements Closeable {
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
 
-                if (metadata.isColumnIndexed(columnIndex)) {
+                if (meta.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader instanceof BitmapIndexBwdReader) {
                         ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
@@ -945,9 +768,9 @@ public class TableReader implements Closeable {
 
     private void reloadColumnChanges() {
         // create transition index, which will help us reuse already open resources
-        long pTransitionIndex = metadata.createTransitionIndex();
+        long pTransitionIndex = meta.getMetadata().createTransitionIndex();
         try {
-            metadata.applyTransitionIndex(pTransitionIndex);
+            meta.getMetadata().applyTransitionIndex(pTransitionIndex);
             final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
 
             int columnCountBits = getColumnBits(columnCount);
@@ -968,54 +791,6 @@ public class TableReader implements Closeable {
         }
     }
 
-    private boolean reloadInitialNonPartitioned() {
-        long dataVersion = this.dataVersion;
-        if (readTxn()) {
-            reloadStruct();
-            reloadSymbolMapCounts();
-            checkDefaultPartitionExistsAndUpdatePartitionCount();
-            if (partitionCount > 0) {
-                updateCapacities();
-                reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
-                return true;
-            }
-        }
-        return dataVersion != this.dataVersion;
-    }
-
-    private boolean reloadInitialPartitioned() {
-        if (readTxn()) {
-            reloadStruct();
-            return reloadInitialPartitioned0();
-        }
-        return false;
-    }
-
-    private boolean reloadInitialPartitioned0() {
-        reloadSymbolMapCounts();
-        partitionCount = calculatePartitionCount();
-        if (partitionCount > 0) {
-            updateCapacities();
-            if (maxTimestamp != Long.MIN_VALUE) {
-                reloadMethod = PARTITIONED_RELOAD_METHOD;
-            }
-        }
-        return true;
-    }
-
-    private boolean reloadNonPartitioned() {
-        // calling readTxn will set "rowCount" member variable
-        if (readTxn()) {
-            reloadStruct();
-            if (getPartitionRowCount(0) == -1) {
-                openPartition0(0);
-            } else {
-                reloadPartition(0, rowCount);
-            }
-            return true;
-        }
-        return false;
-    }
 
     /**
      * Updates boundaries of all columns in partition.
@@ -1031,7 +806,7 @@ public class TableReader implements Closeable {
             growColumn(
                     columns.getQuick(index),
                     columns.getQuick(index + 1),
-                    metadata.getColumnType(i),
+                    meta.getColumnType(i),
                     rowCount - getColumnTop(columnBase, i)
             );
 
@@ -1044,78 +819,36 @@ public class TableReader implements Closeable {
         partitionRowCounts.setQuick(partitionIndex, rowCount);
     }
 
-    private boolean reloadPartitioned() {
-        assert timestampFloorMethod != null;
-        final long currentPartitionTimestamp = maxTimestamp == Long.MIN_VALUE ? maxTimestamp : floorToPartitionTimestamp(maxTimestamp);
-        final long dataVersion = this.dataVersion;
-        if (readTxn()) {
-            reloadStruct();
-            if (this.dataVersion != dataVersion) {
-                applyTruncate();
-                return true;
-            }
-
-            if (partitionCount == 0) {
-                // old partition count was 0
-                incrementPartitionCountBy(calculatePartitionCount());
-                return true;
-            }
-
-            assert intervalLengthMethod != null;
-
-            //  calculate timestamp delta between before and after reload.
-            int delta = getPartitionCountBetweenTimestamps(currentPartitionTimestamp, floorToPartitionTimestamp(maxTimestamp));
-            int partitionIndex = partitionCount - 1;
-            // do we have something to reload?
-            if (getPartitionRowCount(partitionIndex) > -1) {
-                if (delta > 0) {
-                    incrementPartitionCountBy(delta);
-                    Path path = partitionPathGenerator.generate(this, partitionIndex);
-                    try {
-                        reloadPartition(partitionIndex, TableUtils.readPartitionSize(ff, path.chopZ(), tempMem8b));
-                    } finally {
-                        path.trimTo(rootLen);
-                    }
-                } else {
-                    reloadPartition(partitionIndex, transientRowCount);
-                }
-            } else if (delta > 0) {
-                // although we have nothing to reload we still have to bump partition count
-                incrementPartitionCountBy(delta);
-            }
-            return true;
-        }
-        return false;
-    }
-
     private void reloadStruct() {
-        if (this.prevStructVersion != this.structVersion) {
+        if (this.initialStructVersion != meta.getStructVersion()) {
             reloadColumnChanges();
-            this.prevStructVersion = this.structVersion;
+            this.initialStructVersion = meta.getStructVersion();
         }
 
-        if (this.prevPartitionTableVersion != this.partitionTableVersion) {
+        if (this.initialPartitionTableVersion != meta.getPartitionTableVersion()) {
             closeRemovedPartitions();
-            this.prevPartitionTableVersion = partitionTableVersion;
+            this.initialPartitionTableVersion = meta.getPartitionTableVersion();
         }
+
+        this.prevMinTimestamp = meta.getMinTimestamp();
     }
 
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+            if (meta.getColumnType(i) == ColumnType.SYMBOL) {
                 symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
             }
         }
     }
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (meta.getColumnType(columnIndex) == ColumnType.SYMBOL) {
             if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
+                ((SymbolMapReaderImpl) reader).of(configuration, path, meta.getColumnName(columnIndex), 0);
                 return reader;
             }
-            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), 0);
+            return new SymbolMapReaderImpl(configuration, path, meta.getColumnName(columnIndex), 0);
         } else {
             return reader;
         }
@@ -1192,26 +925,6 @@ public class TableReader implements Closeable {
     }
 
     @FunctionalInterface
-    private interface IntervalLengthMethod {
-        long calculate(long minTimestamp, long maxTimestamp);
-    }
-
-    @FunctionalInterface
-    interface PartitionTimestampCalculatorMethod {
-        long calculate(long minTimestamp, int partitionIndex);
-    }
-
-    @FunctionalInterface
-    interface TimestampFloorMethod {
-        long floor(long timestamp);
-    }
-
-    @FunctionalInterface
-    private interface ReloadMethod {
-        boolean reload(TableReader reader);
-    }
-
-    @FunctionalInterface
     private interface PartitionPathGenerator {
         Path generate(TableReader reader, int partitionIndex);
     }
@@ -1228,4 +941,132 @@ public class TableReader implements Closeable {
         long top;
     }
 
+    @FunctionalInterface
+    private interface ReloadMethod {
+        boolean reload(TableReader reader);
+    }
+
+    private boolean reloadInitialNonPartitioned() {
+        long dataVersion = getDataVersion();
+        if (meta.getTx().read()) {
+            reloadStruct();
+            reloadSymbolMapCounts();
+            checkDefaultPartitionExistsAndUpdatePartitionCount();
+            if (partitionCount > 0) {
+                updateCapacities();
+                reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
+                return true;
+            }
+        }
+        return dataVersion != getDataVersion();
+    }
+
+    private boolean reloadInitialPartitioned() {
+        if (meta.getTx().read()) {
+            reloadStruct();
+            return reloadInitialPartitioned0();
+        }
+        return false;
+    }
+
+    private boolean reloadInitialPartitioned0() {
+        reloadSymbolMapCounts();
+        partitionCount = meta.calculatePartitionCount();
+        if (partitionCount > 0) {
+            updateCapacities();
+            if (getMaxTimestamp() != Long.MIN_VALUE) {
+                reloadMethod = PARTITIONED_RELOAD_METHOD;
+            }
+        }
+        return true;
+    }
+
+    private boolean reloadNonPartitioned() {
+        if (meta.getTx().read()) {
+            reloadStruct();
+            if (getPartitionRowCount(0) == -1) {
+                openPartition0(0);
+            } else {
+                reloadPartition(0, meta.getRowCount());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean reloadPartitioned() {
+        assert meta.getPartitionBy() != PartitionBy.NONE;
+        final long currentPartitionTimestamp = getMaxTimestamp() == Long.MIN_VALUE ? getMaxTimestamp() : floorToPartitionTimestamp(getMaxTimestamp());
+        final long dataVersion = getDataVersion();
+        if (meta.getTx().read()) {
+            reloadStruct();
+            if (getDataVersion() != dataVersion) {
+                applyTruncate();
+                return true;
+            }
+
+            if (partitionCount == 0) {
+                // old partition count was 0
+                incrementPartitionCountBy(meta.calculatePartitionCount());
+                return true;
+            }
+
+            //  calculate timestamp delta between before and after reload.
+            int delta = getPartitionCountBetweenTimestamps(currentPartitionTimestamp, floorToPartitionTimestamp(getMaxTimestamp()));
+            int partitionIndex = partitionCount - 1;
+            // do we have something to reload?
+            if (getPartitionRowCount(partitionIndex) > -1) {
+                if (delta > 0) {
+                    incrementPartitionCountBy(delta);
+                    Path path = partitionPathGenerator.generate(this, partitionIndex);
+                    try {
+                        reloadPartition(partitionIndex, TableUtils.readPartitionSize(ff, path.chopZ(), tempMem8b));
+                    } finally {
+                        path.trimTo(rootLen);
+                    }
+                } else {
+                    reloadPartition(partitionIndex, meta.getTransientRowCount());
+                }
+            } else if (delta > 0) {
+                // although we have nothing to reload we still have to bump partition count
+                incrementPartitionCountBy(delta);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private Path pathGenDay(int partitionIndex) {
+        TableUtils.fmtDay.format(
+                Timestamps.addDays(getMinTimestamp(), partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
+
+    private Path pathGenDefault() {
+        return path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
+    }
+
+    private Path pathGenMonth(int partitionIndex) {
+        TableUtils.fmtMonth.format(
+                Timestamps.addMonths(getMinTimestamp(), partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
+
+    private Path pathGenYear(int partitionIndex) {
+        TableUtils.fmtYear.format(
+                Timestamps.addYear(getMinTimestamp(), partitionIndex),
+                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
 }
