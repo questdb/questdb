@@ -41,6 +41,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("columncount", ColumnType.INT));
         metadata.add(new TableColumnMetadata("partitioncount", ColumnType.INT));
         metadata.add(new TableColumnMetadata("partitionby", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("mintimestamp", ColumnType.TIMESTAMP));
@@ -100,7 +101,9 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
         private final TableCatalogueRecord record = new TableCatalogueRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
+        private final StringSink utf8Sink = new StringSink();
         private long findFileStruct = 0;
+        private TableReader reader;
 
         public TableCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
@@ -132,12 +135,14 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
                 }
 
                 findFileStruct = 0;
+                reader = null;
                 return false;
             }
 
             if (ff.findNext(findFileStruct) > 0) {
                 return next0();
             }
+            reader = null;
             return false;
         }
 
@@ -166,6 +171,10 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
                     path.trimTo(plimit);
                     if (ff.exists(path.concat(pname).concat(TableUtils.TXN_FILE_NAME).$())) {
+                        StringSink utf8Sink = new StringSink();
+                        utf8Sink.clear();
+                        Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8Sink);
+                        reader = new TableReader(configuration, utf8Sink);
                         return true;
                     }
                 }
@@ -173,19 +182,18 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             ff.findClose(findFileStruct);
             findFileStruct = 0;
+            reader = null;
             return false;
         }
 
         private class TableCatalogueRecord implements Record {
-            private final StringSink utf8SinkA = new StringSink();
-            private final StringSink utf8SinkB = new StringSink();
-
             @Override
             public int getInt(int col) {
-                CharSequence table = getStr(0);
-                if (table != null) {
-                    TableReader reader = new TableReader(configuration, getStr(0));
-                    return reader.getPartitionCount();
+                if (reader != null) {
+                    if (col == 1)
+                        return reader.getMetadata().getColumnCount();
+                    else
+                        return reader.getPartitionCount();
                 } else {
                     return -1;
                 }
@@ -193,45 +201,31 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                CharSequence table;
-                utf8SinkA.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkA)) {
-                    table = utf8SinkA;
+                if (reader != null) {
+                    if (col == 0)
+                        return reader.getTableName();
+                    else
+                        return PartitionBy.toString(reader.getPartitionedBy());
                 } else {
                     return null;
-                }
-
-                if (col == 0) {
-                    return table;
-                } else {
-                    TableReader reader = new TableReader(configuration, getStr(0));
-                    return PartitionBy.toString(reader.getPartitionedBy());
                 }
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                CharSequence table;
-                utf8SinkB.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkB)) {
-                    table = utf8SinkB;
+                if (reader != null) {
+                    if (col == 0)
+                        return reader.getTableName();
+                    else
+                        return PartitionBy.toString(reader.getPartitionedBy());
                 } else {
                     return null;
-                }
-
-                if (col == 0) {
-                    return table;
-                } else {
-                    TableReader reader = new TableReader(configuration, getStr(0));
-                    return PartitionBy.toString(reader.getPartitionedBy());
                 }
             }
 
             @Override
             public long getLong(int col) {
-                CharSequence table = getStr(0);
-                if (table != null) {
-                    TableReader reader = new TableReader(configuration, getStr(0));
+                if (reader != null) {
                     if (col == 3)
                         return reader.getMinTimestamp();
                     else if (col == 4)
