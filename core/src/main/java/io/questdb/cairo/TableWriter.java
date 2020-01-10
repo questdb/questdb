@@ -89,7 +89,7 @@ public class TableWriter implements Closeable {
     private final boolean parallelIndexerEnabled;
     private final LongHashSet removedPartitions = new LongHashSet();
     private final TimestampFloorMethod timestampFloorMethod;
-    private final TableMetadata.PartitionTimestampCalculatorMethod nextTimestampMethod;
+    private final TableMeta.PartitionTimestampCalculatorMethod nextTimestampMethod;
     private final int defaultCommitMode;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -1273,7 +1273,7 @@ public class TableWriter implements Closeable {
 
     private long getNextMinTimestamp(
             TimestampFloorMethod timestampFloorMethod,
-            TableMetadata.PartitionTimestampCalculatorMethod nextTimestampMethod
+            TableMeta.PartitionTimestampCalculatorMethod nextTimestampMethod
     ) {
         long nextMinTimestamp = minTimestamp;
         while (nextMinTimestamp < maxTimestamp) {

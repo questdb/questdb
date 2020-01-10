@@ -103,7 +103,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private long findFileStruct = 0;
-        private TableMetadata metadata;
+        private TableMeta metadata;
 
         public TableCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
@@ -174,7 +174,7 @@ public class TableCatalogueFunctionFactory implements FunctionFactory {
                         StringSink utf8Sink = new StringSink();
                         utf8Sink.clear();
                         Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8Sink);
-                        metadata = new TableMetadata(configuration, utf8Sink, null, null);
+                        metadata = new TableMeta(configuration, utf8Sink, null, null);
                         return true;
                     }
                 }

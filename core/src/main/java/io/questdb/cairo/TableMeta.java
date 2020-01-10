@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
@@ -34,7 +33,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class TableMetadata implements Closeable {
+public class TableMeta implements Closeable {
     private final Path path;
     private final int rootLen;
     private final CairoConfiguration configuration;
@@ -46,7 +45,7 @@ public class TableMetadata implements Closeable {
     private final PartitionTimestampCalculatorMethod partitionTimestampCalculatorMethod;
     private final int partitionCount;
 
-    public TableMetadata(CairoConfiguration configuration, CharSequence tableName, IntList symbolCountSnapshot, LongHashSet removedPartitions) {
+    public TableMeta(CairoConfiguration configuration, CharSequence tableName, IntList symbolCountSnapshot, LongHashSet removedPartitions) {
         this.configuration = configuration;
         this.tableName = Chars.toString(tableName);
         this.path = new Path().of(configuration.getRoot()).concat(tableName);
