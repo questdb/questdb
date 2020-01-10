@@ -78,6 +78,10 @@ public class TableMetadata implements Closeable {
         partitionCount = calculatePartitionCount();
     }
 
+    public int getColumnIndex(CharSequence columnName) {
+        return metadata.getColumnIndex(columnName);
+    }
+
     public CharSequence getColumnName(int columnIndex) {
         return metadata.getColumnName(columnIndex);
     }
