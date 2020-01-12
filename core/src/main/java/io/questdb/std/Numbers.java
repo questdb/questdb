@@ -1174,11 +1174,11 @@ public final class Numbers {
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Integer.MIN_VALUE;
+                return Numbers.INT_NaN;
             }
             return parseInt0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Integer.MIN_VALUE;
+            return Numbers.INT_NaN;
         }
 
     }
@@ -2015,7 +2015,7 @@ public final class Numbers {
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
-        if (a == -1 && b == -1 && c == -1 && d == -1) {
+        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
             return;
         }
         sink.put("0x");

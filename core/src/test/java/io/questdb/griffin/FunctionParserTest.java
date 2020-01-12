@@ -737,7 +737,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof NullStrConstant);
+        Assert.assertTrue(function instanceof SymbolConstant);
     }
 
     @Test
@@ -818,7 +818,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof StrConstant);
+        Assert.assertTrue(function instanceof SymbolConstant);
     }
 
     @Test

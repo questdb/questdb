@@ -258,7 +258,7 @@ public class BindVariableService {
     }
 
     public void setLong256Null(CharSequence name) {
-        setLong256(name, -1, -1, -1, -1);
+        setLong256(name, Long256Impl.NULL_LONG256);
     }
 
     public void setLong256(CharSequence name, long l0, long l1, long l2, long l3) {

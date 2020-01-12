@@ -137,7 +137,7 @@ public abstract class Long256Function implements Function {
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getLong256A(rec).getLong0();
     }
 
     @Override

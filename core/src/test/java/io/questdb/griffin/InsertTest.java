@@ -388,5 +388,4 @@ public class InsertTest extends AbstractGriffinTest {
     private interface TimestampFunction {
         long getTimestamp();
     }
-
 }

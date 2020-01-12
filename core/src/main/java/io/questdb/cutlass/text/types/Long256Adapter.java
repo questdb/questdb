@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -45,7 +46,7 @@ public final class Long256Adapter extends AbstractTypeAdapter {
     @Override
     public boolean probe(CharSequence text) {
         final int len = text.length();
-        if (len > 2 && ((len & 1) == 0) && len < 67 && text.charAt(0) == '0' && text.charAt(1) == 'x') {
+        if (Long256Util.isValidString(text, len)) {
             try {
                 Numbers.parseHexLong(text, 2, Math.min(len, 18));
                 if (len > 18) {

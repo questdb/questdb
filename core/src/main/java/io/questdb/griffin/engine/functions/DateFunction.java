@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public abstract class DateFunction implements Function {
@@ -143,7 +144,8 @@ public abstract class DateFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return getDate(rec) * 1000L;
+        final long value = getDate(rec);
+        return value == Numbers.LONG_NaN ? value : value * 1000L;
     }
 
     @Override

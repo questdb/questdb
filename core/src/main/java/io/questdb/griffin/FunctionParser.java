@@ -643,6 +643,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
+        LOG.info().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
         return checkAndCreateFunction(candidate, args, node.position, configuration);
     }
 
@@ -719,11 +720,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return new StrConstant(position, value);
                 }
             case ColumnType.SYMBOL:
-                CharSequence value = function.getSymbol(null);
-                if (value == null) {
-                    return new NullStrConstant(position);
+                if (function instanceof SymbolConstant) {
+                    return function;
                 }
-                return new StrConstant(position, value);
+                return new SymbolConstant(position, Chars.toString(function.getSymbol(null)), 0);
             case ColumnType.TIMESTAMP:
                 if (function instanceof TimestampConstant) {
                     return function;

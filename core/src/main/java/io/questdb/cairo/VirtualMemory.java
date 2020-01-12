@@ -937,10 +937,10 @@ public class VirtualMemory implements Closeable {
     private void putLong256Bytes(CharSequence hexString) {
         final int len;
         if (hexString == null || (len = hexString.length()) == 0) {
-            putLong(-1L);
-            putLong(-1L);
-            putLong(-1L);
-            putLong(-1L);
+            putLong(Long256Impl.NULL_LONG256.getLong0());
+            putLong(Long256Impl.NULL_LONG256.getLong1());
+            putLong(Long256Impl.NULL_LONG256.getLong2());
+            putLong(Long256Impl.NULL_LONG256.getLong3());
         } else {
             long offset = getAppendOffset();
             putLong(0);
@@ -956,10 +956,10 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putLong256Null() {
-        Unsafe.getUnsafe().putLong(appendPointer, -1L);
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, -1L);
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, -1L);
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, -1L);
+        Unsafe.getUnsafe().putLong(appendPointer, Long256Impl.NULL_LONG256.getLong0());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, Long256Impl.NULL_LONG256.getLong1());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, Long256Impl.NULL_LONG256.getLong2());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, Long256Impl.NULL_LONG256.getLong3());
     }
 
     void putLongBytes(long value) {

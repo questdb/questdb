@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,6 +62,17 @@ public class TimestampFunctionTest {
     @Test
     public void testGetDate() {
         Assert.assertEquals(145, function.getDate(null));
+    }
+
+    @Test
+    public void testGetNullDate() {
+        final TimestampFunction function = new TimestampFunction(25) {
+            @Override
+            public long getTimestamp(Record rec) {
+                return Numbers.LONG_NaN;
+            }
+        };
+        Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));
     }
 
     @Test

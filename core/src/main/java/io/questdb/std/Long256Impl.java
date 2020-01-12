@@ -31,10 +31,10 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable {
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
 
     static {
-        NULL_LONG256.setLong0(-1);
-        NULL_LONG256.setLong1(-1);
-        NULL_LONG256.setLong2(-1);
-        NULL_LONG256.setLong3(-1);
+        NULL_LONG256.setLong0(Numbers.LONG_NaN);
+        NULL_LONG256.setLong1(Numbers.LONG_NaN);
+        NULL_LONG256.setLong2(Numbers.LONG_NaN);
+        NULL_LONG256.setLong3(Numbers.LONG_NaN);
     }
 
     private long l0;

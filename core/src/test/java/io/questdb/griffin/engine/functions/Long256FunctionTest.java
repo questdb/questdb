@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,12 +38,12 @@ public class Long256FunctionTest {
     private static final Long256Function function = new Long256Function(25) {
         @Override
         public Long256 getLong256A(Record rec) {
-            return null;
+            return Long256Impl.NULL_LONG256;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            return null;
+            return Long256Impl.NULL_LONG256;
         }
 
         @Override
@@ -89,9 +91,8 @@ public class Long256FunctionTest {
         function.getInt(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
-        function.getLong(null);
+        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
