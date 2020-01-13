@@ -682,6 +682,29 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToInt() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a int)",
+                null,
+                "insert into tab select cast(rnd_boolean() as int) from long_sequence(10)",
+                "a\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n",
+                true
+        );
+    }
+
+    @Test
     public void testStrToInt() throws Exception {
         assertQuery(
                 "a\n",
@@ -1139,6 +1162,75 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToDate() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a date)",
+                null,
+                "insert into tab select cast(rnd_boolean() as date) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.000Z\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToTimestamp() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a timestamp)",
+                null,
+                "insert into tab select cast(rnd_boolean() as timestamp) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToBoolean() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a boolean)",
+                null,
+                "insert into tab select cast(rnd_boolean() as boolean) from long_sequence(10)",
+                "a\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true
+        );
+    }
+
+    @Test
     public void testDoubleToDate() throws Exception {
         assertQuery(
                 "a\n",
@@ -1484,6 +1576,144 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToLong() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a long)",
+                null,
+                "insert into tab select cast(rnd_boolean() as long) from long_sequence(10)",
+                "a\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToByte() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a byte)",
+                null,
+                "insert into tab select cast(rnd_boolean() as byte) from long_sequence(10)",
+                "a\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToShort() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a short)",
+                null,
+                "insert into tab select cast(rnd_boolean() as short) from long_sequence(10)",
+                "a\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToFloat() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a float)",
+                null,
+                "insert into tab select cast(rnd_boolean() as float) from long_sequence(10)",
+                "a\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "0.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "0.0000\n" +
+                        "0.0000\n" +
+                        "0.0000\n" +
+                        "0.0000\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToDouble() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a double)",
+                null,
+                "insert into tab select cast(rnd_boolean() as double) from long_sequence(10)",
+                "a\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "0.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "0.0\n" +
+                        "0.0\n" +
+                        "0.0\n" +
+                        "0.0\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast(rnd_boolean() as char) from long_sequence(10)",
+                "a\n" +
+                        "F\n" +
+                        "F\n" +
+                        "F\n" +
+                        "T\n" +
+                        "F\n" +
+                        "F\n" +
+                        "T\n" +
+                        "T\n" +
+                        "T\n" +
+                        "T\n",
+                true
+        );
+    }
+
+    @Test
     public void testStrToLong() throws Exception {
         assertQuery(
                 "a\n",
@@ -1617,6 +1847,29 @@ public class CastTest extends AbstractGriffinTest {
                         "0x53\n" +
                         "0x5a\n" +
                         "0x4c\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToLong256() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a long256)",
+                null,
+                "insert into tab select cast(rnd_boolean() as long256) from long_sequence(10)",
+                "a\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x0000000000000000\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n",
                 true
         );
     }
@@ -2163,6 +2416,37 @@ public class CastTest extends AbstractGriffinTest {
                         "0x7a\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_byte() a from long_sequence(20))",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToLong256Sort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x0000000000000000\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n",
+                "select cast(a as long256) x from tt order by x",
+                "create table tt as (select rnd_boolean() a from long_sequence(20))",
                 null,
                 true
         );
@@ -2860,6 +3144,29 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToStr() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab select cast(rnd_boolean() as string) from long_sequence(10)",
+                "a\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true
+        );
+    }
+
+    @Test
     public void testByteToStrConst() throws Exception {
         assertQuery(
                 "a\n",
@@ -2878,6 +3185,29 @@ public class CastTest extends AbstractGriffinTest {
                         "34\n" +
                         "34\n" +
                         "34\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToStrConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab select cast(34=34 as string) from long_sequence(10)",
+                "a\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
                 true
         );
     }
@@ -3258,6 +3588,38 @@ public class CastTest extends AbstractGriffinTest {
                 "create table tt as (select rnd_byte() a from long_sequence(20))",
                 null,
                 true
+        );
+    }
+
+    @Test
+    public void testBooleanToStrSort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                "select cast(a as string) x from tt order by x",
+                "create table tt as (select rnd_boolean() a from long_sequence(20))",
+                null,
+                true,
+                false
         );
     }
 
@@ -4160,6 +4522,29 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToSymbol() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a symbol)",
+                null,
+                "insert into tab select cast(rnd_boolean() as symbol) from long_sequence(10)",
+                "a\n" +
+                        "false\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true
+        );
+    }
+
+    @Test
     public void testLongToSymbol() throws Exception {
         assertQuery(
                 "a\n",
@@ -4270,6 +4655,29 @@ public class CastTest extends AbstractGriffinTest {
                         "14\n" +
                         "14\n" +
                         "14\n",
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToSymbolConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a symbol)",
+                null,
+                "insert into tab select cast(14=14 as symbol) from long_sequence(10)",
+                "a\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
                 true
         );
     }
@@ -4616,6 +5024,37 @@ public class CastTest extends AbstractGriffinTest {
                         "74\t74\n",
                 "select cast(a as symbol) b, a from tab",
                 "create table tab as (select rnd_byte() a from long_sequence(20))",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToSymbolIndexBehaviour() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "true\ttrue\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "true\ttrue\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n",
+                "select cast(a as symbol) b, a from tab",
+                "create table tab as (select rnd_boolean() a from long_sequence(20))",
                 null,
                 true
         );

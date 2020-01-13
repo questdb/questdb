@@ -58,7 +58,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 'T' : 'F';
     }
 
     @Override
@@ -73,32 +73,32 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return (byte) (getBool(rec) ? 0 : 1);
     }
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
     public final int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
@@ -118,37 +118,41 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return (short) (getBool(rec) ? 0 : 1);
     }
 
     @Override
     public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr0(rec);
     }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
+        sink.put(getStr0(rec));
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr0(rec);
+    }
+
+    private String getStr0(Record rec) {
+        return getBool(rec) ? "true" : "false";
     }
 
     @Override
     public final int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? "true".length() : "false".length();
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr0(rec);
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBool(rec) ? 0 : 1;
     }
 
     @Override
