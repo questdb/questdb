@@ -25,126 +25,161 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class BooleanFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BooleanFunction function = new BooleanFunction(25) {
+    private static final BooleanFunction functionA = new BooleanFunction(25) {
         @Override
         public boolean getBool(Record rec) {
             return false;
         }
     };
 
+    private static final BooleanFunction functionB = new BooleanFunction(25) {
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
+    };
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
-        function.getBin(null);
+        functionA.getBin(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBinLen() {
-        function.getBinLen(null);
+        functionA.getBinLen(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetByte() {
-        function.getByte(null);
+        Assert.assertEquals(1, functionA.getByte(null));
+        Assert.assertEquals(0, functionB.getByte(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetDate() {
-        function.getDate(null);
+        Assert.assertEquals(1, functionA.getDate(null));
+        Assert.assertEquals(0, functionB.getDate(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetDouble() {
-        function.getDouble(null);
+        Assert.assertEquals(1.0, functionA.getDouble(null), 0.000001);
+        Assert.assertEquals(0.0, functionB.getDouble(null), 0.000001);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetFloat() {
-        function.getFloat(null);
+        Assert.assertEquals(1.0, functionA.getFloat(null), 0.000001);
+        Assert.assertEquals(0.0, functionB.getFloat(null), 0.000001);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetInt() {
-        function.getInt(null);
+        Assert.assertEquals(1, functionA.getInt(null));
+        Assert.assertEquals(0, functionB.getInt(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetLong() {
-        function.getLong(null);
+        Assert.assertEquals(1, functionA.getLong(null));
+        Assert.assertEquals(0, functionB.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetMetadata() {
-        function.getMetadata();
+        functionA.getMetadata();
     }
 
     @Test
     public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
+        Assert.assertEquals(25, functionA.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory();
+        functionA.getRecordCursorFactory();
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetShort() {
-        function.getShort(null);
+        Assert.assertEquals(1, functionA.getShort(null));
+        Assert.assertEquals(0, functionB.getShort(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStr() {
-        function.getStr(null);
+        Assert.assertEquals("false", functionA.getStr(null));
+        Assert.assertEquals("true", functionB.getStr(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStr2() {
-        function.getStr(null, null);
+        final StringSink sink = new StringSink();
+        functionA.getStr(null, sink);
+        TestUtils.assertEquals("false", sink);
+
+        sink.clear();
+
+        functionB.getStr(null, sink);
+        TestUtils.assertEquals("true", sink);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrB() {
-        function.getStrB(null);
+        Assert.assertEquals("false", functionA.getStr(null));
+        Assert.assertEquals("true", functionB.getStr(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrLen() {
-        function.getStrLen(null);
+        Assert.assertEquals("false".length(), functionA.getStrLen(null));
+        Assert.assertEquals("true".length(), functionB.getStrLen(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetSym() {
-        function.getSymbol(null);
+        Assert.assertEquals("false", functionA.getSymbol(null));
+        Assert.assertEquals("true", functionB.getSymbol(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetTimestamp() {
-        function.getTimestamp(null);
+        Assert.assertEquals(1, functionA.getTimestamp(null));
+        Assert.assertEquals(0, functionB.getTimestamp(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testChar() {
-        function.getChar(null);
+        Assert.assertEquals('F', functionA.getChar(null));
+        final BooleanFunction function = new BooleanFunction(25) {
+            @Override
+            public boolean getBool(Record rec) {
+                return true;
+            }
+        };
+        Assert.assertEquals('T', function.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256() {
-        function.getLong256(null, null);
+        functionA.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256A() {
-        function.getLong256A(null);
+        functionA.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
-        function.getLong256B(null);
+        functionA.getLong256B(null);
     }
 }

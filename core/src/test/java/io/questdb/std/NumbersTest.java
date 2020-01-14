@@ -184,6 +184,13 @@ public class NumbersTest {
     }
 
     @Test
+    public void testAppendZeroLong256() {
+        sink.clear();
+        Numbers.appendLong256(0, 0, 0, 0, sink);
+        TestUtils.assertEquals("0x00", sink);
+    }
+
+    @Test
     public void testFormatDoubleHugeZero() {
         sink.clear();
         Numbers.append(sink, -0.000000000000001);

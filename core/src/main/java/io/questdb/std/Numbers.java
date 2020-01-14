@@ -537,7 +537,7 @@ public final class Numbers {
             sink.put("NaN");
             return;
         }
-        int bit = 64 - Long.numberOfLeadingZeros(value - 1);
+        int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value - 1);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
     }
