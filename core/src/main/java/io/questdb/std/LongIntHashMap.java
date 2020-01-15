@@ -28,7 +28,7 @@ import java.util.Arrays;
 
 public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
 
-    private static final int noEntryValue = -1;
+    public static final int NO_ENTRY_VALUE = -1;
     private int[] values;
 
     public LongIntHashMap() {
@@ -66,7 +66,7 @@ public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
     }
 
     public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
+        return index < 0 ? values[-index - 1] : NO_ENTRY_VALUE;
     }
 
     @Override

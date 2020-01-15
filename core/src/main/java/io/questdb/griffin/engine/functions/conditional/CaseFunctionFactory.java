@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ObjList;
@@ -53,27 +52,36 @@ public class CaseFunctionFactory implements FunctionFactory {
             elseBranch = null;
         }
 
-
+        // compute return type in this loop
         for (int i = 0; i < n; i += 2) {
             Function bool = args.getQuick(i);
-            Function outcome = args.getQuick(i + 1);
+            Function value = args.getQuick(i + 1);
 
             if (bool.getType() != ColumnType.BOOLEAN) {
                 throw SqlException.position(bool.getPosition()).put("BOOLEAN expected, found ").put(ColumnType.nameOf(bool.getType()));
             }
 
-            if (i == 0) {
-                returnType = outcome.getType();
-            } else if (!SqlCompiler.isAssignableFrom(returnType, outcome.getType())) {
-                throw SqlException.position(outcome.getPosition()).put(ColumnType.nameOf(returnType)).put(" expected, found ").put(ColumnType.nameOf(outcome.getType()));
-            }
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), value.getPosition());
 
             vars.add(bool);
-            vars.add(outcome);
+            vars.add(value);
         }
 
-        if (elseBranch != null && !SqlCompiler.isAssignableFrom(returnType, elseBranch.getType())) {
-            throw SqlException.position(elseBranch.getPosition()).put(ColumnType.nameOf(returnType)).put(" expected, found ").put(ColumnType.nameOf(elseBranch.getType()));
+        if (elseBranch != null) {
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranch.getPosition());
+        }
+
+        // next calculate cast functions
+        for (int i = 1; i < n; i += 2) {
+            args.setQuick(i, CaseCommon.getCastFunction(
+                    args.getQuick(i),
+                    returnType,
+                    configuration
+            ));
+        }
+
+        if (elseBranch != null) {
+            elseBranch = CaseCommon.getCastFunction(elseBranch, returnType, configuration);
         }
 
         final int argsLen = vars.size();

@@ -59,8 +59,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
             invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
         }
-
-//        invalidFunctionNameChars.add('.');
         invalidFunctionNameChars.add(' ');
         invalidFunctionNameChars.add('\"');
         invalidFunctionNameChars.add('\'');

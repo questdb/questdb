@@ -39,6 +39,16 @@ import io.questdb.std.ObjList;
 
 public class SwitchFunctionFactory implements FunctionFactory {
 
+    private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
+    private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
+    private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
+    private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
+    private static final IntMethod GET_CHAR = SwitchFunctionFactory::getChar;
+    private static final LongMethod GET_DATE = SwitchFunctionFactory::getDate;
+    private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
+    private static final CharSequenceMethod GET_STRING = SwitchFunctionFactory::getString;
+    private static final CharSequenceMethod GET_SYMBOL = SwitchFunctionFactory::getSymbol;
+
     private static char getChar(Function function, Record record) {
         return function.getChar(record);
     }
@@ -55,10 +65,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getShort(record);
     }
 
-    private static int getFloat(Function function, Record record) {
-        return Float.floatToIntBits(function.getFloat(record));
-    }
-
     private static long getLong(Function function, Record record) {
         return function.getLong(record);
     }
@@ -69,10 +75,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static long getTimestamp(Function function, Record record) {
         return function.getTimestamp(record);
-    }
-
-    private static long getDouble(Function function, Record record) {
-        return Double.doubleToLongBits(function.getDouble(record));
     }
 
     private static CharSequence getString(Function function, Record record) {
@@ -94,7 +96,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
-        final int returnType = args.getQuick(2).getType();
         final Function elseBranch;
         if (n % 2 == 0) {
             elseBranch = args.getLast();
@@ -103,6 +104,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             elseBranch = null;
         }
 
+        int returnType = -1;
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
             final int keyArgType = keyFunc.getType();
@@ -117,42 +119,49 @@ public class SwitchFunctionFactory implements FunctionFactory {
                         .put(']');
             }
 
-            final Function valueFunc = args.getQuick(i + 1);
-            if (!SqlCompiler.isAssignableFrom(returnType, valueFunc.getType())) {
-                throw SqlException.position(valueFunc.getPosition())
-                        .put("type mismatch [expected=").put(ColumnType.nameOf(returnType))
-                        .put(", actual=").put(ColumnType.nameOf(valueFunc.getType()))
-                        .put(']');
-            }
+            // determine common return type
+            final Function value = args.getQuick(i + 1);
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), value.getPosition());
+        }
+
+        // another loop to create cast functions and replace current value function
+        // start with 2 to avoid offsetting each function position
+        for (int i = 2; i < n; i += 2) {
+            args.setQuick(i,
+                    CaseCommon.getCastFunction(
+                            args.getQuick(i),
+                            returnType,
+                            configuration
+                    )
+            );
         }
 
         switch (keyType) {
             case ColumnType.CHAR:
-                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getChar);
+                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:
-                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getInt);
+                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_INT);
             case ColumnType.BYTE:
-                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getByte);
+                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
             case ColumnType.SHORT:
-                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getShort);
-            case ColumnType.FLOAT:
-                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getFloat);
+                return getIntKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
             case ColumnType.LONG:
-                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getLong);
+                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_LONG);
             case ColumnType.DATE:
-                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getDate);
+                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_DATE);
             case ColumnType.TIMESTAMP:
-                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getTimestamp);
-            case ColumnType.DOUBLE:
-                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getDouble);
+                return getLongKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_TIMESTAMP);
             case ColumnType.BOOLEAN:
                 return getIfElseFunction(args, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
-                return getCharSequenceKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getString);
+                return getCharSequenceKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_STRING);
             case ColumnType.SYMBOL:
-                return getCharSequenceKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, SwitchFunctionFactory::getSymbol);
+                return getCharSequenceKeyedFunction(args, position, n, keyFunction, returnType, elseBranch, GET_SYMBOL);
             default:
-                return null;
+                throw SqlException.
+                        $(keyFunction.getPosition(), "type ")
+                        .put(ColumnType.nameOf(keyType))
+                        .put(" is not supported in 'switch' type of 'case' statement");
         }
     }
 
@@ -222,7 +231,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
 
             if (elseBranch != null) {
-                throw SqlException.$(elseBranch.getPosition(), "duplicate of boolean values");
+                throw SqlException.$(elseBranch.getPosition(), "duplicate boolean values");
             }
 
             if (a) {
@@ -270,7 +279,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return CaseCommon.getCaseFunction(position, valueType, picker);
     }
 
-
     private Function getCharSequenceKeyedFunction(
             ObjList<Function> args,
             int position,
@@ -281,24 +289,48 @@ public class SwitchFunctionFactory implements FunctionFactory {
             CharSequenceMethod method
     ) throws SqlException {
         final CharSequenceObjHashMap<Function> map = new CharSequenceObjHashMap<>();
+        Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final CharSequence key = method.getKey(fun, null);
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(fun.getPosition(), "duplicate branch");
+            if (key == null) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(fun.getPosition(), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(method.getKey(keyFunction, record));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final CharSequence value = method.getKey(keyFunction, record);
+                if (value != null) {
+                    final int index = map.keyIndex(value);
+                    if (index < 0) {
+                        return map.valueAtQuick(index);
+                    }
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                final CharSequence value = method.getKey(keyFunction, record);
+                if (value == null) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(value);
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        }
 
         return CaseCommon.getCaseFunction(position, valueType, picker);
     }

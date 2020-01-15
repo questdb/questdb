@@ -997,13 +997,34 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInconvertibleBranch() throws Exception {
-        assertFailure(
+    public void testIntToStringCastOnBranch() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\t10\n" +
+                        "454\t10\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\t10\n" +
+                        "692\t\n" +
+                        "-743\tLJU\n" +
+                        "36\t\n" +
+                        "0\t\n" +
+                        "799\t\n" +
+                        "650\t\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\t\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\t10\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
                         "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then 10\n" +
+                        "        when x > 100 and x < 500 then 10\n" +
                         "    end \n" +
                         "from tanc",
                 "create table tanc as (" +
@@ -1013,14 +1034,36 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " rnd_str() c" +
                         " from long_sequence(20)" +
                         ")",
-                88,
-                "STRING expected"
+                null,
+                true,
+                false
         );
     }
 
     @Test
-    public void testInconvertibleElse() throws Exception {
-        assertFailure(
+    public void testIntToStringCast() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\t3.5\n" +
+                        "454\t3.5\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\t3.5\n" +
+                        "692\t3.5\n" +
+                        "-743\tLJU\n" +
+                        "36\t3.5\n" +
+                        "0\t3.5\n" +
+                        "799\t3.5\n" +
+                        "650\t3.5\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\t3.5\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\t3.5\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1036,10 +1079,12 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " rnd_str() c" +
                         " from long_sequence(20)" +
                         ")",
-                103,
-                "STRING expected"
+                null,
+                true,
+                false
         );
     }
+
     @Test
     public void testTimestampOrElse() throws Exception {
         assertQuery(
