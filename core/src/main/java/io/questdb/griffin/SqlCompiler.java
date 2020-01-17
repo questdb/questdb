@@ -80,6 +80,7 @@ public class SqlCompiler implements Closeable {
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final Path path = new Path();
+    private final Path renamePath = new Path();
     private final AppendMemory mem = new AppendMemory();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoWorkScheduler workScheduler;
@@ -635,6 +636,7 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         Misc.free(path);
+        Misc.free(renamePath);
         Misc.free(textLoader);
     }
 
@@ -934,6 +936,10 @@ public class SqlCompiler implements Closeable {
                 return createTableWithRetries(executionModel, executionContext);
             case ExecutionModel.COPY:
                 return executeCopy(executionContext, (CopyModel) executionModel);
+            case ExecutionModel.RENAME_TABLE:
+                final RenameTableModel rtm = (RenameTableModel) executionModel;
+                engine.rename(executionContext.getCairoSecurityContext(), path, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
+                return compiledQuery.ofRenameTable();
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {

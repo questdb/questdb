@@ -217,7 +217,7 @@ public class CairoEngine implements Closeable {
             Path path,
             CharSequence tableName,
             Path otherPath,
-            String newName
+            CharSequence newName
     ) {
         if (lock(securityContext, tableName)) {
             try {

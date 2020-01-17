@@ -979,102 +979,6 @@ public class IODispatcherTest {
 
     @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
-//        testImport(
-//                "HTTP/1.1 200 OK\r\n" +
-//                        "Server: questDB/1.0\r\n" +
-//                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-//                        "Transfer-Encoding: chunked\r\n" +
-//                        "Content-Type: text/plain; charset=utf-8\r\n" +
-//                        "\r\n" +
-//                        "05d7\r\n" +
-//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-//                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-//                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-//                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-//                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-//                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-//                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-//                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-//                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-//                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-//                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-//                        "\r\n" +
-//                        "00\r\n" +
-//                        "\r\n",
-//                "POST /upload HTTP/1.1\r\n" +
-//                        "Host: localhost:9001\r\n" +
-//                        "User-Agent: curl/7.64.0\r\n" +
-//                        "Accept: */*\r\n" +
-//                        "Content-Length: 437760673\r\n" +
-//                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-//                        "Expect: 100-continue\r\n" +
-//                        "\r\n" +
-//                        "--------------------------27d997ca93d2689d\r\n" +
-//                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-//                        "Content-Type: application/octet-stream\r\n" +
-//                        "\r\n" +
-//                        "[\r\n" +
-//                        "  {\r\n" +
-//                        "    \"name\": \"date\",\r\n" +
-//                        "    \"type\": \"DATE\",\r\n" +
-//                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-//                        "    \"locale\": \"ru-RU\"\r\n" +
-//                        "  }\r\n" +
-//                        "]\r\n" +
-//                        "\r\n" +
-//                        "--------------------------27d997ca93d2689d\r\n" +
-//                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-//                        "Content-Type: application/octet-stream\r\n" +
-//                        "\r\n" +
-//                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-//                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-//                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-//                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-//                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-//                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-//                        "\r\n" +
-//                        "--------------------------27d997ca93d2689d--",
-//                new NetworkFacadeImpl() {
-//                    int totalSent = 0;
-//
-//                    @Override
-//                    public int send(long fd, long buffer, int bufferLen) {
-//                        if (bufferLen > 0) {
-//                            int result = super.send(fd, buffer, 1);
-//                            totalSent += result;
-//
-//                            // start delaying after 800 bytes
-//
-//                            if (totalSent > 800) {
-//                                LockSupport.parkNanos(10000);
-//                            }
-//                            return result;
-//                        }
-//                        return 0;
-//                    }
-//                }
-//        );
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
@@ -2024,6 +1928,138 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryRenameTable() throws Exception {
+        testJsonQuery0(2, engine -> {
+            // create table with all column types
+            CairoTestUtils.createTestTable(
+                    engine.getConfiguration(),
+                    20,
+                    new Rnd(),
+                    new TestRecord.ArrayBinarySequence());
+
+            // rename x -> y (quoted)
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=rename+table+%27x%27+to+%27y%27&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // query new table name
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=y%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0224\r\n" +
+                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // rename y -> x (unquoted)
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=rename+table+y+to+x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            // query table 'x'
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0224\r\n" +
+                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+        });
     }
 
     @Test

@@ -111,4 +111,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.type = TRUNCATE;
         return this;
     }
+
+    CompiledQuery ofRenameTable() {
+        this.type = RENAME_TABLE;
+        return this;
+    }
 }
