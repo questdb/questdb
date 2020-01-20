@@ -31,6 +31,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -53,6 +54,11 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         } else {
             this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter);
         }
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override

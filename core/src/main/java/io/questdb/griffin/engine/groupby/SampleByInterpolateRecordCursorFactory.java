@@ -45,7 +45,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     protected final RecordCursorFactory base;
     protected final Map recordKeyMap;
     private final Map dataMap;
-    private final SampleByInterpolatedRecordCursor cursor;
+    private final VirtualFunctionSkewedSymbolRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
@@ -88,7 +88,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.recordFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        final IntIntHashMap symbolTableIndex = new IntIntHashMap();
+        final IntIntHashMap symbolTableSkewIndex = new IntIntHashMap();
 
         GroupByUtils.prepareGroupByRecordFunctions(
                 model,
@@ -99,7 +99,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                symbolTableIndex,
+                symbolTableSkewIndex,
                 false
         );
 
@@ -166,7 +166,12 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.base = base;
         this.metadata = groupByMetadata;
         this.sampler = timestampSampler;
-        this.cursor = new SampleByInterpolatedRecordCursor(recordFunctions, symbolTableIndex);
+        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -423,7 +428,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             RecordCursor mapCursor,
             RecordCursor baseCursor
     ) {
-        cursor.of(mapCursor, baseCursor);
+        cursor.of(baseCursor, mapCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
             recordFunctions.getQuick(i).init(cursor, executionContext);
@@ -458,72 +463,5 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
-    }
-
-    private static class SampleByInterpolatedRecordCursor implements RecordCursor {
-        private final VirtualRecord functionRecord;
-        private final IntIntHashMap symbolTableIndex;
-        private RecordCursor mapCursor;
-        private RecordCursor baseCursor;
-
-        public SampleByInterpolatedRecordCursor(ObjList<Function> functions, IntIntHashMap symbolTableIndex) {
-            this.functionRecord = new VirtualRecord(functions);
-            this.symbolTableIndex = symbolTableIndex;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(mapCursor);
-            Misc.free(baseCursor);
-        }
-
-        @Override
-        public Record getRecord() {
-            return functionRecord;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(symbolTableIndex.get(columnIndex));
-        }
-
-        @Override
-        public boolean hasNext() {
-            return mapCursor.hasNext();
-        }
-
-        @Override
-        public long size() {
-            return mapCursor.size();
-        }
-
-        @Override
-        public Record newRecord() {
-            VirtualRecord record = new VirtualRecord(functionRecord.getFunctions());
-            record.of(mapCursor.newRecord());
-            return record;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            assert record instanceof VirtualRecord;
-            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
-        }
-
-        @Override
-        public void recordAt(long rowId) {
-            mapCursor.recordAt(functionRecord.getBaseRecord(), rowId);
-        }
-
-        @Override
-        public void toTop() {
-            mapCursor.toTop();
-        }
-
-        public void of(RecordCursor mapCursor, RecordCursor baseCursor) {
-            this.mapCursor = mapCursor;
-            this.baseCursor = baseCursor;
-            functionRecord.of(mapCursor.getRecord());
-        }
     }
 }

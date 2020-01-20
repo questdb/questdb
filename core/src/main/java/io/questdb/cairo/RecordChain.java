@@ -129,11 +129,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void recordAt(long row) {
-        record.of(rowToDataOffset(row));
-    }
-
-    @Override
     public void toTop() {
         if (mem.getAppendOffset() == 0) {
             nextRecordOffset = -1L;

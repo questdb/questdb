@@ -22,27 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.griffin.DefaultSqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.ObjList;
 
-import java.io.Closeable;
+public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
+    public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions) {
+        super(functions);
+    }
 
-public interface RecordCursorFactory extends Closeable {
     @Override
-    default void close() {
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return ((SymbolFunction) record.getFunctions().getQuick(columnIndex));
     }
-
-    default RecordCursor getCursor() {
-        return getCursor(DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    RecordCursor getCursor(SqlExecutionContext executionContext);
-
-    RecordMetadata getMetadata();
-
-    boolean isRandomAccessCursor();
-
-    Record newRecord();
 }

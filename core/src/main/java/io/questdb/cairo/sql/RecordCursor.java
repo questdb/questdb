@@ -40,9 +40,11 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     Record newRecord();
 
-    void recordAt(Record record, long atRowId);
+    default void link(Record record) {
+        // nothing to do by default
+    }
 
-    void recordAt(long rowId);
+    void recordAt(Record record, long atRowId);
 
     void toTop();
 

@@ -62,7 +62,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
+        this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain, slaveFactory.newRecord());
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -119,12 +124,19 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
+        private final Record slaveRecord;
 
-        public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
+        public HashJoinRecordCursor(
+                int columnSplit,
+                Map joinKeyMap,
+                LongChain slaveChain,
+                Record slaveRecord
+        ) {
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.columnSplit = columnSplit;
+            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -152,9 +164,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public void toTop() {
+            masterCursor.toTop();
+            slaveChainCursor = null;
+        }
+
+        @Override
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                slaveCursor.recordAt(slaveChainCursor.next());
+                slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
@@ -167,24 +185,18 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                     // we know cursor has values
                     // advance to get first value
                     slaveChainCursor.hasNext();
-                    slaveCursor.recordAt(slaveChainCursor.next());
+                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     return true;
                 }
             }
             return false;
         }
 
-        @Override
-        public void toTop() {
-            masterCursor.toTop();
-            slaveChainCursor = null;
-        }
-
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            Record slaveRecord = slaveCursor.getRecord();
+            slaveCursor.link(slaveRecord);
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

@@ -507,15 +507,8 @@ public class FastMapTest extends AbstractCairoTest {
                         value.putInt(0, value.getInt(0) * 2);
                     }
 
-                    // access map by rowid now
-                    rnd.reset();
-                    for (int i = 0, n = list.size(); i < n; i++) {
-                        cursor.recordAt(list.getQuick(i));
-                        Assert.assertEquals((i + 1) * 2, record.getInt(0));
-                        Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                    }
-
                     MapRecord rec = (MapRecord) cursor.newRecord();
+                    cursor.link(rec);
                     Assert.assertNotSame(rec, record);
 
                     rnd.reset();

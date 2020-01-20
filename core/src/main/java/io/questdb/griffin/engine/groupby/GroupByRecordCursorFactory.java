@@ -35,14 +35,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final Map dataMap;
-    private final GroupByRecordCursor cursor;
+    private final VirtualFunctionSkewedSymbolRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
@@ -74,7 +77,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         this.recordFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        final IntIntHashMap symbolTableIndex = new IntIntHashMap();
+        final IntIntHashMap symbolTableSkewIndex = new IntIntHashMap();
 
         GroupByUtils.prepareGroupByRecordFunctions(
                 model,
@@ -85,7 +88,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                symbolTableIndex,
+                symbolTableSkewIndex,
                 true
         );
 
@@ -94,7 +97,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
         this.metadata = groupByMetadata;
-        this.cursor = new GroupByRecordCursor(recordFunctions, symbolTableIndex);
+        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -110,11 +118,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, executionContext);
-        }
 
         try {
             final Record baseRecord = baseCursor.getRecord();
@@ -125,7 +128,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 MapValue value = key.createValue();
                 GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
             }
-            cursor.setMapCursor(dataMap.getCursor());
+            cursor.of(baseCursor, dataMap.getCursor());
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            for (int i = 0, m = recordFunctions.size(); i < m; i++) {
+                recordFunctions.getQuick(i).init(cursor, executionContext);
+            }
             return cursor;
         } catch (CairoException e) {
             baseCursor.close();
@@ -143,73 +150,4 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         return true;
     }
 
-    private static class GroupByRecordCursor implements RecordCursor {
-        private final VirtualRecord functionRecord;
-        private final IntIntHashMap symbolTableIndex;
-        private RecordCursor mapCursor;
-        private RecordCursor baseCursor;
-
-        public GroupByRecordCursor(ObjList<Function> functions, IntIntHashMap symbolTableIndex) {
-            this.functionRecord = new VirtualRecord(functions);
-            this.symbolTableIndex = symbolTableIndex;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(mapCursor);
-            Misc.free(baseCursor);
-        }
-
-        @Override
-        public Record getRecord() {
-            return functionRecord;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(symbolTableIndex.get(columnIndex));
-        }
-
-        @Override
-        public boolean hasNext() {
-            return mapCursor.hasNext();
-        }
-
-        @Override
-        public Record newRecord() {
-            VirtualRecord record = new VirtualRecord(functionRecord.getFunctions());
-            record.of(mapCursor.newRecord());
-            return record;
-        }
-
-        @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            assert record instanceof VirtualRecord;
-            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
-        }
-
-        @Override
-        public void recordAt(long rowId) {
-            mapCursor.recordAt(functionRecord.getBaseRecord(), rowId);
-        }
-
-        @Override
-        public void toTop() {
-            mapCursor.toTop();
-        }
-
-        public void of(RecordCursor baseCursor) {
-            this.baseCursor = baseCursor;
-        }
-
-        private void setMapCursor(RecordCursor mapCursor) {
-            this.mapCursor = mapCursor;
-            functionRecord.of(mapCursor.getRecord());
-        }
-    }
 }

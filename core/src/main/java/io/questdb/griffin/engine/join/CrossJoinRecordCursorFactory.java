@@ -68,6 +68,11 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public boolean isRandomAccessCursor() {
         return false;
     }

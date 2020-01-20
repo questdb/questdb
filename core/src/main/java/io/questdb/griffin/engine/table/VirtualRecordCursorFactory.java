@@ -25,15 +25,12 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final VirtualRecordCursor cursor;
+    private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
     private final RecordCursorFactory base;
 
@@ -43,8 +40,15 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory baseFactory) {
         super(metadata);
         this.functions = functions;
-        this.cursor = new VirtualRecordCursor(functions);
+        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions);
         this.base = baseFactory;
+    }
+
+    @Override
+    public Record newRecord() {
+        final VirtualRecord record = new VirtualRecord(functions);
+        record.of(base.newRecord());
+        return record;
     }
 
     @Override

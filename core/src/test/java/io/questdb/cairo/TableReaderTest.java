@@ -3385,27 +3385,11 @@ public class TableReaderTest extends AbstractCairoTest {
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
 
-        // assert rowid access, method 1
-        rnd.reset();
-        timestamp = ts;
-        for (int i = 0; i < count; i++) {
-            cursor.recordAt(rows.getQuick(i));
-            asserter.assertRecord(record, rnd, timestamp += increment, blob);
-        }
-
-        // assert rowid access, method 2
-        rnd.reset();
-        timestamp = ts;
-        Record rec = cursor.getRecord();
-        for (int i = 0; i < count; i++) {
-            cursor.recordAt(rec, rows.getQuick(i));
-            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
-        }
-
         // assert rowid access, method 3
         rnd.reset();
         timestamp = ts;
-        rec = cursor.newRecord();
+        final Record rec = cursor.newRecord();
+        cursor.link(rec);
         for (int i = 0; i < count; i++) {
             cursor.recordAt(rec, rows.getQuick(i));
             asserter.assertRecord(rec, rnd, timestamp += increment, blob);
@@ -3998,9 +3982,11 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 Rnd exp = new Rnd();
+                final Record rec = cursor.newRecord();
+                cursor.link(rec);
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(rows.getQuick(i));
-                    BATCH1_ASSERTER.assertRecord(record, exp, ts += inc, blob);
+                    cursor.recordAt(rec, rows.getQuick(i));
+                    BATCH1_ASSERTER.assertRecord(rec, exp, ts += inc, blob);
                 }
             }
         } finally {

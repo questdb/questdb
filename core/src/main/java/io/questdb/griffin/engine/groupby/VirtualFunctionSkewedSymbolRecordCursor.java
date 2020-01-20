@@ -22,62 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
-public class CompactMapCursor implements RecordCursor {
+public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
+    private final IntIntHashMap symbolTableSkewIndex;
+    private SymbolTableSource symbolTableSource;
 
-    private final CompactMapRecord record;
-    private long offsetHi;
-    private long nextOffset;
-
-    public CompactMapCursor(CompactMapRecord record) {
-        this.record = record;
+    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntIntHashMap symbolTableSkewIndex) {
+        super(functions);
+        this.symbolTableSkewIndex = symbolTableSkewIndex;
     }
 
     @Override
     public void close() {
+        Misc.free(symbolTableSource);
     }
 
     @Override
-    public MapRecord getRecord() {
-        return record;
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return symbolTableSource.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
     }
 
-    @Override
-    public boolean hasNext() {
-        if (nextOffset < offsetHi) {
-            record.of(nextOffset);
-            nextOffset = record.getNextRecordOffset();
-            return true;
-        }
-        return false;
-    }
 
-    @Override
-    public MapRecord newRecord() {
-        return record.clone();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        ((CompactMapRecord) record).of(atRowId);
-    }
-
-    @Override
-    public void toTop() {
-        nextOffset = 0;
-    }
-
-    void of(long offsetHi) {
-        this.nextOffset = 0;
-        this.offsetHi = offsetHi;
-    }
-
-    @Override
-    public long size() {
-        return -1;
+    public void of(SymbolTableSource symbolTableSource, RecordCursor mapCursor) {
+        this.symbolTableSource = symbolTableSource;
+        of(mapCursor);
     }
 }

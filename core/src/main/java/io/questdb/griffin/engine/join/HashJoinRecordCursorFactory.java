@@ -67,6 +67,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public void close() {
         joinKeyMap.close();
         slaveChain.close();

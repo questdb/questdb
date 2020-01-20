@@ -66,19 +66,19 @@ class SelectedRecordCursor implements RecordCursor {
 
     @Override
     public Record newRecord() {
-        SelectedRecord record = new SelectedRecord(this.record.getColumnCrossIndex());
+        final SelectedRecord record = new SelectedRecord(this.record.getColumnCrossIndex());
         record.of(baseCursor.newRecord());
         return record;
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
+    public void link(Record record) {
+        baseCursor.link(((SelectedRecord) record).getBaseRecord());
     }
 
     @Override
-    public void recordAt(long rowId) {
-        baseCursor.recordAt(rowId);
+    public void recordAt(Record record, long atRowId) {
+        baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
     }
 
     @Override

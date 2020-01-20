@@ -61,7 +61,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(-8968886490993754893L, record.getLong(0));
             }
@@ -84,7 +84,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(Numbers.LONG_NaN, record.getLong(0));
             }
@@ -111,7 +111,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(-8968886490993754893L, record.getLong(0));
             }
@@ -137,7 +137,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(12, record.getLong(0));
             }

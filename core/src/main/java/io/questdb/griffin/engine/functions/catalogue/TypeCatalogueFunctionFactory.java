@@ -25,9 +25,13 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -75,44 +79,17 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            return TypeCatalogueCursor.INSTANCE;
+            return EmptyTableRecordCursor.INSTANCE;
         }
 
         @Override
         public boolean isRandomAccessCursor() {
             return false;
         }
-    }
-
-    private static class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
-        private static final TypeCatalogueCursor INSTANCE = new TypeCatalogueCursor();
-
-        private final TypeCatalogueRecord record = new TypeCatalogueRecord();
 
         @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return false;
-        }
-
-        @Override
-        public long size() {
-            return 0;
-        }
-
-        @Override
-        public void toTop() {
-        }
-
-        private static class TypeCatalogueRecord implements Record {
+        public Record newRecord() {
+            return EmptyTableRecordCursor.INSTANCE.newRecord();
         }
     }
 }

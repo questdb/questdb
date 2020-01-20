@@ -163,7 +163,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TableStatusCheckProcessor(cairoEngine);
+                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
             }
         });
 

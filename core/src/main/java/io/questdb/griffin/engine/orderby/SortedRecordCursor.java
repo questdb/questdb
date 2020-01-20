@@ -64,13 +64,13 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        chainCursor.recordAt(record, atRowId);
+    public void link(Record record) {
+        chainCursor.link(record);
     }
 
     @Override
-    public void recordAt(long rowId) {
-        chainCursor.recordAt(rowId);
+    public void recordAt(Record record, long atRowId) {
+        chainCursor.recordAt(record, atRowId);
     }
 
     @Override

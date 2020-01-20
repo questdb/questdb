@@ -70,6 +70,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public void close() {
         super.close();
         recordCursorFactory.close();

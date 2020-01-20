@@ -63,7 +63,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.9856290845874263, record.getDouble(0), 0.0001);
             }
@@ -86,7 +86,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertTrue(Double.isNaN(record.getDouble(0)));
             }
@@ -110,7 +110,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.9856290845874263, record.getDouble(0), 0.0001);
             }

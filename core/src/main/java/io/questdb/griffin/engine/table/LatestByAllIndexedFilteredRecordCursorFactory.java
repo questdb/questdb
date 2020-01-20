@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -37,13 +38,22 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @Nullable Function filter) {
+            @Nullable Function filter
+    ) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (filter == null) {
             this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows);
         } else {
+            // todo: test that symbol function can work in this context
+            //     the only place this is called from is 'testLatestByAllIndexedFilter'
+            //     create test that would search on another symbol column, via '='
             this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter);
         }
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override

@@ -61,6 +61,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public void close() {
         dataMap.close();
         base.close();
@@ -131,13 +136,13 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
+        public void link(Record record) {
+            baseCursor.link(record);
         }
 
         @Override
-        public void recordAt(long rowId) {
-            baseCursor.recordAt(rowId);
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override

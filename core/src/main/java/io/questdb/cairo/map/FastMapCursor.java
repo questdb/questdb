@@ -79,11 +79,6 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(long rowId) {
-        record.of(rowId);
-    }
-
-    @Override
     public void toTop() {
         this.address = topAddress;
         this.remaining = count;

@@ -79,7 +79,6 @@ public class RecordChainTest extends AbstractCairoTest {
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M)) {
                     LongList rows = new LongList();
-                    Record chainRecord = chain.getRecord();
                     RecordCursor cursor = reader.getCursor();
                     Record cursorRecord = cursor.getRecord();
 
@@ -94,23 +93,16 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(N, rows.size());
                     cursor.toTop();
 
-                    for (int i = 0, n = rows.size(); i < n; i++) {
-                        long row = rows.getQuick(i);
-                        Assert.assertTrue(cursor.hasNext());
-                        chain.recordAt(row);
-                        Assert.assertEquals(row, chainRecord.getRowId());
-                        assertSame(cursorRecord, chainRecord, reader.getMetadata());
-                    }
-
-                    Record rec2 = chain.newRecord();
+                    final Record rec = chain.newRecord();
+                    chain.link(rec);
                     cursor.toTop();
 
                     for (int i = 0, n = rows.size(); i < n; i++) {
                         long row = rows.getQuick(i);
                         Assert.assertTrue(cursor.hasNext());
-                        chain.recordAt(rec2, row);
-                        Assert.assertEquals(row, rec2.getRowId());
-                        assertSame(cursorRecord, rec2, reader.getMetadata());
+                        chain.recordAt(rec, row);
+                        Assert.assertEquals(row, rec.getRowId());
+                        assertSame(cursorRecord, rec, reader.getMetadata());
                     }
                 }
             }

@@ -87,13 +87,13 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+    public void link(Record record) {
+        base.link(record);
     }
 
     @Override
-    public void recordAt(long rowId) {
-        base.recordAt(rowId);
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
     }
 
     @Override

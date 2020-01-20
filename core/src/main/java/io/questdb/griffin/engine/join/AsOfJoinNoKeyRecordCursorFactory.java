@@ -48,8 +48,14 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex()
+                slaveFactory.getMetadata().getTimestampIndex(),
+                slaveFactory.newRecord()
         );
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -81,15 +87,22 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private Record slaveRecord;
+        private final Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
 
-        public AsOfLightJoinRecordCursor(int columnSplit, Record nullRecord, int masterTimestampIndex, int slaveTimestampIndex) {
+        public AsOfLightJoinRecordCursor(
+                int columnSplit,
+                Record nullRecord,
+                int masterTimestampIndex,
+                int slaveTimestampIndex,
+                Record slaveRecord
+        ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
+            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -113,19 +126,20 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-
+            final long prevSlaveRowID = lastSlaveRowID;
             long lastRowId = lastSlaveRowID;
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 long slaveTimestamp = this.slaveTimestamp;
 
                 if (slaveTimestamp <= masterTimestamp) {
+                    final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
-                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp > masterTimestamp) {
                             break;
                         }
-                        lastRowId = slaveRecord.getRowId();
+                        lastRowId = rec.getRowId();
                     }
                     // now we have dangling slave record, which we need to hold on to
                     this.slaveTimestamp = slaveTimestamp;
@@ -136,7 +150,10 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
                     record.hasSlave(false);
                 } else {
                     record.hasSlave(true);
-                    slaveCursor.recordAt(lastSlaveRowID);
+                    // positioning
+                    if (prevSlaveRowID != lastSlaveRowID) {
+                        slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
+                    }
                 }
                 return true;
             }
@@ -162,7 +179,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            slaveCursor.link(slaveRecord);
             record.of(masterRecord, slaveRecord);
         }
     }

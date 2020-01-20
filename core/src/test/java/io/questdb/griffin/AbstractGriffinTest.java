@@ -119,7 +119,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            rows.clear();
             printer.print(cursor, factory.getMetadata(), true);
 
             TestUtils.assertEquals(expected, sink);
@@ -154,38 +153,45 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 cursor.toTop();
 
                 sink.clear();
+                rows.clear();
                 while (cursor.hasNext()) {
                     rows.add(record.getRowId());
                 }
 
+                final Record rec = cursor.newRecord();
+                cursor.link(rec);
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(record, rows.getQuick(i));
-                    printer.print(record, metadata);
+                    cursor.recordAt(rec, rows.getQuick(i));
+                    printer.print(rec, metadata);
                 }
 
                 TestUtils.assertEquals(expected, sink);
 
-                // test internal record
-                sink.clear();
-                printer.printHeader(metadata);
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(rows.getQuick(i));
-                    printer.print(record, metadata);
+                // test that absolute positioning of record does not affect state of record cursor
+                if (rows.size() > 0) {
+                    sink.clear();
+
+                    cursor.toTop();
+                    int target = rows.size() / 2;
+                    printer.printHeader(metadata);
+                    while (target-- > 0 && cursor.hasNext()) {
+                        printer.print(record, metadata);
+                    }
+
+                    // no obliterate record with absolute positioning
+                    for (int i = 0, n = rows.size(); i < n; i++) {
+                        cursor.recordAt(rec, rows.getQuick(i));
+                    }
+
+                    // not continue normal fetch
+                    while (cursor.hasNext()) {
+                        printer.print(record, metadata);
+                    }
+
+                    TestUtils.assertEquals(expected, sink);
+
                 }
-
-                TestUtils.assertEquals(expected, sink);
-
-                // test _new_ record
-                sink.clear();
-                record = cursor.newRecord();
-                printer.printHeader(metadata);
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(record, rows.getQuick(i));
-                    printer.print(record, metadata);
-                }
-
-                TestUtils.assertEquals(expected, sink);
             } else {
                 Assert.assertFalse(factory.isRandomAccessCursor());
                 try {
@@ -196,12 +202,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                 try {
                     cursor.newRecord();
-                    Assert.fail();
-                } catch (UnsupportedOperationException ignore) {
-                }
-
-                try {
-                    cursor.recordAt(0);
                     Assert.fail();
                 } catch (UnsupportedOperationException ignore) {
                 }

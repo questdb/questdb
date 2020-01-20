@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
@@ -45,6 +46,11 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion));
         return cursor;
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override

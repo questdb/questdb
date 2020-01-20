@@ -58,6 +58,8 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+        assert this.symbolTable != this;
+        assert this.symbolTable != null;
     }
 
     @Override

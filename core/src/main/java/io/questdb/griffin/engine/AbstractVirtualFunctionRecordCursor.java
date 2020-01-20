@@ -22,33 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-class VirtualRecordCursor implements RecordCursor {
-    private final VirtualRecord record;
-    private RecordCursor baseCursor;
+public abstract class AbstractVirtualFunctionRecordCursor implements RecordCursor {
+    protected final VirtualRecord record;
+    protected RecordCursor baseCursor;
 
-    public VirtualRecordCursor(ObjList<Function> functions) {
+    public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions) {
         this.record = new VirtualRecord(functions);
     }
 
     @Override
     public void close() {
-        baseCursor.close();
+        Misc.free(baseCursor);
     }
 
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return ((SymbolFunction) record.getFunctions().getQuick(columnIndex));
     }
 
     @Override
@@ -69,13 +67,13 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+    public void link(Record record) {
+        baseCursor.link(((VirtualRecord) record).getBaseRecord());
     }
 
     @Override
-    public void recordAt(long rowId) {
-        baseCursor.recordAt(rowId);
+    public void recordAt(Record record, long atRowId) {
+        baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
     }
 
     @Override
@@ -83,7 +81,7 @@ class VirtualRecordCursor implements RecordCursor {
         baseCursor.toTop();
     }
 
-    void of(RecordCursor cursor) {
+    public void of(RecordCursor cursor) {
         this.baseCursor = cursor;
         record.of(baseCursor.getRecord());
     }

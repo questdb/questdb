@@ -59,6 +59,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public void close() {
         if (filter != null) {
             filter.close();

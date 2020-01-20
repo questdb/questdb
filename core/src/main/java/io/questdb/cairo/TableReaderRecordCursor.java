@@ -66,9 +66,13 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public Record newRecord() {
-        TableReaderRecord record = new TableReaderRecord();
-        record.of(reader);
-        return record;
+        return new TableReaderRecord();
+    }
+
+    @Override
+    public void link(Record record) {
+        final TableReaderRecord rec = (TableReaderRecord) record;
+        rec.of(reader);
     }
 
     @Override
@@ -79,11 +83,6 @@ public class TableReaderRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long rowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        recordAt(record, rowId);
     }
 
     @Override

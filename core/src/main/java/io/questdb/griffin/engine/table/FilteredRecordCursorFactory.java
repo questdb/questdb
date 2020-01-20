@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
@@ -45,6 +42,11 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         base.close();
         filter.close();
+    }
+
+    @Override
+    public Record newRecord() {
+        return base.newRecord();
     }
 
     @Override

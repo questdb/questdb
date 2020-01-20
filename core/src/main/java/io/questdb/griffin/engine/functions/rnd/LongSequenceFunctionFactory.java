@@ -111,11 +111,6 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void recordAt(long rowId) {
-            record.of(rowId);
-        }
-
-        @Override
         public void toTop() {
             record.of(0);
         }

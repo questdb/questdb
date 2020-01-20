@@ -40,9 +40,11 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
 
     private final CairoEngine cairoEngine;
     private final Path path = new Path();
+    private final String keepAliveHeader;
 
-    public TableStatusCheckProcessor(CairoEngine cairoEngine) {
+    public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
+        this.keepAliveHeader = Chars.toString(configuration.getKeepAliveHeader());
     }
 
     private static String toResponse(int existenceCheckResult) {
@@ -79,8 +81,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");
 
-                // todo: configure this header externally
-                r.headers().put("Keep-Alive: timeout=5, max=10000").put(Misc.EOL);
+                r.headers().put(keepAliveHeader).put(Misc.EOL);
                 r.sendHeader();
 
                 r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');

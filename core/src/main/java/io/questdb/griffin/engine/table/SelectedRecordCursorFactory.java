@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,11 +36,20 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final SelectedRecordCursor cursor;
+    private final IntList columnCrossIndex;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
         super(metadata);
         this.base = base;
+        this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex);
+    }
+
+    @Override
+    public Record newRecord() {
+        final SelectedRecord record = new SelectedRecord(columnCrossIndex);
+        record.of(base.newRecord());
+        return record;
     }
 
     @Override

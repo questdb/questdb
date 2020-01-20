@@ -71,6 +71,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         );
     }
 
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
     static void buildMap(RecordCursor slaveCursor, Record record, Map joinKeyMap, RecordSink slaveKeySink, RecordChain slaveChain) {
         joinKeyMap.clear();
         slaveChain.clear();

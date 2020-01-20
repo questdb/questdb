@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -45,6 +46,11 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
 
         this.cursor = new UnionAllRecordCursor(
         );
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override

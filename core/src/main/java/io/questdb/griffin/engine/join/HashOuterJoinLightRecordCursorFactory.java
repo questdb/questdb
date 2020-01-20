@@ -66,8 +66,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 columnSplit,
                 joinKeyMap,
                 slaveChain,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata())
+                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                slaveFactory.newRecord()
         );
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -124,17 +130,20 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
+        private final Record slaveRecord;
 
         public HashOuterJoinLightRecordCursor(
                 int columnSplit,
                 Map joinKeyMap,
                 LongChain slaveChain,
-                Record nullRecord
+                Record nullRecord,
+                Record slaveRecord
         ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.columnSplit = columnSplit;
+            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -164,7 +173,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                slaveCursor.recordAt(slaveChainCursor.next());
+                slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
@@ -177,7 +186,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                     // we know cursor has values
                     // advance to get first value
                     slaveChainCursor.hasNext();
-                    slaveCursor.recordAt(slaveChainCursor.next());
+                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     record.hasSlave(true);
                 } else {
                     slaveChainCursor = null;
@@ -199,7 +208,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            Record slaveRecord = slaveCursor.getRecord();
+            slaveCursor.link(slaveRecord);
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

@@ -69,8 +69,14 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex()
+                slaveFactory.getMetadata().getTimestampIndex(),
+                slaveFactory.newRecord()
         );
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
@@ -101,19 +107,27 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
+        private final Record slaveRecord;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
 
-        public AsOfLightJoinRecordCursor(int columnSplit, Map joinKeyMap, Record nullRecord, int masterTimestampIndex, int slaveTimestampIndex) {
+        public AsOfLightJoinRecordCursor(
+                int columnSplit,
+                Map joinKeyMap,
+                Record nullRecord,
+                int masterTimestampIndex,
+                int slaveTimestampIndex,
+                Record slaveRecord
+        ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
+            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -151,20 +165,21 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 if (slaveTimestamp <= masterTimestamp) {
 
                     if (lastSlaveRowID != Numbers.LONG_NaN) {
-                        slaveCursor.recordAt(lastSlaveRowID);
+                        slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
                         key = joinKeyMap.withKey();
                         key.put(slaveRecord, slaveKeySink);
                         value = key.createValue();
                         value.putLong(0, lastSlaveRowID);
                     }
 
+                    final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {
-                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp <= masterTimestamp) {
                             key = joinKeyMap.withKey();
-                            key.put(slaveRecord, slaveKeySink);
+                            key.put(rec, slaveKeySink);
                             value = key.createValue();
-                            value.putLong(0, slaveRecord.getRowId());
+                            value.putLong(0, rec.getRowId());
                         } else {
                             break;
                         }
@@ -172,14 +187,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
                     // now we have dangling slave record, which we need to hold on to
                     this.slaveTimestamp = slaveTimestamp;
-                    this.lastSlaveRowID = slaveRecord.getRowId();
-
+                    this.lastSlaveRowID = rec.getRowId();
                 }
                 key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
                 if (value != null) {
-                    slaveCursor.recordAt(value.getLong(0));
+                    slaveCursor.recordAt(slaveRecord, value.getLong(0));
                     record.hasSlave(true);
                 } else {
                     record.hasSlave(false);
@@ -206,7 +220,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            slaveCursor.link(this.slaveRecord);
             record.of(masterRecord, slaveRecord);
         }
     }

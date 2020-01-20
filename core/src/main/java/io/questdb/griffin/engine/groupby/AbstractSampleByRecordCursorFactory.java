@@ -117,6 +117,11 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public void close() {
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             recordFunctions.getQuick(i).close();

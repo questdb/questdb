@@ -56,19 +56,17 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
 
     @Override
     public Record newRecord() {
-        TableReaderRecord record = new TableReaderRecord();
-        record.of(dataFrameCursor.getTableReader());
-        return record;
+        return new TableReaderRecord();
+    }
+
+    @Override
+    public void link(Record record) {
+        ((TableReaderRecord) record).of(dataFrameCursor.getTableReader());
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        recordAt(record, rowId);
     }
 
     abstract void of(DataFrameCursor cursor, SqlExecutionContext executionContext);

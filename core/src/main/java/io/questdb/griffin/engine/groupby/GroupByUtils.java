@@ -86,7 +86,7 @@ class GroupByUtils {
             GenericRecordMetadata groupByMetadata,
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
-            IntIntHashMap symbolTableIndex,
+            IntIntHashMap symbolTableSkewIndex,
             boolean timestampUnimportant
     ) {
 
@@ -152,7 +152,7 @@ class GroupByUtils {
                             fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            symbolTableIndex.put(i, index);
+                            symbolTableSkewIndex.put(i, index);
                             fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:

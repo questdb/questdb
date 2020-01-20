@@ -40,6 +40,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
@@ -96,13 +101,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            base.recordAt(record, atRowId);
+        public void link(Record record) {
+            base.link(record);
         }
 
         @Override
-        public void recordAt(long rowId) {
-            base.recordAt(rowId);
+        public void recordAt(Record record, long atRowId) {
+            base.recordAt(record, atRowId);
         }
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) {

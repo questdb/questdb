@@ -60,7 +60,7 @@ public class MinByteGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(-127, record.getByte(0));
             }
@@ -83,7 +83,7 @@ public class MinByteGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0, record.getByte(0));
             }
@@ -110,7 +110,7 @@ public class MinByteGroupByFunctionFactoryTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor()) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(-127, record.getByte(0));
             }

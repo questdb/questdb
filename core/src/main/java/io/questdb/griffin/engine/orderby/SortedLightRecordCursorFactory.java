@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -46,7 +47,12 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortLightValuePageSize());
         this.base = base;
-        this.cursor = new SortedLightRecordCursor(chain, comparator);
+        this.cursor = new SortedLightRecordCursor(chain, comparator, base.newRecord());
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
     }
 
     @Override
