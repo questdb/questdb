@@ -931,7 +931,6 @@ public final class SqlParser {
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "table");
         RenameTableModel model = renameTableModelPool.next();
-        // todo: review and test
         ExpressionNode e = expectExpr(lexer);
         if (e.type != ExpressionNode.LITERAL && e.type != ExpressionNode.CONSTANT) {
             throw SqlException.$(e.position, "literal or constant expected");

@@ -171,7 +171,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     @Override
     public Record newRecord() {
-        return cursor.newRecord();
+        final VirtualRecord record = new VirtualRecord(recordFunctions);
+        record.of(dataMap.getRecord());
+        return record;
     }
 
     @Override

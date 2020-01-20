@@ -44,9 +44,6 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
         if (filter == null) {
             this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows);
         } else {
-            // todo: test that symbol function can work in this context
-            //     the only place this is called from is 'testLatestByAllIndexedFilter'
-            //     create test that would search on another symbol column, via '='
             this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter);
         }
     }

@@ -168,6 +168,18 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                 TestUtils.assertEquals(expected, sink);
 
+                sink.clear();
+                // test that factory record works as anticipated
+                final Record factRec = factory.newRecord();
+                cursor.link(factRec);
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    printer.print(factRec, metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
                 // test that absolute positioning of record does not affect state of record cursor
                 if (rows.size() > 0) {
                     sink.clear();
@@ -181,7 +193,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                     // no obliterate record with absolute positioning
                     for (int i = 0, n = rows.size(); i < n; i++) {
-                        cursor.recordAt(rec, rows.getQuick(i));
+                        cursor.recordAt(factRec, rows.getQuick(i));
                     }
 
                     // not continue normal fetch

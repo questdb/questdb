@@ -1203,6 +1203,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedFilterBySymbol() throws Exception {
+        final String expected = "a\tb\tc\tk\n" +
+                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
+        assertQuery(expected,
+                "select * from x latest by b where c = 'SXUX'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_symbol(5,4,4,1) c," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " 'SXUX'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tc\tk\n" +
+                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testLatestByAllNewSymFilter() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +

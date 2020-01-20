@@ -54,7 +54,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddBusyTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
             try {
                 createX();
@@ -93,45 +93,34 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' is busy");
             }
 
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
             allHaltLatch.await(2, TimeUnit.SECONDS);
         });
     }
 
     @Test
     public void testAddColumn() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int").getType());
 
-                        assertQuery(
-                                "c\tmycol\n" +
-                                        "XYZ\tNaN\n" +
-                                        "ABC\tNaN\n" +
-                                        "ABC\tNaN\n" +
-                                        "XYZ\tNaN\n" +
-                                        "\tNaN\n" +
-                                        "CDE\tNaN\n" +
-                                        "CDE\tNaN\n" +
-                                        "ABC\tNaN\n" +
-                                        "\tNaN\n" +
-                                        "XYZ\tNaN\n",
-                                "select c, mycol from x",
-                                null,
-                                true
-                        );
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-                    }
+                    assertQuery(
+                            "c\tmycol\n" +
+                                    "XYZ\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "XYZ\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "XYZ\tNaN\n",
+                            "select c, mycol from x",
+                            null,
+                            true
+                    );
                 }
         );
     }
@@ -163,44 +152,38 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddSymbolCache() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        engine.releaseAllWriters();
-                        engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
 
-                        // create default configuration with nocache
+                    // create default configuration with nocache
 
-                        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                            @Override
-                            public boolean getDefaultSymbolCacheFlag() {
-                                return false;
-                            }
-                        };
-
-                        try (CairoEngine engine = new CairoEngine(configuration)) {
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache").getType());
-
-                                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                                    SymbolMapReader smr = reader.getSymbolMapReader(16);
-                                    Assert.assertNotNull(smr);
-                                    Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                                    Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                                    Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                                    Assert.assertTrue(smr.isCached());
-                                }
-
-                                Assert.assertEquals(0, engine.getBusyWriterCount());
-                                Assert.assertEquals(0, engine.getBusyReaderCount());
-                            }
+                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                        @Override
+                        public boolean getDefaultSymbolCacheFlag() {
+                            return false;
                         }
+                    };
 
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                        try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache").getType());
+
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                                SymbolMapReader smr = reader.getSymbolMapReader(16);
+                                Assert.assertNotNull(smr);
+                                Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                                Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                                Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                                Assert.assertTrue(smr.isCached());
+                            }
+
+                            Assert.assertEquals(0, engine.getBusyWriterCount());
+                            Assert.assertEquals(0, engine.getBusyReaderCount());
+                        }
                     }
                 }
         );
@@ -208,27 +191,19 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddSymbolCapacity() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048").getType());
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(2048, smr.getSymbolCapacity());
-                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
-                        }
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(2048, smr.getSymbolCapacity());
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
                     }
                 }
         );
@@ -272,27 +247,19 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddSymbolIndex() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index").getType());
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
-                        }
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
                     }
                 }
         );
@@ -300,28 +267,20 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddSymbolIndexCapacity() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000").getType());
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
-                            // power of 2
-                            Assert.assertEquals(16384, reader.getMetadata().getIndexValueBlockCapacity(16));
-                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
-                        }
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
+                        // power of 2
+                        Assert.assertEquals(16384, reader.getMetadata().getIndexValueBlockCapacity(16));
+                        Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
                     }
                 }
         );
@@ -334,27 +293,19 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddSymbolNoCache() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache").getType());
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                            Assert.assertFalse(smr.isCached());
-                        }
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        Assert.assertFalse(smr.isCached());
                     }
                 }
         );
@@ -362,60 +313,43 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testAddTwoColumns() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
+                    createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol").getType());
 
-                        assertQuery(
-                                "c\tmycol\tsecond\n" +
-                                        "XYZ\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "XYZ\tNaN\t\n" +
-                                        "\tNaN\t\n" +
-                                        "CDE\tNaN\t\n" +
-                                        "CDE\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "\tNaN\t\n" +
-                                        "XYZ\tNaN\t\n",
-                                "select c, mycol, second from x",
-                                null,
-                                true
-                        );
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-                    }
+                    assertQuery(
+                            "c\tmycol\tsecond\n" +
+                                    "XYZ\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "XYZ\tNaN\t\n" +
+                                    "\tNaN\t\n" +
+                                    "CDE\tNaN\t\n" +
+                                    "CDE\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "\tNaN\t\n" +
+                                    "XYZ\tNaN\t\n",
+                            "select c, mycol, second from x",
+                            null,
+                            true
+                    );
                 }
         );
     }
 
     @Test
     public void testAddColumnUpperCase() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
+                    createX();
+
                     try {
-                        createX();
-
-                        try {
-                            compiler.compile("alter table x add column D int");
-                            Assert.fail();
-                        } catch (SqlException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
-                        }
-
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                        compiler.compile("alter table x add column D int");
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
                     }
                 }
         );
@@ -452,7 +386,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
                 createX();
                 compiler.compile(sql);
@@ -461,9 +395,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
