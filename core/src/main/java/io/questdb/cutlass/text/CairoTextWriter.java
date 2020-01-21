@@ -289,7 +289,12 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
 
         @Override
-        public boolean getIndexedFlag(int columnIndex) {
+        public boolean isIndexed(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
             return false;
         }
 

@@ -235,7 +235,7 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
-        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0);
+        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
 
     /**
@@ -264,7 +264,7 @@ public class TableWriter implements Closeable {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param type                    {@link ColumnType}
-     * @param indexFlag               configures column to be indexed or not
+     * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      */
     public void addColumn(
@@ -272,8 +272,9 @@ public class TableWriter implements Closeable {
             int type,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean indexFlag,
-            int indexValueBlockCapacity
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential
     ) {
 
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
@@ -292,7 +293,7 @@ public class TableWriter implements Closeable {
         removeColumnFiles(name, type, REMOVE_OR_EXCEPTION);
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(name, type, indexFlag, indexValueBlockCapacity);
+        this.metaSwapIndex = addColumnToMeta(name, type, isIndexed, indexValueBlockCapacity, isSequential);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -322,7 +323,7 @@ public class TableWriter implements Closeable {
         }
 
         // add column objects
-        configureColumn(type, indexFlag);
+        configureColumn(type, isIndexed);
 
         // increment column count
         columnCount++;
@@ -334,7 +335,7 @@ public class TableWriter implements Closeable {
         // create column files
         if (transientRowCount > 0 || partitionBy == PartitionBy.NONE) {
             try {
-                openNewColumnFiles(name, indexFlag, indexValueBlockCapacity);
+                openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
             }
@@ -353,7 +354,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, type, indexFlag, indexValueBlockCapacity);
+        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -853,7 +854,12 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
+    private int addColumnToMeta(
+            CharSequence name,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean sequentialFlag) {
         int index;
         try {
             index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -862,6 +868,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            ddlMem.putInt(ColumnType.VERSION);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -869,9 +876,18 @@ public class TableWriter implements Closeable {
 
             // add new column metadata to bottom of list
             ddlMem.putByte((byte) type);
-            ddlMem.putBool(indexFlag);
+            long flags = 0;
+            if (indexFlag) {
+                flags |= META_FLAG_BIT_INDEXED;
+            }
+
+            if (sequentialFlag) {
+                flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            ddlMem.putLong(flags);
             ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.skip(10);
+            ddlMem.skip(META_COLUMN_DATA_RESERVED);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -1626,6 +1642,7 @@ public class TableWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
+            ddlMem.putInt(ColumnType.VERSION);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -2113,9 +2130,17 @@ public class TableWriter implements Closeable {
 
     private void writeColumnEntry(int i) {
         ddlMem.putByte((byte) getColumnType(metaMem, i));
-        ddlMem.putBool(isColumnIndexed(metaMem, i));
+        long flags = 0;
+        if (isColumnIndexed(metaMem, i)) {
+            flags |= META_FLAG_BIT_INDEXED;
+        }
+
+        if (isSequential(metaMem, i)) {
+            flags |= META_FLAG_BIT_SEQUENTIAL;
+        }
+        ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(10);
+        ddlMem.skip(META_COLUMN_DATA_RESERVED);
     }
 
     private void writeColumnTop(CharSequence name) {

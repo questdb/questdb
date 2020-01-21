@@ -30,6 +30,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
 public final class ColumnType {
+    // column type version as written to the metadata file
+    public static final int VERSION = 404;
+
     public static final int BOOLEAN = 0;
     public static final int BYTE = 1;
     public static final int SHORT = 2;

@@ -74,6 +74,11 @@ public class TableModel implements TableStructure, Closeable {
         return this;
     }
 
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return false;
+    }
+
     public boolean getSymbolCacheFlag(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
@@ -98,7 +103,7 @@ public class TableModel implements TableStructure, Closeable {
         return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
     }
 
-    public boolean getIndexedFlag(int index) {
+    public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
 

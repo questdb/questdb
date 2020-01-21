@@ -41,7 +41,6 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
-    public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
@@ -65,6 +64,7 @@ public final class TableUtils {
     static final long TX_OFFSET_TXN_CHECK = 64;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
     /**
+     * TXN file structure
      * struct {
      * long txn;
      * long transient_row_count; // rows count in last partition
@@ -82,17 +82,23 @@ public final class TableUtils {
 
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
-    static final String TODO_FILE_NAME = "_todo";
     static final long META_OFFSET_COUNT = 0;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    static final long META_OFFSET_VERSION = 12;
+    static final long META_COLUMN_DATA_SIZE = 16;
+    static final long META_COLUMN_DATA_RESERVED = 3;
+    static final long META_OFFSET_COLUMN_TYPES = 128;
+    static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
+
+    static final String TODO_FILE_NAME = "_todo";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
-    private static final long META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
     static {
@@ -124,13 +130,23 @@ public final class TableUtils {
             mem.putInt(count);
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
+            mem.putInt(ColumnType.VERSION);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
                 mem.putByte((byte) structure.getColumnType(i));
-                mem.putBool(structure.getIndexedFlag(i));
+                long flags = 0;
+                if (structure.isIndexed(i)) {
+                    flags |= META_FLAG_BIT_INDEXED;
+                }
+
+                if (structure.isSequential(i)) {
+                    flags |= META_FLAG_BIT_SEQUENTIAL;
+                }
+
+                mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.skip(10); // reserved
+                mem.skip(META_COLUMN_DATA_RESERVED); // reserved
             }
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
@@ -255,6 +271,10 @@ public final class TableUtils {
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
+            if (ColumnType.VERSION != metaMem.getInt(TableUtils.META_OFFSET_VERSION)) {
+                throw validationException(metaMem).put("Metadata version does not match runtime version");
+            }
+
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
 
@@ -376,12 +396,20 @@ public final class TableUtils {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
+    static long getColumnFlags(ReadOnlyMemory metaMem, int columnIndex) {
+        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
+    }
+
     static boolean isColumnIndexed(ReadOnlyMemory metaMem, int columnIndex) {
-        return metaMem.getBool(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
+    }
+
+    static boolean isSequential(ReadOnlyMemory metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
     static int getIndexBlockCapacity(ReadOnlyMemory metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 2);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
     static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, Path path, int rootLen, int retryCount) {

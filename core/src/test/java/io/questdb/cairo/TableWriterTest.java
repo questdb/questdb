@@ -613,7 +613,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 try {
-                    w.addColumn("c", ColumnType.STRING, 0, false, true, 1024);
+                    w.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "only supported");
@@ -628,7 +628,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 // re-add column  with index flag switched off
-                w.addColumn("c", ColumnType.STRING, 0, false, false, 0);
+                w.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
             }
         });
     }
@@ -655,7 +655,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 try {
-                    w.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0);
+                    w.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "Invalid index value block capacity");
@@ -670,7 +670,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 // re-add column  with index flag switched off
-                w.addColumn("c", ColumnType.STRING, 0, false, false, 0);
+                w.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
             }
         });
     }

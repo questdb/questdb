@@ -33,7 +33,9 @@ public interface TableStructure {
 
     int getIndexBlockCapacity(int columnIndex);
 
-    boolean getIndexedFlag(int columnIndex);
+    boolean isIndexed(int columnIndex);
+
+    boolean isSequential(int columnIndex);
 
     int getPartitionBy();
 

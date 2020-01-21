@@ -109,8 +109,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public boolean getIndexedFlag(int index) {
+    public boolean isIndexed(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        // todo: expose this flag on CREATE TABLE statement
+        return false;
     }
 
     @Override
@@ -202,7 +208,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
             getQueryModel().toSink(sink);
             sink.put(')');
             for (int i = 0, n = getColumnCount(); i < n; i++) {
-                if (getIndexedFlag(i)) {
+                if (isIndexed(i)) {
                     sink.put(", index(");
                     sink.put(getColumnName(i));
                     sink.put(" capacity ");
@@ -258,7 +264,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                     }
                 }
 
-                if (getIndexedFlag(i)) {
+                if (isIndexed(i)) {
                     sink.put(" index capacity ");
                     sink.put(getIndexBlockCapacity(i));
                 }

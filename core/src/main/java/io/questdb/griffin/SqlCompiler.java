@@ -808,7 +808,8 @@ public class SqlCompiler implements Closeable {
                         type,
                         Numbers.ceilPow2(symbolCapacity),
                         cache, indexed,
-                        Numbers.ceilPow2(indexValueBlockCapacity)
+                        Numbers.ceilPow2(indexValueBlockCapacity),
+                        false
                 );
             } catch (CairoException e) {
                 LOG.error().$("Cannot add column '").$(writer.getName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
@@ -1595,8 +1596,13 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean getIndexedFlag(int columnIndex) {
-            return model.getIndexedFlag(columnIndex);
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
         }
 
         @Override
