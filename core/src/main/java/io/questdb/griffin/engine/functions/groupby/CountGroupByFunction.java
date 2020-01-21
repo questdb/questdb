@@ -46,7 +46,7 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, mapValue.getLong(valueIndex) + 1);
+        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
