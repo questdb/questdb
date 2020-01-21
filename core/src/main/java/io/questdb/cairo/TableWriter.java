@@ -603,9 +603,9 @@ public class TableWriter implements Closeable {
             if (ff.exists(path)) {
 
                 // todo: when this fails - rescan partitions to calculate fixedRowCount
-                // also write a todo file, which will indicate which partition we wanted to delete
-                // reconcile partitions we can read sizes of with partition table
-                // add partitions we cannot read sizes of to partition table
+                //     also write a _todo_ file, which will indicate which partition we wanted to delete
+                //     reconcile partitions we can read sizes of with partition table
+                //     add partitions we cannot read sizes of to partition table
                 final long partitionSize = readPartitionSize(ff, path, tempMem8b);
 
                 int symbolWriterCount = denseSymbolMapWriters.size();
@@ -1920,7 +1920,7 @@ public class TableWriter implements Closeable {
                     partitionHi =
                             Timestamps.yearMicros(y, leap)
                                     + Timestamps.monthOfYearMicros(m, leap)
-                                    + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS;
+                                    + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
                 }
                 break;
             case PartitionBy.MONTH:
@@ -1935,7 +1935,7 @@ public class TableWriter implements Closeable {
                     partitionHi =
                             Timestamps.yearMicros(y, leap)
                                     + Timestamps.monthOfYearMicros(m, leap)
-                                    + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS;
+                                    + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
                 }
                 break;
             case PartitionBy.YEAR:
@@ -1943,7 +1943,7 @@ public class TableWriter implements Closeable {
                 leap = Timestamps.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
-                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1);
+                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
                 }
                 break;
             default:
@@ -2191,12 +2191,11 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
-            // todo: try to optimise out '>='
-            if (timestamp < partitionHi && timestamp >= maxTimestamp) {
-                updateMaxTimestamp(timestamp);
-                return row;
+            if (timestamp > partitionHi || timestamp < maxTimestamp) {
+                return newRow0(timestamp);
             }
-            return newRow0(timestamp);
+            updateMaxTimestamp(timestamp);
+            return row;
         }
 
         @NotNull
@@ -2205,7 +2204,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
 
-            if (timestamp >= partitionHi && partitionBy != PartitionBy.NONE) {
+            if (timestamp > partitionHi && partitionBy != PartitionBy.NONE) {
                 switchPartition(timestamp);
             }
 

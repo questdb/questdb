@@ -196,7 +196,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             entries.remove(name);
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            // todo: test utf8 correctness in exception message
             throw CairoException.instance(0).put("Not the lock owner of ").put(name);
         }
 

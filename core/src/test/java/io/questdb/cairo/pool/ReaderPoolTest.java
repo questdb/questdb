@@ -881,17 +881,17 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockByAnotherThread() throws Exception {
         assertWithPool(pool -> {
-            Assert.assertTrue(pool.lock("x"));
+            Assert.assertTrue(pool.lock("Ургант"));
             AtomicInteger errors = new AtomicInteger();
 
             CountDownLatch latch = new CountDownLatch(1);
             new Thread(() -> {
                 try {
                     try {
-                        pool.unlock("x");
+                        pool.unlock("Ургант");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Not the lock owner");
+                        TestUtils.assertContains(e.getMessage(), "Not the lock owner of Ургант");
                     }
                 } catch (Throwable e) {
                     e.printStackTrace();
@@ -905,11 +905,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Assert.assertEquals(0, errors.get());
 
             try {
-                pool.get("x");
+                pool.get("Ургант");
                 Assert.fail();
             } catch (EntryLockedException ignore) {
             }
-            pool.unlock("x");
+            pool.unlock("Ургант");
         });
     }
 
