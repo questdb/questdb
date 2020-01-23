@@ -42,8 +42,8 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public boolean getBool(int columnIndex) {
-        return getByte(columnIndex) == 1;
+    public boolean getBool(int index) {
+        return getByte(index) == 1;
     }
 
     @Override
@@ -52,8 +52,8 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public long getDate(int columnIndex) {
-        return getLong(columnIndex);
+    public long getDate(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -87,8 +87,8 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public long getTimestamp(int columnIndex) {
-        return getLong(columnIndex);
+    public long getTimestamp(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -97,8 +97,8 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public void putBool(int columnIndex, boolean value) {
-        putByte(columnIndex, (byte) (value ? 1 : 0));
+    public void putBool(int index, boolean value) {
+        putByte(index, (byte) (value ? 1 : 0));
     }
 
     @Override
@@ -178,8 +178,8 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public void putTimestamp(int columnIndex, long value) {
-        putLong(columnIndex, value);
+    public void putTimestamp(int index, long value) {
+        putLong(index, value);
     }
 
     @Override

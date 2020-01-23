@@ -30,7 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
@@ -40,7 +40,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
     private final Record record;
-    private final IntIntHashMap symbolTableIndex;
+    private final IntList symbolTableSkewIndex;
     private final RecordCursor mapCursor;
     private RecordCursor base;
     private Record baseRecord;
@@ -54,7 +54,8 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            IntIntHashMap symbolTableIndex) {
+            IntList symbolTableSkewIndex
+    ) {
         this.map = map;
         this.groupByFunctions = groupByFunctions;
         this.timestampIndex = timestampIndex;
@@ -63,7 +64,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
         rec.of(map.getRecord());
         this.record = rec;
-        this.symbolTableIndex = symbolTableIndex;
+        this.symbolTableSkewIndex = symbolTableSkewIndex;
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
@@ -90,7 +91,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableIndex.get(columnIndex));
+        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
     }
 
     @Override

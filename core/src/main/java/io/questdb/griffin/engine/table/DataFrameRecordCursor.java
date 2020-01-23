@@ -28,11 +28,16 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.BooleanSupplier;
+
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
     private final Function filter;
     private final boolean entityCursor;
     private RowCursor rowCursor;
+    private BooleanSupplier next;
+    private final BooleanSupplier nextRow = this::nextRow;
+    private final BooleanSupplier nextFrame = this::nextFrame;
 
     public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter, boolean entityCursor) {
         this.rowCursorFactory = rowCursorFactory;
@@ -43,11 +48,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public boolean hasNext() {
         try {
-            if (rowCursor != null && rowCursor.hasNext()) {
-                record.setRecordIndex(rowCursor.next());
-                return true;
-            }
-            return nextFrame();
+            return next.getAsBoolean();
         } catch (NoMoreFramesException ignore) {
             return false;
         }
@@ -56,10 +57,18 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public void toTop() {
         dataFrameCursor.toTop();
-        rowCursor = null;
+        next = nextFrame;
         if (filter != null) {
             filter.toTop();
         }
+    }
+
+    private boolean nextRow() {
+        if (rowCursor.hasNext()) {
+            record.setRecordIndex(rowCursor.next());
+            return true;
+        }
+        return nextFrame();
     }
 
     @Override
@@ -70,7 +79,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
         this.record.of(dataFrameCursor.getTableReader());
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
-        rowCursor = null;
+        this.next = nextFrame;
         if (filter != null) {
             filter.init(dataFrameCursor, executionContext);
         }
@@ -87,6 +96,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             if (rowCursor.hasNext()) {
                 record.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                next = nextRow;
                 return true;
             }
         }

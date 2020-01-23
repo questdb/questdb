@@ -45,18 +45,18 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
-    public boolean getBool(int columnIndex) {
-        return entries.getBool(getValueColumnOffset(columnIndex));
+    public boolean getBool(int index) {
+        return entries.getBool(getValueColumnOffset(index));
     }
 
     @Override
-    public byte getByte(int columnIndex) {
-        return entries.getByte(getValueColumnOffset(columnIndex));
+    public byte getByte(int index) {
+        return entries.getByte(getValueColumnOffset(index));
     }
 
     @Override
-    public long getDate(int columnIndex) {
-        return getLong(columnIndex);
+    public long getDate(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -126,8 +126,8 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
-    public long getTimestamp(int columnIndex) {
-        return getLong(columnIndex);
+    public long getTimestamp(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -136,8 +136,8 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putBool(int columnIndex, boolean value) {
-        entries.putBool(getValueColumnOffset(columnIndex), value);
+    public void putBool(int index, boolean value) {
+        entries.putBool(getValueColumnOffset(index), value);
     }
 
     @Override
@@ -181,8 +181,8 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putTimestamp(int columnIndex, long value) {
-        putLong(columnIndex, value);
+    public void putTimestamp(int index, long value) {
+        putLong(index, value);
     }
 
     @Override

@@ -39,12 +39,12 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-class GroupByUtils {
-    static void prepareGroupByFunctions(
+public class GroupByUtils {
+    public static void prepareGroupByFunctions(
             QueryModel model,
             RecordMetadata metadata,
             FunctionParser functionParser,
@@ -56,7 +56,7 @@ class GroupByUtils {
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
-            ExpressionNode node = column.getAst();
+            final ExpressionNode node = column.getAst();
 
             if (node.type != ExpressionNode.LITERAL) {
                 // this can fail
@@ -77,7 +77,7 @@ class GroupByUtils {
         }
     }
 
-    static void prepareGroupByRecordFunctions(
+    public static IntList prepareGroupByRecordFunctions(
             @NotNull QueryModel model,
             RecordMetadata metadata,
             @NotNull ListColumnFilter listColumnFilter,
@@ -86,7 +86,6 @@ class GroupByUtils {
             GenericRecordMetadata groupByMetadata,
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
-            IntIntHashMap symbolTableSkewIndex,
             boolean timestampUnimportant
     ) {
 
@@ -97,6 +96,7 @@ class GroupByUtils {
 
         final int timestampIndex = metadata.getTimestampIndex();
         final ObjList<QueryColumn> columns = model.getColumns();
+        IntList symbolTableSkewIndex = null;
 //        assert timestampIndex != -1;
 
         int valueColumnIndex = 0;
@@ -152,7 +152,10 @@ class GroupByUtils {
                             fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            symbolTableSkewIndex.put(i, index);
+                            if (symbolTableSkewIndex == null) {
+                                symbolTableSkewIndex = new IntList();
+                            }
+                            symbolTableSkewIndex.extendAndSet(i, index);
                             fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
@@ -213,6 +216,8 @@ class GroupByUtils {
             }
 
         }
+
+        return symbolTableSkewIndex;
     }
 
     static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
@@ -223,21 +228,15 @@ class GroupByUtils {
         }
     }
 
-    private static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+    public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeNext(value, record);
         }
     }
 
-    private static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+    public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
-        }
-    }
-
-    static void closeGroupByFunctions(ObjList<GroupByFunction> groupByFunctions) {
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            groupByFunctions.getQuick(i).close();
         }
     }
 }

@@ -24,57 +24,49 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
-    private final Map map;
-    private final RecordSink keyMapSink;
+public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
-    private final Record record;
+    private final SplitVirtualRecord record;
     private final IntList symbolTableSkewIndex;
-    private final RecordCursor mapCursor;
+    private final SimpleMapValue simpleMapValue;
     private RecordCursor base;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
 
-    public SampleByFillPrevRecordCursor(
-            Map map,
-            RecordSink keyMapSink,
+    public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            IntList symbolTableSkewIndex
+            IntList symbolTableSkewIndex,
+            SimpleMapValue simpleMapValue
     ) {
-        this.map = map;
+        this.simpleMapValue = simpleMapValue;
         this.groupByFunctions = groupByFunctions;
         this.timestampIndex = timestampIndex;
-        this.keyMapSink = keyMapSink;
         this.timestampSampler = timestampSampler;
-        VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
-        rec.of(map.getRecord());
-        this.record = rec;
+        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
+        this.record.of(simpleMapValue);
         this.symbolTableSkewIndex = symbolTableSkewIndex;
+        assert recordFunctions.size() == placeholderFunctions.size();
+        final TimestampFunc timestampFunc = new TimestampFunc(0);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
-                recordFunctions.setQuick(i, new TimestampFunc(0));
+                recordFunctions.setQuick(i, timestampFunc);
+                placeholderFunctions.setQuick(i, timestampFunc);
             }
         }
-        this.mapCursor = map.getCursor();
     }
 
     @Override
@@ -94,13 +86,6 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
     @Override
     public boolean hasNext() {
-        //
-        if (mapCursor.hasNext()) {
-            // scroll down the map iterator
-            // next() will return record that uses current map position
-            return true;
-        }
-
         if (baseRecord == null) {
             return false;
         }
@@ -110,57 +95,52 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        final long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        long currentTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
 
         // is data timestamp ahead of next expected timestamp?
         if (this.nextTimestamp > nextTimestamp) {
             this.lastTimestamp = nextTimestamp;
-            // reset iterator on map and stream contents
-            return map.getCursor().hasNext();
+            record.setActiveB();
+            return true;
         }
 
-        this.lastTimestamp = this.nextTimestamp;
-
-        // looks like we need to populate key map
+        // this is new timestamp value
+        this.lastTimestamp = currentTimestamp;
+        // switch to non-placeholder record
+        record.setActiveA();
 
         int n = groupByFunctions.size();
-        while (true) {
-            long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+        // initialize values
+        for (int i = 0; i < n; i++) {
+            groupByFunctions.getQuick(i).computeFirst(simpleMapValue, baseRecord);
+        }
+
+        while (base.hasNext()) {
+            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                final MapValue value = key.findValue();
-                assert value != null;
-
-                if (value.getLong(0) != timestamp) {
-                    value.putLong(0, timestamp);
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
-                    }
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
-                    }
+                for (int i = 0; i < n; i++) {
+                    groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
                 }
-
-                // carry on with the loop if we still have data
-                if (base.hasNext()) {
-                    continue;
-                }
-
-                // we ran out of data, make sure hasNext() returns false at the next
-                // opportunity, after we stream map that is.
-                baseRecord = null;
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
                 this.nextTimestamp = timestamp;
+                return true;
             }
-
-            return this.map.getCursor().hasNext();
         }
+
+        // no more data from base cursor
+        // return what we aggregated so far and stop
+        baseRecord = null;
+        return true;
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -170,26 +150,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
             baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             this.lastTimestamp = this.nextTimestamp;
-
-            int n = groupByFunctions.size();
-            RecordCursor mapCursor = map.getCursor();
-            MapRecord mapRecord = map.getRecord();
-            while (mapCursor.hasNext()) {
-                MapValue value = mapRecord.getValue();
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).setNull(value);
-                }
-            }
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

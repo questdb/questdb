@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,7 +44,7 @@ public interface SampleByCursorLambda {
             int timestampIndex,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntIntHashMap symbolTableIndex,
+            IntList symbolTableSkewIndex,
             int keyCount
     ) throws SqlException;
 }

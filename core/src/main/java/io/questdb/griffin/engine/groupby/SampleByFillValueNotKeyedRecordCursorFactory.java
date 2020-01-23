@@ -24,72 +24,55 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
-    protected final Map map;
-    private final SampleByFillNoneRecordCursor cursor;
+    private final SampleByFillValueNotKeyedRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final RecordMetadata metadata;
 
-    public SampleByFillNoneRecordCursorFactory(
-            CairoConfiguration configuration,
+    public SampleByFillValueNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
-            RecordMetadata groupByMetadata,
-            @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<Function> recordFunctions,
-            IntList symbolTableIndex,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes
-
-    ) {
-        this.recordFunctions = recordFunctions;
-        // sink will be storing record columns to map key
-        final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            @Transient @NotNull ObjList<ExpressionNode> fillValues,
+            RecordMetadata groupByMetadata,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
+            IntList symbolTableSkewIndex
+    ) throws SqlException {
         try {
             this.base = base;
             this.metadata = groupByMetadata;
-            int timestampIndex = base.getMetadata().getTimestampIndex();
-            this.cursor = new SampleByFillNoneRecordCursor(
-                    this.map,
-                    mapSink,
+            this.recordFunctions = recordFunctions;
+            final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(recordFunctions, fillValues);
+            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByMetadata.getColumnCount());
+
+            this.cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
-                    this.recordFunctions,
-                    timestampIndex,
+                    recordFunctions,
+                    placeholderFunctions,
+                    base.getMetadata().getTimestampIndex(),
                     timestampSampler,
-                    symbolTableIndex
+                    symbolTableSkewIndex,
+                    simpleMapValue
             );
-        } catch (CairoException e) {
-            Misc.free(map);
+
+        } catch (SqlException | CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            map.clear();
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
-
-        baseCursor.close();
-        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override
@@ -100,8 +83,17 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @Override
     public void close() {
         Misc.freeObjList(recordFunctions);
-        Misc.free(map);
         Misc.free(base);
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (baseCursor.hasNext()) {
+            return initFunctionsAndCursor(executionContext, baseCursor);
+        }
+        Misc.free(baseCursor);
+        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override

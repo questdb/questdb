@@ -29,15 +29,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
-    private final IntIntHashMap symbolTableSkewIndex;
+    private final IntList symbolTableSkewIndex;
     private SymbolTableSource symbolTableSource;
 
-    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntIntHashMap symbolTableSkewIndex) {
+    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntList symbolTableSkewIndex) {
         super(functions);
         this.symbolTableSkewIndex = symbolTableSkewIndex;
     }

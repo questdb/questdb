@@ -37,7 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -81,7 +81,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByRecordC
             int timestampIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @NotNull IntIntHashMap symbolTableIndex,
+            IntList symbolTableSkewIndex,
             int keyCount
     ) {
         return new SampleByFillPrevRecordCursor(
@@ -91,7 +91,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByRecordC
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,
-                symbolTableIndex
+                symbolTableSkewIndex
         );
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.groupby.*;
@@ -946,39 +947,8 @@ public class SqlCodeGenerator {
             valueTypes.reset();
             listColumnFilterA.clear();
 
-            if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
-                return new SampleByFillNoneRecordCursorFactory(
-                        configuration,
-                        factory,
-                        timestampSampler,
-                        model,
-                        listColumnFilterA,
-                        functionParser,
-                        executionContext,
-                        asm,
-                        keyTypes,
-                        valueTypes
-                );
-            }
-
-
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 return new SampleByFillPrevRecordCursorFactory(
-                        configuration,
-                        factory,
-                        timestampSampler,
-                        model,
-                        listColumnFilterA,
-                        functionParser,
-                        executionContext,
-                        asm,
-                        keyTypes,
-                        valueTypes
-                );
-            }
-
-            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "null")) {
-                return new SampleByFillNullRecordCursorFactory(
                         configuration,
                         factory,
                         timestampSampler,
@@ -1008,20 +978,117 @@ public class SqlCodeGenerator {
                 );
             }
 
+            final int columnCount = model.getColumns().size();
+            final RecordMetadata metadata = factory.getMetadata();
+            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
+
+            GroupByUtils.prepareGroupByFunctions(
+                    model,
+                    metadata,
+                    functionParser,
+                    executionContext,
+                    groupByFunctions,
+                    valueTypes
+            );
+
+            final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+            final IntList symbolTableSkewIndex = GroupByUtils.prepareGroupByRecordFunctions(
+                    model,
+                    metadata,
+                    listColumnFilterA,
+                    groupByFunctions,
+                    recordFunctions,
+                    groupByMetadata,
+                    keyTypes,
+                    valueTypes.getColumnCount(),
+                    false
+            );
+
+            if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
+
+                if (keyTypes.getColumnCount() == 0) {
+                    // this sample by is not keyed
+                    return new SampleByFillNoneNotKeyedRecordCursorFactory(
+                            factory,
+                            timestampSampler,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            symbolTableSkewIndex
+                    );
+                }
+
+                return new SampleByFillNoneRecordCursorFactory(
+                        configuration,
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableSkewIndex,
+                        timestampSampler,
+                        listColumnFilterA,
+                        asm,
+                        keyTypes,
+                        valueTypes
+                );
+            }
+
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "null")) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new SampleByFillNullNotKeyedRecordCursorFactory(
+                            factory,
+                            timestampSampler,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            symbolTableSkewIndex
+                    );
+                }
+
+                return new SampleByFillNullRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        listColumnFilterA,
+                        asm,
+                        keyTypes,
+                        valueTypes,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableSkewIndex
+                );
+            }
+
             assert fillCount > 0;
+
+            if (keyTypes.getColumnCount() == 0) {
+                return new SampleByFillValueNotKeyedRecordCursorFactory(
+                        factory,
+                        timestampSampler,
+                        sampleByFill,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableSkewIndex
+                );
+            }
 
             return new SampleByFillValueRecordCursorFactory(
                     configuration,
                     factory,
                     timestampSampler,
-                    model,
                     listColumnFilterA,
-                    functionParser,
-                    executionContext,
                     asm,
                     sampleByFill,
                     keyTypes,
-                    valueTypes
+                    valueTypes,
+                    groupByMetadata,
+                    groupByFunctions,
+                    recordFunctions,
+                    symbolTableSkewIndex
             );
         } catch (SqlException | CairoException e) {
             factory.close();

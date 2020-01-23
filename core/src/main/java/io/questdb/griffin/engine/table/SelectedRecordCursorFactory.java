@@ -47,8 +47,10 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public Record newRecord() {
+        // base record may throw exception, get this out of the way first before creating new object instance.
+        final Record baseRecord = base.newRecord();
         final SelectedRecord record = new SelectedRecord(columnCrossIndex);
-        record.of(base.newRecord());
+        record.of(baseRecord);
         return record;
     }
 

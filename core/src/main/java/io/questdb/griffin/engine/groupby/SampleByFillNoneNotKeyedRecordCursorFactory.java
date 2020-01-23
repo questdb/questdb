@@ -24,57 +24,46 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
-    protected final Map map;
-    private final SampleByFillNoneRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
+    private final SampleByFillNoneNotKeyedRecordCursor cursor;
     private final RecordMetadata metadata;
+    private final ObjList<Function> recordFunctions;
 
-    public SampleByFillNoneRecordCursorFactory(
-            CairoConfiguration configuration,
+    public SampleByFillNoneNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
-            RecordMetadata groupByMetadata,
-            @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<Function> recordFunctions,
-            IntList symbolTableIndex,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes
-
+            RecordMetadata groupByMetadata,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
+            IntList symbolTableIndex
     ) {
+        final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByMetadata.getColumnCount());
+        final RecordMetadata metadata = base.getMetadata();
         this.recordFunctions = recordFunctions;
-        // sink will be storing record columns to map key
-        final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+
         try {
             this.base = base;
             this.metadata = groupByMetadata;
-            int timestampIndex = base.getMetadata().getTimestampIndex();
-            this.cursor = new SampleByFillNoneRecordCursor(
-                    this.map,
-                    mapSink,
+            this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
+                    simpleMapValue,
                     groupByFunctions,
-                    this.recordFunctions,
-                    timestampIndex,
+                    recordFunctions,
+                    metadata.getTimestampIndex(),
                     timestampSampler,
                     symbolTableIndex
             );
         } catch (CairoException e) {
-            Misc.free(map);
             Misc.freeObjList(recordFunctions);
             throw e;
         }
@@ -84,10 +73,8 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         if (baseCursor.hasNext()) {
-            map.clear();
             return initFunctionsAndCursor(executionContext, baseCursor);
         }
-
         baseCursor.close();
         return EmptyTableRecordCursor.INSTANCE;
     }
@@ -100,7 +87,6 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @Override
     public void close() {
         Misc.freeObjList(recordFunctions);
-        Misc.free(map);
         Misc.free(base);
     }
 

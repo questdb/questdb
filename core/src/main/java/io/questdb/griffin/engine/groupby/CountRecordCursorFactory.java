@@ -65,7 +65,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public Record newRecord() {
-        return cursor.newRecord();
+        throw new UnsupportedOperationException();
     }
 
     @Override

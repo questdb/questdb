@@ -105,7 +105,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
             }
         }
 
-        private Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
+        private static Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
             if (Long256Util.isValidString(text, len)) {
                 try {
                     final long a = Numbers.parseHexLong(text, 2, Math.min(len, 18));

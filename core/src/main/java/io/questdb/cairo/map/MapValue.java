@@ -30,11 +30,11 @@ public interface MapValue extends Record {
 
     long getAddress();
 
-    boolean getBool(int columnIndex);
+    boolean getBool(int index);
 
     byte getByte(int index);
 
-    long getDate(int columnIndex);
+    long getDate(int index);
 
     double getDouble(int index);
 
@@ -48,11 +48,11 @@ public interface MapValue extends Record {
 
     short getShort(int index);
 
-    long getTimestamp(int columnIndex);
+    long getTimestamp(int index);
 
     boolean isNew();
 
-    void putBool(int columnIndex, boolean value);
+    void putBool(int index, boolean value);
 
     void putByte(int index, byte value);
 
@@ -82,7 +82,7 @@ public interface MapValue extends Record {
 
     void putChar(int index, char value);
 
-    void putTimestamp(int columnIndex, long value);
+    void putTimestamp(int index, long value);
 
     void setMapRecordHere();
 }

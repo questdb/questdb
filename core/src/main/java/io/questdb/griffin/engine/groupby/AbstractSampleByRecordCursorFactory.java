@@ -78,9 +78,8 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
 
         this.recordFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        final IntIntHashMap symbolTableIndex = new IntIntHashMap();
 
-        GroupByUtils.prepareGroupByRecordFunctions(
+        final IntList symbolTableSkewIndex = GroupByUtils.prepareGroupByRecordFunctions(
                 model,
                 metadata,
                 listColumnFilter,
@@ -89,7 +88,6 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                symbolTableIndex,
                 false
         );
 
@@ -107,7 +105,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
                     metadata.getTimestampIndex(),
                     groupByFunctions,
                     recordFunctions,
-                    symbolTableIndex,
+                    symbolTableSkewIndex,
                     keyTypes.getColumnCount()
             );
         } catch (SqlException | CairoException e) {
@@ -118,7 +116,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public Record newRecord() {
-        return cursor.newRecord();
+        throw new UnsupportedOperationException();
     }
 
     @Override

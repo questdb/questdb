@@ -24,49 +24,45 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-class SampleByFillNoneNKRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
-    private final Map map;
+class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
-    private final Record record;
-    private final IntIntHashMap symbolTableIndex;
-    private final RecordCursor mapCursor;
+    private final IntList symbolTableSkewIndex;
+    private final SimpleMapValue simpleMapValue;
+    private final VirtualRecord record;
     private RecordCursor base;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
 
-    public SampleByFillNoneNKRecordCursor(
-            Map map,
+    public SampleByFillNoneNotKeyedRecordCursor(
+            SimpleMapValue simpleMapValue,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            IntIntHashMap symbolTableIndex) {
-        this.map = map;
+            IntList symbolTableSkewIndex
+    ) {
+        this.simpleMapValue = simpleMapValue;
         this.groupByFunctions = groupByFunctions;
         this.timestampIndex = timestampIndex;
         this.timestampSampler = timestampSampler;
-        VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
-        rec.of(map.getRecord());
-        this.record = rec;
-        this.symbolTableIndex = symbolTableIndex;
+        this.symbolTableSkewIndex = symbolTableSkewIndex;
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function f = recordFunctions.getQuick(i);
+            final Function f = recordFunctions.getQuick(i);
             if (f == null) {
                 recordFunctions.setQuick(i, new TimestampFunc(0));
             }
         }
-        this.mapCursor = map.getCursor();
+        this.record = new VirtualRecordNoRowid(recordFunctions);
+        this.record.of(simpleMapValue);
     }
 
     @Override
@@ -81,12 +77,40 @@ class SampleByFillNoneNKRecordCursor implements DelegatingRecordCursor, NoRandom
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableIndex.get(columnIndex));
+        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
     }
 
     @Override
     public boolean hasNext() {
-        return mapHasNext() || baseRecord != null && computeNextBatch();
+        if (baseRecord == null) {
+            return false;
+        }
+
+        this.lastTimestamp = this.nextTimestamp;
+
+        // looks like we need to populate key map
+        // at the start of this loop 'lastTimestamp' will be set to timestamp
+        // of first record in base cursor
+        int n = groupByFunctions.size();
+        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
+
+        while (base.hasNext()) {
+            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            if (lastTimestamp == timestamp) {
+                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+            } else {
+                // timestamp changed, make sure we keep the value of 'lastTimestamp'
+                // unchanged. Timestamp columns uses this variable
+                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
+                // and build another map
+                this.nextTimestamp = timestamp;
+                return true;
+            }
+        }
+
+        // opportunity, after we stream map that is.
+        baseRecord = null;
+        return true;
     }
 
     @Override
@@ -96,7 +120,6 @@ class SampleByFillNoneNKRecordCursor implements DelegatingRecordCursor, NoRandom
             baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             this.lastTimestamp = this.nextTimestamp;
-            map.clear();
         }
     }
 
@@ -111,49 +134,6 @@ class SampleByFillNoneNKRecordCursor implements DelegatingRecordCursor, NoRandom
         this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
-    }
-
-    private boolean computeNextBatch() {
-        this.lastTimestamp = this.nextTimestamp;
-        this.map.clear();
-        final MapValue value = map.withKey().createValue();
-
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        int n = groupByFunctions.size();
-        do {
-            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            if (lastTimestamp == timestamp) {
-                GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
-                if (value.isNew()) {
-                    map.withKey().createValue();
-                }
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.nextTimestamp = timestamp;
-                return createMapCursor();
-            }
-        } while (base.hasNext());
-
-        // we ran out of data, make sure hasNext() returns false at the next
-        // opportunity, after we stream map that is.
-        baseRecord = null;
-        return createMapCursor();
-    }
-
-    private boolean createMapCursor() {
-        // reset map iterator
-        map.getCursor();
-        // we do not have any more data, let map take over
-        return mapHasNext();
-    }
-
-    private boolean mapHasNext() {
-        return mapCursor.hasNext();
     }
 
     private class TimestampFunc extends TimestampFunction {

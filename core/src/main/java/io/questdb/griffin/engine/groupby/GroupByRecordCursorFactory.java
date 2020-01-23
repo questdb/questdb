@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -77,9 +77,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         this.recordFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        final IntIntHashMap symbolTableSkewIndex = new IntIntHashMap();
-
-        GroupByUtils.prepareGroupByRecordFunctions(
+        final IntList symbolTableSkewIndex = GroupByUtils.prepareGroupByRecordFunctions(
                 model,
                 metadata,
                 listColumnFilter,
@@ -88,7 +86,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                symbolTableSkewIndex,
                 true
         );
 

@@ -98,12 +98,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         compiler.close();
     }
 
-    @After
-    public void tearDownAfterTest() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-    }
-
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -345,6 +339,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 // and again
                 assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
             }
+
+            if (!factory.isRandomAccessCursor()) {
+                try {
+                    factory.newRecord();
+                    Assert.fail();
+                } catch (UnsupportedOperationException e) {
+                    // expected
+                }
+            }
         }
     }
 
@@ -359,21 +362,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                if (ddl != null) {
-                    compiler.compile(ddl, sqlExecutionContext);
-                }
-                if (verify != null) {
-                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
-                }
-                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
             }
+            if (verify != null) {
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
+            }
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
         });
     }
 
@@ -438,6 +434,26 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
+    @After
+    public void tearDownAfterTest() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+    }
+
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) {
         assertTimestamp(expectedTimestamp, factory);
         assertCursor(expected, factory, supportsRandomAccess, true);
@@ -492,19 +508,5 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
         }
-    }
-
-    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
     }
 }

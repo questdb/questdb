@@ -88,9 +88,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.recordFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        final IntIntHashMap symbolTableSkewIndex = new IntIntHashMap();
-
-        GroupByUtils.prepareGroupByRecordFunctions(
+        final IntList symbolTableSkewIndex = GroupByUtils.prepareGroupByRecordFunctions(
                 model,
                 metadata,
                 listColumnFilter,
@@ -99,7 +97,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                symbolTableSkewIndex,
                 false
         );
 
@@ -142,7 +139,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
                     break;
                 default:
-                    GroupByUtils.closeGroupByFunctions(groupByFunctions);
+                    Misc.freeObjList(groupByFunctions);
                     throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }
@@ -464,6 +461,5 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 groupByFunctions.getQuick(i).setNull(value);
             }
         }
-
     }
 }
