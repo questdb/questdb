@@ -697,7 +697,7 @@
 
         function publishQuery() {
             if (query) {
-                bus.trigger('grid.query', encodeURIComponent(query));
+                bus.trigger(qdb.MSG_QUERY_EXPORT, {q: query});
             }
         }
 

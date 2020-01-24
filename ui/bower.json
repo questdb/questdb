@@ -16,7 +16,7 @@
   ],
   "dependencies": {
     "bootstrap-sass": "3.3.5",
-    "jquery": "2.2.2",
+    "jquery": "2.2.4",
     "fontawesome": "4.5.0",
     "metisMenu": "2.4.3",
     "PACE": "pace#1.0.2",

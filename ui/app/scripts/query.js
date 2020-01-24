@@ -201,9 +201,9 @@
         }
 
         //noinspection JSUnusedLocalSymbols
-        function exportQuery(x, query) {
-            if (query) {
-                window.location.href = '/exp?query=' + query;
+        function exportQuery(x, e) {
+            if (e) {
+                window.location.href = '/exp?query=' + encodeURIComponent(e.q);
             }
         }
 
@@ -213,7 +213,7 @@
             bus.on(qdb.MSG_QUERY_ERROR, error);
             bus.on(qdb.MSG_QUERY_OK, ok);
             bus.on(qdb.MSG_QUERY_RUNNING, start);
-            bus.on('grid.query', exportQuery);
+            bus.on(qdb.MSG_QUERY_EXPORT, exportQuery);
 
             $('.js-editor-toggle-invisible').click(function () {
                 bus.trigger('editor.toggle.invisibles');

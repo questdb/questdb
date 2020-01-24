@@ -29,6 +29,7 @@
     'use strict';
 
     const queryBatchSize = 1000;
+    const MSG_QUERY_EXPORT = 'query.in.export';
     const MSG_QUERY_EXEC = 'query.in.exec';
     const MSG_QUERY_CANCEL = 'query.in.cancel';
     const MSG_QUERY_RUNNING = 'query.out.running';
@@ -66,6 +67,7 @@
     $.extend(true, window, {
         qdb: {
             queryBatchSize,
+            MSG_QUERY_EXPORT,
             MSG_QUERY_EXEC,
             MSG_QUERY_CANCEL,
             MSG_QUERY_RUNNING,
