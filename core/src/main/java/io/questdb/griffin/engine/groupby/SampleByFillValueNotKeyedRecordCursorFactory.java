@@ -50,14 +50,15 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
+            IntList symbolTableSkewIndex,
+            int valueCount
     ) throws SqlException {
         try {
             this.base = base;
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(recordFunctions, fillValues);
-            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByMetadata.getColumnCount());
+            final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
 
             this.cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,

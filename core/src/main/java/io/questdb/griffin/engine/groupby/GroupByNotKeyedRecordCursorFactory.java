@@ -24,53 +24,37 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
-public class GroupByRecordCursorFactory implements RecordCursorFactory {
+public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
     protected final RecordCursorFactory base;
-    private final Map dataMap;
-    private final VirtualFunctionSkewedSymbolRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
+    private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordMetadata metadata;
+    private final SimpleMapValue simpleMapValue;
+    private final VirtualRecord virtualRecord;
 
-    public GroupByRecordCursorFactory(
-            CairoConfiguration configuration,
+    public GroupByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
-            @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
-            @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
+            int valueCount
     ) {
-        // sink will be storing record columns to map key
-        try {
-            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-            this.base = base;
-            this.metadata = groupByMetadata;
-            this.groupByFunctions = groupByFunctions;
-            this.recordFunctions = recordFunctions;
-            this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
-        } catch (CairoException e) {
-            Misc.freeObjList(recordFunctions);
-            throw e;
-        }
+        this.simpleMapValue = new SimpleMapValue(valueCount);
+        this.base = base;
+        this.metadata = groupByMetadata;
+        this.groupByFunctions = groupByFunctions;
+        this.virtualRecord = new VirtualRecordNoRowid(recordFunctions);
+        this.virtualRecord.of(simpleMapValue);
+        this.cursor = new GroupByNotKeyedRecordCursor();
     }
 
     @Override
@@ -80,35 +64,36 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(dataMap);
+        Misc.freeObjList(groupByFunctions);
         Misc.free(base);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
-
         try {
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
+
+            if (baseCursor.hasNext()) {
+                GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
+            } else {
+                return EmptyTableRecordCursor.INSTANCE;
+            }
+
             while (baseCursor.hasNext()) {
-                final MapKey key = dataMap.withKey();
-                mapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
+                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
             }
-            cursor.of(baseCursor, dataMap.getCursor());
+
+            cursor.toTop();
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
-            for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-                recordFunctions.getQuick(i).init(cursor, executionContext);
+            for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
+                groupByFunctions.getQuick(i).init(cursor, executionContext);
             }
-            return cursor;
-        } catch (CairoException e) {
-            baseCursor.close();
-            throw e;
+        } finally {
+            Misc.free(baseCursor);
         }
+        return cursor;
     }
 
     @Override
@@ -119,5 +104,34 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean isRandomAccessCursor() {
         return true;
+    }
+
+    private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
+
+        private int recordsRemaining = 1;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return virtualRecord;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return recordsRemaining-- > 0;
+        }
+
+        @Override
+        public void toTop() {
+            recordsRemaining = 1;
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
     }
 }

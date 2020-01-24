@@ -2174,6 +2174,92 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillPrevNotKeyed() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "0.8745454354091133\t1970-01-03T00:00:00.000000Z\n" +
+                        "NaN\t1970-01-03T03:00:00.000000Z\n",
+                "select sum(o), k from x sample by 3h fill(prev)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(o), k from x sample by 3h fill(prev)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "NaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "1.0412323041734997\t1970-01-03T03:00:00.000000Z\n",
+                false
+        );
+    }
+
+    @Test
     public void testSampleFillPrevDuplicateKey() throws Exception {
         assertQuery("b\tb1\tb2\tsum\tk\n" +
                         "\t\t\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
@@ -3745,6 +3831,88 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 30m fill(20.56)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "0.35983672154330515\t1970-01-03T00:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T00:30:00.000000Z\n" +
+                        "76.75673070796104\t1970-01-03T01:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T01:30:00.000000Z\n" +
+                        "62.173267078530984\t1970-01-03T02:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T02:30:00.000000Z\n" +
+                        "63.81607531178513\t1970-01-03T03:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T03:30:00.000000Z\n" +
+                        "57.93466326862211\t1970-01-03T04:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T04:30:00.000000Z\n" +
+                        "12.026122412833129\t1970-01-03T05:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T05:30:00.000000Z\n" +
+                        "48.820511018586934\t1970-01-03T06:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T06:30:00.000000Z\n" +
+                        "26.922103479744898\t1970-01-03T07:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T07:30:00.000000Z\n" +
+                        "52.98405941762054\t1970-01-03T08:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T08:30:00.000000Z\n" +
+                        "84.45258177211063\t1970-01-03T09:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyed() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T00:30:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T01:30:00.000000Z\n" +
+                        "23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T02:30:00.000000Z\n" +
+                        "70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T03:30:00.000000Z\n" +
+                        "87.99634725391621\t1970-01-03T04:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T04:30:00.000000Z\n" +
+                        "32.881769076795045\t1970-01-03T05:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T05:30:00.000000Z\n" +
+                        "97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T06:30:00.000000Z\n" +
+                        "81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T07:30:00.000000Z\n" +
+                        "57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T08:30:00.000000Z\n" +
+                        "12.026122412833129\t1970-01-03T09:00:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
                 false);

@@ -34,50 +34,38 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
-    private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final RecordMetadata metadata;
+    private final SampleByFillPrevNotKeyedRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
+    private final RecordMetadata metadata;
 
-    public SampleByFillNoneNotKeyedRecordCursorFactory(
+    public SampleByFillPrevNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableIndex,
-            int valueCount
-    ) {
-        final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        final RecordMetadata metadata = base.getMetadata();
-        this.recordFunctions = recordFunctions;
+            IntList symbolTableSkewIndex
 
+    ) {
         try {
             this.base = base;
             this.metadata = groupByMetadata;
-            this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
-                    simpleMapValue,
+            this.recordFunctions = recordFunctions;
+            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByMetadata.getColumnCount());
+            this.cursor = new SampleByFillPrevNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,
-                    metadata.getTimestampIndex(),
+                    base.getMetadata().getTimestampIndex(),
                     timestampSampler,
-                    symbolTableIndex
+                    symbolTableSkewIndex,
+                    simpleMapValue
             );
         } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
-        baseCursor.close();
-        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override
@@ -89,6 +77,16 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
     public void close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (baseCursor.hasNext()) {
+            return initFunctionsAndCursor(executionContext, baseCursor);
+        }
+        baseCursor.close();
+        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override

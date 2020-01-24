@@ -131,7 +131,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
 
         int n = groupByFunctions.size();
         while (true) {
-            long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);

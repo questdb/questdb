@@ -947,21 +947,6 @@ public class SqlCodeGenerator {
             valueTypes.reset();
             listColumnFilterA.clear();
 
-            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
-                return new SampleByFillPrevRecordCursorFactory(
-                        configuration,
-                        factory,
-                        timestampSampler,
-                        model,
-                        listColumnFilterA,
-                        functionParser,
-                        executionContext,
-                        asm,
-                        keyTypes,
-                        valueTypes
-                );
-            }
-
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "linear")) {
                 return new SampleByInterpolateRecordCursorFactory(
                         configuration,
@@ -1006,6 +991,34 @@ public class SqlCodeGenerator {
                     false
             );
 
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new SampleByFillPrevNotKeyedRecordCursorFactory(
+                            factory,
+                            timestampSampler,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            symbolTableSkewIndex
+                    );
+                }
+
+                return new SampleByFillPrevRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        listColumnFilterA,
+                        asm,
+                        keyTypes,
+                        valueTypes,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableSkewIndex
+                );
+            }
+
+
             if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
 
                 if (keyTypes.getColumnCount() == 0) {
@@ -1016,7 +1029,8 @@ public class SqlCodeGenerator {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            symbolTableSkewIndex
+                            symbolTableSkewIndex,
+                            valueTypes.getColumnCount()
                     );
                 }
 
@@ -1043,7 +1057,8 @@ public class SqlCodeGenerator {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            symbolTableSkewIndex
+                            symbolTableSkewIndex,
+                            valueTypes.getColumnCount()
                     );
                 }
 
@@ -1072,7 +1087,8 @@ public class SqlCodeGenerator {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
-                        symbolTableSkewIndex
+                        symbolTableSkewIndex,
+                        valueTypes.getColumnCount()
                 );
             }
 
@@ -1236,16 +1252,54 @@ public class SqlCodeGenerator {
             valueTypes.reset();
             listColumnFilterA.clear();
 
+
+            final int columnCount = model.getColumns().size();
+            final RecordMetadata metadata = factory.getMetadata();
+            ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            GroupByUtils.prepareGroupByFunctions(
+                    model,
+                    metadata,
+                    functionParser,
+                    executionContext,
+                    groupByFunctions,
+                    valueTypes
+            );
+
+            final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+            final IntList symbolTableSkewIndex = GroupByUtils.prepareGroupByRecordFunctions(
+                    model,
+                    metadata,
+                    listColumnFilterA,
+                    groupByFunctions,
+                    recordFunctions,
+                    groupByMetadata,
+                    keyTypes,
+                    valueTypes.getColumnCount(),
+                    true
+            );
+
+            if (keyTypes.getColumnCount() == 0) {
+                return new GroupByNotKeyedRecordCursorFactory(
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        valueTypes.getColumnCount()
+                );
+            }
+
             return new GroupByRecordCursorFactory(
                     configuration,
                     factory,
-                    model,
                     listColumnFilterA,
-                    functionParser,
-                    executionContext,
                     asm,
                     keyTypes,
-                    valueTypes
+                    valueTypes,
+                    groupByMetadata,
+                    groupByFunctions,
+                    recordFunctions,
+                    symbolTableSkewIndex
             );
 
         } catch (CairoException e) {
