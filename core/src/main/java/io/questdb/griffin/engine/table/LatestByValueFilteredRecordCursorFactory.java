@@ -49,11 +49,6 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         super.close();
         if (filter != null) {

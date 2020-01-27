@@ -33,7 +33,7 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
     private long dataVersion = -1;
 
     public void bookmark() {
-        lastRowId = record.getRowId();
+        lastRowId = recordA.getRowId();
         this.txn = reader.getTxn();
     }
 

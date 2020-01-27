@@ -66,14 +66,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 columnSplit,
                 joinKeyMap,
                 slaveChain,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                slaveFactory.newRecord()
+                NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override
@@ -130,20 +124,18 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
-        private final Record slaveRecord;
+        private Record slaveRecord;
 
         public HashOuterJoinLightRecordCursor(
                 int columnSplit,
                 Map joinKeyMap,
                 LongChain slaveChain,
-                Record nullRecord,
-                Record slaveRecord
+                Record nullRecord
         ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.columnSplit = columnSplit;
-            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -208,7 +200,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            slaveCursor.link(slaveRecord);
+            this.slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

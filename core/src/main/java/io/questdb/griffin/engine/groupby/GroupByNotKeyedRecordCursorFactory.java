@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -58,11 +58,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
@@ -78,7 +73,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             if (baseCursor.hasNext()) {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
             } else {
-                return EmptyTableRecordCursor.INSTANCE;
+                return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
             while (baseCursor.hasNext()) {

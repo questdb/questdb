@@ -74,7 +74,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
             final int partitionIndex = frame.getPartitionIndex();
-            record.jumpTo(partitionIndex, 0);
+            recordA.jumpTo(partitionIndex, 0);
 
             for (int i = keyLo; i < keyHi; i++) {
                 int index = found.keyIndex(i);
@@ -82,8 +82,8 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
                     RowCursor cursor = indexReader.getCursor(false, i, rowLo, rowHi);
                     if (cursor.hasNext()) {
                         long row = cursor.next();
-                        record.setRecordIndex(row);
-                        if (filter.getBool(record)) {
+                        recordA.setRecordIndex(row);
+                        if (filter.getBool(recordA)) {
                             rows.add(Rows.toRowID(partitionIndex, row));
                             found.addAt(index, i);
                         }

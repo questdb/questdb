@@ -35,14 +35,12 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain.TreeCursor chainCursor;
     private RecordCursor base;
     private Record baseRecord;
-    private final Record placeHolderRecord;
 
-    public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator, Record placeHolderRecord) {
+    public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
         this.comparator = comparator;
         // assign it once, its the same instance anyway
         this.chainCursor = chain.getCursor();
-        this.placeHolderRecord = placeHolderRecord;
     }
 
     @Override
@@ -76,13 +74,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return base.newRecord();
-    }
-
-    @Override
-    public void link(Record record) {
-        base.link(record);
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override
@@ -99,7 +92,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor base) {
         this.base = base;
         this.baseRecord = base.getRecord();
-        base.link(placeHolderRecord);
+        final Record placeHolderRecord = base.getRecordB();
 
         chain.clear();
         while (base.hasNext()) {

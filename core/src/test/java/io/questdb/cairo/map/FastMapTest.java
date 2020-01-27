@@ -507,8 +507,7 @@ public class FastMapTest extends AbstractCairoTest {
                         value.putInt(0, value.getInt(0) * 2);
                     }
 
-                    MapRecord rec = (MapRecord) cursor.newRecord();
-                    cursor.link(rec);
+                    MapRecord rec = (MapRecord) cursor.getRecordB();
                     Assert.assertNotSame(rec, record);
 
                     rnd.reset();

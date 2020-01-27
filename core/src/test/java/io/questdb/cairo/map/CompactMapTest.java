@@ -262,8 +262,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
                     // access map by rowid now
                     rnd.reset();
-                    Record rec = mapCursor.newRecord();
-                    mapCursor.link(rec);
+                    Record rec = mapCursor.getRecordB();
                     for (int i = 0, n = list.size(); i < n; i++) {
                         mapCursor.recordAt(rec, list.getQuick(i));
                         Assert.assertEquals((i + 1) * 2, rec.getInt(0));

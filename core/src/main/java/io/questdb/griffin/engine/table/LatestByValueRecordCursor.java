@@ -62,10 +62,10 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            record.jumpTo(frame.getPartitionIndex(), rowHi);
+            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
-                record.setRecordIndex(row);
-                int key = record.getInt(columnIndex);
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
                 if (key == symbolKey) {
                     empty = false;
                     break OUT;
@@ -82,7 +82,8 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
         findRecord();
         toTop();
     }

@@ -68,12 +68,12 @@ class LatestByAllFilteredRecordCursor extends AbstractRecordListCursor {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            record.jumpTo(frame.getPartitionIndex(), rowHi);
+            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
-                record.setRecordIndex(row);
-                if (filter.getBool(record)) {
+                recordA.setRecordIndex(row);
+                if (filter.getBool(recordA)) {
                     MapKey key = map.withKey();
-                    key.put(record, recordSink);
+                    key.put(recordA, recordSink);
                     if (key.create()) {
                         rows.add(Rows.toRowID(partitionIndex, row));
                     }

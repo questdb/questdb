@@ -38,11 +38,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     boolean hasNext();
 
-    Record newRecord();
-
-    default void link(Record record) {
-        // nothing to do by default
-    }
+    Record getRecordB();
 
     void recordAt(Record record, long atRowId);
 

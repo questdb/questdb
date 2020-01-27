@@ -45,11 +45,6 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         super.close();
         filter.close();

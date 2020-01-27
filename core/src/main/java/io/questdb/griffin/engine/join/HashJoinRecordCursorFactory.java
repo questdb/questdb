@@ -67,11 +67,6 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         joinKeyMap.close();
         slaveChain.close();
@@ -103,7 +98,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
-        private final JoinRecord record;
+        private final JoinRecord recordA;
         private final RecordChain slaveChain;
         private final Map joinKeyMap;
         private final int columnSplit;
@@ -113,7 +108,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean useSlaveCursor;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
-            this.record = new JoinRecord(columnSplit);
+            this.recordA = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.columnSplit = columnSplit;
@@ -127,7 +122,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
         }
 
         @Override
@@ -177,7 +172,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.masterRecord = masterCursor.getRecord();
             Record slaveRecord = slaveChain.getRecord();
             this.slaveChain.setSymbolTableResolver(slaveCursor);
-            record.of(masterRecord, slaveRecord);
+            recordA.of(masterRecord, slaveRecord);
             useSlaveCursor = false;
         }
     }

@@ -52,10 +52,10 @@ class LatestByValuesRecordCursor extends AbstractRecordListCursor {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            record.jumpTo(frame.getPartitionIndex(), rowHi);
+            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
-                record.setRecordIndex(row);
-                int key = TableUtils.toIndexKey(record.getInt(columnIndex));
+                recordA.setRecordIndex(row);
+                int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
                 int index = map.keyIndex(key);
                 if (index < 0 && map.valueAt(index) == 0) {
                     rows.add(Rows.toRowID(partitionIndex, row));

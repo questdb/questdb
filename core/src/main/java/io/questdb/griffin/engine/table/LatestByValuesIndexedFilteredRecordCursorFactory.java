@@ -26,7 +26,10 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
@@ -55,11 +58,6 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rowidList);
         }
         this.filter = filter;
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override

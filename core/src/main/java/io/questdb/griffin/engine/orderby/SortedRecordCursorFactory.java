@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -55,11 +54,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                 configuration.getSqlSortValuePageSize());
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override

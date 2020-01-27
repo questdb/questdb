@@ -68,7 +68,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
-            this.record.jumpTo(partitionIndex, 0);
+            this.recordA.jumpTo(partitionIndex, 0);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
@@ -77,8 +77,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
                     RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
                     while (cursor.hasNext()) {
                         final long row = cursor.next();
-                        record.setRecordIndex(row);
-                        if (filter.getBool(record)) {
+                        recordA.setRecordIndex(row);
+                        if (filter.getBool(recordA)) {
                             rows.add(Rows.toRowID(partitionIndex, row));
                             found.addAt(index, symbolKey);
                         }

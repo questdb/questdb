@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -78,11 +81,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
         }
         baseCursor.close();
         return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

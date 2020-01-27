@@ -29,12 +29,14 @@ import io.questdb.cairo.sql.RecordCursor;
 
 public class CompactMapCursor implements RecordCursor {
 
-    private final CompactMapRecord record;
+    private final CompactMapRecord recordA;
+    private final CompactMapRecord recordB;
     private long offsetHi;
     private long nextOffset;
 
     public CompactMapCursor(CompactMapRecord record) {
-        this.record = record;
+        this.recordA = record;
+        this.recordB = record.clone();
     }
 
     @Override
@@ -43,22 +45,22 @@ public class CompactMapCursor implements RecordCursor {
 
     @Override
     public MapRecord getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
     public boolean hasNext() {
         if (nextOffset < offsetHi) {
-            record.of(nextOffset);
-            nextOffset = record.getNextRecordOffset();
+            recordA.of(nextOffset);
+            nextOffset = recordA.getNextRecordOffset();
             return true;
         }
         return false;
     }
 
     @Override
-    public MapRecord newRecord() {
-        return record.clone();
+    public MapRecord getRecordB() {
+        return recordB;
     }
 
     @Override

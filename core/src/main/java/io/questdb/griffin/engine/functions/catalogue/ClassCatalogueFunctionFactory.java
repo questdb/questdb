@@ -86,11 +86,6 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Record newRecord() {
-            return cursor.newRecord();
-        }
-
-        @Override
         public boolean isRandomAccessCursor() {
             return false;
         }

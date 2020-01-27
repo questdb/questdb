@@ -70,11 +70,12 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
     static class LongSequenceRecordCursor implements RecordCursor {
 
         private final long recordCount;
-        private final LongSequenceRecord record = new LongSequenceRecord();
+        private final LongSequenceRecord recordA = new LongSequenceRecord();
+        private final LongSequenceRecord recordB = new LongSequenceRecord();
 
         public LongSequenceRecordCursor(long recordCount) {
             this.recordCount = recordCount;
-            this.record.of(0);
+            this.recordA.of(0);
         }
 
         @Override
@@ -88,21 +89,21 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordA;
         }
 
         @Override
         public boolean hasNext() {
-            if (record.getValue() < recordCount) {
-                record.next();
+            if (recordA.getValue() < recordCount) {
+                recordA.next();
                 return true;
             }
             return false;
         }
 
         @Override
-        public Record newRecord() {
-            return new LongSequenceRecord();
+        public Record getRecordB() {
+            return recordB;
         }
 
         @Override
@@ -112,7 +113,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            record.of(0);
+            recordA.of(0);
         }
     }
 

@@ -38,7 +38,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     private final long[] columnOffsets;
     private final VirtualMemory mem;
-    private final RecordChainRecord record = new RecordChainRecord();
+    private final RecordChainRecord recordA = new RecordChainRecord();
+    private final RecordChainRecord recordB = new RecordChainRecord();
     private final long varOffset;
     private final long fixOffset;
     private final RecordSink recordSink;
@@ -104,7 +105,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -112,15 +113,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         if (nextRecordOffset != -1) {
             long offset = nextRecordOffset;
             nextRecordOffset = mem.getLong(nextRecordOffset);
-            record.of(rowToDataOffset(offset));
+            recordA.of(rowToDataOffset(offset));
             return true;
         }
         return false;
     }
 
     @Override
-    public Record newRecord() {
-        return new RecordChainRecord();
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override

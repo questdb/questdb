@@ -91,15 +91,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 NullRecordFactory.getInstance(masterFactory.getMetadata()),
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.newRecord(),
-                slaveFactory.newRecord()
+                NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override
@@ -288,8 +281,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private final int slaveTimestampIndex;
         private final Record nullMasterRecord;
         private final Record nullSlaveRecord;
-        private final Record masterRecord2;
-        private final Record slaveRecord2;
+        private Record masterRecord2;
+        private Record slaveRecord2;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
@@ -310,9 +303,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 Record nullMasterRecord,
-                Record nullSlaveRecord,
-                Record masterRecord2,
-                Record slaveRecord2
+                Record nullSlaveRecord
         ) {
             this.record = new FullJoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
@@ -321,8 +312,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-            this.masterRecord2 = masterRecord2;
-            this.slaveRecord2 = slaveRecord2;
         }
 
         @Override
@@ -447,8 +436,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 this.slaveCursor = slaveCursor;
                 this.masterRecord = masterCursor.getRecord();
                 this.slaveRecord = slaveCursor.getRecord();
-                masterCursor.link(masterRecord2);
-                slaveCursor.link(slaveRecord2);
+                this.masterRecord2 = masterCursor.getRecordB();
+                this.slaveRecord2 = slaveCursor.getRecordB();
             }
             resetState();
         }

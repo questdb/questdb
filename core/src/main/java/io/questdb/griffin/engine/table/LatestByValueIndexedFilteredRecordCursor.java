@@ -73,12 +73,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
-            this.record.jumpTo(partitionIndex, 0);
+            this.recordA.jumpTo(partitionIndex, 0);
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
             while (cursor.hasNext()) {
-                record.setRecordIndex(cursor.next());
-                if (filter.getBool(record)) {
+                recordA.setRecordIndex(cursor.next());
+                if (filter.getBool(recordA)) {
                     found = true;
                     break OUT;
                 }
@@ -94,7 +94,8 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
         findRecord();
         hasNext = found;
         filter.init(this, executionContext);

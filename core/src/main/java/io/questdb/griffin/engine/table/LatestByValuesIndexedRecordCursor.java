@@ -80,7 +80,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
         buildTreeMap();
     }
 
@@ -88,7 +89,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     public boolean hasNext() {
         if (index > -1) {
             final long rowid = rows.get(index);
-            record.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
+            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
             index--;
             return true;
         }

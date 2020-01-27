@@ -26,17 +26,12 @@ package io.questdb.cairo.sql;
 
 public interface NoRandomAccessRecordCursor extends RecordCursor {
     @Override
-    default Record newRecord() {
+    default Record getRecordB() {
         throw new UnsupportedOperationException();
     }
 
     @Override
     default void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default void link(Record record) {
         throw new UnsupportedOperationException();
     }
 }

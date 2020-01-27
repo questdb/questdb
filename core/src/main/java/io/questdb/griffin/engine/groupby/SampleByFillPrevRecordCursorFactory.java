@@ -85,11 +85,6 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(map);

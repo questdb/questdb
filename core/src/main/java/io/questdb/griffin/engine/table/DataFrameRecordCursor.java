@@ -65,7 +65,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
 
     private boolean nextRow() {
         if (rowCursor.hasNext()) {
-            record.setRecordIndex(rowCursor.next());
+            recordA.setRecordIndex(rowCursor.next());
             return true;
         }
         return nextFrame();
@@ -77,7 +77,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             close();
             this.dataFrameCursor = dataFrameCursor;
         }
-        this.record.of(dataFrameCursor.getTableReader());
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         this.next = nextFrame;
         if (filter != null) {
@@ -95,7 +96,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             DataFrame dataFrame = dataFrameCursor.next();
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             if (rowCursor.hasNext()) {
-                record.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
                 next = nextRow;
                 return true;
             }

@@ -31,11 +31,16 @@ import io.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
 
-    protected final TableReaderRecord record = new TableReaderRecord();
+    protected final TableReaderRecord recordA = new TableReaderRecord();
+    private final TableReaderRecord recordB = new TableReaderRecord();
     protected TableReader reader;
     private int partitionIndex = 0;
-    private int partitionCount;
+    private int partitionLimit;
     private long maxRecordIndex = -1;
+    private int partitionLo;
+    private long recodLo;
+    private int partitionHi;
+    private long recordHi;
 
     @Override
     public void close() {
@@ -47,7 +52,7 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -57,22 +62,16 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (record.getRecordIndex() < maxRecordIndex || switchPartition()) {
-            record.incrementRecordIndex();
+        if (recordA.getRecordIndex() < maxRecordIndex || switchPartition()) {
+            recordA.incrementRecordIndex();
             return true;
         }
         return false;
     }
 
     @Override
-    public Record newRecord() {
-        return new TableReaderRecord();
-    }
-
-    @Override
-    public void link(Record record) {
-        final TableReaderRecord rec = (TableReaderRecord) record;
-        rec.of(reader);
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override
@@ -87,41 +86,68 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        partitionIndex = 0;
-        partitionCount = reader.getPartitionCount();
-        record.jumpTo(0, -1);
-        maxRecordIndex = -1;
+        partitionIndex = partitionLo;
+        if (recordHi == -1) {
+            partitionLimit = reader.getPartitionCount();
+        } else {
+            partitionLimit = Math.min(partitionHi + 1, reader.getPartitionCount());
+        }
+        maxRecordIndex = recodLo - 1;
+        recordA.jumpTo(0, maxRecordIndex);
     }
 
     public void of(TableReader reader) {
+        this.partitionLo = 0;
+        this.recodLo = 0;
+        this.partitionHi = reader.getPartitionCount();
+        // because we set partitionHi to partition count
+        // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
+        this.recordHi = -1;
+        of0(reader);
+    }
+
+    private void of0(TableReader reader) {
         close();
         this.reader = reader;
-        this.record.of(reader);
+        this.recordA.of(reader);
+        this.recordB.of(reader);
         toTop();
+    }
+
+    public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
+        this.partitionLo = partitionLo;
+        this.partitionHi = partitionHi;
+        this.recodLo = recordLo;
+        this.recordHi = recordHi;
+        of0(reader);
     }
 
     public void startFrom(long rowid) {
         partitionIndex = Rows.toPartitionIndex(rowid);
         long recordIndex = Rows.toLocalRowID(rowid);
-        record.jumpTo(this.partitionIndex, recordIndex);
+        recordA.jumpTo(this.partitionIndex, recordIndex);
         maxRecordIndex = reader.openPartition(partitionIndex) - 1;
         partitionIndex++;
-        this.partitionCount = reader.getPartitionCount();
+        this.partitionLimit = reader.getPartitionCount();
     }
 
     private boolean switchPartition() {
-        if (partitionIndex < partitionCount) {
+        if (partitionIndex < partitionLimit) {
             return switchPartition0();
         }
         return false;
     }
 
     private boolean switchPartition0() {
-        while (partitionIndex < partitionCount) {
+        while (partitionIndex < partitionLimit) {
             final long partitionSize = reader.openPartition(partitionIndex);
             if (partitionSize > 0) {
-                maxRecordIndex = partitionSize - 1;
-                record.jumpTo(partitionIndex, -1);
+                if (partitionIndex == partitionHi && recordHi > -1) {
+                    maxRecordIndex = recordHi - 1;
+                } else {
+                    maxRecordIndex = partitionSize - 1;
+                }
+                recordA.jumpTo(partitionIndex, -1);
                 partitionIndex++;
                 return true;
             }

@@ -49,7 +49,7 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
     public boolean hasNext() {
         if (index > -1) {
             long row = rows.get(index--);
-            record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
             return true;
         }
         return false;
@@ -63,7 +63,8 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
         rows.clear();
         buildTreeMap(executionContext);
         index = rows.size() - 1;

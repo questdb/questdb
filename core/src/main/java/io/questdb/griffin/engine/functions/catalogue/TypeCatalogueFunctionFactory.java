@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
@@ -85,11 +84,6 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRandomAccessCursor() {
             return false;
-        }
-
-        @Override
-        public Record newRecord() {
-            return EmptyTableRecordCursor.INSTANCE.newRecord();
         }
     }
 }

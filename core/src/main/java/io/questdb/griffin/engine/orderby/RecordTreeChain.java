@@ -64,7 +64,7 @@ public class RecordTreeChain implements Closeable, Mutable {
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
         this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize);
-        this.recordChainRecord = this.recordChain.newRecord();
+        this.recordChainRecord = this.recordChain.getRecordB();
     }
 
     private static void setLeft(long blockAddress, long left) {
@@ -337,13 +337,8 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
-        public Record newRecord() {
-            return recordChain.newRecord();
-        }
-
-        @Override
-        public void link(Record record) {
-            recordChain.link(record);
+        public Record getRecordB() {
+            return recordChain.getRecordB();
         }
 
         @Override

@@ -93,8 +93,7 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(N, rows.size());
                     cursor.toTop();
 
-                    final Record rec = chain.newRecord();
-                    chain.link(rec);
+                    final Record rec = chain.getRecordB();
                     cursor.toTop();
 
                     for (int i = 0, n = rows.size(); i < n; i++) {

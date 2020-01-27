@@ -64,11 +64,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean isRandomAccessCursor() {
         return false;
     }

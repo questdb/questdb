@@ -62,12 +62,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain, slaveFactory.newRecord());
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
+        this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
     }
 
     @Override
@@ -124,19 +119,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
-        private final Record slaveRecord;
+        private Record slaveRecord;
 
         public HashJoinRecordCursor(
                 int columnSplit,
                 Map joinKeyMap,
-                LongChain slaveChain,
-                Record slaveRecord
+                LongChain slaveChain
         ) {
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.columnSplit = columnSplit;
-            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -196,7 +189,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            slaveCursor.link(slaveRecord);
+            this.slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

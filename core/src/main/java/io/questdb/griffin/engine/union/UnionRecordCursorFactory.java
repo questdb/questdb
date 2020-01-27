@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -55,11 +54,6 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         this.slaveFactory = slaveFactory;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
         this.cursor = new UnionRecordCursor(map, recordSink);
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override

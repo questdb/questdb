@@ -48,14 +48,8 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.newRecord()
+                slaveFactory.getMetadata().getTimestampIndex()
         );
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override
@@ -87,7 +81,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private final Record slaveRecord;
+        private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
 
@@ -95,14 +89,12 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
-                int slaveTimestampIndex,
-                Record slaveRecord
+                int slaveTimestampIndex
         ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -179,7 +171,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            slaveCursor.link(slaveRecord);
+            this.slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
         }
     }

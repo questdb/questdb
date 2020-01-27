@@ -31,12 +31,12 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
-    public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions) {
-        super(functions);
+    public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+        super(functions, supportsRandomAccess);
     }
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return ((SymbolFunction) record.getFunctions().getQuick(columnIndex));
+        return ((SymbolFunction) recordA.getFunctions().getQuick(columnIndex));
     }
 }

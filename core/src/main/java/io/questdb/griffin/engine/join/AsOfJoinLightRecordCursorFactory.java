@@ -69,14 +69,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.newRecord()
+                slaveFactory.getMetadata().getTimestampIndex()
         );
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override
@@ -107,7 +101,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
-        private final Record slaveRecord;
+        private Record slaveRecord;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
@@ -119,15 +113,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 Map joinKeyMap,
                 Record nullRecord,
                 int masterTimestampIndex,
-                int slaveTimestampIndex,
-                Record slaveRecord
+                int slaveTimestampIndex
         ) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.slaveRecord = slaveRecord;
         }
 
         @Override
@@ -220,7 +212,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            slaveCursor.link(this.slaveRecord);
+            this.slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
         }
     }

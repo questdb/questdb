@@ -76,11 +76,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         joinKeyMap.close();
         ((JoinRecordMetadata) getMetadata()).close();

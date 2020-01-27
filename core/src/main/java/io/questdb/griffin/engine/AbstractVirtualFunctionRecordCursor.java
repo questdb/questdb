@@ -32,11 +32,17 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractVirtualFunctionRecordCursor implements RecordCursor {
-    protected final VirtualRecord record;
+    protected final VirtualRecord recordA;
+    private final VirtualRecord recordB;
     protected RecordCursor baseCursor;
 
-    public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions) {
-        this.record = new VirtualRecord(functions);
+    public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+        this.recordA = new VirtualRecord(functions);
+        if (supportsRandomAccess) {
+            this.recordB = new VirtualRecord(functions);
+        } else {
+            this.recordB = null;
+        }
     }
 
     @Override
@@ -46,7 +52,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -60,15 +66,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
-    public Record newRecord() {
-        final VirtualRecord record = new VirtualRecord(this.record.getFunctions());
-        record.of(baseCursor.newRecord());
-        return record;
-    }
-
-    @Override
-    public void link(Record record) {
-        baseCursor.link(((VirtualRecord) record).getBaseRecord());
+    public Record getRecordB() {
+        if (recordB != null) {
+            return recordB;
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -83,6 +85,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     public void of(RecordCursor cursor) {
         this.baseCursor = cursor;
-        record.of(baseCursor.getRecord());
+        recordA.of(baseCursor.getRecord());
+        if (recordB != null) {
+            recordB.of(baseCursor.getRecordB());
+        }
     }
 }

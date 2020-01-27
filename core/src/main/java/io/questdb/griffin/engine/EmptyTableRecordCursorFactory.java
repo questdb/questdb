@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,10 +48,5 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean isRandomAccessCursor() {
         return false;
-    }
-
-    @Override
-    public Record newRecord() {
-        return EmptyTableRecordCursor.INSTANCE.newRecord();
     }
 }

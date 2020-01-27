@@ -43,7 +43,7 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfCorrectness() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             compiler.compile(
                     "create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
@@ -109,9 +109,6 @@ public class JoinTest extends AbstractGriffinTest {
                 quotes.commit();
                 orders.commit();
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
 
         assertQuery(

@@ -82,13 +82,8 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return base.newRecord();
-    }
-
-    @Override
-    public void link(Record record) {
-        base.link(record);
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override

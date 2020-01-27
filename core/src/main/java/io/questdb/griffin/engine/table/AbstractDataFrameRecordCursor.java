@@ -33,7 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Rows;
 
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
-    protected final TableReaderRecord record = new TableReaderRecord();
+    protected final TableReaderRecord recordA = new TableReaderRecord();
+    protected final TableReaderRecord recordB = new TableReaderRecord();
     protected DataFrameCursor dataFrameCursor;
 
     @Override
@@ -46,7 +47,7 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -55,13 +56,8 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return new TableReaderRecord();
-    }
-
-    @Override
-    public void link(Record record) {
-        ((TableReaderRecord) record).of(dataFrameCursor.getTableReader());
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override

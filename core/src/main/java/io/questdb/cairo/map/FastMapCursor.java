@@ -29,7 +29,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
-    private final FastMapRecord record;
+    private final FastMapRecord recordA;
+    private final MapRecord recordB;
     private final FastMap map;
     private int remaining;
     private long address;
@@ -37,7 +38,8 @@ public final class FastMapCursor implements RecordCursor {
     private int count;
 
     FastMapCursor(FastMapRecord record, FastMap map) {
-        this.record = record;
+        this.recordA = record;
+        this.recordB = record.clone();
         this.map = map;
     }
 
@@ -52,7 +54,7 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public MapRecord getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -61,15 +63,15 @@ public final class FastMapCursor implements RecordCursor {
             long address = this.address;
             this.address = address + Unsafe.getUnsafe().getInt(address);
             remaining--;
-            record.of(address);
+            recordA.of(address);
             return true;
         }
         return false;
     }
 
     @Override
-    public MapRecord newRecord() {
-        return record.clone();
+    public MapRecord getRecordB() {
+        return recordB;
     }
 
     @Override

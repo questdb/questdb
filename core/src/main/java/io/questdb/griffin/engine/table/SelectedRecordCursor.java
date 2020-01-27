@@ -30,12 +30,18 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 
 class SelectedRecordCursor implements RecordCursor {
-    private final SelectedRecord record;
+    private final SelectedRecord recordA;
+    private final SelectedRecord recordB;
     private final IntList columnCrossIndex;
     private RecordCursor baseCursor;
 
-    public SelectedRecordCursor(IntList columnCrossIndex) {
-        this.record = new SelectedRecord(columnCrossIndex);
+    public SelectedRecordCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
+        this.recordA = new SelectedRecord(columnCrossIndex);
+        if (supportsRandomAccess) {
+            this.recordB = new SelectedRecord(columnCrossIndex);
+        } else {
+            this.recordB = null;
+        }
         this.columnCrossIndex = columnCrossIndex;
     }
 
@@ -46,7 +52,7 @@ class SelectedRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -65,15 +71,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        final SelectedRecord record = new SelectedRecord(this.record.getColumnCrossIndex());
-        record.of(baseCursor.newRecord());
-        return record;
-    }
-
-    @Override
-    public void link(Record record) {
-        baseCursor.link(((SelectedRecord) record).getBaseRecord());
+    public Record getRecordB() {
+        if (recordB != null) {
+            return recordB;
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -88,6 +90,9 @@ class SelectedRecordCursor implements RecordCursor {
 
     void of(RecordCursor cursor) {
         this.baseCursor = cursor;
-        record.of(cursor.getRecord());
+        recordA.of(cursor.getRecord());
+        if (recordB != null) {
+            recordB.of(cursor.getRecordB());
+        }
     }
 }

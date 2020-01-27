@@ -66,16 +66,15 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.metadata = groupByMetadata;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
+            this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(
+                    recordFunctions,
+                    symbolTableSkewIndex,
+                    base.isRandomAccessCursor()
+            );
         } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
     }
 
     @Override

@@ -28,7 +28,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
@@ -73,11 +73,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         if (filter != null) {
             filter.close();
@@ -105,7 +100,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             SqlExecutionContext executionContext
     ) {
         if (deferredSymbols != null && lookupDeferredSymbols(dataFrameCursor)) {
-            return EmptyTableRecordCursor.INSTANCE;
+            return EmptyTableRandomRecordCursor.INSTANCE;
         }
         this.cursor.of(dataFrameCursor, executionContext);
         return this.cursor;

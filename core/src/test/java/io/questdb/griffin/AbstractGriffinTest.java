@@ -152,8 +152,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     rows.add(record.getRowId());
                 }
 
-                final Record rec = cursor.newRecord();
-                cursor.link(rec);
+                final Record rec = cursor.getRecordB();
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(rec, rows.getQuick(i));
@@ -163,9 +162,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 sink.clear();
-                // test that factory record works as anticipated
-                final Record factRec = factory.newRecord();
-                cursor.link(factRec);
+
+                final Record factRec = cursor.getRecordB();
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
@@ -207,7 +205,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
 
                 try {
-                    cursor.newRecord();
+                    cursor.getRecordB();
                     Assert.fail();
                 } catch (UnsupportedOperationException ignore) {
                 }
@@ -338,15 +336,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
                 // and again
                 assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
-            }
-
-            if (!factory.isRandomAccessCursor()) {
-                try {
-                    factory.newRecord();
-                    Assert.fail();
-                } catch (UnsupportedOperationException e) {
-                    // expected
-                }
             }
         }
     }

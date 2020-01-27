@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -51,11 +52,6 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     }
 
     @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
     public void close() {
         super.close();
         if (filter != null) {
@@ -71,6 +67,9 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
             SqlExecutionContext executionContext
     ) {
         if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
+            if (isRandomAccessCursor()) {
+                return EmptyTableRandomRecordCursor.INSTANCE;
+            }
             return EmptyTableRecordCursor.INSTANCE;
         }
         cursor.of(dataFrameCursor, executionContext);

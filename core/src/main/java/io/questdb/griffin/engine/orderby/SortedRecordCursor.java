@@ -59,13 +59,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return chainCursor.newRecord();
-    }
-
-    @Override
-    public void link(Record record) {
-        chainCursor.link(record);
+    public Record getRecordB() {
+        return chainCursor.getRecordB();
     }
 
     @Override
