@@ -55,6 +55,7 @@ $icon-font-path: '../fonts/';
 @import "grid";
 @import "splitter";
 @import "visualisation";
+@import "quick-vis";
 
 .btn:disabled {
   cursor: default;

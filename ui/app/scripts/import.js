@@ -641,7 +641,7 @@ function nopropagation(e) {
         }
 
         function init() {
-            bus.on('active.panel', handleActivation);
+            bus.on(qdb.MSG_ACTIVE_PANEL, handleActivation);
 
             const input = $('#js-browse-files-input')[0];
 
