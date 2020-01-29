@@ -86,6 +86,7 @@
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
+            requestParams.src = 'con';
             time = new Date().getTime();
             hActiveRequest = $.get('/exec', requestParams);
             bus.trigger(qdb.MSG_QUERY_RUNNING);

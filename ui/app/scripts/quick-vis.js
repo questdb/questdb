@@ -295,7 +295,7 @@ function arrayEquals(left, right) {
                 requestParams.query = query;
                 requestParams.count = false;
                 requestParams.cols = urlColumns;
-
+                requestParams.src = 'vis';
                 // time the query because control that displays query success expected time delta
                 queryExecutionTimestamp = new Date().getTime();
                 hActiveRequest = $.get('/exec', requestParams);
