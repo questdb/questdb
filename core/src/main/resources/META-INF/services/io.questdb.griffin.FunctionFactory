@@ -25,6 +25,7 @@
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
 io.questdb.griffin.engine.functions.bool.AndFunctionFactory
+io.questdb.griffin.engine.functions.bool.NotFunctionFactory
 
 # '='
 io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
