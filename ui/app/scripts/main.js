@@ -92,5 +92,5 @@ $(document).ready(function () {
 $(window).load(function () {
     'use strict';
     $(window).trigger('resize');
-    bus.trigger('editor.focus');
+    bus.trigger(qdb.MSG_EDITOR_FOCUS);
 });

@@ -975,23 +975,28 @@ public class SqlCompiler implements Closeable {
                 if (fd == -1) {
                     throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(']');
                 }
-                long fileLen = ff.length(fd);
-                long n = ff.read(fd, buf, len, 0);
-                if (n > 0) {
-                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                    textLoader.setState(TextLoader.LOAD_DATA);
-                    int read;
-                    while (n < fileLen) {
-                        read = (int) ff.read(fd, buf, len, n);
-                        if (read < 1) {
-                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
+                try {
+                    long fileLen = ff.length(fd);
+                    long n = ff.read(fd, buf, len, 0);
+                    if (n > 0) {
+                        textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
+                        textLoader.setState(TextLoader.LOAD_DATA);
+                        int read;
+                        while (n < fileLen) {
+                            read = (int) ff.read(fd, buf, len, n);
+                            if (read < 1) {
+                                throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
+                            }
+                            textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
+                            n += read;
                         }
-                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                        n += read;
+                        textLoader.wrapUp();
                     }
-                    textLoader.wrapUp();
+                } finally {
+                    ff.close(fd);
                 }
             } finally {
+                textLoader.clear();
                 Unsafe.free(buf, len);
             }
         } catch (TextException e) {

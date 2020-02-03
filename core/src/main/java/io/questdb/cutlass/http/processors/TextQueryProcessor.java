@@ -29,10 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
-import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
@@ -46,35 +43,41 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
-    private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
-    private final AtomicLong cacheHits = new AtomicLong();
-    private final AtomicLong cacheMisses = new AtomicLong();
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final MillisecondClock clock;
+    private final QueryCache queryCache;
 
-    public TextQueryProcessor(JsonQueryProcessorConfiguration configuration, CairoEngine engine) {
+    public TextQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            QueryCache queryCache
+    ) {
         // todo: add scheduler
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
+        this.queryCache = queryCache;
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -90,10 +93,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute(
             HttpConnectionContext context,
-            JsonQueryProcessorState state
+            TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            state.recordCursorFactory = JsonQueryProcessorState.FACTORY_CACHE.get().poll(state.query);
+            state.recordCursorFactory = queryCache.poll(state.query);
             int retryCount = 0;
             do {
                 sqlExecutionContext.with(context.getCairoSecurityContext(), null);
@@ -102,13 +105,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     if (cc.getType() == CompiledQuery.SELECT) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     }
-                    cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").utf8(state.query).
                             $("`, skip: ").$(state.skip).
                             $(", stop: ").$(state.stop).
                             $(']').$();
                 } else {
-                    cacheMisses.incrementAndGet();
                     info(state).$("execute-cached [q=`").utf8(state.query).
                             $("`, skip: ").$(state.skip).
                             $(", stop: ").$(state.stop).
@@ -128,8 +129,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         //  we could be having severe hardware issues and continue trying
                         if (retryCount == 0) {
                             // todo: we want to clear cache, no need to create string to achieve this
-                            JsonQueryProcessorState.FACTORY_CACHE.get().put(state.query.toString(), null);
-                            state.recordCursorFactory = null;
+                            queryCache.remove(state.query);
+                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             LOG.error().$("RecordSource execution failed. ").$(e.getMessage()).$(". Retrying ...").$();
                             retryCount++;
                         } else {
@@ -161,9 +162,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
+        TextQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new JsonQueryProcessorState(context.getFd(), configuration.getConnectionCheckFrequency()));
+            LV.set(context, state = new TextQueryProcessorState(
+                            context,
+                            configuration.getConnectionCheckFrequency(),
+                            queryCache
+                    )
+            );
         }
         HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (parseUrl(socket, context.getRequestHeader(), state)) {
@@ -181,7 +187,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
+        TextQueryProcessorState state = LV.get(context);
         if (state == null || state.cursor == null) {
             return;
         }
@@ -285,16 +291,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
-    private LogRecord error(JsonQueryProcessorState state) {
-        return LOG.error().$('[').$(state.fd).$("] ");
-    }
-
-    long getCacheHits() {
-        return cacheHits.longValue();
-    }
-
-    long getCacheMisses() {
-        return cacheMisses.longValue();
+    private LogRecord error(TextQueryProcessorState state) {
+        return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
     protected void header(
@@ -307,14 +305,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.sendHeader();
     }
 
-    private LogRecord info(JsonQueryProcessorState state) {
-        return LOG.info().$('[').$(state.fd).$("] ");
+    private LogRecord info(TextQueryProcessorState state) {
+        return LOG.info().$('[').$(state.getFd()).$("] ");
     }
 
     private void internalError(
             HttpChunkedResponseSocket socket,
             Throwable e,
-            JsonQueryProcessorState state
+            TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         error(state).$("Server error executing query ").utf8(state.query).$(e).$();
         sendException(socket, 0, e.getMessage(), 500, state.query);
@@ -323,7 +321,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private boolean parseUrl(
             HttpChunkedResponseSocket socket,
             HttpRequestHeader request,
-            JsonQueryProcessorState state
+            TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
         final DirectByteCharSequence query = request.getUrlParam("query");
@@ -460,7 +458,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendDone(
             HttpChunkedResponseSocket socket,
-            JsonQueryProcessorState state
+            TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
             state.count = -1;
@@ -489,7 +487,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private void syntaxError(
             HttpChunkedResponseSocket socket,
             SqlException sqlException,
-            JsonQueryProcessorState state
+            TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)

@@ -80,6 +80,16 @@ public class LogRecordSink extends AbstractCharSink implements Closeable {
     }
 
     @Override
+    public CharSink put(CharSequence cs, int lo, int hi) {
+        int rem = (int) (lim - _wptr);
+        int len = hi - lo;
+        int n = Math.min(rem, len);
+        Chars.asciiStrCpy(cs, lo, n, _wptr);
+        _wptr += n;
+        return this;
+    }
+
+    @Override
     public CharSink put(char c) {
         if (_wptr < lim) {
             Unsafe.getUnsafe().putByte(_wptr++, (byte) c);

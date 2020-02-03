@@ -30,7 +30,7 @@ public interface CharSink {
 
     CharSink encodeUtf8(CharSequence cs);
 
-    CharSink encodeUtf8(CharSequence cs, int from, int len);
+    CharSink encodeUtf8(CharSequence cs, int lo, int hi);
 
     CharSink encodeUtf8AndQuote(CharSequence cs);
 
@@ -43,7 +43,7 @@ public interface CharSink {
         throw new UnsupportedOperationException();
     }
 
-    default CharSink put(CharSequence cs, int start, int end) {
+    default CharSink put(CharSequence cs, int lo, int hi) {
         throw new UnsupportedOperationException();
     }
 

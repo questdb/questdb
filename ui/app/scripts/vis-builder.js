@@ -366,6 +366,8 @@ function parseQueryData(response, status, jqXHR) {
 
     console.log('before');
     console.log(jqXHR.chartOptions);
+    console.log('mapAxis:');
+    console.log(jqXHR.mapAxis);
     jqXHR.chartOptions.legend = generateLegend(jqXHR.mapSeries);
     const axis = generateOptionAxis(jqXHR.mapAxis);
     jqXHR.chartOptions.yAxis = axis.yAxis;

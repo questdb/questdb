@@ -38,6 +38,10 @@
     const msgPanel = editor.find('.js-query-message-panel');
     const navbar = $('nav.navbar-default');
     const win = $(window);
+    const grid = $('#grid');
+    const quickVis = $('#quick-vis');
+    const toggleChartBtn = $('#js-toggle-chart');
+    const toggleGridBtn = $('#js-toggle-grid');
 
     let topHeight = 350;
     const bottomHeight = 350;
@@ -71,17 +75,14 @@
         }
     }
 
-    function switchToGrid() {
-        // $('#editor').show();
-        $('#js-toggle-chart').removeClass('active');
-        $('#js-toggle-grid').addClass('active');
-    }
-
     function loadSplitterPosition() {
         if (typeof (Storage) !== 'undefined') {
             const n = localStorage.getItem('splitter.position');
             if (n) {
                 topHeight = parseInt(n);
+                if (!topHeight) {
+                    topHeight = 350;
+                }
             }
         }
     }
@@ -102,6 +103,21 @@
         }
     }
 
+    function toggleChart() {
+        toggleChartBtn.addClass('active');
+        toggleGridBtn.removeClass('active');
+        grid.hide();
+        quickVis.show();
+        quickVis.resize();
+    }
+
+    function toggleGrid() {
+        toggleChartBtn.removeClass('active');
+        toggleGridBtn.addClass('active');
+        grid.show();
+        quickVis.hide();
+        grid.resize();
+    }
 
     function setup(bus) {
         win.bind('resize', resize);
@@ -134,22 +150,20 @@
         bus.domController();
 
         sqlEditor.editor(bus);
+        grid.grid(bus);
+        quickVis.quickVis(bus);
 
-        $('#grid').grid(bus);
         $('#console-splitter').splitter(bus, 'console', 200, 0);
 
-        switchToGrid();
-
         // wire query publish
-        $('#js-toggle-chart').click(function () {
-            bus.trigger('query.publish');
-        });
+        toggleChartBtn.click(toggleChart);
+        toggleGridBtn.click(toggleGrid);
+        bus.on(qdb.MSG_QUERY_DATASET, toggleGrid);
     }
 
     $.extend(true, window, {
         qdb: {
-            setupConsoleController: setup,
-            switchToGrid
+            setupConsoleController: setup
         }
     });
 }(jQuery));

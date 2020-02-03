@@ -434,6 +434,12 @@ public final class Chars {
         }
     }
 
+    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
+        }
+    }
+
     public static char toLowerCaseAscii(char character) {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
     }

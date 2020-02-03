@@ -34,7 +34,7 @@ public final class EmptyRecordMetadata extends BaseRecordMetadata {
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName) {
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         return -1;
     }
 }

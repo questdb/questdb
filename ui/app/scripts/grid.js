@@ -643,7 +643,7 @@
                     break;
                 case 113:
                     unfocusCell();
-                    bus.trigger('editor.focus');
+                    bus.trigger(qdb.MSG_EDITOR_FOCUS);
                     break;
                 default:
                     downKey[keyCode] = true;
@@ -720,7 +720,7 @@
             bus.on('grid.focus', focusCell);
             bus.on('grid.refresh', refreshQuery);
             bus.on('grid.publish.query', publishQuery);
-            bus.on('active.panel', resize);
+            bus.on(qdb.MSG_ACTIVE_PANEL, resize);
         }
 
         bind();

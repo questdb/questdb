@@ -29,7 +29,10 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
@@ -349,7 +352,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 read = nf.recv(fd, recvBuffer, 1);
                 if (read != 0) {
                     dumpBuffer(recvBuffer, read);
-                    LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
+                    LOG.info().$("disconnect after request [fd=").$(fd).$(']').$();
                     dispatcher.disconnect(this);
                 } else {
                     processor.onHeadersReady(this);

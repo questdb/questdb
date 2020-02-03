@@ -102,6 +102,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $(CharSequence sequence, int lo, int hi) {
+        sink().put(sequence, lo, hi);
+        return this;
+    }
+
+    @Override
     public LogRecord utf8(CharSequence sequence) {
         if (sequence == null) {
             sink().put("null");
@@ -152,13 +158,6 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord $(File x) {
         sink().put(x == null ? "null" : x.getAbsolutePath());
-        return this;
-    }
-
-    @SuppressWarnings("rawtypes")
-    @Override
-    public LogRecord $(Enum e) {
-        sink().put(e != null ? e.name() : "null");
         return this;
     }
 

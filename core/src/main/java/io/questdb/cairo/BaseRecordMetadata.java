@@ -46,12 +46,16 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName) {
-        return columnNameIndexMap.get(columnName);
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
+        if (index < 0) {
+            return columnNameIndexMap.valueAt(index);
+        }
+        return -1;
     }
 
     @Override
-    public CharSequence getColumnName(int columnIndex) {
+    public String getColumnName(int columnIndex) {
         return getColumnQuick(columnIndex).getName();
     }
 

@@ -68,13 +68,13 @@
             hActiveRequest = null;
         }
 
-        function handleServerError(jqXHR) {
+        function handleServerError(r) {
             bus.trigger(qdb.MSG_QUERY_ERROR,
                 {
                     query: qry,
-                    r: jqXHR.responseJSON,
-                    status: jqXHR.status,
-                    statusText: jqXHR.statusText,
+                    r: r.responseJSON,
+                    status: r.status,
+                    statusText: r.statusText,
                     delta: (new Date().getTime() - time)
                 }
             );
@@ -86,6 +86,7 @@
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
+            requestParams.src = 'con';
             time = new Date().getTime();
             hActiveRequest = $.get('/exec', requestParams);
             bus.trigger(qdb.MSG_QUERY_RUNNING);
@@ -191,7 +192,7 @@
             if (running) {
                 bus.trigger(qdb.MSG_QUERY_CANCEL);
             } else {
-                bus.trigger('editor.execute');
+                bus.trigger(qdb.MSG_EDITOR_EXECUTE);
             }
         }
 
@@ -311,7 +312,6 @@
                             if (startPos === -1) {
                                 sql = text.substring(0, i);
                             } else {
-                                console.log('thru this, startRow=' + startRow + ', startCol=' + startCol);
                                 sql = text.substring(startPos, i);
                             }
                         }
@@ -444,27 +444,27 @@
         }
 
         function bind() {
-            bus.on('editor.execute', submitQuery);
-            bus.on('editor.execute.alt', submitQuery);
+            bus.on(qdb.MSG_EDITOR_EXECUTE, submitQuery);
+            bus.on(qdb.MSG_EDITOR_EXECUTE_ALT, submitQuery);
             bus.on('editor.show.error', showError);
             bus.on('editor.toggle.invisibles', toggleInvisibles);
             bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
             bus.on('editor.insert.column', insertColumn);
-            bus.on('editor.focus', function () {
+            bus.on(qdb.MSG_EDITOR_FOCUS, function () {
                 edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
                 });
                 edit.focus();
             });
 
             edit.commands.addCommand({
-                name: 'editor.execute',
+                name: qdb.MSG_EDITOR_EXECUTE,
                 bindKey: 'F9',
                 exec: submitQuery
             });
 
 
             edit.commands.addCommand({
-                name: 'editor.execute.alt',
+                name: qdb.MSG_EDITOR_EXECUTE_ALT,
                 bindKey:
                     {
                         mac: 'Command-Enter',

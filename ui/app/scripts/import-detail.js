@@ -259,6 +259,6 @@
         });
 
         $(window).resize(resizeCanvas);
-        editorBus.on('active.panel', resizeCanvas);
+        editorBus.on(qdb.MSG_ACTIVE_PANEL, resizeCanvas);
     };
 }(jQuery));

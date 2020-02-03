@@ -24,8 +24,10 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.ObjectFactory;
+import io.questdb.cutlass.http.processors.QueryCache;
 
-public interface HttpRequestProcessorFactory extends ObjectFactory<HttpRequestProcessor> {
+public interface HttpRequestProcessorFactory {
+    HttpRequestProcessor newInstance(QueryCache queryCache);
+
     String getUrl();
 }

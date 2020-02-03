@@ -149,12 +149,12 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName) {
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final MapKey key = map.withKey();
-        final int dot = Chars.indexOf(columnName, '.');
+        final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
             key.putStr(null);
-            key.putStr(columnName);
+            key.putStr(columnName, lo, hi);
         } else {
             key.putStr(columnName, 0, dot);
             key.putStr(columnName, dot + 1, columnName.length());

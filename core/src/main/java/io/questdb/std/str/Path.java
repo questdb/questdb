@@ -57,12 +57,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
     }
 
-    private static void strcpy(final CharSequence value, final int lo, final int hi, final long address) {
-        for (int i = lo; i < hi; i++) {
-            Unsafe.getUnsafe().putByte(address + i - lo, (byte) value.charAt(i));
-        }
-    }
-
     public Path $() {
         if (1 + (wptr - ptr) >= capacity) {
             extend((int) (16 + (wptr - ptr)));
@@ -146,12 +140,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public CharSink put(CharSequence cs, int start, int end) {
-        int l = end - start;
+    public CharSink put(CharSequence cs, int lo, int hi) {
+        int l = hi - lo;
         if (l + len >= capacity) {
             extend(l + len);
         }
-        strcpy(cs, start, end, wptr);
+        Chars.asciiStrCpy(cs, lo, l, wptr);
         wptr += l;
         len += l;
         return this;
