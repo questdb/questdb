@@ -22,19 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.BaseRecordMetadata;
-
-public final class EmptyRecordMetadata extends BaseRecordMetadata {
-    public static final EmptyRecordMetadata INSTANCE = new EmptyRecordMetadata();
-
-    private EmptyRecordMetadata() {
-        columnCount = 0;
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        return -1;
-    }
+public interface Locality {
+    LocalValueMap getMap();
 }

@@ -27,10 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -349,6 +346,59 @@ public class IODispatcherTest {
         }
     }
 
+    @Test
+    public void testHttpLong256AndCharImportLimitColumns() {
+        // this script uploads text file:
+        // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
+        // 0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b
+        // 0x9e6e19637bb625a8ff3d052b7c2fe57dc78c55a15d258d77c43d5a9c160b0384,p
+        // 0xcb9378977089c773c074045b20ede2cdcc3a6ff562f4e64b51b20c5205234525,w
+        // 0xd23ae9b2e5c68caf2c5663af5ba27679dc3b3cb781c4dc698abbd17d63e32e9f,t
+
+        final String uploadScript = ">504f5354202f696d703f666d743d6a736f6e266f76657277726974653d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a436f6e74656e742d4c656e6774683a203534380d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a436f6e74656e742d547970653a206d756c7469706172742f666f726d2d646174613b20626f756e646172793d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a4f726967696e3a20687474703a2f2f6c6f63616c686f73743a393030300d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                ">2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2264617461223b2066696c656e616d653d2273616d706c652e637376220d0a436f6e74656e742d547970653a206170706c69636174696f6e2f766e642e6d732d657863656c0d0a0d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f2d2d0d0a\n" +
+                "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a\n" +
+                "<0d0a63380d0a\n" +
+                "<7b22737461747573223a224f4b222c226c6f636174696f6e223a2273616d706c652e637376222c22726f777352656a6563746564223a302c22726f7773496d706f72746564223a352c22686561646572223a66616c73652c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536222c2273697a65223a33322c226572726f7273223a307d2c7b226e616d65223a226631222c2274797065223a2243484152222c2273697a65223a322c226572726f7273223a307d5d7d\n" +
+                "<0d0a30300d0a\n" +
+                "<0d0a\n";
+
+        final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
+
+        final String baseDir = temp.getRoot().getAbsolutePath();
+
+        try (
+                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                HttpServer ignored = HttpServer.create(
+                        new DefaultHttpServerConfiguration() {
+                            @Override
+                            public MillisecondClock getClock() {
+                                return StationaryMillisClock.INSTANCE;
+                            }
+                        },
+                        null,
+                        LOG,
+                        cairoEngine
+                )) {
+
+            // upload file
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
+
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+                StringSink sink = new StringSink();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expectedTableMetadata, sink);
+            }
+
+            final String selectAsJsonScript = ">474554202f657865633f71756572793d25323773616d706c652e63737625323726636f756e743d66616c736526636f6c733d66302532436631267372633d76697320485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37392e302e333934352e313330205361666172692f3533372e33360d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a5365632d46657463682d4d6f64653a20636f72730d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a436f6f6b69653a205f67613d4741312e312e323132343933323030312e313537333832343636393b205f6769643d4741312e312e3339323836373839362e313538303132333336350d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303165630d0a\n";
+
+            // select * from 'sample.csv' and limit columns to f0,f1
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
+        }
+    }
+
     public void testImport(
             String response,
             String request,
@@ -388,7 +438,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -400,7 +450,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -1009,7 +1059,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -1021,7 +1071,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -1178,7 +1228,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -1190,10 +1240,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine
+                                engine,
+                                queryCache
                         );
                     }
                 });
@@ -1847,6 +1898,106 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryMultipleRowsLimitColumns() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=x&cols=k,c,b,d,f,e,g,h,i,j,a,l HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0bda\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,-13027,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-303295973,-11105,6854658259142399220,\"273652-10-24T01:16:04.499209Z\",null,0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",30,[]],[true,1985398001,4635,7522482991756933150,\"20093-07-24T16:56:53.198086Z\",\"279864478-12-31T01:58:35.932Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",-79,[]],[false,-1966408995,-4628,-2406077911451945242,\"-254163-09-17T05:33:54.251307Z\",null,0.81233966,null,\"IKJSM\",\"SUQ\",70,[]],[false,2011884585,-15119,4641238585508069993,\"186548-11-05T05:57:55.827139Z\",\"-277437004-09-03T08:55:41.803Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",-97,[]],[false,-907794648,30294,null,null,null,0.13264287,null,\"OHNZH\",null,-9,[]],[true,-1510166985,-1315,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",-94,[]],[false,null,-30006,750145151786158348,\"-279681-08-19T06:26:33.186955Z\",\"-144112168-08-02T20:50:38.542Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",-97,[]],[false,null,-5079,6793615437970356479,\"171291-08-24T10:16:32.229138Z\",\"63572238-04-24T11:00:13.287Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",58,[]],[false,null,30698,-9219078548506735248,\"197633-02-20T09:12:49.579955Z\",\"286623354-12-11T19:15:45.735Z\",null,0.8001632261203552,null,\"KFM\",37,[]],[false,-485549586,10024,null,\"122137-10-05T20:22:21.831563Z\",\"278802275-11-05T23:22:18.593Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",109,[]],[false,-1604266757,-13852,4598876523645326656,\"204480-04-27T20:21:01.380246Z\",null,0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",-44,[]],[true,-861621212,-20937,-6446120489339099836,\"79287-08-03T02:05:46.962686Z\",null,0.4349324,0.11296257318851766,\"CGFNW\",null,17,[]],[false,1772084256,-23044,-5828188148408093893,\"-252298-10-09T07:11:36.011048Z\",\"-270365729-01-24T04:33:47.165Z\",null,0.5764439692141042,\"BQQEM\",null,-104,[]],[true,-159178348,0,null,null,\"81404961-06-19T18:10:11.037Z\",0.5598187,0.5900836401674938,null,\"HPZ\",-99,[]],[false,-238129044,-32768,-8851773155849999621,\"-90192-03-24T17:45:15.784841Z\",\"-152632412-11-30T22:15:09.334Z\",0.7806183,null,\"CLNXF\",\"UWP\",-127,[]],[true,1665107665,0,-8306574409611146484,\"-109765-04-18T07:45:05.739795Z\",\"-243146933-02-10T16:15:15.931Z\",0.52387,null,\"NIJEE\",\"RUG\",-59,[]],[false,21764960,-32768,-5708280760166173503,\"-248236-04-27T14:06:03.509521Z\",null,0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",69,[]],[true,null,0,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",56,[]],[true,-416467698,-32768,null,\"201101-10-20T07:35:25.133598Z\",\"-175203601-12-02T01:02:02.378Z\",null,0.7430101994511517,\"DXCBJ\",null,58,[]]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryInvalidColumnNameInLimitColumns() throws Exception {
+        testJsonQuery(20, "GET /query?query=x&cols=k,c,b,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "32\r\n" +
+                        "{\"query\":\"x\",\"error\":'invalid column in list: f1'}\r\n" +
+                        "00\r\n" +
+                        "\r\n", 20);
+    }
+
+    @Test
+    public void testJsonQueryInvalidLastColumnNameInLimitColumns() throws Exception {
+        testJsonQuery(20, "GET /query?query=x&cols=k,c,b,d,f,e,g,h,i,j,a,l2 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "32\r\n" +
+                        "{\"query\":\"x\",\"error\":'invalid column in list: l2'}\r\n" +
+                        "00\r\n" +
+                        "\r\n", 20);
+    }
+
+    @Test
+    public void testJsonQueryEmptyColumnNameInLimitColumns() throws Exception {
+        testJsonQuery(20, "GET /query?query=x&cols=k,c,,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2c\r\n" +
+                        "{\"query\":\"x\",\"error\":\"empty column in list\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n", 20);
+    }
+
+    @Test
     public void testJsonQueryMultipleRowsFiltered() throws Exception {
         testJsonQuery(
                 20,
@@ -1925,6 +2076,191 @@ public class IODispatcherTest {
                         "\r\n" +
                         "0224\r\n" +
                         "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryLimitColumnsUtf8() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=select+%27oops%27+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)%0A&count=false&cols=%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE&src=vis HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "ec\r\n" +
+                        "{\"query\":\"select 'oops' рекордно from long_sequence(10)\\n\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"STRING\"}],\"dataset\":[[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"]],\"count\":10}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryLimitColumnsBadUtf8() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=select+%27oops%27+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)%0A&count=false&cols=�������&src=vis HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "25\r\n" +
+                        "{\"error\":\"utf8 error in column list\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testExistentCheckDoesNotExist() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /chk?f=json&j=clipboard-1580645706714&_=1580598041784 HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "1b\r\n" +
+                        "{\"status\":\"Does not exist\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testExistentCheckExists() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /chk?f=json&j=x HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "13\r\n" +
+                        "{\"status\":\"Exists\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testExistentCheckExistsPlain() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /chk?j=x HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "08\r\n" +
+                        "Exists\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testExistentCheckBadArg() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /chk?f=json&x=clipboard-1580645706714&_=1580598041784 HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "14\r\n" +
+                        "table name missing\r\n" +
+                        "\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2095,7 +2431,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -2107,10 +2443,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine
+                                engine,
+                                queryCache
                         );
                     }
                 });
@@ -2189,6 +2526,40 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryBadUtf8() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=�������&limit=10 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "58\r\n" +
+                        "{\"query\":\"�������\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testBadUtf8() {
+        byte[] b = {-1, -2, -3, -2, -1, -4, -8};
+        System.out.println(new String(b));
     }
 
     @Test
@@ -2276,6 +2647,35 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonUtf8EncodedColumnName() throws Exception {
+        testJsonQuery(0, "GET /query?query=select+0+%D1%80%D0%B5%D0%BA%D0%BE%D1%80%D0%B4%D0%BD%D0%BE+from+long_sequence(10)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.392867896.1580123365\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "b0\r\n" +
+                        "{\"query\":\"select 0 рекордно from long_sequence(10)\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"INT\"}],\"dataset\":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],\"count\":10}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
     }
 
     @Test
@@ -2402,7 +2802,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -2596,7 +2996,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -3445,7 +3845,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -3457,7 +3857,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -3469,10 +3869,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine
+                                engine,
+                                queryCache
                         );
                     }
                 });
@@ -3713,7 +4114,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -3725,11 +4126,24 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine
+                                engine,
+                                queryCache
                         );
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/chk";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 

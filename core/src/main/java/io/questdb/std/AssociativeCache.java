@@ -74,19 +74,23 @@ public class AssociativeCache<V> implements Closeable {
         }
         V value = values[index];
         values[index] = null;
-        keys[index] = null;
+        // do not null value to avoid creating another immutable key
         return value;
     }
 
     public CharSequence put(CharSequence key, V value) {
-        int lo = lo(key);
+        final int lo = lo(key);
         CharSequence ok = keys[lo + bmask];
         if (ok != null) {
             free(lo + bmask);
         }
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
         System.arraycopy(values, lo, values, lo + 1, bmask);
-        keys[lo] = Chars.toString(key);
+        if (value == null) {
+            keys[lo] = null;
+        } else if (key instanceof String || !Chars.equalsNc(key, ok)) {
+            keys[lo] = Chars.toString(key);
+        }
         values[lo] = value;
         return ok;
     }

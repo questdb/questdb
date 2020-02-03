@@ -80,11 +80,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $(Enum e) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(Object x) {
         return this;
     }
@@ -107,6 +102,11 @@ final class NullLogRecord implements LogRecord {
     @Override
     public boolean isEnabled() {
         return false;
+    }
+
+    @Override
+    public LogRecord $(CharSequence sequence, int lo, int hi) {
+        return this;
     }
 
     @Override

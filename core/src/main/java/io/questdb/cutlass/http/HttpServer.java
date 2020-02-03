@@ -50,10 +50,17 @@ public class HttpServer implements Closeable {
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
     private final WorkerPool workerPool;
+    private final ObjList<QueryCache> queryCacheList;
 
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
+        this.queryCacheList = new ObjList<>(workerCount);
+
+        for (int i = 0; i < workerCount; i++) {
+            queryCacheList.add(new QueryCache(i, 8, 8));
+        }
+
         if (localPool) {
             workerPool = pool;
         } else {
@@ -123,10 +130,12 @@ public class HttpServer implements Closeable {
             }
 
             @Override
-            public HttpRequestProcessor newInstance() {
+            public HttpRequestProcessor newInstance(QueryCache queryCache) {
                 return new JsonQueryProcessor(
                         configuration.getJsonQueryProcessorConfiguration(),
-                        cairoEngine
+                        cairoEngine,
+                        queryCache
+
                 );
             }
         });
@@ -138,7 +147,7 @@ public class HttpServer implements Closeable {
             }
 
             @Override
-            public HttpRequestProcessor newInstance() {
+            public HttpRequestProcessor newInstance(QueryCache queryCache) {
                 return new TextImportProcessor(cairoEngine);
             }
         });
@@ -150,8 +159,12 @@ public class HttpServer implements Closeable {
             }
 
             @Override
-            public HttpRequestProcessor newInstance() {
-                return new TextQueryProcessor(configuration.getJsonQueryProcessorConfiguration(), cairoEngine);
+            public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                return new TextQueryProcessor(
+                        configuration.getJsonQueryProcessorConfiguration(),
+                        cairoEngine,
+                        queryCache
+                );
             }
         });
 
@@ -162,7 +175,7 @@ public class HttpServer implements Closeable {
             }
 
             @Override
-            public HttpRequestProcessor newInstance() {
+            public HttpRequestProcessor newInstance(QueryCache queryCache) {
                 return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
             }
         });
@@ -174,7 +187,7 @@ public class HttpServer implements Closeable {
             }
 
             @Override
-            public HttpRequestProcessor newInstance() {
+            public HttpRequestProcessor newInstance(QueryCache queryCache) {
                 return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
             }
         });
@@ -182,16 +195,15 @@ public class HttpServer implements Closeable {
 
     }
 
-
     public void bind(HttpRequestProcessorFactory factory) {
         final String url = factory.getUrl();
         assert url != null;
         for (int i = 0; i < workerCount; i++) {
             HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
             if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
+                selector.defaultRequestProcessor = factory.newInstance(queryCacheList.getQuick(i));
             } else {
-                selector.processorMap.put(url, factory.newInstance());
+                selector.processorMap.put(url, factory.newInstance(queryCacheList.getQuick(i)));
             }
         }
     }
@@ -201,6 +213,7 @@ public class HttpServer implements Closeable {
         if (workerPool != null) {
             workerPool.halt();
         }
+        Misc.freeObjList(queryCacheList);
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
     }

@@ -33,6 +33,8 @@ public interface LogRecord {
 
     LogRecord $(CharSequence sequence);
 
+    LogRecord $(CharSequence sequence, int lo, int hi);
+
     LogRecord $(int x);
 
     LogRecord $(double x);
@@ -46,8 +48,6 @@ public interface LogRecord {
     LogRecord $(Throwable e);
 
     LogRecord $(File x);
-
-    LogRecord $(Enum e);
 
     LogRecord $(Object x);
 

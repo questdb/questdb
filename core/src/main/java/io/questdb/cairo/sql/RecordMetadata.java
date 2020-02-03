@@ -30,6 +30,8 @@ import io.questdb.std.str.CharSink;
 
 public interface RecordMetadata extends ColumnTypes {
 
+    int COLUMN_NOT_FOUND = -1;
+
     int getColumnCount();
 
     int getColumnType(int index);
@@ -42,9 +44,13 @@ public interface RecordMetadata extends ColumnTypes {
         return index;
     }
 
-    int getColumnIndexQuiet(CharSequence columnName);
+    default int getColumnIndexQuiet(CharSequence columnName) {
+        return getColumnIndexQuiet(columnName, 0, columnName.length());
+    }
 
-    CharSequence getColumnName(int columnIndex);
+    int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
+
+    String getColumnName(int columnIndex);
 
     default int getColumnType(CharSequence columnName) {
         return getColumnType(getColumnIndex(columnName));

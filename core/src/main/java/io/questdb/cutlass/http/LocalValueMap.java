@@ -22,7 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.http;
+
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 

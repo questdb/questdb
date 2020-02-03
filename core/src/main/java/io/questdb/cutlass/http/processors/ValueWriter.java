@@ -22,19 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.http.processors;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 
-public class LocalValue<T> {
-    private final static AtomicInteger atomicInteger = new AtomicInteger();
-    final int hashCode = atomicInteger.getAndIncrement();
-
-    public T get(Locality locality) {
-        return locality.getMap().get(this);
-    }
-
-    public void set(Locality locality, T obj) {
-        locality.getMap().set(this, obj);
-    }
+@FunctionalInterface
+interface ValueWriter {
+    void write(HttpChunkedResponseSocket socket, Record rec, int col);
 }

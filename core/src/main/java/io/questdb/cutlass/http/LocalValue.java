@@ -22,8 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.http;
 
-public interface Locality {
-    LocalValueMap getMap();
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class LocalValue<T> {
+    private final static AtomicInteger atomicInteger = new AtomicInteger();
+    final int hashCode = atomicInteger.getAndIncrement();
+
+    public T get(Locality locality) {
+        return locality.getMap().get(this);
+    }
+
+    public void set(Locality locality, T obj) {
+        locality.getMap().set(this, obj);
+    }
 }

@@ -495,6 +495,19 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+            int len = hi - lo;
+            long p = _wPtr;
+            if (p + len < limit) {
+                Chars.asciiStrCpy(cs, lo, len, p);
+                _wPtr = p + len;
+            } else {
+                throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            }
+            return this;
+        }
+
+        @Override
         public CharSink put(char c) {
             if (_wPtr < limit) {
                 Unsafe.getUnsafe().putByte(_wPtr++, (byte) c);
@@ -616,11 +629,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 LOG.debug().$("end chunk sent").$();
             }
         }
-
-//        @Override
-//        public void flush() {
-//            sendChunk();
-//        }
 
         @Override
         public HttpResponseHeader headers() {

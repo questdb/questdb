@@ -24,6 +24,9 @@
 
 package io.questdb.std;
 
+import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.LocalValueMap;
+import io.questdb.cutlass.http.Locality;
 import org.junit.Assert;
 import org.junit.Test;
 

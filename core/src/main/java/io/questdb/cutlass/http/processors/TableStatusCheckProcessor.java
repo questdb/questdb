@@ -36,7 +36,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
-public class TableStatusCheckProcessor implements HttpRequestProcessor {
+import java.io.Closeable;
+
+public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
 
     private final CairoEngine cairoEngine;
     private final Path path = new Path();
@@ -59,15 +61,12 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public void close() {
+        Misc.free(path);
+    }
+
+    @Override
     public void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    @Override
-    public void resumeRecv(HttpConnectionContext context) {
-    }
-
-    @Override
-    public void resumeSend(HttpConnectionContext context) {
     }
 
     @Override
@@ -81,7 +80,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");
 
-                r.headers().put(keepAliveHeader).put(Misc.EOL);
+                r.headers().put(keepAliveHeader);
                 r.sendHeader();
 
                 r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');
@@ -91,6 +90,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }
         }
+        context.clear();
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 }
