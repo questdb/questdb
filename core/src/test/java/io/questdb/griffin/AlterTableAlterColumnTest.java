@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -42,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
-public class AlterTableDropColumnTest extends AbstractGriffinTest {
+public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
     @Before
     public void setUp3() {
@@ -50,8 +48,13 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBadSyntax() throws Exception {
-        assertFailure("alter table x drop column l m", 28, "',' expected");
+    public void testInvalidColumnName() throws Exception {
+        assertFailure("alter table x alter column y add index", 27, "Invalid column: y");
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        assertFailure("alter table z alter column y add index", 12, "table 'z' does not exist");
     }
 
     @Test
@@ -85,7 +88,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x drop column ik");
+                    compiler.compile("alter table x alter column ik add index");
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -103,37 +106,32 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x drop", 18, "'column' or 'partition' expected");
+    public void testAlterExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x alter", 19, "'column' expected");
     }
 
     @Test
-    public void testDropExpectColumnName() throws Exception {
-        assertFailure("alter table x drop column", 25, "column name expected");
+    public void testAlterExpectColumnName() throws Exception {
+        assertFailure("alter table x alter column", 26, "column name expected");
     }
 
     @Test
-    public void testDropTwoColumns() throws Exception {
-        TestUtils.assertMemoryLeak(
+    public void testAddIndexColumns() throws Exception {
+        assertMemoryLeak(
                 () -> {
-                    try {
-                        createX();
-
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x drop column e, m").getType());
-
-                        String expected = "{\"columnCount\":14,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":11,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":12,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":13,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
-
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            sink.clear();
-                            reader.getMetadata().toJson(sink);
-                            TestUtils.assertEquals(expected, sink);
+                    createX();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        try {
+                            reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
+                            Assert.fail();
+                        } catch (CairoException ignored) {
                         }
+                    }
 
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index").getType());
+
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        Assert.assertNotNull(reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
                     }
                 }
         );
@@ -157,16 +155,6 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableName() throws Exception {
         assertFailure("alter table", 11, "table name expected");
-    }
-
-    @Test
-    public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x drop column l, kk", 29, "Invalid column: kk");
-    }
-
-    @Test
-    public void testTableDoesNotExist() throws Exception {
-        assertFailure("alter table y", 12, "table 'y' does not");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

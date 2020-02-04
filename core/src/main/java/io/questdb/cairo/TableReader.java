@@ -43,8 +43,8 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
     private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
-    private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
+    private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
@@ -150,6 +150,62 @@ public class TableReader implements Closeable {
         } catch (CairoException e) {
             close();
             throw e;
+        }
+    }
+
+    private static int getColumnBits(int columnCount) {
+        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
+    }
+
+    static int getPrimaryColumnIndex(int base, int index) {
+        return base + index * 2;
+    }
+
+    private static boolean isEntryToBeProcessed(long address, int index) {
+        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
+            return false;
+        }
+        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
+        return true;
+    }
+
+    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
+        if (rowCount > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    growBin(mem1, mem2, rowCount);
+                    break;
+                case ColumnType.STRING:
+                    growStr(mem1, mem2, rowCount);
+                    break;
+                default:
+                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
+                    break;
+            }
+        }
+    }
+
+    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        mem1.grow(offset + 4);
+        final long len = mem1.getInt(offset);
+        if (len > 0) {
+            mem1.grow(offset + len * 2 + 4);
+        }
+    }
+
+    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        // grow data column to value offset + length, so that we can read length
+        mem1.grow(offset + 8);
+        final long len = mem1.getLong(offset);
+        if (len > 0) {
+            mem1.grow(offset + len + 8);
         }
     }
 
@@ -335,62 +391,6 @@ public class TableReader implements Closeable {
 
     public long size() {
         return rowCount;
-    }
-
-    private static int getColumnBits(int columnCount) {
-        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
-    }
-
-    static int getPrimaryColumnIndex(int base, int index) {
-        return base + index * 2;
-    }
-
-    private static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
-    }
-
-    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
-        if (rowCount > 0) {
-            // subtract column top
-            switch (type) {
-                case ColumnType.BINARY:
-                    growBin(mem1, mem2, rowCount);
-                    break;
-                case ColumnType.STRING:
-                    growStr(mem1, mem2, rowCount);
-                    break;
-                default:
-                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
-                    break;
-            }
-        }
-    }
-
-    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.grow(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        mem1.grow(offset + 4);
-        final long len = mem1.getInt(offset);
-        if (len > 0) {
-            mem1.grow(offset + len * 2 + 4);
-        }
-    }
-
-    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.grow(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        // grow data column to value offset + length, so that we can read length
-        mem1.grow(offset + 8);
-        final long len = mem1.getLong(offset);
-        if (len > 0) {
-            mem1.grow(offset + len + 8);
-        }
     }
 
     private void applyTruncate() {
@@ -622,7 +622,7 @@ public class TableReader implements Closeable {
         return columns.getQuick(absoluteIndex);
     }
 
-    int getColumnBase(int partitionIndex) {
+    public int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountBits;
     }
 
