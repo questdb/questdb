@@ -38,7 +38,7 @@ import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
@@ -50,12 +50,8 @@ import java.util.Properties;
 
 public class PropServerConfigurationTest {
 
+    @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-
-    @Before
-    public void setUp() throws Exception {
-        temp.create();
-    }
 
     @Test
     public void testAllDefaults() throws ServerConfigurationException, IOException, JsonException {

@@ -33,11 +33,15 @@ interface ColumnIndexer {
 
     long getSequence();
 
-    void index(long loRow, long hiRow);
+    void refreshSourceAndIndex(long loRow, long hiRow);
+
+    void index(VirtualMemory mem, long loRow, long hiRow);
 
     boolean isDistressed();
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, long columnTop);
+    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory columnMem, long columnTop);
+
+    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
 
     void rollback(long maxRow);
 

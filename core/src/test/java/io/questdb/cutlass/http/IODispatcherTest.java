@@ -38,7 +38,10 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.nio.charset.StandardCharsets;
@@ -47,6 +50,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -95,17 +100,12 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    @Before
-    public void setUp() throws Exception {
-        temp.create();
-    }
-
     @Test
     public void testBiasWrite() throws Exception {
 
         LOG.info().$("started testBiasWrite").$();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -182,7 +182,7 @@ public class IODispatcherTest {
 
         LOG.info().$("started testConnectDisconnect").$();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
@@ -406,7 +406,7 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
                     false,
@@ -1029,7 +1029,7 @@ public class IODispatcherTest {
 
     @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -1196,7 +1196,7 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -2400,7 +2400,7 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQuerySyntaxError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -2683,7 +2683,7 @@ public class IODispatcherTest {
 
         LOG.info().$("started maxConnections").$();
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             int N = 200;
@@ -2775,7 +2775,7 @@ public class IODispatcherTest {
 
     @Test
     public void testSCPConnectDownloadDisconnect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -2969,7 +2969,7 @@ public class IODispatcherTest {
 
     @Test
     public void testSCPFullDownload() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -3162,7 +3162,7 @@ public class IODispatcherTest {
                 "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
@@ -3327,7 +3327,7 @@ public class IODispatcherTest {
                 "00\r\n" +
                 "\r\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration() {
                 @Override
                 public MillisecondClock getClock() {
@@ -3487,7 +3487,7 @@ public class IODispatcherTest {
                 "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
@@ -3657,7 +3657,7 @@ public class IODispatcherTest {
         final int senderCount = 2;
 
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -3813,7 +3813,7 @@ public class IODispatcherTest {
     @Test
     @Ignore
     public void testUpload() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
 //            final String baseDir = "/home/vlad/dev/123";
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
@@ -4083,7 +4083,7 @@ public class IODispatcherTest {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {

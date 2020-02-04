@@ -27,9 +27,9 @@ package io.questdb.cairo;
 public class TableColumnMetadata {
     private final String name;
     private final int type;
-    private final boolean indexed;
-    private final int indexValueBlockCapacity;
     private final boolean symbolTableStatic;
+    private int indexValueBlockCapacity;
+    private boolean indexed;
 
     public TableColumnMetadata(String name, int type) {
         this(name, type, false, 0, false);
@@ -54,6 +54,10 @@ public class TableColumnMetadata {
         return indexValueBlockCapacity;
     }
 
+    public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
+        this.indexValueBlockCapacity = indexValueBlockCapacity;
+    }
+
     public String getName() {
         return name;
     }
@@ -64,6 +68,10 @@ public class TableColumnMetadata {
 
     public boolean isIndexed() {
         return indexed;
+    }
+
+    public void setIndexed(boolean value) {
+        indexed = value;
     }
 
     public boolean isSymbolTableStatic() {

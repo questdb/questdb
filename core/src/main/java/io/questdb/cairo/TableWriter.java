@@ -336,7 +336,7 @@ public class TableWriter implements Closeable {
 
     static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
         try {
-            indexer.index(lo, hi);
+            indexer.refreshSourceAndIndex(lo, hi);
         } catch (CairoException e) {
             indexer.distress();
             LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
@@ -468,6 +468,199 @@ public class TableWriter implements Closeable {
         metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+    }
+
+    public void addIndex(CharSequence name, int indexValueBlockSize) {
+        assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
+
+        checkDistressed();
+
+        final int columnIndex = getColumnIndexQuiet(metaMem, name, columnCount);
+
+        if (columnIndex == -1) {
+            throw CairoException.instance(0).put("Invalid column name: ").put(name);
+        }
+
+        commit();
+
+        final int existingType = getColumnType(metaMem, columnIndex);
+        LOG.info().$("adding index to '").utf8(name).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
+
+        if (existingType != ColumnType.SYMBOL) {
+            LOG.error().$("cannot create index for [column='").utf8(name).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
+            throw CairoException.instance(0).put("cannot create index for [column='").put(name).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+        }
+
+        // create indexer
+        final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
+
+        try {
+            try {
+
+                // edge cases here are:
+                // column spans only part of table - e.g. it was added after table was created and populated
+                // column has top value, e.g. does not span entire partition
+                // to this end, we have a super-edge case:
+                //
+                if (partitionBy != PartitionBy.NONE) {
+                    // run indexer for the whole table
+                    final long timestamp = indexHistoricPartitions(indexer, name, indexValueBlockSize);
+                    path.trimTo(rootLen);
+                    setStateForTimestamp(timestamp, true);
+                } else {
+                    setStateForTimestamp(0, false);
+                }
+
+                // create index in last partition
+                indexLastPartition(indexer, name, columnIndex, indexValueBlockSize);
+
+            } finally {
+                path.trimTo(rootLen);
+            }
+        } catch (CairoException | CairoError e) {
+            LOG.error().$("rolling back index created so far [path=").$(path).$(']').$();
+            removeIndexFiles(name);
+            throw e;
+        }
+
+        // set index flag in metadata
+        // create new _meta.swp
+
+        metaSwapIndex = copyMetadataAndSetIndexed(columnIndex, indexValueBlockSize);
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // validate new meta
+        validateSwapMeta(name);
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(name);
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(name);
+
+        // rename _meta.swp to -_meta
+        renameSwapMetaToMeta(name);
+
+        try {
+            // open _meta file
+            openMetaFile();
+
+            // remove _todo
+            removeTodoFile();
+
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        bumpStructureVersion();
+
+        indexers.extendAndSet((columnIndex) / 2, indexer);
+        populateDenseIndexerList();
+
+        TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+        columnMetadata.setIndexed(true);
+        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        LOG.info().$("ADDED index to '").utf8(name).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
+    }
+
+    private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
+        final long maxTimestamp = timestampFloorMethod.floor(this.maxTimestamp);
+        long timestamp = minTimestamp;
+
+        try (final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
+
+            while (timestamp < maxTimestamp) {
+
+                path.trimTo(rootLen);
+
+                setStateForTimestamp(timestamp, true);
+
+                if (ff.exists(path.$())) {
+
+                    final int plen = path.length();
+
+                    TableUtils.dFile(path.trimTo(plen), columnName);
+
+                    if (ff.exists(path)) {
+
+                        path.trimTo(plen);
+
+                        LOG.info().$("indexing [path=").$(path).$(']').$();
+
+                        createIndexFiles(columnName, indexValueBlockSize, plen, true);
+
+                        final long partitionSize = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem8b);
+                        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem8b);
+
+                        if (partitionSize > columnTop) {
+                            TableUtils.dFile(path.trimTo(plen), columnName);
+
+                            roMem.of(ff, path, ff.getPageSize(), 0);
+                            roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+
+                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+                            indexer.index(roMem, columnTop, partitionSize);
+                        }
+                    }
+                }
+                timestamp = nextTimestampMethod.calculate(timestamp, 1);
+            }
+        } finally {
+            indexer.close();
+        }
+        return timestamp;
+    }
+
+    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, int columnIndex, int indexValueBlockSize) {
+        final int plen = path.length();
+
+        createIndexFiles(columnName, indexValueBlockSize, plen, true);
+
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem8b);
+
+        // set indexer up to continue functioning as normal
+        indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
+        indexer.refreshSourceAndIndex(0, transientRowCount);
+    }
+
+    private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
+        try {
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                if (i != columnIndex) {
+                    writeColumnEntry(i);
+                } else {
+                    ddlMem.putByte((byte) getColumnType(metaMem, i));
+                    long flags = META_FLAG_BIT_INDEXED;
+                    if (isSequential(metaMem, i)) {
+                        flags |= META_FLAG_BIT_SEQUENTIAL;
+                    }
+                    ddlMem.putLong(flags);
+                    ddlMem.putInt(indexValueBlockSize);
+                    ddlMem.skip(META_COLUMN_DATA_RESERVED);
+                }
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += VirtualMemory.getStorageLength(columnName);
+            }
+            return index;
+        } finally {
+            ddlMem.close();
+        }
     }
 
     @Override
@@ -1186,11 +1379,10 @@ public class TableWriter implements Closeable {
      * append index data. Therefore it must be called before primary column is initialized.
      *
      * @param columnName              column name
-     * @param columnIndex             column index in table writer column list
      * @param indexValueBlockCapacity approximate number of values per index key
      * @param plen                    path length. This is used to trim shared path object to.
      */
-    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexValueBlockCapacity, int plen, boolean force) {
+    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, boolean force) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
 
@@ -1199,19 +1391,24 @@ public class TableWriter implements Closeable {
             }
 
             // reuse memory column object to create index and close it at the end
-            try (AppendMemory mem = getPrimaryColumn(columnIndex)) {
-                mem.of(ff, path, ff.getPageSize());
-                BitmapIndexWriter.initKeyMemory(mem, indexValueBlockCapacity);
+            try {
+                ddlMem.of(ff, path, ff.getPageSize());
+                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half baked file sitting around
-                LOG.error().$("failed to create index [name=").utf8(path).$(']').$();
+                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
                 if (!ff.remove(path)) {
-                    LOG.error().$("failed to remove '").utf8(path).$("'. Please remove MANUALLY.").$();
+                    LOG.error().$("could not remove '").utf8(path).$("'. Please remove MANUALLY.").$();
                 }
                 throw e;
+            } finally {
+                ddlMem.close();
             }
-            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
+            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
+                LOG.error().$("could not create index [name=").$(path).$(']').$();
+                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
+            }
         } finally {
             path.trimTo(plen);
         }
@@ -1433,13 +1630,13 @@ public class TableWriter implements Closeable {
         try {
             // open column files
             setStateForTimestamp(maxTimestamp, false);
-            int plen = path.length();
+            final int plen = path.length();
             final int columnIndex = columnCount - 1;
 
             // index must be created before column is initialised because
             // it uses primary column object as temporary tool
             if (indexFlag) {
-                createIndexFiles(name, columnIndex, indexValueBlockCapacity, plen, true);
+                createIndexFiles(name, indexValueBlockCapacity, plen, true);
             }
 
             openColumnFiles(name, columnIndex, plen);
@@ -1451,7 +1648,7 @@ public class TableWriter implements Closeable {
             if (indexFlag) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
-                indexers.getQuick(columnIndex).of(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), transientRowCount);
+                indexers.getQuick(columnIndex).configureFollowerAndWriter(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), transientRowCount);
             }
 
         } finally {
@@ -1478,7 +1675,7 @@ public class TableWriter implements Closeable {
                 if (indexed) {
                     // we have to create files before columns are open
                     // because we are reusing AppendMemory object from columns list
-                    createIndexFiles(name, i, metadata.getIndexValueBlockCapacity(i), plen, transientRowCount < 1);
+                    createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, transientRowCount < 1);
                 }
 
                 openColumnFiles(name, i, plen);
@@ -1488,7 +1685,7 @@ public class TableWriter implements Closeable {
                 if (indexed) {
                     ColumnIndexer indexer = indexers.getQuick(i);
                     assert indexer != null;
-                    indexer.of(configuration, path, name, getPrimaryColumn(i), columnTop);
+                    indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();
@@ -1633,6 +1830,23 @@ public class TableWriter implements Closeable {
                 removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName));
                 removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName));
             }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeIndexFiles(CharSequence columnName) {
+        try {
+            ff.iterateDir(path.$(), (file, type) -> {
+                nativeLPSZ.of(file);
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+                    path.trimTo(rootLen);
+                    path.concat(nativeLPSZ);
+                    int plen = path.length();
+                    removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
+                    removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
+                }
+            });
         } finally {
             path.trimTo(rootLen);
         }
@@ -2097,7 +2311,7 @@ public class TableWriter implements Closeable {
     private void updateIndexesSerially(long lo, long hi) {
         for (int i = 0, n = indexCount; i < n; i++) {
             try {
-                denseIndexers.getQuick(i).index(lo, hi);
+                denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
                 // this is pretty severe, we hit some sort of a limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
