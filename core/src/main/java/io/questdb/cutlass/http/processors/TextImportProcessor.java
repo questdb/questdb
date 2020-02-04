@@ -35,7 +35,10 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -88,7 +91,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 socket.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
                         .putQuoted("location").put(':').encodeUtf8AndQuote(textLoader.getTableName()).put(',')
-                        .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
+                        .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + textLoader.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
                         .putQuoted("header").put(':').put(textLoader.isForceHeaders()).put(',')
                         .putQuoted("columns").put(':').put('[');
@@ -195,7 +198,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows handled");
-                pad(socket, TO_STRING_COL2_PAD, textLoader.getParsedLineCount());
+                pad(socket, TO_STRING_COL2_PAD, textLoader.getParsedLineCount() + textLoader.getErrorLineCount());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);

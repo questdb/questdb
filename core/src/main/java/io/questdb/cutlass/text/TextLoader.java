@@ -135,6 +135,10 @@ public class TextLoader implements Closeable, Mutable {
         return textLexer.getLineCount();
     }
 
+    public long getErrorLineCount() {
+        return textLexer.getErrorCount();
+    }
+
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
     }

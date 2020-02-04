@@ -98,6 +98,10 @@ public class TextLexer implements Closeable, Mutable {
         fieldMax = -1;
     }
 
+    public long getErrorCount() {
+        return errorCount;
+    }
+
     @Override
     public void close() {
         if (lineRollBufPtr != 0) {
@@ -380,7 +384,7 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void stashField(int fieldIndex) {
-        if (lineCount == 0) {
+        if (lineCount == 0 && fieldIndex >= fields.size()) {
             addField();
         }
 
