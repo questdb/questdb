@@ -362,7 +362,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add' or 'drop' expected");
+        assertFailure("alter table x", 13, "'add', 'alter' or 'drop' expected");
     }
 
     @Test

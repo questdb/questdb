@@ -682,7 +682,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tableName = GenericLexer.immutableOf(tok);
         try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
 
-            tok = expectToken(lexer, "'add' or 'drop'");
+            tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
             if (Chars.equalsLowerCaseAscii("add", tok)) {
                 alterTableAddColumn(tableNamePosition, writer);
@@ -695,6 +695,8 @@ public class SqlCompiler implements Closeable {
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
+            } else if (Chars.equalsLowerCaseAscii("alter", tok)) {
+                alterTableColumnAddIndex(executionContext, tableNamePosition, tableName);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
             }
@@ -704,6 +706,26 @@ public class SqlCompiler implements Closeable {
         }
 
         return compiledQuery.ofAlter();
+    }
+
+    private void alterTableColumnAddIndex(SqlExecutionContext executionContext, int tableNamePosition, CharSequence tableName) throws SqlException {
+        expectKeyword(lexer, "column");
+        final CharSequence columnName = GenericLexer.immutableOf(expectToken(lexer, "column name"));
+        final int columnNamePosition = lexer.lastTokenPosition();
+        expectKeyword(lexer, "add");
+        expectKeyword(lexer, "index");
+
+        try {
+            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
+                // do column existence check to provide adequate error position
+                if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
+                    throw SqlException.invalidColumn(columnNamePosition, columnName);
+                }
+                w.addIndex(columnName, configuration.getIndexValueBlockSize());
+            }
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
     }
 
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
