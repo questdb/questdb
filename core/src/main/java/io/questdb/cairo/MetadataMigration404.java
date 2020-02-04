@@ -152,7 +152,7 @@ public class MetadataMigration404 {
             }
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             NativeLPSZ nativeLPSZ = new NativeLPSZ();
-            path1.of("C:\\qdb\\db").$();
+            path1.of(args[0]).$();
 
             ff.iterateDir(path1, (name, type) -> {
                 if (type == Files.DT_DIR) {
