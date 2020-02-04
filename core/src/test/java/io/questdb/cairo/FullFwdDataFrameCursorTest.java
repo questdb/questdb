@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -46,6 +47,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
     static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
+        cursor.toTop();
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
+    }
+
+    private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
@@ -58,7 +65,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, indexDirection);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -896,8 +903,38 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolIndexReadByDayAfterAlter() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.DAY, 1000000 * 60 * 5, 3, 1000);
+    }
+
+    @Test
+    public void testSymbolIndexReadByDayAfterAlterSparse() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+    }
+
+    @Test
+    public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse() throws Exception {
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+    }
+
+    @Test
+    public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse2() throws Exception {
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, (long) (Timestamps.DAY_MICROS * 1.5), 3, 30);
+    }
+
+    @Test
     public void testSymbolIndexReadByMonth() throws Exception {
         testSymbolIndexRead(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
+    }
+
+    @Test
+    public void testSymbolIndexReadByMonthAfterAlter() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, 1000);
+    }
+
+    @Test
+    public void testSymbolIndexReadByMonthAfterColumnAddAndAlterSparse() throws Exception {
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.MONTH, (long) ((Timestamps.DAY_MICROS * 1.5) * 30), 2, 40);
     }
 
     @Test
@@ -906,8 +943,18 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolIndexReadByNoneAfterAlter() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.NONE, 1000000 * 60 * 5, 0, 1000);
+    }
+
+    @Test
     public void testSymbolIndexReadByYear() throws Exception {
         testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
+    }
+
+    @Test
+    public void testSymbolIndexReadByYearAfterAlter() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, 1000);
     }
 
     private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
@@ -1024,9 +1071,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(M * 2, count);
     }
 
-    private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment) {
+    private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment, int count) {
         long timestamp = ts;
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < count; i++) {
             TableWriter.Row row = writer.newRow(timestamp += increment);
             row.putSym(0, symbols[rnd.nextPositiveInt() % 100]);
             row.append();
@@ -2091,7 +2138,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // prepare the data
             long timestamp = 0;
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                populateTable(writer, symbols, rnd, timestamp, increment);
+                populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
             }
 
@@ -2120,6 +2167,122 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    private void testSymbolIndexReadAfterAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 100;
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.SYMBOL).indexed(false, N / 4).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
+
+                writer.addIndex("a", configuration.getIndexValueBlockSize());
+
+                populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
+                writer.commit();
+            }
+
+            // check that each symbol in table exists in index as well
+            // and current row is collection of index rows
+            try (TableReader reader = new TableReader(configuration, "x")) {
+
+                // Open data frame cursor. This one will frame table as collection of
+                // partitions, each partition is a frame.
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord();
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                cursor.of(reader);
+                record.of(reader);
+
+                assertSymbolFoundInIndex(cursor, record, 0, M);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 0, M);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, M);
+            }
+        });
+    }
+
+    private void testSymbolIndexReadColumnAddAndAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 100;
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+
+                for (int i = 0; i < M / 2; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.append();
+                }
+
+                writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, false, configuration.getIndexValueBlockSize(), false);
+
+
+                for (int i = 0; i < M / 2; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % 100]);
+                    row.append();
+
+                }
+                writer.commit();
+
+                writer.addIndex("a", configuration.getIndexValueBlockSize());
+
+            }
+
+            // check that each symbol in table exists in index as well
+            // and current row is collection of index rows
+            try (TableReader reader = new TableReader(configuration, "x")) {
+
+                // Open data frame cursor. This one will frame table as collection of
+                // partitions, each partition is a frame.
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord();
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                cursor.of(reader);
+                record.of(reader);
+
+                assertSymbolFoundInIndex(cursor, record, 1, M);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, M);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, M);
+            }
+        });
+    }
+
     private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
@@ -2142,11 +2305,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             long timestamp = 0;
 
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment);
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment);
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.rollback();
-                populateTable(writer, symbols, rnd, timestamp, increment);
+                populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
             }
 

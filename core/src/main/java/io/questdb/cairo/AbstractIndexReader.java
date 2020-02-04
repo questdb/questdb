@@ -43,6 +43,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected MicrosecondClock clock;
     protected int keyCount;
     protected long unIndexedNullCount;
+    private int keyCountIncludingNulls;
 
     @Override
     public void close() {
@@ -54,7 +55,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     @Override
     public int getKeyCount() {
-        return keyCount;
+        return keyCountIncludingNulls;
     }
 
     @Override
@@ -116,7 +117,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            this.keyCount = keyCount;
+            this.keyCount = this.keyCountIncludingNulls = keyCount;
+            if (unIndexedNullCount > 0) {
+                this.keyCountIncludingNulls++;
+            }
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
             this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (CairoException e) {
@@ -151,8 +155,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             }
         }
 
-        if (keyCount > this.getKeyCount()) {
-            this.keyCount = keyCount;
+        if (keyCount > this.keyCount) {
+            this.keyCount = this.keyCountIncludingNulls = keyCount;
+            if (unIndexedNullCount > 0) {
+                this.keyCountIncludingNulls++;
+            }
         }
     }
 }

@@ -118,6 +118,56 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddIndexAndFailOnceByDay() throws Exception {
+
+        final FilesFacade ff = new FilesFacadeImpl() {
+            int count = 5;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "supplier.d") && count-- == 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        testAddIndexAndFailToIndexHalfWay(configuration, PartitionBy.DAY, 1000);
+    }
+
+    @Test
+    public void testAddIndexAndFailOnceByNone() throws Exception {
+
+        final FilesFacade ff = new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public boolean touch(LPSZ path) {
+                if (Chars.endsWith(path, "supplier.v") && --count == 0) {
+                    return false;
+                }
+                return super.touch(path);
+            }
+        };
+
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        testAddIndexAndFailToIndexHalfWay(configuration, PartitionBy.NONE, 500);
+    }
+
+    @Test
     public void testAddColumnAndOpenWriterByMonth() throws Exception {
         testAddColumnAndOpenWriter(PartitionBy.MONTH, 1000);
     }
@@ -2602,6 +2652,45 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 writer.commit();
                 Assert.assertEquals(N * 2, writer.size());
+            }
+        });
+    }
+
+    private void testAddIndexAndFailToIndexHalfWay(CairoConfiguration configuration, int partitionBy, int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+
+            create(FF, partitionBy, N);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, N, 60L * 60000L * 1000L);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(ts += 60L * 60000 * 1000L);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+                Assert.assertEquals(N * 2, writer.size());
+            }
+
+            // another attempt to create index
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
             }
         });
     }

@@ -67,12 +67,17 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void index(long loRow, long hiRow) {
+    public void refreshSourceAndIndex(long loRow, long hiRow) {
         mem.updateSize();
+        index(mem, loRow, hiRow);
+    }
+
+    @Override
+    public void index(VirtualMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         for (long lo = loRow - columnTop; lo < hiRow; lo++) {
-            writer.add(TableUtils.toIndexKey(mem.getInt(lo * 4)), lo + columnTop);
+            writer.add(TableUtils.toIndexKey(mem.getInt(lo * Integer.BYTES)), lo + columnTop);
         }
     }
 
@@ -82,11 +87,28 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, long columnTop) {
+    public void configureFollowerAndWriter(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            AppendMemory columnMem,
+            long columnTop
+    ) {
         this.columnTop = columnTop;
         try {
             this.writer.of(configuration, path, name);
-            this.mem.of(mem1);
+            this.mem.of(columnMem);
+        } catch (CairoException e) {
+            this.close();
+            throw e;
+        }
+    }
+
+    @Override
+    public void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop) {
+        this.columnTop = columnTop;
+        try {
+            this.writer.of(configuration, path, name);
         } catch (CairoException e) {
             this.close();
             throw e;

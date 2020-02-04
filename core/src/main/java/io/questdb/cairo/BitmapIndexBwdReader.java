@@ -44,20 +44,20 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         assert minValue <= maxValue;
 
-        if (key >= getKeyCount()) {
+        if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key == 0 && unIndexedNullCount > 0) {
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, minValue, maxValue);
+            nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
 
-        if (key < getKeyCount()) {
+        if (key < keyCount) {
             final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue);
+            cursor.of(key, minValue, maxValue, keyCount);
             return cursor;
         }
 
@@ -119,43 +119,47 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
-        void of(int key, long minValue, long maxValue) {
-            assert key > -1 : "key must be positive integer: " + key;
-            long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-            keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
-            // Read value count and last block offset atomically. In that we must orderly read value count first and
-            // value count check last. If they match - everything we read between those holds true. We must retry
-            // should these values do not match.
-            long valueCount;
-            long valueBlockOffset;
-            final long deadline = clock.getTicks() + spinLockTimeoutUs;
-            while (true) {
-                valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-
-                Unsafe.getUnsafe().loadFence();
-                if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+        void of(int key, long minValue, long maxValue, long keyCount) {
+            if (keyCount == 0) {
+                valueCount = 0;
+            } else {
+                assert key > -1 : "key must be positive integer: " + key;
+                long offset = BitmapIndexUtils.getKeyEntryOffset(key);
+                keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                // Read value count and last block offset atomically. In that we must orderly read value count first and
+                // value count check last. If they match - everything we read between those holds true. We must retry
+                // should these values do not match.
+                long valueCount;
+                long valueBlockOffset;
+                final long deadline = clock.getTicks() + spinLockTimeoutUs;
+                while (true) {
+                    valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
                     Unsafe.getUnsafe().loadFence();
-                    if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                        break;
+                    if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
+                        valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+
+                        Unsafe.getUnsafe().loadFence();
+                        if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                            break;
+                        }
+                    }
+
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
                     }
                 }
 
-                if (clock.getTicks() > deadline) {
-                    LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                    throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
+                valueMem.grow(valueBlockOffset + blockCapacity);
+
+                if (valueCount > 0) {
+                    BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                } else {
+                    seekValue(valueCount, valueBlockOffset);
                 }
+                this.minValue = minValue;
             }
-
-            valueMem.grow(valueBlockOffset + blockCapacity);
-
-            if (valueCount > 0) {
-                BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
-            } else {
-                seekValue(valueCount, valueBlockOffset);
-            }
-            this.minValue = minValue;
         }
 
         private void seekValue(long count, long offset) {
