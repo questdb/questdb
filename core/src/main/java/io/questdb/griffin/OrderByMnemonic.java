@@ -22,35 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
-
-public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
-
-    public DataFrameRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
-            RowCursorFactory rowCursorFactory
-    ) {
-        super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity());
-    }
-
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return true;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) {
-        cursor.of(dataFrameCursor, executionContext);
-        return cursor;
-    }
+public class OrderByMnemonic {
+    public static final int ORDER_BY_UNKNOWN = 0;
+    public static final int ORDER_BY_REQUIRED = 1;
+    public static final int ORDER_BY_INVARIANT = 2;
 }

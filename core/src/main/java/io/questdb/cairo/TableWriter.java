@@ -470,25 +470,29 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
 
-    public void addIndex(CharSequence name, int indexValueBlockSize) {
+    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, name, columnCount);
+        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.instance(0).put("Invalid column name: ").put(name);
+            throw CairoException.instance(0).put("Invalid column name: ").put(columnName);
         }
 
         commit();
 
+        if (isColumnIndexed(metaMem, columnIndex)) {
+            throw CairoException.instance(0).put("already indexed [column=").put(columnName).put(']');
+        }
+
         final int existingType = getColumnType(metaMem, columnIndex);
-        LOG.info().$("adding index to '").utf8(name).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
+        LOG.info().$("adding index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
 
         if (existingType != ColumnType.SYMBOL) {
-            LOG.error().$("cannot create index for [column='").utf8(name).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
-            throw CairoException.instance(0).put("cannot create index for [column='").put(name).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
+            throw CairoException.instance(0).put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
 
         // create indexer
@@ -504,7 +508,7 @@ public class TableWriter implements Closeable {
                 //
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
-                    final long timestamp = indexHistoricPartitions(indexer, name, indexValueBlockSize);
+                    final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
                     path.trimTo(rootLen);
                     setStateForTimestamp(timestamp, true);
                 } else {
@@ -512,14 +516,14 @@ public class TableWriter implements Closeable {
                 }
 
                 // create index in last partition
-                indexLastPartition(indexer, name, columnIndex, indexValueBlockSize);
+                indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
 
             } finally {
                 path.trimTo(rootLen);
             }
         } catch (CairoException | CairoError e) {
             LOG.error().$("rolling back index created so far [path=").$(path).$(']').$();
-            removeIndexFiles(name);
+            removeIndexFiles(columnName);
             throw e;
         }
 
@@ -532,17 +536,17 @@ public class TableWriter implements Closeable {
         metaMem.close();
 
         // validate new meta
-        validateSwapMeta(name);
+        validateSwapMeta(columnName);
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
+        renameMetaToMetaPrev(columnName);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
+        writeRestoreMetaTodo(columnName);
 
         // rename _meta.swp to -_meta
-        renameSwapMetaToMeta(name);
+        renameSwapMetaToMeta(columnName);
 
         try {
             // open _meta file
@@ -564,7 +568,7 @@ public class TableWriter implements Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        LOG.info().$("ADDED index to '").utf8(name).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
+        LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {

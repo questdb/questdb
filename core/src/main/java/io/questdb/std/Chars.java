@@ -29,9 +29,14 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Comparator;
+
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
+    public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR = Chars::compare;
+    public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR_DESC = Chars::compareDescending;
+
     private Chars() {
     }
 
@@ -691,6 +696,10 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
+    }
+
+    public static int compareDescending(CharSequence l, CharSequence r) {
+        return compare(r, l);
     }
 
     public static int compare(CharSequence l, CharSequence r) {

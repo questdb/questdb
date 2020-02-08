@@ -171,7 +171,7 @@ final class WhereClauseParser {
             }
 
             try {
-                model.intersectIntervals(DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) + increment, Long.MAX_VALUE);
+                model.intersectIntervals(DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1), Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -334,7 +334,7 @@ final class WhereClauseParser {
                     return false;
                 }
 
-                long lo = DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) + inc;
+                long lo = DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1);
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;

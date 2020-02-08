@@ -45,6 +45,10 @@ public interface RecordCursorFactory extends Closeable {
         throw new UnsupportedOperationException();
     }
 
+    default boolean followedOrderByAdvice() {
+        return false;
+    }
+
     RecordMetadata getMetadata();
 
     boolean isRandomAccessCursor();

@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -41,15 +41,17 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final int columnIndex;
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
-    private CharSequenceHashSet deferredSymbols;
+    private final boolean followedOrderByAdvice;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            @NotNull CharSequenceHashSet keyValues,
+            @NotNull @Transient ObjList<CharSequence> keyValues,
             int columnIndex,
             @NotNull @Transient TableReader reader,
-            @Nullable Function filter
+            @Nullable Function filter,
+            int orderByMnemonic,
+            boolean followedOrderByAdvice
     ) {
         super(metadata, dataFrameCursorFactory);
         final int nKeyValues = keyValues.size();
@@ -59,24 +61,24 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
             final CharSequence symbol = keyValues.get(i);
-            final int symbolKey = symbolMapReader.keyOf(symbol);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                addSymbolKey(symbolKey);
-            } else {
-                if (deferredSymbols == null) {
-                    deferredSymbols = new CharSequenceHashSet();
-                }
-                deferredSymbols.add(Chars.toString(symbol));
-            }
+            addSymbolKey(symbolMapReader.keyOf(symbol), symbol);
         }
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), filter, false);
+        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
+            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false);
+        } else {
+            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false);
+        }
+        this.followedOrderByAdvice = followedOrderByAdvice;
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return followedOrderByAdvice;
     }
 
     @Override
     public void close() {
-        if (filter != null) {
-            filter.close();
-        }
+        Misc.free(filter);
     }
 
     @Override
@@ -84,12 +86,20 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         return true;
     }
 
-    private void addSymbolKey(int symbolKey) {
+    private void addSymbolKey(int symbolKey, CharSequence symbolValue) {
         final RowCursorFactory rowCursorFactory;
         if (filter == null) {
-            rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, Chars.toString(symbolValue), cursorFactories.size() == 0);
+            } else {
+                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
+            }
         } else {
-            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(columnIndex, Chars.toString(symbolValue), filter, cursorFactories.size() == 0);
+            } else {
+                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
+            }
         }
         cursorFactories.add(rowCursorFactory);
     }
@@ -99,36 +109,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        if (deferredSymbols != null && lookupDeferredSymbols(dataFrameCursor)) {
-            return EmptyTableRandomRecordCursor.INSTANCE;
-        }
         this.cursor.of(dataFrameCursor, executionContext);
         return this.cursor;
-    }
-
-    private boolean lookupDeferredSymbols(DataFrameCursor dataFrameCursor) {
-        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
-        int n = deferredSymbols.size();
-        for (int i = 0; i < n; ) {
-            CharSequence symbolValue = deferredSymbols.get(i);
-            int symbolKey = symbolTable.keyOf(symbolValue);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                addSymbolKey(symbolKey);
-                deferredSymbols.remove(symbolValue);
-                n--;
-            } else {
-                i++;
-            }
-        }
-
-        if (deferredSymbols.size() == 0) {
-            deferredSymbols = null;
-        }
-
-        if (cursorFactories.size() == 0) {
-            dataFrameCursor.close();
-            return true;
-        }
-        return false;
     }
 }

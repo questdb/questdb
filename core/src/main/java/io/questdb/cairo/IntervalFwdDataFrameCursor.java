@@ -55,14 +55,16 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
 
+                final long partitionTimestampLo = column.getLong(0);
                 // interval is wholly above partition, skip interval
-                if (column.getLong(0) > intervalHi) {
+                if (partitionTimestampLo > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
+                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
                 // interval is wholly below partition, skip partition
-                if (column.getLong((rowCount - 1) * 8) < intervalLo) {
+                if (partitionTimestampHi < intervalLo) {
                     partitionLimit = 0;
                     partitionLo++;
                     continue;
@@ -70,9 +72,14 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 // calculate intersection
 
-                long lo = search(column, intervalLo, partitionLimit, rowCount);
-                if (lo < 0) {
-                    lo = -lo - 1;
+                long lo;
+                if (partitionTimestampLo == intervalLo) {
+                    lo = 0;
+                } else {
+                    lo = search(column, intervalLo, partitionLimit, rowCount);
+                    if (lo < 0) {
+                        lo = -lo - 1;
+                    }
                 }
 
                 long hi = search(column, intervalHi, lo, rowCount);

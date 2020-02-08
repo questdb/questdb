@@ -541,8 +541,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.585982949541474\tABC\t1971-01-01T00:00:00.000000Z\n");
 
         // these value are also ok because ddl2 is present, there is another round of check for that
-        Assert.assertEquals(10, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(24, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -656,8 +654,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "44.80468966861358\t\t\n");
 
         // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(9, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(24, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -737,11 +733,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected +
                         "75.88175403454873\tHYRX\n" +
                         "57.78947915182423\tHYRX\n");
-
-        // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(9, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(24, TestMatchFunctionFactory.getTopCount());
-        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -773,10 +764,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
                         "57.78947915182423\tABC\n");
-        // 5 opens is good because we check variable length column API sanity
-        Assert.assertEquals(7, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(14, TestMatchFunctionFactory.getTopCount());
-        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test

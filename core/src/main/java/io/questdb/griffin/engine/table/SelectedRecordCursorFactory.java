@@ -43,6 +43,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return base.followedOrderByAdvice();
+    }
+
+    @Override
     public void close() {
         base.close();
     }

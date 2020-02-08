@@ -67,7 +67,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         private int next() {
-            return rnd.nextPositiveInt() % count;
+            return Math.abs(rnd.nextPositiveInt() % count);
         }
 
         @Override

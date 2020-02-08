@@ -48,9 +48,6 @@ class SqlOptimiser {
     private static final int NOT_OP_LESS_EQ = 7;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_NOT_EQ = 9;
-    private static final int ORDER_BY_UNKNOWN = 0;
-    private static final int ORDER_BY_REQUIRED = 1;
-    private static final int ORDER_BY_INVARIANT = 2;
     private final static IntHashSet joinBarriers;
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
@@ -86,7 +83,7 @@ class SqlOptimiser {
 
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
-    private final ObjectPool<ExpressionNode> sqlNodePool;
+    private final ObjectPool<ExpressionNode> expressionNodePool;
     private final CharacterStore characterStore;
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -118,6 +115,7 @@ class SqlOptimiser {
     private final FunctionParser functionParser;
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
     private final Path path;
+    private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -125,7 +123,7 @@ class SqlOptimiser {
             CairoConfiguration configuration,
             CairoEngine engine,
             CharacterStore characterStore,
-            ObjectPool<ExpressionNode> sqlNodePool,
+            ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
@@ -133,7 +131,7 @@ class SqlOptimiser {
             Path path
     ) {
         this.engine = engine;
-        this.sqlNodePool = sqlNodePool;
+        this.expressionNodePool = expressionNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
         this.queryModelPool = queryModelPool;
@@ -197,7 +195,7 @@ class SqlOptimiser {
                 ExpressionNode base = column.getAst();
                 column.of(
                         column.getAlias(),
-                        sqlNodePool.next().of(
+                        expressionNodePool.next().of(
                                 base.type,
                                 base.token.subSequence(dot + 1, base.token.length()),
                                 base.precedence,
@@ -217,7 +215,7 @@ class SqlOptimiser {
 
         if (ai == bi) {
             // (same table)
-            ExpressionNode node = sqlNodePool.next().of(ExpressionNode.OPERATION, "=", 0, 0);
+            ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, "=", 0, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -299,7 +297,7 @@ class SqlOptimiser {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        ExpressionNode node = sqlNodePool.next().of(ExpressionNode.OPERATION, constNameToToken.get(name), 0, 0);
+                        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, constNameToToken.get(name), 0, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
@@ -513,7 +511,7 @@ class SqlOptimiser {
         literalCollectorANames.clear();
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
-        sqlNodePool.clear();
+        expressionNodePool.clear();
         characterStore.clear();
         tablesSoFar.clear();
         clausesToSteal.clear();
@@ -531,7 +529,7 @@ class SqlOptimiser {
         if (old == null) {
             return filter;
         } else {
-            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
+            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -549,7 +547,7 @@ class SqlOptimiser {
         ExpressionNode timestamp = model.getTimestamp();
         if (timestamp == null) {
             if (m.getTimestampIndex() != -1) {
-                model.setTimestamp(sqlNodePool.next().of(ExpressionNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
+                model.setTimestamp(expressionNodePool.next().of(ExpressionNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
             }
         } else {
             int index = m.getColumnIndexQuiet(timestamp.token);
@@ -1094,7 +1092,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode makeOperation(CharSequence token, ExpressionNode lhs, ExpressionNode rhs) {
-        ExpressionNode expr = sqlNodePool.next().of(ExpressionNode.OPERATION, token, 0, 0);
+        ExpressionNode expr = expressionNodePool.next().of(ExpressionNode.OPERATION, token, 0, 0);
         expr.paramCount = 2;
         expr.lhs = lhs;
         expr.rhs = rhs;
@@ -1360,15 +1358,15 @@ class SqlOptimiser {
     }
 
     private QueryColumn nextColumn(CharSequence name) {
-        return SqlUtil.nextColumn(queryColumnPool, sqlNodePool, name, name);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name);
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, sqlNodePool, alias, column);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
-        return SqlUtil.nextLiteral(sqlNodePool, token, position);
+        return SqlUtil.nextLiteral(expressionNodePool, token, position);
     }
 
     private ExpressionNode nextLiteral(CharSequence token) {
@@ -1436,7 +1434,7 @@ class SqlOptimiser {
                         )
                 )
         );
-        optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
+        optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
         moveWhereInsideSubQueries(rewrittenModel);
@@ -1507,7 +1505,7 @@ class SqlOptimiser {
                 return node;
             default:
                 if (reverse) {
-                    ExpressionNode n = sqlNodePool.next();
+                    ExpressionNode n = expressionNodePool.next();
                     n.token = "not";
                     n.paramCount = 1;
                     n.rhs = node;
@@ -1621,61 +1619,85 @@ class SqlOptimiser {
     }
 
     // removes redundant order by clauses from sub-queries
-    private void optimiseOrderBy(QueryModel model, int orderByState) {
+    private void optimiseOrderBy(QueryModel model, final int topLevelOrderByMnemonic) {
         ObjList<QueryColumn> columns = model.getColumns();
-        int subQueryOrderByState;
+        int orderByMnemonic;
         int n = columns.size();
         // determine if ordering is required
-        switch (orderByState) {
-            case ORDER_BY_UNKNOWN:
+        switch (topLevelOrderByMnemonic) {
+            case OrderByMnemonic.ORDER_BY_UNKNOWN:
                 // we have sample by, so expect sub-query has to be ordered
                 if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
-                    subQueryOrderByState = ORDER_BY_INVARIANT;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                 } else {
-                    subQueryOrderByState = ORDER_BY_REQUIRED;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
                 }
                 if (model.getSampleBy() == null) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
                         if (hasAggregates(col.getAst())) {
-                            subQueryOrderByState = ORDER_BY_INVARIANT;
+                            orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                             break;
                         }
                     }
                 }
                 break;
-            case ORDER_BY_REQUIRED:
+            case OrderByMnemonic.ORDER_BY_REQUIRED:
                 // parent requires order
                 // if this model forces ordering - sub-query ordering is not needed
                 if (model.getOrderBy().size() > 0) {
-                    subQueryOrderByState = ORDER_BY_INVARIANT;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                 } else {
-                    subQueryOrderByState = ORDER_BY_REQUIRED;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
                 }
                 break;
             default:
                 // sub-query ordering is not needed
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
-                    subQueryOrderByState = ORDER_BY_REQUIRED;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
                 } else {
-                    subQueryOrderByState = ORDER_BY_INVARIANT;
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                 }
                 break;
         }
 
+        final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
+        final IntList orderByDirectionAdvice = model.getOrderByDirection();
         final ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                optimiseOrderBy(qm, subQueryOrderByState);
+                qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                qm.copyOrderByAdvice(orderByAdvice);
+                qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                optimiseOrderBy(qm, orderByMnemonic);
             }
         }
 
         final QueryModel union = model.getUnionModel();
         if (union != null) {
-            optimiseOrderBy(union, subQueryOrderByState);
+            union.copyOrderByAdvice(orderByAdvice);
+            union.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+            union.setOrderByAdviceMnemonic(orderByMnemonic);
+            optimiseOrderBy(union, orderByMnemonic);
         }
+    }
+
+    private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
+        orderByAdvice.clear();
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        final int len = orderBy.size();
+        if (len == 0) {
+            return orderByAdvice;
+        }
+
+        CharSequenceObjHashMap<CharSequence> map = model.getAliasToColumnMap();
+        for (int i = 0; i < len; i++) {
+            orderByAdvice.add(nextLiteral(map.get(orderBy.getQuick(i).token)));
+
+        }
+        return orderByAdvice;
     }
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
@@ -1959,7 +1981,7 @@ class SqlOptimiser {
                     }
                     orderByNodes.setQuick(
                             i,
-                            sqlNodePool.next().of(
+                            expressionNodePool.next().of(
                                     ExpressionNode.LITERAL,
                                     columns.get(position - 1).getName(),
                                     -1,

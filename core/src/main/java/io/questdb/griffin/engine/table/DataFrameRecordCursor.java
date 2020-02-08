@@ -24,24 +24,24 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.function.BooleanSupplier;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
-    private final Function filter;
     private final boolean entityCursor;
     private RowCursor rowCursor;
     private BooleanSupplier next;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextFrame = this::nextFrame;
 
-    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter, boolean entityCursor) {
+    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, boolean entityCursor) {
         this.rowCursorFactory = rowCursorFactory;
-        this.filter = filter;
         this.entityCursor = entityCursor;
     }
 
@@ -58,9 +58,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     public void toTop() {
         dataFrameCursor.toTop();
         next = nextFrame;
-        if (filter != null) {
-            filter.toTop();
-        }
     }
 
     private boolean nextRow() {
@@ -81,9 +78,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.recordB.of(dataFrameCursor.getTableReader());
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         this.next = nextFrame;
-        if (filter != null) {
-            filter.init(dataFrameCursor, executionContext);
-        }
     }
 
     @Override

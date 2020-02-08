@@ -81,6 +81,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private long columnName;
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
+    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private long tableName;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
@@ -89,7 +90,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private FieldValueParser onTagValue;
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
-    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
 
     public CairoLineProtoParser(
             CairoEngine engine,
@@ -225,10 +225,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                putValue(row
+                putValue(
+                        row
                         , i
                         , (int) columnNameType.getQuick(i * 2 + 1)
-                        , cache.get(columnValues.getQuick(i)));
+                        , cache.get(columnValues.getQuick(i))
+                );
             }
             row.append();
         } catch (BadCastException ignore) {
@@ -246,7 +248,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 final long value = columnIndexAndType.getQuick(i);
-                putValue(row
+                putValue(
+                        row
                         , Numbers.decodeLowInt(value)
                         , Numbers.decodeHighInt(value)
                         , cache.get(columnValues.getQuick(i))

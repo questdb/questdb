@@ -55,7 +55,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.filter = filter;
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), filter, false);
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false);
     }
 
     @Override

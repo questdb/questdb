@@ -323,7 +323,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr
     ) throws SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        try {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr);
             // make sure we get the same outcome when we get factory to create new cursor
@@ -333,10 +334,23 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             if (ddl2 != null) {
                 compiler.compile(ddl2, sqlExecutionContext);
-                assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
-                // and again
-                assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
+
+                int count = 3;
+                while (count > 0) {
+                    try {
+                        assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
+                        // and again
+                        assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
+                        return;
+                    } catch (ReaderOutOfDateException e) {
+                        Misc.free(factory);
+                        factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        count--;
+                    }
+                }
             }
+        } finally {
+            Misc.free(factory);
         }
     }
 

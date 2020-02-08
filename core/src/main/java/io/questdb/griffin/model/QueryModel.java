@@ -85,6 +85,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
+    private final ObjList<ExpressionNode> latestBy = new ObjList<>();
+    private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
+    private final IntList orderByDirectionAdvice = new IntList();
     private ExpressionNode whereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
@@ -93,7 +96,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private long tableVersion;
     private Function tableNameFunction;
     private ExpressionNode alias;
-    private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
     private JoinContext context;
@@ -109,6 +111,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private int unionModelType;
     private int modelPosition = 0;
+    private int orderByAdviceMnemonic;
 
     private QueryModel() {
         joinModels.add(this);
@@ -122,6 +125,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } else {
             sink.put(alias);
         }
+    }
+
+    public ObjList<ExpressionNode> getOrderByAdvice() {
+        return orderByAdvice;
+    }
+
+    public IntList getOrderByDirectionAdvice() {
+        return orderByDirectionAdvice;
+    }
+
+    public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
+        this.orderByAdvice.clear();
+        this.orderByAdvice.addAll(orderByAdvice);
+    }
+
+    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
+        this.orderByDirectionAdvice.clear();
+        this.orderByDirectionAdvice.addAll(orderByDirection);
+    }
+
+    public int getOrderByAdviceMnemonic() {
+        return orderByAdviceMnemonic;
+    }
+
+    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
+        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
     }
 
     public QueryModel getUnionModel() {

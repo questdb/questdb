@@ -41,11 +41,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
     private long buffer;
-    private final CharSequenceCache charSequenceCache = address -> {
-        floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
-        floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
-        return floatingCharSequence;
-    };
+    private final CharSequenceCache charSequenceCache;
     private long bufferHi;
     private long dstPos = 0;
     private long dstTop = 0;
@@ -59,6 +55,13 @@ public class LineProtoLexer implements Mutable, Closeable {
     public LineProtoLexer(int bufferSize) {
         buffer = Unsafe.malloc(bufferSize);
         bufferHi = buffer + bufferSize;
+        charSequenceCache = address -> {
+            floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
+            floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
+            assert floatingCharSequence.hi < bufferHi;
+            assert floatingCharSequence.lo >= buffer;
+            return floatingCharSequence;
+        };
         populateCharHandlers();
         clear();
     }
