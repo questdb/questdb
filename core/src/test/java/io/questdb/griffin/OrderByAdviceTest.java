@@ -121,7 +121,27 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true
+        );
+    }
 
+    @Test
+    public void testNoKeyGroupBy() throws Exception {
+        assertQuery(
+                "column\n",
+                "select sum(price)/count() from x where price>0",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(1000)) timestamp (ts)",
+                "column\n" +
+                        "0.48510032025339733\n",
+                false
         );
     }
 

@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -39,7 +39,8 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordMetadata metadata;
     private final SimpleMapValue simpleMapValue;
-    private final VirtualRecord virtualRecord;
+    private final VirtualRecord virtualRecordA;
+    private final VirtualRecord virtualRecordB;
 
     public GroupByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -52,8 +53,12 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         this.base = base;
         this.metadata = groupByMetadata;
         this.groupByFunctions = groupByFunctions;
-        this.virtualRecord = new VirtualRecordNoRowid(recordFunctions);
-        this.virtualRecord.of(simpleMapValue);
+        this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
+        this.virtualRecordA.of(simpleMapValue);
+
+        this.virtualRecordB = new VirtualRecordNoRowid(recordFunctions);
+        this.virtualRecordB.of(simpleMapValue);
+
         this.cursor = new GroupByNotKeyedRecordCursor();
     }
 
@@ -73,7 +78,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             if (baseCursor.hasNext()) {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
             } else {
-                return EmptyTableRandomRecordCursor.INSTANCE;
+                return EmptyTableRecordCursor.INSTANCE;
             }
 
             while (baseCursor.hasNext()) {
@@ -98,7 +103,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean isRandomAccessCursor() {
-        return true;
+        return false;
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
@@ -111,7 +116,12 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecord() {
-            return virtualRecord;
+            return virtualRecordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return virtualRecordB;
         }
 
         @Override
