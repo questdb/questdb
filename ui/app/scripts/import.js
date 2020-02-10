@@ -351,7 +351,7 @@ function nopropagation(e) {
                 const type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
                 status(current, '<span class="label ' + type + '">imported in ' + (current.delta / 1000) + 's</span>', true);
             } else {
-                current.importState = 4; // error with journal, status has error message
+                current.importState = 4;
                 current.response = data.status;
                 status(current, '<span class="label label-danger">failed</span>', true);
             }
@@ -361,6 +361,8 @@ function nopropagation(e) {
             switch (s) {
                 case 0:
                     return 3; // server not responding
+                case 400:
+                    return 4; // bad request
                 case 500:
                     return 5; // internal error
                 default:
@@ -371,8 +373,8 @@ function nopropagation(e) {
         function importFailed(r) {
             renderRowAsCancel(null, current);
             if (r.statusText !== 'abort') {
-                current.response = r.responseText;
                 current.importState = httpStatusToImportState(r.status);
+                current.response = r.responseJSON.status;
                 status(current, '<span class="label label-danger">failed</span>', true);
             } else {
                 // current.importState = -1; // abort

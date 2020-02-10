@@ -184,10 +184,10 @@
             } else {
                 switch (e.importState) {
                     case 1:
-                        divMessage.html('Journal <strong>' + e.name + '</strong> already exists on server');
+                        divMessage.html('Table <strong>' + e.name + '</strong> already exists');
                         break;
                     case 2:
-                        divMessage.html('Journal name <strong>' + e.name + '</strong> is reserved');
+                        divMessage.html('Name <strong>' + e.name + '</strong> is reserved');
                         break;
                     case 3:
                         divMessage.html('Server is not responding...');
