@@ -72,7 +72,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
 
     @Override
     public double getMaxRequiredDelimiterStdDev() {
-        return 0.1222d;
+        return 0.35d;
     }
 
     @Override

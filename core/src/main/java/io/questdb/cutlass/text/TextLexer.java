@@ -65,6 +65,7 @@ public class TextLexer implements Closeable, Mutable {
     private boolean delayedOutQuote;
     private long fieldLo;
     private long fieldHi;
+    private boolean skipLinesWithExtraValues;
 
     public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
@@ -228,6 +229,14 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
+    public boolean isSkipLinesWithExtraValues() {
+        return skipLinesWithExtraValues;
+    }
+
+    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
+        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
+    }
+
     private void ignoreEolOnce() {
         eol = true;
         fieldIndex = 0;
@@ -340,21 +349,6 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
-    private void reportExtraFields() {
-        LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$("]\n\t").$(lineCount).$(" -> ");
-        for (int i = 0, n = fields.size(); i < n; i++) {
-            if (i > 0) {
-                logRecord.$(',');
-            }
-            logRecord.$(fields.getQuick(i));
-        }
-        logRecord.$(" ...").$();
-
-        errorCount++;
-        ignoreEolOnce = true;
-        fieldIndex = 0;
-    }
-
     private void rollLine(long lo, long hi) {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
@@ -389,7 +383,26 @@ public class TextLexer implements Closeable, Mutable {
         }
 
         if (fieldIndex > fieldMax) {
-            reportExtraFields();
+            LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$(", fieldIndex=").$(fieldIndex).$(", fieldMax=").$(fieldMax).$("]\n\t").$(lineCount).$(" -> ");
+            for (int i = 0, n = fields.size(); i < n; i++) {
+                if (i > 0) {
+                    logRecord.$(',');
+                }
+                logRecord.$(fields.getQuick(i));
+            }
+            logRecord.$(" ...").$();
+
+            if (skipLinesWithExtraValues) {
+                errorCount++;
+                ignoreEolOnce = true;
+                this.fieldIndex = 0;
+            } else {
+                // prepare for next field
+                if (lastQuotePos > -1) {
+                    lastQuotePos = -1;
+                }
+                this.fieldLo = this.fieldHi;
+            }
             return;
         }
 

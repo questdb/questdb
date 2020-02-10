@@ -555,6 +555,58 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLoadRowsWithExtraColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "VendorID\tlpepPickupDatetime\tLpepDropoffDatetime\tStoreAndFwdFlag\tRateCodeID\tPickupLongitude\tPickupLatitude\tDropoffLongitude\tDropoffLatitude\tPassengerCount\tTripDistance\tFareAmount\tExtra\tMTATax\tTipAmount\tTollsAmount\tEhailFee\tTotalAmount\tPaymentType\tTripType\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613283\t40.678714752197266\t6\t7.0200000000000005\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029298\t40.75776672363282\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:36:16.000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:51:03.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t8.98\t26.5\t0.5\t0.5\t5.4\t0\t\t32.9\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T03:13:09.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t0.91\t5.5\t0.5\t0.5\t0.0\t0\t\t6.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:12:18.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.88\t13.0\t0.0\t0.5\t2.6\t0\t\t16.1\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:37:31.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.04\t9.0\t0.0\t0.5\t0.0\t0\t\t9.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T08:05:26.000Z\tN\t1\t0\t0\t-73.86398315429689\t40.89520645141602\t1\t7.61\t22.5\t0.0\t0.5\t0.0\t0\t\t23.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T17:02:26.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t3.37\t14.0\t0.0\t0.5\t7.5\t0\t\t22.0\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T10:45:08.000Z\tN\t1\t0\t0\t-73.98382568359375\t40.67216491699219\t5\t2.98\t11.0\t0.0\t0.5\t0.0\t0\t\t11.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:23:12.000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1000000000000005\t21.0\t0.0\t0.5\t4.2\t0\t\t25.700000000000003\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T20:30:34.000Z\tN\t1\t0\t0\t-73.83473205566408\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.9626922607422\t40.80527877807618\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T01:12:02.000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3000000000000003\t0\t\t14.3\t1\t1\n";
+
+            String csv = "VendorID,lpep_pickup_datetime,Lpep_dropoff_datetime,Store_and_fwd_flag,RateCodeID,Pickup_longitude,Pickup_latitude,Dropoff_longitude,Dropoff_latitude,Passenger_count,Trip_distance,Fare_amount,Extra,MTA_tax,Tip_amount,Tolls_amount,Ehail_fee,Total_amount,Payment_type,Trip_type\n" +
+                    "\n" +
+                    "\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 19:18:34,N,1,0,0,-73.872024536132813,40.678714752197266,6,7.02,28.5,0,0.5,0,0,,29,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 13:10:37,N,1,0,0,-73.917839050292969,40.757766723632812,1,5.43,23.5,0,0.5,5.88,0,,29.88,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 14:36:16,N,1,0,0,-73.882896423339844,40.870456695556641,1,.84,5,0,0.5,0,0,,5.5,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 02:51:03,N,1,0,0,0,0,1,8.98,26.5,0.5,0.5,5.4,0,,32.9,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 03:13:09,N,1,0,0,0,0,1,.91,5.5,0.5,0.5,0,0,,6.5,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 14:12:18,N,1,0,0,0,0,1,2.88,13,0,0.5,2.6,0,,16.1,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 19:37:31,N,1,0,0,0,0,1,2.04,9,0,0.5,0,0,,9.5,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 08:05:26,N,1,0,0,-73.863983154296875,40.895206451416016,1,7.61,22.5,0,0.5,0,0,,23,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 17:02:26,N,1,0,0,0,0,1,3.37,14,0,0.5,7.5,0,,22,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 10:45:08,N,1,0,0,-73.98382568359375,40.672164916992187,5,2.98,11,0,0.5,0,0,,11.5,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 19:23:12,N,1,0,0,-73.897506713867188,40.856563568115234,1,6.10,21,0,0.5,4.2,0,,25.7,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 20:30:34,N,1,0,0,-73.834732055664063,40.769981384277344,1,4.03,13.5,0.5,0.5,0,0,,14.5,2,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 02:11:02,N,1,0,0,-73.962692260742187,40.805278778076172,1,11.02,36.5,0.5,0.5,9.25,0,,46.75,1,1,,\n" +
+                    "2,2014-03-01 00:00:00,2014-03-01 01:12:02,N,1,0,0,-73.812576293945313,40.72515869140625,1,2.98,11,0.5,0.5,2.3,0,,14.3,1,1,,\n";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            textLoader.setForceHeaders(false);
+            textLoader.setSkipRowsWithExtraValues(false);
+            playText(
+                    textLoader,
+                    csv,
+                    1024 * 1024,
+                    expected,
+                    "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpepPickupDatetime\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"LpepDropoffDatetime\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"StoreAndFwdFlag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"PickupLongitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"PickupLatitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"DropoffLongitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"DropoffLatitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"PassengerCount\",\"type\":\"INT\"},{\"index\":10,\"name\":\"TripDistance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"FareAmount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTATax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"TipAmount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"TollsAmount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"EhailFee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"TotalAmount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"PaymentType\",\"type\":\"INT\"},{\"index\":19,\"name\":\"TripType\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    14,
+                    14
+            );
+        });
+    }
+
+    @Test
     public void testDanglingQuote() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +

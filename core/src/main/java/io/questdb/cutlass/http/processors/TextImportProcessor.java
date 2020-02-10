@@ -66,8 +66,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
 
     static {
-        atomicityParamMap.put("relaxed", Atomicity.SKIP_ROW);
-        atomicityParamMap.put("strict", Atomicity.SKIP_ALL);
+        atomicityParamMap.put("skipRow", Atomicity.SKIP_ROW);
+        atomicityParamMap.put("abort", Atomicity.SKIP_ALL);
     }
 
     private final CairoEngine engine;
@@ -291,10 +291,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     name,
                     Chars.equalsNc("true", rh.getUrlParam("overwrite")),
                     Chars.equalsNc("true", rh.getUrlParam("durable")),
-                    // todo: these values are incorrect, but ok for now
                     getAtomicity(rh.getUrlParam("atomicity"))
             );
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
+            transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
 
             transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));

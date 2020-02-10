@@ -79,7 +79,7 @@ function nopropagation(e) {
     $.fn.importManager = function (editorBus) {
         const ACTION_DEFAULT = 0;
         const ACTION_APPEND = 1;
-        const ACTTION_OVERWRITE = 2;
+        const ACTION_OVERWRITE = 2;
 
         const dict = {};
         const container = this;
@@ -125,7 +125,7 @@ function nopropagation(e) {
                     element.find('.js-row-append').addClass('label-danger');
                     element.find('.js-row-overwrite').removeClass('label-danger');
                     break;
-                case ACTTION_OVERWRITE:
+                case ACTION_OVERWRITE:
                     element.find('.js-row-append').removeClass('label-danger');
                     element.find('.js-row-overwrite').addClass('label-danger');
                     break;
@@ -147,12 +147,18 @@ function nopropagation(e) {
                 element.find('.js-row-toggle-header').removeClass('label-success');
             }
 
+            if (e.skipLev) {
+                element.find('.js-row-lev').addClass('label-success');
+            } else {
+                element.find('.js-row-lev').removeClass('label-success');
+            }
+
             updateButtons();
         }
 
         //noinspection JSUnusedLocalSymbols
         function renderRowAsOverwrite(x, e) {
-            e.retry = ACTTION_OVERWRITE;
+            e.retry = ACTION_OVERWRITE;
             renderActions(e, $('#' + e.id + ' > .ud-c0'));
         }
 
@@ -208,12 +214,12 @@ function nopropagation(e) {
             const e = dict[btn.parent().parent().attr('id')];
 
             switch (e.retry) {
-                case 1:
+                case ACTION_APPEND:
                     e.retry = 0;
                     e.selected = false;
                     break;
                 default:
-                    e.retry = 1;
+                    e.retry = ACTION_APPEND;
                     e.selected = true;
                     break;
             }
@@ -226,12 +232,12 @@ function nopropagation(e) {
             const e = dict[btn.parent().parent().attr('id')];
 
             switch (e.retry) {
-                case 2:
+                case ACTION_OVERWRITE:
                     e.retry = 0;
                     e.selected = false;
                     break;
                 default:
-                    e.retry = 2;
+                    e.retry = ACTION_OVERWRITE;
                     e.selected = true;
                     break;
             }
@@ -243,6 +249,13 @@ function nopropagation(e) {
             const btn = $(this);
             const e = dict[btn.parent().parent().attr('id')];
             e.forceHeader = !e.forceHeader;
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowLEV() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+            e.skipLev = !e.skipLev;
             renderActions(e, btn.parent());
         }
 
@@ -273,6 +286,7 @@ function nopropagation(e) {
                                 <i class="fa fa-square-o ud-checkbox js-row-toggle"></i>
                                 <span class="label js-row-append">A</span>
                                 <span class="label js-row-overwrite">O</span>
+                                <span class="label js-row-lev">LEV</span>
                                 <span class="label js-row-toggle-header">H</span>
                                 <i class="fa fa-upload js-row-upload"></i>
                             </div>
@@ -292,6 +306,7 @@ function nopropagation(e) {
             html.find('.js-row-toggle').click(toggleRow);
             html.find('.js-row-append').click(toggleRowAppend);
             html.find('.js-row-overwrite').click(toggleRowOverwrite);
+            html.find('.js-row-lev').click(toggleRowLEV);
             html.find('.js-row-toggle-header').click(toggleRowHeader);
             html.find('.js-row-upload').click(uploadRow);
             html.find('.js-row-query').click(viewRow);
@@ -368,12 +383,16 @@ function nopropagation(e) {
         function setupImportRequest() {
             importRequest.url = '/imp?fmt=json';
 
-            if (current.retry === ACTTION_OVERWRITE) {
+            if (current.retry === ACTION_OVERWRITE) {
                 importRequest.url += '&overwrite=true';
             }
 
             if (current.forceHeader) {
                 importRequest.url += '&forceHeader=true';
+            }
+
+            if (current.skipLev) {
+                importRequest.url += '&skipLev=true';
             }
 
             importRequest.xhr = setupUploadProgressCallback;

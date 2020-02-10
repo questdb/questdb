@@ -76,6 +76,7 @@ public class TextLoader implements Closeable, Mutable {
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
         parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
         parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+        textLexer.setSkipLinesWithExtraValues(true);
     }
 
     @Override
@@ -161,6 +162,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
+    }
+
+    public void setSkipRowsWithExtraValues(boolean skipRowsWithExtraValues) {
+        this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
     }
 
     public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
