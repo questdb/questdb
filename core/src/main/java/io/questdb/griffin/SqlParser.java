@@ -306,13 +306,20 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseCopy(GenericLexer lexer) throws SqlException {
+        if (configuration.getInputRoot() == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
+        }
         ExpressionNode tableName = expectExpr(lexer);
         CharSequence tok = tok(lexer, "'from' or 'to'");
 
         if (Chars.equalsLowerCaseAscii(tok, "from")) {
+            final ExpressionNode fileName = expectExpr(lexer);
+            if (fileName.token.length() < 3 && Chars.startsWith(fileName.token, '\'')) {
+                throw SqlException.$(fileName.position, "file name expected");
+            }
             CopyModel model = copyModelPool.next();
             model.setTableName(tableName);
-            model.setFileName(expectExpr(lexer));
+            model.setFileName(fileName);
             return model;
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");

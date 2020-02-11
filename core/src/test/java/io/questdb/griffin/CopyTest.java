@@ -24,20 +24,409 @@
 
 package io.questdb.griffin;
 
-import org.junit.Test;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.std.*;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.*;
 
 import java.io.File;
-import java.net.URL;
 
-public class CopyTest extends AbstractGriffinTest {
+public class CopyTest extends AbstractCairoTest {
+
+    protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+    private static final LongList rows = new LongList();
+    private static CairoEngine engine;
+    private static SqlCompiler compiler;
+
+    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            RecordMetadata metadata = factory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < columnCount; i++) {
+                    switch (metadata.getColumnType(i)) {
+                        case ColumnType.STRING:
+                            CharSequence a = record.getStr(i);
+                            CharSequence b = record.getStrB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                            } else {
+                                if (checkSameStr) {
+                                    Assert.assertNotSame(a, b);
+                                }
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.length(), record.getStrLen(i));
+                            }
+                            break;
+                        case ColumnType.BINARY:
+                            BinarySequence s = record.getBin(i);
+                            if (s == null) {
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                            } else {
+                                Assert.assertEquals(s.length(), record.getBinLen(i));
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    @BeforeClass
+    public static void setUp2() {
+        CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+            @Override
+            public CharSequence getInputRoot() {
+                return new File(".").getAbsolutePath();
+            }
+        };
+        engine = new CairoEngine(configuration);
+        compiler = new SqlCompiler(engine);
+        bindVariableService.clear();
+    }
+
+    @AfterClass
+    public static void tearDown() {
+        engine.close();
+        compiler.close();
+    }
+
+    protected static void assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            if (expected == null) {
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
+                return;
+            }
+
+            sink.clear();
+            printer.print(cursor, factory.getMetadata(), true);
+
+            TestUtils.assertEquals(expected, sink);
+
+            final RecordMetadata metadata = factory.getMetadata();
+
+            testSymbolAPI(metadata, cursor);
+            cursor.toTop();
+            testStringsLong256AndBinary(metadata, cursor, checkSameStr);
+
+            // test API where same record is being updated by cursor
+            cursor.toTop();
+            Record record = cursor.getRecord();
+            Assert.assertNotNull(record);
+            sink.clear();
+            printer.printHeader(metadata);
+            long count = 0;
+            long cursorSize = cursor.size();
+            while (cursor.hasNext()) {
+                printer.print(record, metadata);
+                count++;
+            }
+
+            Assert.assertTrue(cursorSize == -1 || count == cursorSize);
+
+            TestUtils.assertEquals(expected, sink);
+
+            if (supportsRandomAccess) {
+
+                Assert.assertTrue(factory.isRandomAccessCursor());
+
+                cursor.toTop();
+
+                sink.clear();
+                rows.clear();
+                while (cursor.hasNext()) {
+                    rows.add(record.getRowId());
+                }
+
+                final Record rec = cursor.getRecordB();
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(rec, rows.getQuick(i));
+                    printer.print(rec, metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
+                sink.clear();
+
+                final Record factRec = cursor.getRecordB();
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                    printer.print(factRec, metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
+                // test that absolute positioning of record does not affect state of record cursor
+                if (rows.size() > 0) {
+                    sink.clear();
+
+                    cursor.toTop();
+                    int target = rows.size() / 2;
+                    printer.printHeader(metadata);
+                    while (target-- > 0 && cursor.hasNext()) {
+                        printer.print(record, metadata);
+                    }
+
+                    // no obliterate record with absolute positioning
+                    for (int i = 0, n = rows.size(); i < n; i++) {
+                        cursor.recordAt(factRec, rows.getQuick(i));
+                    }
+
+                    // not continue normal fetch
+                    while (cursor.hasNext()) {
+                        printer.print(record, metadata);
+                    }
+
+                    TestUtils.assertEquals(expected, sink);
+
+                }
+            } else {
+                Assert.assertFalse(factory.isRandomAccessCursor());
+                try {
+                    record.getRowId();
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                try {
+                    cursor.getRecordB();
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                try {
+                    cursor.recordAt(record, 0);
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+            }
+        }
+
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            testSymbolAPI(factory.getMetadata(), cursor);
+        }
+    }
+
+    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor, boolean checkSameStr) {
+        Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                switch (metadata.getColumnType(i)) {
+                    case ColumnType.STRING:
+                        CharSequence s = record.getStr(i);
+                        if (s != null) {
+                            if (checkSameStr) {
+                                Assert.assertNotSame(s, record.getStrB(i));
+                            }
+                            TestUtils.assertEquals(s, record.getStrB(i));
+                            Assert.assertEquals(s.length(), record.getStrLen(i));
+                        } else {
+                            Assert.assertNull(record.getStrB(i));
+                            Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                        }
+                        break;
+                    case ColumnType.BINARY:
+                        BinarySequence bs = record.getBin(i);
+                        if (bs != null) {
+                            Assert.assertEquals(record.getBin(i).length(), record.getBinLen(i));
+                        } else {
+                            Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                        }
+                        break;
+                    case ColumnType.LONG256:
+                        Long256 l1 = record.getLong256A(i);
+                        Long256 l2 = record.getLong256B(i);
+                        if (l1 == Long256Impl.NULL_LONG256) {
+                            Assert.assertSame(l1, l2);
+                        } else {
+                            Assert.assertNotSame(l1, l2);
+                        }
+                        Assert.assertEquals(l1.getLong0(), l2.getLong0());
+                        Assert.assertEquals(l1.getLong1(), l2.getLong1());
+                        Assert.assertEquals(l1.getLong2(), l2.getLong2());
+                        Assert.assertEquals(l1.getLong3(), l2.getLong3());
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
+        IntList symbolIndexes = null;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+                if (symbolIndexes == null) {
+                    symbolIndexes = new IntList();
+                }
+                symbolIndexes.add(i);
+            }
+        }
+
+        if (symbolIndexes != null) {
+            cursor.toTop();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                    int column = symbolIndexes.getQuick(i);
+                    SymbolTable symbolTable = cursor.getSymbolTable(column);
+                    if (symbolTable instanceof StaticSymbolTable) {
+                        CharSequence sym = record.getSym(column);
+                        int value = record.getInt(column);
+                        Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                        TestUtils.assertEquals(sym, symbolTable.valueOf(value));
+                    } else {
+                        final int value = record.getInt(column);
+                        TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
+                    }
+                }
+            }
+        }
+    }
+
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
+        int index = factory.getMetadata().getTimestampIndex();
+        long timestamp = Long.MIN_VALUE;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                long ts = record.getTimestamp(index);
+                Assert.assertTrue(timestamp <= ts);
+                timestamp = ts;
+            }
+        }
+    }
+
+    protected static void printSqlResult(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            CharSequence ddl2,
+            CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) throws SqlException {
+        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        try {
+            assertTimestamp(expectedTimestamp, factory);
+            assertCursor(expected, factory, supportsRandomAccess, checkSameStr);
+            // make sure we get the same outcome when we get factory to create new cursor
+            assertCursor(expected, factory, supportsRandomAccess, checkSameStr);
+            // make sure strings, binary fields and symbols are compliant with expected record behaviour
+            assertVariableColumns(factory, checkSameStr);
+
+            if (ddl2 != null) {
+                compiler.compile(ddl2, sqlExecutionContext);
+
+                int count = 3;
+                while (count > 0) {
+                    try {
+                        assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
+                        // and again
+                        assertCursor(expected2, factory, supportsRandomAccess, checkSameStr);
+                        return;
+                    } catch (ReaderOutOfDateException e) {
+                        Misc.free(factory);
+                        factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        count--;
+                    }
+                }
+            }
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
+    private static void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            @Nullable CharSequence verify,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+            if (verify != null) {
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
+            }
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr);
+        });
+    }
+
+    protected static void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true, true);
+    }
+
+    protected static void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            boolean supportsRandomAccess
+    ) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, true);
+    }
+
+    private static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {
+        if (expectedTimestamp == null) {
+            Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+        } else {
+            int index = factory.getMetadata().getColumnIndex(expectedTimestamp);
+            Assert.assertNotEquals(-1, index);
+            Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
+            assertTimestampColumnValues(factory);
+        }
+    }
+
+    private static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
 
     @Test
     public void testSimpleCopy() throws Exception {
         assertMemoryLeak(() -> {
-            URL url = CopyTest.class.getResource("/csv/test-import.csv");
-            File file = new File(url.toURI());
-            compiler.compile("copy x from '" + file.getAbsolutePath() + "'");
 
+            compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'");
 
             final String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                     "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +
@@ -177,5 +566,87 @@ public class CopyTest extends AbstractGriffinTest {
                     true
             );
         });
+    }
+
+    @Test
+    public void testCopyEmptyFileName() throws Exception {
+        assertMemoryLeak(() -> assertFailure(
+                "copy x from ''",
+                null,
+                12,
+                "file name expected"
+        ));
+    }
+
+    @Test
+    public void testCopyFullHack() throws Exception {
+        assertMemoryLeak(() -> assertFailure(
+                "copy x from '../../../../../'",
+                null,
+                12,
+                "we don't like hacks"
+        ));
+    }
+
+    @Test
+    public void testCopyFullHack2() throws Exception {
+        assertMemoryLeak(() -> assertFailure(
+                "copy x from '../../../../..\\..\\..\\'",
+                null,
+                12,
+                "we don't like hacks"
+        ));
+    }
+
+    @After
+    public void tearDownAfterTest() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+    }
+
+    void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) {
+        assertTimestamp(expectedTimestamp, factory);
+        assertCursor(expected, factory, supportsRandomAccess, true);
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(expected, factory, supportsRandomAccess, true);
+        // make sure strings, binary fields and symbols are compliant with expected record behaviour
+        assertVariableColumns(factory, true);
+    }
+
+    protected void assertFailure(
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            int expectedPosition,
+            @NotNull CharSequence expectedMessage
+    ) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                if (ddl != null) {
+                    compiler.compile(ddl, sqlExecutionContext);
+                }
+                try {
+                    compiler.compile(query, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(expectedPosition, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
+        assertQuery(expected, query, expectedTimestamp, false);
+    }
+
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
+        }
     }
 }

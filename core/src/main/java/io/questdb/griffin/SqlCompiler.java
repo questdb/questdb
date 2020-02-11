@@ -992,15 +992,21 @@ public class SqlCompiler implements Closeable {
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len);
             try {
-                path.of(GenericLexer.unquote(model.getFileName().token)).$();
+                final CharSequence name = GenericLexer.unhack(GenericLexer.unquote(model.getFileName().token));
+                if (name == null) {
+                    // full of hacks?
+                    throw SqlException.$(model.getFileName().position, "we don't like hacks");
+                }
+                path.of(configuration.getInputRoot()).concat(name).$();
                 long fd = ff.openRO(path);
                 if (fd == -1) {
-                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(']');
+                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
                 }
                 try {
                     long fileLen = ff.length(fd);
                     long n = ff.read(fd, buf, len, 0);
                     if (n > 0) {
+                        textLoader.setSkipRowsWithExtraValues(false);
                         textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
                         textLoader.setState(TextLoader.LOAD_DATA);
                         int read;

@@ -82,6 +82,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return immutableOf(value);
     }
 
+    public static CharSequence unhack(CharSequence value) {
+        int len = value.length();
+        int p = 0;
+        char c;
+        while (p < len && ((c = value.charAt(p)) == '.' || c == '/' || c == '\\')) {
+            p++;
+        }
+
+        if (p < len) {
+            return value.subSequence(p, len);
+        }
+
+        return null;
+    }
+
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
         final int index = symbols.keyIndex(c);
         return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);

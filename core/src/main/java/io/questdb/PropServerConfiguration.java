@@ -178,6 +178,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlRenameTableModelPoolCapacity;
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
+    private final String inputRoot;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -306,7 +307,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
         this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.sql.copy.model.pool.capacity", 32);
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
-        String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
+        final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
@@ -319,6 +320,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
         }
 
+        this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -858,6 +860,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIndexValueBlockSize() {
             return indexValueBlockSize;
+        }
+
+        @Override
+        public CharSequence getInputRoot() {
+            return inputRoot;
         }
 
         @Override

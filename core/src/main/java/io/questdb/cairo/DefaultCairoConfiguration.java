@@ -295,4 +295,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public TextConfiguration getTextConfiguration() {
         return textConfiguration;
     }
+
+    @Override
+    public CharSequence getInputRoot() {
+        return null;
+    }
 }

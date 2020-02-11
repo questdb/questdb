@@ -69,6 +69,9 @@ public interface CairoConfiguration {
 
     CharSequence getRoot();
 
+    // null input root disables "copy" sql
+    CharSequence getInputRoot();
+
     long getSpinLockTimeoutUs();
 
     int getSqlCacheBlocks();

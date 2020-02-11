@@ -920,7 +920,6 @@ public class TableWriter implements Closeable {
                 int symbolWriterCount = denseSymbolMapWriters.size();
                 int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
 
-
                 long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
                 txMem.putLong(TX_OFFSET_TXN, txn);
                 Unsafe.getUnsafe().storeFence();
