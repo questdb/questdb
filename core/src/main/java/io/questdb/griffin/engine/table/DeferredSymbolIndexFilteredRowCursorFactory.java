@@ -34,10 +34,16 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
     private final String symbol;
     private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
-    public DeferredSymbolIndexFilteredRowCursorFactory(int columnIndex, String symbol, Function filter, boolean cachedIndexReaderCursor) {
+    public DeferredSymbolIndexFilteredRowCursorFactory(
+            int columnIndex,
+            String symbol,
+            Function filter,
+            boolean cachedIndexReaderCursor,
+            int indexDirection
+    ) {
         this.columnIndex = columnIndex;
         this.symbol = symbol;
-        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor);
+        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
     }
 
     @Override

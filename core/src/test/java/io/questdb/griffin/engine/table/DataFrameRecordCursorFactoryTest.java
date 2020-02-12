@@ -86,9 +86,9 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
+                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD);
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false);
 
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

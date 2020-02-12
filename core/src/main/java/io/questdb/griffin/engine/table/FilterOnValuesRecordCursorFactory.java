@@ -51,7 +51,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             @NotNull @Transient TableReader reader,
             @Nullable Function filter,
             int orderByMnemonic,
-            boolean followedOrderByAdvice
+            boolean followedOrderByAdvice,
+            int indexDirection
     ) {
         super(metadata, dataFrameCursorFactory);
         final int nKeyValues = keyValues.size();
@@ -61,7 +62,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
             final CharSequence symbol = keyValues.get(i);
-            addSymbolKey(symbolMapReader.keyOf(symbol), symbol);
+            addSymbolKey(symbolMapReader.keyOf(symbol), symbol, indexDirection);
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
             this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false);
@@ -86,19 +87,19 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         return true;
     }
 
-    private void addSymbolKey(int symbolKey, CharSequence symbolValue) {
+    private void addSymbolKey(int symbolKey, CharSequence symbolValue, int indexDirection) {
         final RowCursorFactory rowCursorFactory;
         if (filter == null) {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, Chars.toString(symbolValue), cursorFactories.size() == 0);
+                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, Chars.toString(symbolValue), cursorFactories.size() == 0, indexDirection);
             } else {
-                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
+                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection);
             }
         } else {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(columnIndex, Chars.toString(symbolValue), filter, cursorFactories.size() == 0);
+                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(columnIndex, Chars.toString(symbolValue), filter, cursorFactories.size() == 0, indexDirection);
             } else {
-                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
+                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection);
             }
         }
         cursorFactories.add(rowCursorFactory);

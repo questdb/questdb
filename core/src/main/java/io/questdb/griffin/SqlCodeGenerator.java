@@ -69,6 +69,7 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private final ObjList<CharSequence> symbolValueList = new ObjList<>();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -603,8 +604,6 @@ public class SqlCodeGenerator {
         }
     }
 
-    private final ObjList<CharSequence> symbolValueList = new ObjList<>();
-
     private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
@@ -720,7 +719,7 @@ public class SqlCodeGenerator {
                             } else {
                                 rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
                             }
-                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf);
+                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, false);
                         }
 
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -1522,28 +1521,48 @@ public class SqlCodeGenerator {
                     }
                     assert nKeyValues > 0;
 
+                    boolean orderByKeyColumn = false;
+                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
+                    final int orderByAdviceSize = orderByAdvice.size();
+                    int indexDirection = BitmapIndexReader.DIR_FORWARD;
+                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                        // todo: when order by coincides with keyColumn and there is index we can incorporate
+                        //    ordering in the code that returns rows from index rather than having an
+                        //    "overhead" order by implementation, which would be trying to oder already ordered symbols
+                        if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
+                            if (orderByAdviceSize == 1) {
+                                orderByKeyColumn = true;
+                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
+                                orderByKeyColumn = true;
+                                if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                }
+                            }
+                        }
+                    }
+
                     if (nKeyValues == 1) {
                         final RowCursorFactory rcf;
                         final CharSequence symbol = intrinsicModel.keyValues.get(0);
                         final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                             if (filter == null) {
-                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true);
+                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
                             } else {
-                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true);
+                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true, indexDirection);
                             }
                         } else {
                             if (filter == null) {
-                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true);
+                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
                             } else {
-                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
+                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf);
+                        return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf, orderByKeyColumn);
                     }
 
                     symbolValueList.clear();
-                    final boolean orderByKeyColumn = model.getOrderByAdvice().size() == 1 && Chars.equals(model.getOrderByAdvice().getQuick(0).token, intrinsicModel.keyColumn);
+
                     for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
                         symbolValueList.add(intrinsicModel.keyValues.get(i));
                     }
@@ -1564,15 +1583,16 @@ public class SqlCodeGenerator {
                             reader,
                             filter,
                             model.getOrderByAdviceMnemonic(),
-                            orderByKeyColumn
+                            orderByKeyColumn,
+                            indexDirection
                     );
                 }
 
                 if (filter != null) {
                     // filter lifecycle is managed by top level
-                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory()), filter);
+                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false), filter);
                 }
-                return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory());
+                return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false);
             }
 
             // no where clause

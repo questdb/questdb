@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderRecord;
 import io.questdb.cairo.TableUtils;
@@ -40,16 +39,29 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     private int symbolKey;
     private RowCursor rowCursor;
     private long rowid;
+    private final int indexDirection;
 
-    public SymbolIndexFilteredRowCursor(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
-        this(columnIndex, filter, cachedIndexReaderCursor);
+    public SymbolIndexFilteredRowCursor(
+            int columnIndex,
+            int symbolKey,
+            Function filter,
+            boolean cachedIndexReaderCursor,
+            int indexDirection
+    ) {
+        this(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
         of(symbolKey);
     }
 
-    public SymbolIndexFilteredRowCursor(int columnIndex, Function filter, boolean cachedIndexReaderCursor) {
+    public SymbolIndexFilteredRowCursor(
+            int columnIndex,
+            Function filter,
+            boolean cachedIndexReaderCursor,
+            int indexDirection
+    ) {
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.indexDirection = indexDirection;
     }
 
     @Override
@@ -76,7 +88,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
 
     public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {
         this.rowCursor = dataFrame
-                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
+                .getBitmapIndexReader(columnIndex, indexDirection)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
         record.jumpTo(dataFrame.getPartitionIndex(), 0);
         return this;

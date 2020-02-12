@@ -29,16 +29,23 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final DataFrameRecordCursor cursor;
+    private final boolean followsOrderByAdvice;
 
     public DataFrameRecordCursorFactory(
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
-            RowCursorFactory rowCursorFactory
+            RowCursorFactory rowCursorFactory,
+            boolean followsOrderByAdvice
     ) {
         super(metadata, dataFrameCursorFactory);
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity());
+        this.followsOrderByAdvice = followsOrderByAdvice;
     }
 
+    @Override
+    public boolean followedOrderByAdvice() {
+        return followsOrderByAdvice;
+    }
 
     @Override
     public boolean isRandomAccessCursor() {

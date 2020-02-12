@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -38,12 +37,19 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final boolean cachedIndexReaderCursor;
     private final String symbol;
     private int symbolKey;
+    private final int indexDirection;
 
-    public DeferredSymbolIndexRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
+    public DeferredSymbolIndexRowCursorFactory(
+            int columnIndex,
+            String symbol,
+            boolean cachedIndexReaderCursor,
+            int indexDirection
+    ) {
         this.columnIndex = columnIndex;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbol = symbol;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.indexDirection = indexDirection;
     }
 
     @Override
@@ -53,7 +59,7 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
         }
 
         return dataFrame
-                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
+                .getBitmapIndexReader(columnIndex, indexDirection)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
     }
 

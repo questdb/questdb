@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -107,9 +108,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                             // we cannot reliably tell that one of them could be using cursor that
                             // belongs to index reader
                             if (filter == null) {
-                                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false);
+                                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false, BitmapIndexReader.DIR_FORWARD);
                             } else {
-                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false);
+                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false, BitmapIndexReader.DIR_FORWARD);
                             }
                         }
 

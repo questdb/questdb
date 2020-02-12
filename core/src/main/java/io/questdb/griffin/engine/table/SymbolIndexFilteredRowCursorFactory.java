@@ -33,8 +33,20 @@ import io.questdb.cairo.sql.RowCursorFactory;
 public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
 
-    public SymbolIndexFilteredRowCursorFactory(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
-        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, symbolKey, filter, cachedIndexReaderCursor);
+    public SymbolIndexFilteredRowCursorFactory(
+            int columnIndex,
+            int symbolKey,
+            Function filter,
+            boolean cachedIndexReaderCursor,
+            int indexDirection
+    ) {
+        this.cursor = new SymbolIndexFilteredRowCursor(
+                columnIndex,
+                symbolKey,
+                filter,
+                cachedIndexReaderCursor,
+                indexDirection
+        );
     }
 
     @Override
