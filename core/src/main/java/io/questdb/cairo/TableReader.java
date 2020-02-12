@@ -52,7 +52,7 @@ public class TableReader implements Closeable {
     private final FilesFacade ff;
     private final Path path;
     private final int rootLen;
-    private final ReadOnlyMemory txMem;
+    private final ReadOnlyColumn txMem;
     private final TableReaderMetadata metadata;
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
@@ -481,7 +481,14 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
+    private void copyColumnsTo(
+            ObjList<ReadOnlyColumn> columns,
+            LongList columnTops,
+            ObjList<BitmapIndexReader> indexReaders,
+            int columnBase,
+            int columnIndex,
+            long partitionRowCount,
+            boolean lastPartition) {
         ReadOnlyColumn mem1 = tempCopyStruct.mem1;
         final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof ForceNullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
@@ -491,7 +498,7 @@ public class TableReader implements Closeable {
         tempCopyStruct.backwardReader = indexReaders.getAndSetQuick(index, tempCopyStruct.backwardReader);
         tempCopyStruct.forwardReader = indexReaders.getAndSetQuick(index + 1, tempCopyStruct.forwardReader);
         if (reload) {
-            reloadColumnAt(path, columns, columnTops, indexReaders, columnBase, columnIndex, partitionRowCount);
+            reloadColumnAt(path, columns, columnTops, indexReaders, columnBase, columnIndex, partitionRowCount, lastPartition);
         }
     }
 
@@ -548,16 +555,17 @@ public class TableReader implements Closeable {
             final int base = partitionIndex << columnBits;
             final int oldBase = partitionIndex << columnCountBits;
             try {
-                Path path = partitionPathGenerator.generate(this, partitionIndex);
+                final Path path = partitionPathGenerator.generate(this, partitionIndex);
                 final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
+                final boolean lastPartition = partitionIndex == partitionCount - 1;
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount);
+                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount, lastPartition);
                     } else {
                         // new instance
-                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount);
+                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount, lastPartition);
                     }
                 }
 
@@ -697,7 +705,8 @@ public class TableReader implements Closeable {
 
                 path.chopZ();
 
-                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
+                final boolean lastPartition = partitionIndex == partitionCount - 1;
+                final long partitionSize = lastPartition ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
 
                 LOG.info()
                         .$("open partition ").utf8(path.$())
@@ -708,7 +717,7 @@ public class TableReader implements Closeable {
                         .$(']').$();
 
                 if (partitionSize > 0) {
-                    openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
+                    openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, lastPartition);
                     partitionRowCounts.setQuick(partitionIndex, partitionSize);
                     if (maxTimestamp != Numbers.LONG_NaN) {
                         if (reloadMethod == FIRST_TIME_PARTITIONED_RELOAD_METHOD) {
@@ -727,9 +736,9 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
+    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount, boolean lastPartition) {
         for (int i = 0; i < columnCount; i++) {
-            reloadColumnAt(path, this.columns, this.columnTops, this.bitmapIndexes, columnBase, i, partitionRowCount);
+            reloadColumnAt(path, this.columns, this.columnTops, this.bitmapIndexes, columnBase, i, partitionRowCount, lastPartition);
         }
     }
 
@@ -745,7 +754,7 @@ public class TableReader implements Closeable {
         }
     }
 
-    private ReadOnlyMemory openTxnFile() {
+    private ReadOnlyColumn openTxnFile() {
         try {
             return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
         } finally {
@@ -873,7 +882,16 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
+    private void reloadColumnAt(
+            Path path,
+            ObjList<ReadOnlyColumn> columns,
+            LongList columnTops,
+            ObjList<BitmapIndexReader> indexReaders,
+            int columnBase,
+            int columnIndex,
+            long partitionRowCount,
+            boolean lastPartition
+    ) {
         int plen = path.length();
         try {
             final CharSequence name = metadata.getColumnName(columnIndex);
@@ -885,10 +903,14 @@ public class TableReader implements Closeable {
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                if (mem1 instanceof ReadOnlyMemory) {
-                    ((ReadOnlyMemory) mem1).of(ff, path, ff.getMapPageSize(), 0);
+                if (mem1 != null && mem1 != ForceNullColumn.INSTANCE) {
+                    mem1.of(ff, path, ff.getMapPageSize(), ff.length(path));
                 } else {
-                    mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                    if (lastPartition) {
+                        mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                    } else {
+                        mem1 = new OnePageMemory(ff, path, ff.length(path));
+                    }
                     columns.setQuick(primaryIndex, mem1);
                 }
 
@@ -899,10 +921,14 @@ public class TableReader implements Closeable {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
-                        if (mem2 instanceof ReadOnlyMemory) {
-                            ((ReadOnlyMemory) mem2).of(ff, path, ff.getMapPageSize(), 0);
+                        if (mem2 != null && mem2 != ForceNullColumn.INSTANCE) {
+                            mem2.of(ff, path, ff.getMapPageSize(), ff.length(path));
                         } else {
-                            mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                            if (lastPartition) {
+                                mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                            } else {
+                                mem2 = new OnePageMemory(ff, path, ff.length(path));
+                            }
                             columns.setQuick(secondaryIndex, mem2);
                         }
                         growColumn(mem1, mem2, type, partitionRowCount - columnTop);
@@ -1129,8 +1155,9 @@ public class TableReader implements Closeable {
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
-                Path path = partitionPathGenerator.generate(this, partitionIndex);
+                final Path path = partitionPathGenerator.generate(this, partitionIndex);
                 final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
+                final boolean lastPartition = partitionIndex == partitionCount - 1;
 
                 Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
 
@@ -1149,17 +1176,17 @@ public class TableReader implements Closeable {
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
                             if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof ForceNullColumn) {
-                                reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
+                                reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             }
                             continue;
                         }
 
                         if (copyFrom > -1) {
                             fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
+                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
+                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount, lastPartition);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
@@ -1168,7 +1195,7 @@ public class TableReader implements Closeable {
                             Misc.free(tempCopyStruct.forwardReader);
                         } else {
                             // new instance
-                            reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
+                            reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                         }
                     }
                 }

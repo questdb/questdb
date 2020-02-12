@@ -269,7 +269,7 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
-    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {
         try {
             if (ColumnType.VERSION != metaMem.getInt(TableUtils.META_OFFSET_VERSION)) {
                 throw validationException(metaMem).put("Metadata version does not match runtime version");
@@ -392,23 +392,23 @@ public final class TableUtils {
         return path.concat(columnName).put(".i").$();
     }
 
-    static int getColumnType(ReadOnlyMemory metaMem, int columnIndex) {
+    static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    static long getColumnFlags(ReadOnlyMemory metaMem, int columnIndex) {
+    static long getColumnFlags(ReadOnlyColumn metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
     }
 
-    static boolean isColumnIndexed(ReadOnlyMemory metaMem, int columnIndex) {
+    static boolean isColumnIndexed(ReadOnlyColumn metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
     }
 
-    static boolean isSequential(ReadOnlyMemory metaMem, int columnIndex) {
+    static boolean isSequential(ReadOnlyColumn metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
-    static int getIndexBlockCapacity(ReadOnlyMemory metaMem, int columnIndex) {
+    static int getIndexBlockCapacity(ReadOnlyColumn metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
@@ -453,7 +453,7 @@ public final class TableUtils {
         }
     }
 
-    private static CairoException validationException(ReadOnlyMemory mem) {
+    private static CairoException validationException(ReadOnlyColumn mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 

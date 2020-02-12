@@ -75,17 +75,6 @@ public class SlidingWindowMemory extends VirtualMemory {
         LOG.info().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
     }
 
-    public void of(FilesFacade ff, long fd, int mapPageSize, long size) {
-        close();
-        this.ff = ff;
-        this.fd = fd;
-        this.parent = null;
-        this.setPageSize(mapPageSize);
-        this.pageIndex = -1;
-        this.size = size;
-        LOG.info().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
-    }
-
     public void updateSize() {
         if (parent != null) {
             this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getMapPageSize();

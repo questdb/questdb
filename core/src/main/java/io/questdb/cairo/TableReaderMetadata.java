@@ -30,7 +30,7 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final ReadOnlyMemory metaMem;
+    private final ReadOnlyColumn metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
@@ -40,7 +40,7 @@ class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
         this.ff = ff;
         this.path = new Path().of(path).$();
         try {
-            this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
+            this.metaMem = new OnePageMemory(ff, path, ff.length(path));
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);

@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
@@ -34,6 +36,8 @@ public interface ReadOnlyColumn extends Closeable {
 
     @Override
     void close();
+
+    void of(FilesFacade ff, LPSZ name, long pageSize, long size);
 
     BinarySequence getBin(long offset);
 

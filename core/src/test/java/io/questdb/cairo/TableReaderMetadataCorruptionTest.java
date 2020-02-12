@@ -45,7 +45,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names.length + 1,
                 PartitionBy.NONE,
                 5,
-                "page outside of file boundary"
+                "outside of file boundary"
         );
     }
 

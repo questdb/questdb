@@ -31,7 +31,7 @@ import io.questdb.std.str.CharSink;
 import java.io.Closeable;
 
 public class VirtualMemory implements Closeable {
-    private static final int STRING_LENGTH_BYTES = 4;
+    static final int STRING_LENGTH_BYTES = 4;
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
