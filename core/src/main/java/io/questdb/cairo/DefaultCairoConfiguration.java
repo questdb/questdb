@@ -207,12 +207,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyPageSize() {
+    public long getSqlSortKeyPageSize() {
         return 4 * Numbers.SIZE_1MB;
     }
 
     @Override
-    public int getSqlSortLightValuePageSize() {
+    public long getSqlSortLightValuePageSize() {
         return Numbers.SIZE_1MB;
     }
 

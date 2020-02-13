@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
@@ -32,6 +34,7 @@ import java.io.Closeable;
 
 public class VirtualMemory implements Closeable {
     static final int STRING_LENGTH_BYTES = 4;
+    private static final Log LOG = LogFactory.getLog(VirtualMemory.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
@@ -599,6 +602,7 @@ public class VirtualMemory implements Closeable {
     }
 
     protected long allocateNextPage(int page) {
+        LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
         return Unsafe.malloc(getMapPageSize());
     }
 

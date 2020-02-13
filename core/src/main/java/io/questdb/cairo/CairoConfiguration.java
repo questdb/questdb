@@ -100,9 +100,9 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlSortKeyPageSize();
+    long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValuePageSize();
+    long getSqlSortLightValuePageSize();
 
     int getSqlHashJoinValuePageSize();
 

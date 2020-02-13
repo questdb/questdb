@@ -45,7 +45,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     protected final MemoryPages mem;
     protected long root = -1;
 
-    public AbstractRedBlackTree(int keyPageSize) {
+    public AbstractRedBlackTree(long keyPageSize) {
         this.mem = new MemoryPages(keyPageSize);
     }
 

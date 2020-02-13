@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,8 +51,12 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
+            final char value = arg.getChar(null);
+            if (value == 0) {
+                return new SymbolConstant(position, null, SymbolTable.VALUE_IS_NULL);
+            }
             final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(arg.getChar(null));
+            sink.put(value);
             return new SymbolConstant(position, Chars.toString(sink), 0);
         }
         return new Func(position, arg);
@@ -78,6 +83,10 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final char value = arg.getChar(rec);
+            if (value == 0) {
+                return null;
+            }
+
             final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
@@ -99,6 +108,10 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final char value = arg.getChar(rec);
+            if (value == 0) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+
             final int keyIndex = symbolTableShortcut.keyIndex(value);
             if (keyIndex < 0) {
                 return symbolTableShortcut.valueAt(keyIndex) - 1;

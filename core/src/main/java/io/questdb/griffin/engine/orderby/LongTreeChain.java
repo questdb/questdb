@@ -34,7 +34,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
     private final TreeCursor cursor = new TreeCursor();
     private final VirtualMemory valueChain;
 
-    public LongTreeChain(int keyPageSize, int valuePageSize) {
+    public LongTreeChain(long keyPageSize, long valuePageSize) {
         super(keyPageSize);
         this.valueChain = new VirtualMemory(valuePageSize);
     }
@@ -79,10 +79,9 @@ public class LongTreeChain extends AbstractRedBlackTree {
         long p = root;
         long parent;
         int cmp;
-        long r;
         do {
             parent = p;
-            r = refOf(p);
+            final long r = refOf(p);
             sourceCursor.recordAt(sourceRecord, valueChain.getLong(r));
             cmp = comparator.compare(sourceRecord);
             if (cmp < 0) {
@@ -98,8 +97,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
         p = allocateBlock();
         setParent(p, parent);
 
-        r = appendValue(value, -1L);
-        setRef(p, r);
+        setRef(p, appendValue(value, -1L));
 
         if (cmp < 0) {
             setLeft(parent, p);

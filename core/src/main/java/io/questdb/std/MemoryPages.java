@@ -24,17 +24,23 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+
 import java.io.Closeable;
 
 public class MemoryPages implements Closeable, Mutable {
-    private final int pageSize;
-    private final int mask;
+
+    private static final Log LOG = LogFactory.getLog(MemoryPages.class);
+
+    private final long pageSize;
+    private final long mask;
     private final int bits;
     private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
 
-    public MemoryPages(int pageSize) {
+    public MemoryPages(long pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
@@ -83,6 +89,7 @@ public class MemoryPages implements Closeable, Mutable {
 
         if (index >= pages.size()) {
             pages.extendAndSet((int) index, Unsafe.malloc(pageSize));
+            LOG.info().$("new page [size=").$(pageSize).$(']').$();
         }
 
         cachePageLo = index << bits;

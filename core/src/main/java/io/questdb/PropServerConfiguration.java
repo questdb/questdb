@@ -96,8 +96,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapKeyCapacity;
     private final int sqlMapPageSize;
     private final int sqlModelPoolCapacity;
-    private final int sqlSortKeyPageSize;
-    private final int sqlSortLightValuePageSize;
+    private final long sqlSortKeyPageSize;
+    private final long sqlSortLightValuePageSize;
     private final int sqlHashJoinValuePageSize;
     private final long sqlLatestByRowCount;
     private final int sqlHashJoinLightValuePageSize;
@@ -290,8 +290,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
-        this.sqlSortKeyPageSize = getIntSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
-        this.sqlSortLightValuePageSize = getIntSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
+        this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
+        this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
         this.sqlHashJoinLightValuePageSize = getIntSize(properties, "cairo.sql.hash.join.light.value.page.size", 1048576);
@@ -475,6 +475,15 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String value = properties.getProperty(key);
         try {
             return value != null ? Numbers.parseLong(value) : defaultValue;
+        } catch (NumericException e) {
+            throw new ServerConfigurationException(key, value);
+        }
+    }
+
+    private long getLongSize(Properties properties, String key, long defaultValue) throws ServerConfigurationException {
+        final String value = properties.getProperty(key);
+        try {
+            return value != null ? Numbers.parseLongSize(value) : defaultValue;
         } catch (NumericException e) {
             throw new ServerConfigurationException(key, value);
         }
@@ -973,12 +982,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortKeyPageSize() {
+        public long getSqlSortKeyPageSize() {
             return sqlSortKeyPageSize;
         }
 
         @Override
-        public int getSqlSortLightValuePageSize() {
+        public long getSqlSortLightValuePageSize() {
             return sqlSortLightValuePageSize;
         }
 

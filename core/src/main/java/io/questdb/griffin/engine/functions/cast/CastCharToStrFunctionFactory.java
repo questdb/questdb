@@ -45,10 +45,14 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
+        Function func = args.getQuick(0);
+        if (func.isConstant()) {
+            final char value = func.getChar(null);
+            if (value == 0) {
+                return new StrConstant(position, null);
+            }
             final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(intFunc.getChar(null));
+            sink.put(value);
             return new StrConstant(position, Chars.toString(sink));
         }
         return new Func(position, args.getQuick(0));
@@ -71,21 +75,32 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
+            final char value = arg.getChar(rec);
+            if (value == 0) {
+                return null;
+            }
             sinkA.clear();
-            sinkA.put(arg.getChar(rec));
+            sinkA.put(value);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
+            final char value = arg.getChar(rec);
+            if (value == 0) {
+                return null;
+            }
             sinkB.clear();
-            sinkB.put(arg.getChar(rec));
+            sinkB.put(value);
             return sinkB;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            sink.put(arg.getChar(rec));
+            final char value = arg.getChar(rec);
+            if (value != 0) {
+                sink.put(value);
+            }
         }
     }
 }
