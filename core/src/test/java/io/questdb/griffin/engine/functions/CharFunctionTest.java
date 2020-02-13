@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -36,7 +38,7 @@ public class CharFunctionTest {
     private static final CharFunction function = new CharFunction(25) {
         @Override
         public char getChar(Record rec) {
-            return 0x30;
+            return 0x34;
         }
 
         @Override
@@ -84,24 +86,25 @@ public class CharFunctionTest {
         function.getRecordCursorFactory();
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStr() {
-        function.getStr(null);
+        TestUtils.assertEquals("4", function.getStr(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, null);
+        StringSink sink = new StringSink();
+        function.getStr(null, sink);
+        TestUtils.assertEquals("4", sink);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrB() {
-        function.getStrB(null);
+        TestUtils.assertEquals("4", function.getStrB(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrLen() {
-        function.getStrLen(null);
+        Assert.assertEquals(1, function.getStrLen(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

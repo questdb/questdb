@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -32,9 +33,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public abstract class CharFunction implements Function {
     private final int position;
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
 
     public CharFunction(int position) {
         this.position = position;
@@ -117,22 +121,41 @@ public abstract class CharFunction implements Function {
 
     @Override
     public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
+        final char value = getChar(rec);
+        if (value == 0) {
+            return null;
+        }
+        sinkA.clear();
+        sinkA.put(value);
+        return sinkA;
     }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
+        final char value = getChar(rec);
+        if (value > 0) {
+            sink.put(value);
+        }
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        final char value = getChar(rec);
+        if (value == 0) {
+            return null;
+        }
+        sinkB.clear();
+        sinkB.put(value);
+        return sinkB;
     }
 
     @Override
     public final int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        final char value = getChar(rec);
+        if (value == 0) {
+            return TableUtils.NULL_LEN;
+        }
+        return 1;
     }
 
     @Override

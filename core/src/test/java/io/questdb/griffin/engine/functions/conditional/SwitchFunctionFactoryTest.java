@@ -915,6 +915,55 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrCharOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "A\t315515118\t1548800833\t-727724771\tthis is A\n" +
+                        "B\t-948263339\t1326447242\t592859671\tthis is B\n" +
+                        "C\t-847531048\t-1191262516\t-2041844972\tthis is something else\n" +
+                        "C\t-1575378703\t806715481\t1545253512\tthis is something else\n" +
+                        "A\t1573662097\t-409854405\t339631474\tthis is A\n" +
+                        "D\t1904508147\t-1532328444\t-1458132197\tthis is D\n" +
+                        "D\t-1849627000\t-1432278050\t426455968\tthis is D\n" +
+                        "D\t-1792928964\t-1844391305\t-1520872171\tthis is D\n" +
+                        "A\t-1153445279\t1404198\t-1715058769\tthis is A\n" +
+                        "D\t1631244228\t-1975183723\t-1252906348\tthis is D\n" +
+                        "C\t-761275053\t-2119387831\t-212807500\tthis is something else\n" +
+                        "B\t1110979454\t1253890363\t-113506296\tthis is B\n" +
+                        "D\t-938514914\t-547127752\t-1271909747\tthis is D\n" +
+                        "B\t-342047842\t-2132716300\t2006313928\tthis is B\n" +
+                        "D\t-27395319\t264240638\t2085282008\tthis is D\n" +
+                        "D\t2137969456\t1890602616\t-1272693194\tthis is D\n" +
+                        "C\t1036510002\t-2002373666\t44173540\tthis is something else\n" +
+                        "A\t410717394\t-2144581835\t1978144263\tthis is A\n" +
+                        "C\t-1162267908\t2031014705\t-530317703\tthis is something else\n" +
+                        "B\t-296610933\t936627841\t326010667\tthis is B\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when 'A' then 'this is A'\n" +
+                        "        when 'B' then 'this is B'\n" +
+                        "        when 'D' then 'this is D'\n" +
+                        "        else 'this is something else'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_str('A','B','C','D') x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testStrToStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +

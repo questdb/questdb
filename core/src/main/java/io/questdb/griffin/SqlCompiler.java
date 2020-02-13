@@ -608,7 +608,8 @@ public class SqlCompiler implements Closeable {
                         && from < to)
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING);
+                || (from == ColumnType.CHAR && to == ColumnType.STRING)
+                ;
     }
 
     private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
