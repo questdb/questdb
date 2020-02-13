@@ -1230,7 +1230,13 @@ public class SqlCompiler implements Closeable {
 
                     final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(index), function.getType())) {
-                        throw SqlException.$(model.getColumnValues().getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(index)));
+                        throw SqlException.inconvertibleTypes(
+                                model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                                function.getType(),
+                                model.getColumnValues().getQuick(i).token,
+                                metadata.getColumnType(index),
+                                metadata.getColumnName(index)
+                        );
                     }
 
                     if (index == writerTimestampIndex) {
@@ -1251,7 +1257,13 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0; i < columnCount; i++) {
                     Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(i), function.getType())) {
-                        throw SqlException.$(values.getQuick(i).position, "inconvertible types: ").put(ColumnType.nameOf(function.getType())).put(" -> ").put(ColumnType.nameOf(metadata.getColumnType(i)));
+                        throw SqlException.inconvertibleTypes(
+                                model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                                function.getType(),
+                                model.getColumnValues().getQuick(i).token,
+                                metadata.getColumnType(i),
+                                metadata.getColumnName(i)
+                        );
                     }
                     if (i == writerTimestampIndex) {
                         timestampFunction = function;
@@ -1322,7 +1334,13 @@ public class SqlCompiler implements Closeable {
                     if (isAssignableFrom(toType, fromType)) {
                         listColumnFilter.add(index);
                     } else {
-                        throw SqlException.$(model.getColumnPosition(i), "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+                        throw SqlException.inconvertibleTypes(
+                                model.getColumnPosition(i),
+                                fromType,
+                                cursorMetadata.getColumnName(i),
+                                toType,
+                                writerMetadata.getColumnName(i)
+                        );
                     }
                 }
 
@@ -1351,7 +1369,13 @@ public class SqlCompiler implements Closeable {
                     // We will try to position on column (i) inside cursor's query model. Assumption is that
                     // it will always have a column, e.g. has been processed by optimiser
                     assert i < model.getQueryModel().getColumns().size();
-                    throw SqlException.$(model.getQueryModel().getColumns().getQuick(i).getAst().position, "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+                    throw SqlException.inconvertibleTypes(
+                            model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                            fromType,
+                            cursorMetadata.getColumnName(i),
+                            toType,
+                            writerMetadata.getColumnName(i)
+                    );
                 }
 
                 entityColumnFilter.of(writerMetadata.getColumnCount());

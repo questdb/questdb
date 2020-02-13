@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
@@ -63,6 +64,15 @@ public class SqlException extends Exception implements Sinkable {
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token: ").put(token);
+    }
+
+    public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
+        return $(position, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(" [from=").put(fromName)
+                .put(", to=").put(toName).put(']');
     }
 
     public CharSequence getFlyweightMessage() {
