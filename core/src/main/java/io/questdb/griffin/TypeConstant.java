@@ -24,10 +24,14 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 
 /**
  * Marker interface to indicate that constant is actually a TYPE and not a VALUE.
  */
 public interface TypeConstant extends ConstantFunction {
+    @Override
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    }
 }

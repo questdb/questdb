@@ -120,7 +120,7 @@ public class CastByteToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            super.init(symbolTableSource, executionContext);
+            arg.init(symbolTableSource, executionContext);
             symbolTableShortcut.clear();
             symbols.clear();
             symbols.add(null);

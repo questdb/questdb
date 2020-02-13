@@ -31,27 +31,28 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class MinLongGroupByFunction extends LongFunction implements GroupByFunction {
-    private final Function value;
+public class MinLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public MinLongGroupByFunction(int position, @NotNull Function value) {
+    public MinLongGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, value.getLong(record));
+        mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         long min = mapValue.getLong(valueIndex);
-        long next = value.getLong(record);
+        long next = arg.getLong(record);
         if (next != Numbers.LONG_NaN && next < min || min == Numbers.LONG_NaN) {
             mapValue.putLong(valueIndex, next);
         }
@@ -76,5 +77,10 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

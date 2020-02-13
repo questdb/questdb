@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
 
+@FunctionalInterface
 interface CaseFunctionPicker {
     @NotNull
     Function pick(Record record);

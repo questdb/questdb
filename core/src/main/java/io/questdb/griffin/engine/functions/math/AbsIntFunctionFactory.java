@@ -48,21 +48,21 @@ public class AbsIntFunctionFactory implements FunctionFactory {
     }
 
     private static class AbsIntFunction extends IntFunction implements UnaryFunction {
-        final Function function;
+        private final Function arg;
 
-        public AbsIntFunction(int position, Function function) {
+        public AbsIntFunction(int position, Function arg) {
             super(position);
-            this.function = function;
+            this.arg = arg;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return arg;
         }
 
         @Override
         public int getInt(Record rec) {
-            int value = function.getInt(rec);
+            int value = arg.getInt(rec);
             return value < 0 ? -value : value;
         }
     }

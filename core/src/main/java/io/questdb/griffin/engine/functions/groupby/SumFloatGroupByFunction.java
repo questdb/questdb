@@ -31,25 +31,26 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction {
-    private final Function value;
+public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public SumFloatGroupByFunction(int position, @NotNull Function value) {
+    public SumFloatGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putFloat(valueIndex, value.getFloat(record));
+        mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addFloat(valueIndex, value.getFloat(record));
+        mapValue.addFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
@@ -71,5 +72,10 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public float getFloat(Record rec) {
         return rec.getFloat(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

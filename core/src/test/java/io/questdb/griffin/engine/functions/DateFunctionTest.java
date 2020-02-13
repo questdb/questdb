@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,6 +38,10 @@ public class DateFunctionTest {
         @Override
         public long getDate(Record rec) {
             return 163;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 
@@ -135,6 +141,10 @@ public class DateFunctionTest {
             @Override
             public long getDate(Record rec) {
                 return Numbers.LONG_NaN;
+            }
+
+            @Override
+            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             }
         };
 

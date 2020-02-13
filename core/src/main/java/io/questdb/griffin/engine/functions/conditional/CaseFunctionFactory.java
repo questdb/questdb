@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class CaseFunctionFactory implements FunctionFactory {
     @Override
@@ -39,10 +40,11 @@ public class CaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         int n = args.size();
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
+        final ObjList<Function> argsToPoke = new ObjList<>(n);
 
         Function elseBranch;
         if (n % 2 == 1) {
@@ -65,16 +67,20 @@ public class CaseFunctionFactory implements FunctionFactory {
 
             vars.add(bool);
             vars.add(value);
+
+            argsToPoke.add(bool);
+            argsToPoke.add(value);
         }
 
         if (elseBranch != null) {
             returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranch.getPosition());
+            argsToPoke.add(elseBranch);
         }
 
         // next calculate cast functions
         for (int i = 1; i < n; i += 2) {
-            args.setQuick(i, CaseCommon.getCastFunction(
-                    args.getQuick(i),
+            vars.setQuick(i, CaseCommon.getCastFunction(
+                    vars.getQuick(i),
                     returnType,
                     configuration
             ));
@@ -90,12 +96,12 @@ public class CaseFunctionFactory implements FunctionFactory {
         final CaseFunctionPicker picker = record -> {
             for (int i = 0; i < argsLen; i += 2) {
                 if (vars.getQuick(i).getBool(record)) {
-                    return args.getQuick(i + 1);
+                    return vars.getQuick(i + 1);
                 }
             }
             return elseB;
         };
 
-        return CaseCommon.getCaseFunction(position, returnType, picker);
+        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
 }

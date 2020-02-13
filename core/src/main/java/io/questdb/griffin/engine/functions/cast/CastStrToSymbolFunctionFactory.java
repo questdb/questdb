@@ -111,7 +111,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            super.init(symbolTableSource, executionContext);
+            arg.init(symbolTableSource, executionContext);
             lookupMap.clear();
             symbols.clear();
             symbols.add(null);

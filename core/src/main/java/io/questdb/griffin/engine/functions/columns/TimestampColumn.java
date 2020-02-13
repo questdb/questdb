@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 
-public class TimestampColumn extends TimestampFunction implements StatelessFunction {
+public class TimestampColumn extends TimestampFunction implements StatelessFunction, NoArgFunction {
     private final int columnIndex;
 
     public TimestampColumn(int position, int columnIndex) {

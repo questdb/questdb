@@ -31,25 +31,26 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class SumShortGroupByFunction extends ShortFunction implements GroupByFunction {
-    private final Function value;
+public class SumShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public SumShortGroupByFunction(int position, @NotNull Function value) {
+    public SumShortGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, value.getShort(record));
+        mapValue.putShort(valueIndex, arg.getShort(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addShort(valueIndex, value.getShort(record));
+        mapValue.addShort(valueIndex, arg.getShort(record));
     }
 
     @Override
@@ -71,5 +72,10 @@ public class SumShortGroupByFunction extends ShortFunction implements GroupByFun
     @Override
     public short getShort(Record rec) {
         return rec.getShort(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

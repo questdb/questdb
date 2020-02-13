@@ -174,6 +174,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             IntMethod intMethod
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final int key = intMethod.getKey(fun, null);
@@ -182,6 +183,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(fun.getPosition(), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
+            argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -193,7 +195,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return elseB;
         };
 
-        return CaseCommon.getCaseFunction(position, valueType, picker);
+        argsToPoke.add(elseB);
+
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getElseFunction(int valueType, Function elseBranch) {
@@ -208,6 +212,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             Function elseBranch
     ) throws SqlException {
         final CaseFunctionPicker picker;
+        final ObjList<Function> argsToPoke;
         if (n == 3) {
             // only one conditional branch
             boolean value = args.getQuick(1).getBool(null);
@@ -220,6 +225,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             } else {
                 picker = record -> keyFunction.getBool(record) ? elseB : branch;
             }
+
+            argsToPoke = new ObjList<>();
+            argsToPoke.add(keyFunction);
+            argsToPoke.add(elseB);
+
         } else if (n == 5) {
             final boolean a = args.getQuick(1).getBool(null);
             final Function branchA = args.getQuick(2);
@@ -240,11 +250,15 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 picker = record -> keyFunction.getBool(record) ? branchB : branchA;
             }
 
+            argsToPoke = new ObjList<>();
+            argsToPoke.add(keyFunction);
+            argsToPoke.add(branchA);
+            argsToPoke.add(branchB);
         } else {
             throw SqlException.$(args.getQuick(5).getPosition(), "too many branches");
         }
 
-        return CaseCommon.getCaseFunction(position, returnType, picker);
+        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
 
     private Function getLongKeyedFunction(
@@ -257,6 +271,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             LongMethod longMethod
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
             final long key = longMethod.getKey(fun, null);
@@ -265,6 +280,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(fun.getPosition(), "duplicate branch");
             }
             map.putAt(index, key, args.getQuick(i + 1));
+            argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
@@ -275,8 +291,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             return elseB;
         };
+        argsToPoke.add(elseB);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -289,6 +306,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             CharSequenceMethod method
     ) throws SqlException {
         final CharSequenceObjHashMap<Function> map = new CharSequenceObjHashMap<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
         Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
@@ -301,6 +319,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     throw SqlException.$(fun.getPosition(), "duplicate branch");
                 }
                 map.putAt(index, key, args.getQuick(i + 1));
+                argsToPoke.add(args.getQuick(i + 1));
             }
         }
 
@@ -330,9 +349,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 }
                 return elseB;
             };
+            argsToPoke.add(nullFunc);
         }
-
-        return CaseCommon.getCaseFunction(position, valueType, picker);
+        argsToPoke.add(elseB);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     @FunctionalInterface

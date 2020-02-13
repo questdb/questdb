@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
@@ -73,6 +75,10 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
                 return (byte) (lo - s % range);
             }
             return (byte) (lo + s % range);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

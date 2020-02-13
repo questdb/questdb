@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Rnd;
@@ -55,5 +57,9 @@ class RndStrFunction extends StrFunction implements StatelessFunction {
     @Override
     public CharSequence getStrB(Record rec) {
         return getStr(rec);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

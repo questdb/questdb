@@ -31,26 +31,27 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinByteGroupByFunction extends ByteFunction implements GroupByFunction {
-    private final Function value;
+public class MinByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public MinByteGroupByFunction(int position, @NotNull Function value) {
+    public MinByteGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(valueIndex, value.getByte(record));
+        mapValue.putByte(valueIndex, arg.getByte(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         byte min = mapValue.getByte(valueIndex);
-        byte next = value.getByte(record);
+        byte next = arg.getByte(record);
         if (next < min) {
             mapValue.putByte(valueIndex, next);
         }
@@ -75,5 +76,10 @@ public class MinByteGroupByFunction extends ByteFunction implements GroupByFunct
     @Override
     public byte getByte(Record rec) {
         return rec.getByte(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

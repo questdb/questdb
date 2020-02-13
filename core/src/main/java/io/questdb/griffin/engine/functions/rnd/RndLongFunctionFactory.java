@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
@@ -57,6 +59,10 @@ public class RndLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             return rnd.nextLong();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -47,7 +48,7 @@ public class RndByteFunctionFactory implements FunctionFactory {
 
     }
 
-    private static class RndFunction extends ByteFunction implements StatelessFunction {
+    private static class RndFunction extends ByteFunction implements StatelessFunction, NoArgFunction {
         private final byte lo;
         private final byte range;
         private final Rnd rnd;

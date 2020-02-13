@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.Numbers;
@@ -80,6 +82,10 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NaN;
             }
             return lo + rnd.nextPositiveInt() % range;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

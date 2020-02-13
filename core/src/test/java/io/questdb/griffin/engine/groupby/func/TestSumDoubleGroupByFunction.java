@@ -31,18 +31,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
-    private final Function value;
+public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     // allocate just to test that close() is correctly invoked
     private final long mem = Unsafe.malloc(1024);
     private int valueIndex;
 
-    public TestSumDoubleGroupByFunction(int position, @NotNull Function value) {
+    public TestSumDoubleGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
@@ -57,12 +58,12 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value.getDouble(record));
+        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
     }
 
     @Override
@@ -79,5 +80,10 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 
@@ -39,5 +41,9 @@ class ShortBindVariable extends ShortFunction implements StatelessFunction {
     @Override
     public short getShort(Record rec) {
         return value;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

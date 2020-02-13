@@ -24,17 +24,24 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 class Long256CaseFunction extends Long256Function {
     private final CaseFunctionPicker picker;
+    private final ObjList<Function> args;
 
-    public Long256CaseFunction(int position, CaseFunctionPicker picker) {
+    public Long256CaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
         super(position);
         this.picker = picker;
+        this.args = args;
     }
 
     @Override
@@ -50,5 +57,20 @@ class Long256CaseFunction extends Long256Function {
     @Override
     public void getLong256(Record rec, CharSink sink) {
         picker.pick(rec).getLong256(rec, sink);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        Function.init(args, symbolTableSource, executionContext);
+    }
+
+    @Override
+    public void toTop() {
+        Function.toTop(args);
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(args);
     }
 }

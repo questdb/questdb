@@ -27,11 +27,24 @@ package io.questdb.cairo.sql;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
 public interface Function extends Closeable {
+
+    static void init(ObjList<Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).init(symbolTableSource, executionContext);
+        }
+    }
+
+    static void toTop(ObjList<Function> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).toTop();
+        }
+    }
 
     @Override
     default void close() {
@@ -85,8 +98,7 @@ public interface Function extends Closeable {
 
     int getType();
 
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-    }
+    void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext);
 
     default boolean isConstant() {
         return false;

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -38,15 +39,15 @@ import org.jetbrains.annotations.NotNull;
  * This function does not make sense. It is there to test how group-by algos deal
  * with unsupported function types.
  */
-public class TestSumStringGroupByFunction extends StrFunction implements GroupByFunction {
-    private final Function value;
+public class TestSumStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     // allocate just to test that close() is correctly invoked
     private final long mem = Unsafe.malloc(1024);
     private int valueIndex;
 
-    public TestSumStringGroupByFunction(int position, @NotNull Function value) {
+    public TestSumStringGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
@@ -66,12 +67,12 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value.getDouble(record));
+        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
     }
 
     @Override
@@ -88,5 +89,10 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

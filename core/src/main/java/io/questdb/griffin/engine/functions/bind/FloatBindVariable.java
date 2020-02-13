@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 
@@ -39,5 +41,9 @@ class FloatBindVariable extends FloatFunction implements StatelessFunction {
     @Override
     public float getFloat(Record rec) {
         return value;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

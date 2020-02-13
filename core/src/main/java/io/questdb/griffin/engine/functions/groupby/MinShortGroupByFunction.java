@@ -31,26 +31,32 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinShortGroupByFunction extends ShortFunction implements GroupByFunction {
-    private final Function value;
+public class MinShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public MinShortGroupByFunction(int position, @NotNull Function value) {
+    public MinShortGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, value.getShort(record));
+        mapValue.putShort(valueIndex, arg.getShort(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         short min = mapValue.getShort(valueIndex);
-        short next = value.getShort(record);
+        short next = arg.getShort(record);
         if (next < min) {
             mapValue.putShort(valueIndex, next);
         }

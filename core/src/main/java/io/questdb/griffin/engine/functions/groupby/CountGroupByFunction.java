@@ -28,6 +28,8 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
@@ -68,5 +70,9 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

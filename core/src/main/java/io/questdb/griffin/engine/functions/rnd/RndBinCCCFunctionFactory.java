@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BinFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
@@ -67,7 +68,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         return new FixLenFunction(position, lo, nullRate, configuration);
     }
 
-    private static final class VarLenFunction extends BinFunction implements StatelessFunction {
+    private static final class VarLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
         private final Rnd rnd;
         private final long lo;
@@ -97,7 +98,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class FixLenFunction extends BinFunction implements StatelessFunction {
+    private static final class FixLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
         private final Rnd rnd;
         private final int nullRate;

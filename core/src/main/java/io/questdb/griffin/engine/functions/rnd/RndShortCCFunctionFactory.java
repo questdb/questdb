@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
@@ -54,7 +55,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends ShortFunction implements StatelessFunction {
+    private static class RndFunction extends ShortFunction implements StatelessFunction, NoArgFunction {
         private final short lo;
         private final short range;
         private final Rnd rnd;

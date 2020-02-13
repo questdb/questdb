@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
@@ -45,7 +46,7 @@ public class RndBinFunctionFactory implements FunctionFactory {
         return new FixLenFunction(position, configuration);
     }
 
-    private static final class FixLenFunction extends BinFunction implements StatelessFunction {
+    private static final class FixLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
 
         public FixLenFunction(int position, CairoConfiguration configuration) {

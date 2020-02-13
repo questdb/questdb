@@ -61,12 +61,12 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
+        private final Function arg;
         private final Matcher matcher;
 
-        public MatchFunction(int position, Function value, Matcher matcher) {
+        public MatchFunction(int position, Function arg, Matcher matcher) {
             super(position);
-            this.value = value;
+            this.arg = arg;
             this.matcher = matcher;
         }
 
@@ -78,7 +78,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getArg() {
-            return value;
+            return arg;
         }
     }
 }

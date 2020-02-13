@@ -31,26 +31,27 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinCharGroupByFunction extends CharFunction implements GroupByFunction {
-    private final Function value;
+public class MinCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
-    public MinCharGroupByFunction(int position, @NotNull Function value) {
+    public MinCharGroupByFunction(int position, @NotNull Function arg) {
         super(position);
-        this.value = value;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putChar(valueIndex, value.getChar(record));
+        mapValue.putChar(valueIndex, arg.getChar(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         char min = mapValue.getChar(valueIndex);
-        char next = value.getChar(record);
+        char next = arg.getChar(record);
         if (next > 0 && next < min) {
             mapValue.putChar(valueIndex, next);
         }
@@ -70,5 +71,10 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     @Override
     public char getChar(Record rec) {
         return rec.getChar(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

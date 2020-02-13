@@ -71,23 +71,23 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
-        private final Function symFunc;
+        private final Function arg;
         private final char constant;
 
-        public ConstCheckFunc(int position, Function symFunc, char constant) {
+        public ConstCheckFunc(int position, Function arg, char constant) {
             super(position);
-            this.symFunc = symFunc;
+            this.arg = arg;
             this.constant = constant;
         }
 
         @Override
         public Function getArg() {
-            return symFunc;
+            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(symFunc.getSymbol(rec), constant);
+            return Chars.equalsNc(arg.getSymbol(rec), constant);
         }
     }
 

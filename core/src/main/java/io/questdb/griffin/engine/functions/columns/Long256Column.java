@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public class Long256Column extends Long256Function implements StatelessFunction {
+public class Long256Column extends Long256Function implements StatelessFunction, NoArgFunction {
     private final int columnIndex;
 
     public Long256Column(int position, int columnIndex) {

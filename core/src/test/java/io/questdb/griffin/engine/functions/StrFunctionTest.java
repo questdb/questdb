@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,6 +43,10 @@ public class StrFunctionTest {
         @Override
         public CharSequence getStrB(Record rec) {
             return "a";
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 

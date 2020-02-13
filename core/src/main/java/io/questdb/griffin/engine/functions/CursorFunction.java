@@ -24,10 +24,8 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TypeEx;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -165,5 +163,9 @@ public class CursorFunction implements Function {
     @Override
     public final int getType() {
         return TypeEx.CURSOR;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

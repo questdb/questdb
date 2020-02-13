@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,12 +40,20 @@ public class BooleanFunctionTest {
         public boolean getBool(Record rec) {
             return false;
         }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        }
     };
 
     private static final BooleanFunction functionB = new BooleanFunction(25) {
         @Override
         public boolean getBool(Record rec) {
             return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 
@@ -163,6 +173,10 @@ public class BooleanFunctionTest {
             @Override
             public boolean getBool(Record rec) {
                 return true;
+            }
+
+            @Override
+            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             }
         };
         Assert.assertEquals('T', function.getChar(null));

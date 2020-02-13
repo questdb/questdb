@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
@@ -70,7 +71,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         return new Func(position, symbols, configuration);
     }
 
-    private static final class Func extends StrFunction implements StatelessFunction {
+    private static final class Func extends StrFunction implements StatelessFunction, NoArgFunction {
         private final ObjList<String> symbols;
         private final Rnd rnd;
         private final int count;

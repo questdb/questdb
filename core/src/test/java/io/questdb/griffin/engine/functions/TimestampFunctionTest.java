@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,6 +38,10 @@ public class TimestampFunctionTest {
         @Override
         public long getTimestamp(Record rec) {
             return 145000L;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 
@@ -70,6 +76,10 @@ public class TimestampFunctionTest {
             @Override
             public long getTimestamp(Record rec) {
                 return Numbers.LONG_NaN;
+            }
+
+            @Override
+            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             }
         };
         Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));

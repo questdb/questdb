@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 
-class TimestampBindVariable extends TimestampFunction implements StatelessFunction {
+class TimestampBindVariable extends TimestampFunction implements StatelessFunction, NoArgFunction {
     long value;
 
     public TimestampBindVariable(long value) {

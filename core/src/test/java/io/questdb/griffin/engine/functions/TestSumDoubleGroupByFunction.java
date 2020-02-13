@@ -31,29 +31,29 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
 
-public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
-    private final Function value1;
+public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
     private int valueIndex;
 
     public TestSumDoubleGroupByFunction(
             int position,
-            @NotNull Function value1,
+            @NotNull Function arg,
             @NotNull Function value2
     ) {
         super(position);
         // this is just random attempt to create a problem within a function
         value2.getDouble(null);
-        this.value1 = value1;
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value1.getDouble(record));
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value1.getDouble(record));
+        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
     }
 
     @Override
@@ -75,5 +75,10 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public double getDouble(Record rec) {
         return rec.getDouble(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

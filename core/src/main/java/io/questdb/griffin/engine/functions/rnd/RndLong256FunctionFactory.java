@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.*;
@@ -79,6 +81,10 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink sink) {
             Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

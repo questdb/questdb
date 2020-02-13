@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -45,7 +46,7 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         return new RndFunction(position, configuration);
     }
 
-    private static class RndFunction extends DoubleFunction implements StatelessFunction {
+    private static class RndFunction extends DoubleFunction implements StatelessFunction, NoArgFunction {
 
         private final Rnd rnd;
 

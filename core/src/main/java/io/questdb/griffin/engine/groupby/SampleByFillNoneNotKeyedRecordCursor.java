@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -136,7 +137,7 @@ class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, No
         this.lastTimestamp = this.nextTimestamp;
     }
 
-    private class TimestampFunc extends TimestampFunction {
+    private class TimestampFunc extends TimestampFunction implements NoArgFunction {
 
         public TimestampFunc(int position) {
             super(position);

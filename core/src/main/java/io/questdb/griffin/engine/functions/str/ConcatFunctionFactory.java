@@ -28,7 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -38,16 +40,21 @@ import io.questdb.std.str.StringSink;
 public class ConcatFunctionFactory implements FunctionFactory {
     private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
 
-    @Override
-    public String getSignature() {
-        return "concat(V)";
-    }
-
-    @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) {
-        final ObjList<Function> functions = new ObjList<>(args.size());
-        functions.addAll(args);
-        return new ConcatFunction(position, functions);
+    static {
+        adapterReferences.extendAndSet(ColumnType.LONG256, ConcatFunctionFactory::sinkLong256);
+        adapterReferences.extendAndSet(ColumnType.BOOLEAN, ConcatFunctionFactory::sinkBool);
+        adapterReferences.extendAndSet(ColumnType.BYTE, ConcatFunctionFactory::sinkByte);
+        adapterReferences.extendAndSet(ColumnType.SHORT, ConcatFunctionFactory::sinkShort);
+        adapterReferences.extendAndSet(ColumnType.CHAR, ConcatFunctionFactory::sinkChar);
+        adapterReferences.extendAndSet(ColumnType.INT, ConcatFunctionFactory::sinkInt);
+        adapterReferences.extendAndSet(ColumnType.LONG, ConcatFunctionFactory::sinkLong);
+        adapterReferences.extendAndSet(ColumnType.FLOAT, ConcatFunctionFactory::sinkFloat);
+        adapterReferences.extendAndSet(ColumnType.DOUBLE, ConcatFunctionFactory::sinkDouble);
+        adapterReferences.extendAndSet(ColumnType.STRING, ConcatFunctionFactory::sinkStr);
+        adapterReferences.extendAndSet(ColumnType.SYMBOL, ConcatFunctionFactory::sinkSymbol);
+        adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
+        adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);
+        adapterReferences.extendAndSet(ColumnType.TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
     }
 
     private static void sinkLong(CharSink sink, Function function, Record record) {
@@ -107,6 +114,18 @@ public class ConcatFunctionFactory implements FunctionFactory {
         function.getStr(record, sink);
     }
 
+    @Override
+    public String getSignature() {
+        return "concat(V)";
+    }
+
+    @Override
+    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) {
+        final ObjList<Function> functions = new ObjList<>(args.size());
+        functions.addAll(args);
+        return new ConcatFunction(position, functions);
+    }
+
     @FunctionalInterface
     private interface TypeAdapter {
         void sink(CharSink sink, Function function, Record record);
@@ -154,22 +173,15 @@ public class ConcatFunctionFactory implements FunctionFactory {
                 adaptors.getQuick(i).sink(sink, functions.getQuick(i), rec);
             }
         }
-    }
 
-    static {
-        adapterReferences.extendAndSet(ColumnType.LONG256, ConcatFunctionFactory::sinkLong256);
-        adapterReferences.extendAndSet(ColumnType.BOOLEAN, ConcatFunctionFactory::sinkBool);
-        adapterReferences.extendAndSet(ColumnType.BYTE, ConcatFunctionFactory::sinkByte);
-        adapterReferences.extendAndSet(ColumnType.SHORT, ConcatFunctionFactory::sinkShort);
-        adapterReferences.extendAndSet(ColumnType.CHAR, ConcatFunctionFactory::sinkChar);
-        adapterReferences.extendAndSet(ColumnType.INT, ConcatFunctionFactory::sinkInt);
-        adapterReferences.extendAndSet(ColumnType.LONG, ConcatFunctionFactory::sinkLong);
-        adapterReferences.extendAndSet(ColumnType.FLOAT, ConcatFunctionFactory::sinkFloat);
-        adapterReferences.extendAndSet(ColumnType.DOUBLE, ConcatFunctionFactory::sinkDouble);
-        adapterReferences.extendAndSet(ColumnType.STRING, ConcatFunctionFactory::sinkStr);
-        adapterReferences.extendAndSet(ColumnType.SYMBOL, ConcatFunctionFactory::sinkSymbol);
-        adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
-        adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);
-        adapterReferences.extendAndSet(ColumnType.TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            Function.init(functions, symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void toTop() {
+            Function.toTop(functions);
+        }
     }
 }

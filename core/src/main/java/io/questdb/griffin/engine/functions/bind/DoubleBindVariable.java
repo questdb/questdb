@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 
-class DoubleBindVariable extends DoubleFunction implements StatelessFunction {
+class DoubleBindVariable extends DoubleFunction implements StatelessFunction, NoArgFunction {
     double value;
 
     public DoubleBindVariable(double value) {

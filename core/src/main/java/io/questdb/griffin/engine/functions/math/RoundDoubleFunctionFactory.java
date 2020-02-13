@@ -124,7 +124,6 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
             return Numbers.roundHalfUpPosScale(l, scale);
         }
-
     }
 
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
@@ -151,8 +150,5 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
             return Numbers.roundHalfUpNegScale(l, scale);
         }
-
     }
-
-
 }

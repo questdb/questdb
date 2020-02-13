@@ -28,6 +28,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
@@ -168,6 +169,10 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         @Override
         public long getTimestamp(Record rec) {
             return lastTimestamp;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

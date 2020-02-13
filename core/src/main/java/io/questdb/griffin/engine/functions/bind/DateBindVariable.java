@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 
-class DateBindVariable extends DateFunction implements StatelessFunction {
+class DateBindVariable extends DateFunction implements StatelessFunction, NoArgFunction {
     long value;
 
     public DateBindVariable(long value) {

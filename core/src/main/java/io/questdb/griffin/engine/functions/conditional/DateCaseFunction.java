@@ -24,19 +24,41 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class DateCaseFunction extends DateFunction {
     private final CaseFunctionPicker picker;
+    private final ObjList<Function> args;
 
-    public DateCaseFunction(int position, CaseFunctionPicker picker) {
+    public DateCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
         super(position);
         this.picker = picker;
+        this.args = args;
     }
 
     @Override
     public long getDate(Record rec) {
         return picker.pick(rec).getDate(rec);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        Function.init(args, symbolTableSource, executionContext);
+    }
+
+    @Override
+    public void toTop() {
+        Function.toTop(args);
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(args);
     }
 }

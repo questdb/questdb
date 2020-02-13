@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -201,7 +202,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
         this.lastTimestamp = this.nextTimestamp;
     }
 
-    private class TimestampFunc extends TimestampFunction {
+    private class TimestampFunc extends TimestampFunction implements NoArgFunction {
 
         public TimestampFunc(int position) {
             super(position);

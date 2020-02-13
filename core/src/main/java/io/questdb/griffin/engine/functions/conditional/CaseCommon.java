@@ -316,7 +316,7 @@ public class CaseCommon {
         return constructor;
     }
 
-    static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker) throws SqlException {
-        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker);
+    static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
+        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
     }
 }
