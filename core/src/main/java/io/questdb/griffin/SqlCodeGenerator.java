@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
+import io.questdb.std.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
@@ -666,11 +667,12 @@ public class SqlCodeGenerator {
             String tableName,
             IntrinsicModel intrinsicModel,
             Function filter,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            int timestampIndex
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.intervals != null) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, timestampIndex);
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
@@ -735,11 +737,13 @@ public class SqlCodeGenerator {
                                 dataFrameCursorFactory,
                                 latestByIndex,
                                 symbol,
-                                filter);
+                                filter
+                        );
                     }
 
                     return new LatestByValuesIndexedFilteredRecordCursorFactory(
                             configuration,
+                            // todo: check if metadata copy is needed here
                             copyMetadata(metadata),
                             dataFrameCursorFactory,
                             latestByIndex,
@@ -1447,7 +1451,7 @@ public class SqlCodeGenerator {
                 }
             }
 
-            final String tableName = Chars.toString(model.getTableName().token);
+            final String tableName = reader.getTableName();
 
             if (whereClause != null) {
 
@@ -1489,17 +1493,33 @@ public class SqlCodeGenerator {
                             tableName,
                             intrinsicModel,
                             filter,
-                            executionContext
+                            executionContext,
+                            timestampIndex
                     );
                 }
 
-
                 // below code block generates index-based filter
 
+                final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.intervals != null) {
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, timestampIndex);
+                    switch (reader.getPartitionedBy()) {
+                        case PartitionBy.DAY:
+                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_DD);
+                            break;
+                        case PartitionBy.MONTH:
+                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_MM);
+                            break;
+                        case PartitionBy.YEAR:
+                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_YYYY);
+                            break;
+                        default:
+                            intervalHitsOnlyOnePartition = true;
+                            break;
+                    }
                 } else {
                     dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
+                    intervalHitsOnlyOnePartition = false;
                 }
 
                 if (intrinsicModel.keyColumn != null) {
@@ -1522,20 +1542,22 @@ public class SqlCodeGenerator {
                     assert nKeyValues > 0;
 
                     boolean orderByKeyColumn = false;
-                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                    final int orderByAdviceSize = orderByAdvice.size();
                     int indexDirection = BitmapIndexReader.DIR_FORWARD;
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
-                        // todo: when order by coincides with keyColumn and there is index we can incorporate
-                        //    ordering in the code that returns rows from index rather than having an
-                        //    "overhead" order by implementation, which would be trying to oder already ordered symbols
-                        if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                            if (orderByAdviceSize == 1) {
-                                orderByKeyColumn = true;
-                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                orderByKeyColumn = true;
-                                if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                    if (intervalHitsOnlyOnePartition) {
+                        final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
+                        final int orderByAdviceSize = orderByAdvice.size();
+                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                            // todo: when order by coincides with keyColumn and there is index we can incorporate
+                            //    ordering in the code that returns rows from index rather than having an
+                            //    "overhead" order by implementation, which would be trying to oder already ordered symbols
+                            if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
+                                if (orderByAdviceSize == 1) {
+                                    orderByKeyColumn = true;
+                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
+                                    orderByKeyColumn = true;
+                                    if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                        indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                    }
                                 }
                             }
                         }
@@ -1592,18 +1614,55 @@ public class SqlCodeGenerator {
                     // filter lifecycle is managed by top level
                     return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false), filter);
                 }
+
+                if (intervalHitsOnlyOnePartition) {
+                    final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
+                    final int orderByAdviceSize = orderByAdvice.size();
+                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.intervals != null) {
+                        // we can only deal with 'order by symbol, timestamp' at best
+                        // skip this optimisation if order by is more extensive
+                        final int columnIndex = metadata.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
+                        assert columnIndex > -1;
+
+                        // this is our kind of column
+                        if (metadata.isColumnIndexed(columnIndex)) {
+                            boolean orderByKeyColumn = false;
+                            int indexDirection = BitmapIndexReader.DIR_FORWARD;
+                            if (orderByAdviceSize == 1) {
+                                orderByKeyColumn = true;
+                            } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
+                                orderByKeyColumn = true;
+                                if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                }
+                            }
+
+                            if (orderByKeyColumn) {
+                                // check that intrinsicModel.intervals hit only one partition
+                                metadata.setTimestampIndex(-1);
+                                return new SortedSymbolIndexRecordCursorFactory(
+                                        metadata,
+                                        dfcFactory,
+                                        columnIndex,
+                                        model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING,
+                                        indexDirection
+                                );
+                            }
+                        }
+                    }
+                }
                 return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false);
             }
 
             // no where clause
             if (latestByColumnCount == 0) {
-                return new TableReaderRecordCursorFactory(copyMetadata(metadata), engine, tableName, model.getTableVersion());
+                return new TableReaderRecordCursorFactory(metadata, engine, tableName, model.getTableVersion());
             }
 
             if (latestByColumnCount == 1 && metadata.isColumnIndexed(listColumnFilterA.getQuick(0))) {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
-                        copyMetadata(metadata),
+                        metadata,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                         listColumnFilterA.getQuick(0),
                         null
@@ -1611,7 +1670,7 @@ public class SqlCodeGenerator {
             }
 
             return new LatestByAllFilteredRecordCursorFactory(
-                    copyMetadata(metadata),
+                    metadata,
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
@@ -1621,6 +1680,15 @@ public class SqlCodeGenerator {
         }
     }
 
+    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);

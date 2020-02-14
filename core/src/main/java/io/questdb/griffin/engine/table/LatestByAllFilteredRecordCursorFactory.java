@@ -45,7 +45,8 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes columnTypes,
-            @Nullable Function filter) {
+            @Nullable Function filter
+    ) {
         super(metadata, dataFrameCursorFactory, configuration);
         this.map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {

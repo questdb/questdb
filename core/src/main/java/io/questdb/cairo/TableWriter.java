@@ -97,8 +97,8 @@ public class TableWriter implements Closeable {
     private final CairoWorkScheduler workScheduler;
     private final boolean parallelIndexerEnabled;
     private final LongHashSet removedPartitions = new LongHashSet();
-    private final TableReader.TimestampFloorMethod timestampFloorMethod;
-    private final TableReader.PartitionTimestampCalculatorMethod nextTimestampMethod;
+    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
+    private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private int txPartitionCount = 0;
@@ -197,24 +197,24 @@ public class TableWriter implements Closeable {
             this.columnTops = new LongList(columnCount);
             switch (partitionBy) {
                 case PartitionBy.DAY:
-                    timestampFloorMethod = Timestamps::floorDD;
-                    nextTimestampMethod = Timestamps::addDays;
+                    timestampFloorMethod = Timestamps.FLOOR_DD;
+                    timestampAddMethod = Timestamps.ADD_DD;
                     partitionDirFmt = fmtDay;
                     break;
                 case PartitionBy.MONTH:
-                    timestampFloorMethod = Timestamps::floorMM;
-                    nextTimestampMethod = Timestamps::addMonths;
+                    timestampFloorMethod = Timestamps.FLOOR_MM;
+                    timestampAddMethod = Timestamps.ADD_MM;
                     partitionDirFmt = fmtMonth;
                     break;
                 case PartitionBy.YEAR:
                     // year
-                    timestampFloorMethod = Timestamps::floorYYYY;
-                    nextTimestampMethod = Timestamps::addYear;
+                    timestampFloorMethod = Timestamps.FLOOR_YYYY;
+                    timestampAddMethod = Timestamps.ADD_YYYY;
                     partitionDirFmt = fmtYear;
                     break;
                 default:
                     timestampFloorMethod = null;
-                    nextTimestampMethod = null;
+                    timestampAddMethod = null;
                     partitionDirFmt = null;
                     break;
             }
@@ -611,7 +611,7 @@ public class TableWriter implements Closeable {
                         }
                     }
                 }
-                timestamp = nextTimestampMethod.calculate(timestamp, 1);
+                timestamp = timestampAddMethod.calculate(timestamp, 1);
             }
         } finally {
             indexer.close();
@@ -902,7 +902,7 @@ public class TableWriter implements Closeable {
 
             final long nextMinTimestamp;
             if (timestampFloorMethod.floor(timestamp) == timestampFloorMethod.floor(minTimestamp)) {
-                nextMinTimestamp = getNextMinTimestamp(timestampFloorMethod, nextTimestampMethod);
+                nextMinTimestamp = getNextMinTimestamp(timestampFloorMethod, timestampAddMethod);
             } else {
                 nextMinTimestamp = minTimestamp;
             }
@@ -1498,12 +1498,12 @@ public class TableWriter implements Closeable {
     }
 
     private long getNextMinTimestamp(
-            TableReader.TimestampFloorMethod timestampFloorMethod,
-            TableReader.PartitionTimestampCalculatorMethod nextTimestampMethod
+            Timestamps.TimestampFloorMethod timestampFloorMethod,
+            Timestamps.TimestampAddMethod timestampAddMethod
     ) {
         long nextMinTimestamp = minTimestamp;
         while (nextMinTimestamp < maxTimestamp) {
-            long nextTimestamp = timestampFloorMethod.floor(nextTimestampMethod.calculate(nextMinTimestamp, 1));
+            long nextTimestamp = timestampFloorMethod.floor(timestampAddMethod.calculate(nextMinTimestamp, 1));
             setStateForTimestamp(nextTimestamp, false);
             try {
                 dFile(path, metadata.getColumnName(metadata.getTimestampIndex()));

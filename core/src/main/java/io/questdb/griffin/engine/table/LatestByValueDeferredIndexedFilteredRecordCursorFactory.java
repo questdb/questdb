@@ -37,7 +37,8 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             String symbol,
-            @NotNull Function filter) {
+            @NotNull Function filter
+    ) {
         super(metadata, dataFrameCursorFactory, columnIndex, symbol, filter);
     }
 

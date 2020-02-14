@@ -46,6 +46,8 @@ final public class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
+    public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
+    public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long YEAR_MICROS = 365 * DAY_MICROS;
     private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
@@ -56,11 +58,15 @@ final public class Timestamps {
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
     private static final int DAYS_0000_TO_1970 = 719527;
+    public static final TimestampFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
+    public static final TimestampFloorMethod FLOOR_MM = Timestamps::floorMM;
+    public static final TimestampAddMethod ADD_MM = Timestamps::addMonths;
+    public static final TimestampAddMethod ADD_YYYY = Timestamps::addYear;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
@@ -74,7 +80,6 @@ final public class Timestamps {
             MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
         }
     }
-
     private Timestamps() {
     }
 
@@ -626,4 +631,13 @@ final public class Timestamps {
         return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;
     }
 
+    @FunctionalInterface
+    public interface TimestampFloorMethod {
+        long floor(long timestamp);
+    }
+
+    @FunctionalInterface
+    public interface TimestampAddMethod {
+        long calculate(long minTimestamp, int partitionIndex);
+    }
 }

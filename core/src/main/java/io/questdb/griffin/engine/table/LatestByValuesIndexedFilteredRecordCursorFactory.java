@@ -50,7 +50,8 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             int columnIndex,
             @Transient CharSequenceHashSet keyValues,
             @Transient SymbolMapReader symbolMapReader,
-            @Nullable Function filter) {
+            @Nullable Function filter
+    ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
         if (filter != null) {
             this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);

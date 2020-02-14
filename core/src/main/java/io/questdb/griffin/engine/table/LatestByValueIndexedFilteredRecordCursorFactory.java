@@ -38,7 +38,8 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter) {
+            @NotNull Function filter
+    ) {
         super(metadata, dataFrameCursorFactory);
         this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter);
         this.filter = filter;

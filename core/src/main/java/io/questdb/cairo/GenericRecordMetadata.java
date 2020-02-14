@@ -40,7 +40,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             to.add(new TableColumnMetadata(
-                    from.getColumnName(i).toString(),
+                    from.getColumnName(i),
                     from.getColumnType(i),
                     from.isColumnIndexed(i),
                     from.getIndexValueBlockCapacity(i),

@@ -30,14 +30,20 @@ import io.questdb.std.LongList;
 public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final IntervalFwdDataFrameCursor cursor;
 
-    public IntervalFwdDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion, LongList intervals) {
+    public IntervalFwdDataFrameCursorFactory(
+            CairoEngine engine,
+            String tableName,
+            long tableVersion,
+            LongList intervals,
+            int timestampIndex
+    ) {
         super(engine, tableName, tableVersion);
-        this.cursor = new IntervalFwdDataFrameCursor(intervals);
+        this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
     }
 
     @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext, int timestampIndex) {
-        cursor.of(getReader(securityContext), timestampIndex);
+    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
+        cursor.of(getReader(securityContext));
         return cursor;
     }
 }

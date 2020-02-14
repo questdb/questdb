@@ -58,8 +58,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariableInSelect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
+        assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
@@ -82,8 +81,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariableInSelect2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
+        assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
@@ -106,7 +104,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariableInSelect3() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
@@ -130,7 +128,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariableInWhere() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
@@ -154,7 +152,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
             engine.releaseAllReaders();
@@ -182,7 +180,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
             try {
                 compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", sqlExecutionContext);
@@ -199,7 +197,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
             compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
@@ -207,9 +205,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -467,6 +462,278 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testOrderUsingIndexAndInterval() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "x where k = '1970-01' order by b asc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testOrderUsingIndexAndIntervalDesc() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "x where k = '1970-01' order by b desc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testOrderUsingIndexIntervalTooWide() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "x where k = '1970-01' order by b desc, k",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testOrderUsingIndexAndIntervalTimestampDesc() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "x where k = '1970-01' order by b, k desc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by MONTH",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1970-01-24', 'yyyy-MM-dd') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                        "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                        "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                        "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                        "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                        "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                        "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "56.594291398612405\tABC\t1970-01-24T00:00:00.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n" +
+                        "81.46807944500559\tPEHN\t1970-01-09T02:26:40.000000Z\n" +
+                        "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n"
+        );
     }
 
     @Test
@@ -1307,7 +1574,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByIOFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             FilesFacade ff = new FilesFacadeImpl() {
 
                 @Override
@@ -2246,7 +2513,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
@@ -3226,16 +3493,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectFromAliasedTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (sym int, id long)", sqlExecutionContext).getType());
-
-            try {
-                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext).getRecordCursorFactory()) {
-                    Assert.assertNotNull(factory);
-                }
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+            try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertNotNull(factory);
             }
         });
     }

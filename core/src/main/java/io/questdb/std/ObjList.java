@@ -248,7 +248,11 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public void sort(Comparator<T> cmp) {
-        Arrays.sort(buffer, 0, pos, cmp);
+        sort(0, pos, cmp);
+    }
+
+    public void sort(int from, int to, Comparator<T> cmp) {
+        Arrays.sort(buffer, from, to, cmp);
     }
 
     @Override

@@ -38,7 +38,8 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
             DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
-            @Nullable Function filter) {
+            @Nullable Function filter
+    ) {
         super(metadata, dataFrameCursorFactory);
         if (filter == null) {
             this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);

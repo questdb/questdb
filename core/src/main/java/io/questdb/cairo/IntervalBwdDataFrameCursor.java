@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.std.LongList;
+import io.questdb.std.Transient;
 
 public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
+    private final int timestampIndex;
 
     /**
      * Cursor for data frames that chronologically intersect collection of intervals.
@@ -36,8 +38,9 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      * @param intervals pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                  edges.
      */
-    public IntervalBwdDataFrameCursor(LongList intervals) {
+    public IntervalBwdDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
         super(intervals);
+        this.timestampIndex = timestampIndex;
     }
 
     @Override

@@ -85,12 +85,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
                 return true;
             }
 
-
             while (cursorIndex < cursorIndexLimit) {
                 currentCursor = cursors.getQuick(++cursorIndex);
-                if (currentCursor == null) {
-                    System.out.println("oops");
-                }
                 if (currentCursor.hasNext()) {
                     return true;
                 }

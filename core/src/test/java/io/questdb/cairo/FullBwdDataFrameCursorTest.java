@@ -86,15 +86,10 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.commit();
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
-                    final int timestampIndex;
-
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                        timestampIndex = reader.getMetadata().getTimestampIndex();
-                    }
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 
-                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, timestampIndex)) {
+                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);
@@ -119,7 +114,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     w.removeColumn("a");
 
                     try {
-                        factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, timestampIndex);
+                        factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
                         Assert.fail();
                     } catch (ReaderOutOfDateException ignored) {
                     }

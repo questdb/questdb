@@ -24,37 +24,48 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final DataFrameCursorFactory dataFrameCursorFactory;
+public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    private final DataFrameRecordCursor cursor;
 
-    public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
-        super(metadata);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+    public SortedSymbolIndexRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            int columnIndex,
+            boolean columnOrderAsc,
+            int indexDirection
+    ) {
+        super(metadata, dataFrameCursorFactory);
+        this.cursor = new DataFrameRecordCursor(
+                new SortedSymbolIndexRowCursorFactory(
+                        columnIndex,
+                        columnOrderAsc,
+                        indexDirection
+                ),
+                true
+        );
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(
-                executionContext.getCairoSecurityContext()
-        );
-        try {
-            return getCursorInstance(dataFrameCursor, executionContext);
-        } catch (CairoException e) {
-            dataFrameCursor.close();
-            throw e;
-        }
+    public boolean followedOrderByAdvice() {
+        // the fact this factory is created means we are following order by advice
+        return true;
     }
 
-    protected abstract RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    );
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+        this.cursor.of(dataFrameCursor, executionContext);
+        return this.cursor;
+    }
 }

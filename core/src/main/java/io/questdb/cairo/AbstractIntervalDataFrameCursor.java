@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.LongList;
+import io.questdb.std.Transient;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     protected final LongList intervals;
@@ -47,8 +48,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
-    public AbstractIntervalDataFrameCursor(LongList intervals) {
-        this.intervals = intervals;
+    public AbstractIntervalDataFrameCursor(@Transient LongList intervals) {
+        this.intervals = new LongList(intervals);
     }
 
     protected static long search(ReadOnlyColumn column, long value, long low, long high) {
@@ -106,8 +107,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return dataFrame;
     }
 
-    public void of(TableReader reader, int timestampIndex) {
-        this.timestampIndex = timestampIndex;
+    public void of(TableReader reader) {
         if (this.timestampIndex == -1) {
             throw CairoException.instance(0).put("table '").put(reader.getTableName()).put("' has no timestamp");
         }

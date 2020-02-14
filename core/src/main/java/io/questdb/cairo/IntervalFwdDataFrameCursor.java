@@ -28,6 +28,8 @@ import io.questdb.std.LongList;
 
 public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
 
+    private final int timestampIndex;
+
     /**
      * Cursor for data frames that chronologically intersect collection of intervals.
      * Data frame low and high row will be within intervals inclusive of edges. Intervals
@@ -36,8 +38,9 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      * @param intervals pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                  edges.
      */
-    public IntervalFwdDataFrameCursor(LongList intervals) {
+    public IntervalFwdDataFrameCursor(LongList intervals, int timestampIndex) {
         super(intervals);
+        this.timestampIndex = timestampIndex;
     }
 
     @Override

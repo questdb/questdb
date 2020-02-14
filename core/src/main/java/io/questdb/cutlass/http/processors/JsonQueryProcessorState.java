@@ -599,6 +599,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             final RecordCursor cursor = this.cursor;
             final long size = cursor.size();
             if (size < 0) {
+                LOG.info().$("counting").$();
                 long count = 1;
                 while (cursor.hasNext()) {
                     count++;

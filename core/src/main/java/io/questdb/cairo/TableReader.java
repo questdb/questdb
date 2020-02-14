@@ -47,7 +47,7 @@ public class TableReader implements Closeable {
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
-    private static final TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
+    private static final Timestamps.TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
@@ -57,9 +57,9 @@ public class TableReader implements Closeable {
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final TimestampFloorMethod timestampFloorMethod;
+    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
-    private final PartitionTimestampCalculatorMethod partitionTimestampCalculatorMethod;
+    private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final String tableName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -104,28 +104,28 @@ public class TableReader implements Closeable {
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Timestamps::floorDD;
                     intervalLengthMethod = Timestamps::getDaysBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addDays;
+                    timestampAddMethod = Timestamps::addDays;
                     break;
                 case PartitionBy.MONTH:
                     partitionPathGenerator = MONTH_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Timestamps::floorMM;
                     intervalLengthMethod = Timestamps::getMonthsBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addMonths;
+                    timestampAddMethod = Timestamps::addMonths;
                     break;
                 case PartitionBy.YEAR:
                     partitionPathGenerator = YEAR_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Timestamps::floorYYYY;
                     intervalLengthMethod = Timestamps::getYearsBetween;
-                    partitionTimestampCalculatorMethod = Timestamps::addYear;
+                    timestampAddMethod = Timestamps::addYear;
                     break;
                 default:
                     partitionPathGenerator = DEFAULT_GEN;
                     reloadMethod = FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = ENTITY_FLOOR_METHOD;
                     intervalLengthMethod = null;
-                    partitionTimestampCalculatorMethod = null;
+                    timestampAddMethod = null;
                     break;
             }
             readTxn();
@@ -302,7 +302,7 @@ public class TableReader implements Closeable {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
@@ -687,8 +687,8 @@ public class TableReader implements Closeable {
 
     private long openPartition0(int partitionIndex) {
         // is this table is partitioned?
-        if (partitionTimestampCalculatorMethod != null
-                && removedPartitions.contains(partitionTimestampCalculatorMethod.calculate(
+        if (timestampAddMethod != null
+                && removedPartitions.contains(timestampAddMethod.calculate(
                 minTimestamp, partitionIndex
         ))) {
             return -1;
@@ -1221,16 +1221,6 @@ public class TableReader implements Closeable {
     @FunctionalInterface
     private interface IntervalLengthMethod {
         long calculate(long minTimestamp, long maxTimestamp);
-    }
-
-    @FunctionalInterface
-    interface PartitionTimestampCalculatorMethod {
-        long calculate(long minTimestamp, int partitionIndex);
-    }
-
-    @FunctionalInterface
-    interface TimestampFloorMethod {
-        long floor(long timestamp);
     }
 
     @FunctionalInterface
