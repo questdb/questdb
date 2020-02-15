@@ -265,16 +265,6 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             ) {
                 CairoTestUtils.create(model);
             }
-
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(new LongList(), reader.getMetadata().getTimestampIndex());
-                try {
-                    cursor.of(reader);
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "table 'x' has no timestamp");
-                }
-            }
         });
     }
 

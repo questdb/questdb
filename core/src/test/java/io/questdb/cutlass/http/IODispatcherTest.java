@@ -2044,6 +2044,37 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryInfinity() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=select+1.0%2F0.0+from+long_sequence(1)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.2057572436.1581161560\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "7c\r\n" +
+                        "{\"query\":\"select 1.0\\/0.0 from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"DOUBLE\"}],\"dataset\":[[null]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testJsonQueryMiddleLimitNoMeta() throws Exception {
         testJsonQuery(
                 20,
