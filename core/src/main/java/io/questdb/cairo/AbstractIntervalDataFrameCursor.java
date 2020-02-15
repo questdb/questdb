@@ -33,7 +33,7 @@ import io.questdb.std.Transient;
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     protected final LongList intervals;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
-    protected int timestampIndex;
+    protected final int timestampIndex;
     protected TableReader reader;
     protected int intervalsLo;
     protected int intervalsHi;
@@ -48,8 +48,10 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
-    public AbstractIntervalDataFrameCursor(@Transient LongList intervals) {
+    public AbstractIntervalDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
+        assert timestampIndex > -1;
         this.intervals = new LongList(intervals);
+        this.timestampIndex = timestampIndex;
     }
 
     protected static long search(ReadOnlyColumn column, long value, long low, long high) {
@@ -108,9 +110,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     public void of(TableReader reader) {
-        if (this.timestampIndex == -1) {
-            throw CairoException.instance(0).put("table '").put(reader.getTableName()).put("' has no timestamp");
-        }
         this.reader = reader;
         calculateRanges();
     }

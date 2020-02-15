@@ -26,20 +26,26 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final DataFrameRecordCursor cursor;
     private final boolean followsOrderByAdvice;
+    private final Function filter;
 
     public DataFrameRecordCursorFactory(
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
             RowCursorFactory rowCursorFactory,
-            boolean followsOrderByAdvice
+            boolean followsOrderByAdvice,
+            // filter included here only for lifecycle management of the latter
+            @Nullable Function filter
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity());
+        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter);
         this.followsOrderByAdvice = followsOrderByAdvice;
+        this.filter = filter;
     }
 
     @Override
@@ -58,6 +64,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             SqlExecutionContext executionContext
     ) {
         cursor.of(dataFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
+        }
         return cursor;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(filter);
     }
 }

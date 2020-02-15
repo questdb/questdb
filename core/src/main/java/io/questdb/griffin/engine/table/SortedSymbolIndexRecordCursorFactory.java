@@ -48,7 +48,8 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
                         columnOrderAsc,
                         indexDirection
                 ),
-                true
+                true,
+                null
         );
     }
 

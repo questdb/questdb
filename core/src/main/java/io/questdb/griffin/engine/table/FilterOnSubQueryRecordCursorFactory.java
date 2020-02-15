@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -56,14 +57,12 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.filter = filter;
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false);
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter);
     }
 
     @Override
     public void close() {
-        if (filter != null) {
-            filter.close();
-        }
+        Misc.free(filter);
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
@@ -130,6 +129,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         this.cursor.of(dataFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
+        }
         return this.cursor;
     }
 }

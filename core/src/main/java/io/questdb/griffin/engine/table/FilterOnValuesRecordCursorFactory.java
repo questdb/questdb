@@ -65,9 +65,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             addSymbolKey(symbolMapReader.keyOf(symbol), symbol, indexDirection);
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false);
+            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false);
+            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
     }
@@ -111,6 +111,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             SqlExecutionContext executionContext
     ) {
         this.cursor.of(dataFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(this.cursor, executionContext);
+        }
         return this.cursor;
     }
 }

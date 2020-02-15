@@ -24,11 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.BooleanSupplier;
 
@@ -39,10 +37,17 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private BooleanSupplier next;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextFrame = this::nextFrame;
+    private final Function filter;
 
-    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, boolean entityCursor) {
+    public DataFrameRecordCursor(
+            RowCursorFactory rowCursorFactory,
+            boolean entityCursor,
+            // this cursor owns "toTop()" lifecycle of filter
+            @Nullable Function filter
+    ) {
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
+        this.filter = filter;
     }
 
     @Override
@@ -56,6 +61,9 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
+        if (filter != null) {
+            filter.toTop();
+        }
         dataFrameCursor.toTop();
         next = nextFrame;
     }

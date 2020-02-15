@@ -59,7 +59,7 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.cursor.of(symbolKey);
-            this.cursor.setTableReader(tableReader);
+            this.cursor.prepare(tableReader);
         }
     }
 

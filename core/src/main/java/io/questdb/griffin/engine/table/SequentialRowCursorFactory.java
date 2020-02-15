@@ -57,9 +57,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void prepareCursor(TableReader tableReader) {
-        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
-            cursorFactories.getQuick(i).prepareCursor(tableReader);
-        }
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     private class SequentialRowCursor implements RowCursor {

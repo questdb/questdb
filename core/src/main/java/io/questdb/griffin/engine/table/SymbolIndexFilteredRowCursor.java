@@ -94,7 +94,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         return this;
     }
 
-    void setTableReader(TableReader tableReader) {
+    void prepare(TableReader tableReader) {
         this.record.of(tableReader);
     }
 }

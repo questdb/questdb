@@ -56,7 +56,7 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void prepareCursor(TableReader tableReader) {
-        this.cursor.setTableReader(tableReader);
+        this.cursor.prepare(tableReader);
     }
 
     @Override

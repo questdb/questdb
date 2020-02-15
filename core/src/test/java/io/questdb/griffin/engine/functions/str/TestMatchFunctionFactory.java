@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
+import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -47,16 +48,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         closeCount.set(0);
     }
 
-    public static int getCloseCount() {
-        return closeCount.get();
-    }
-
-    public static int getOpenCount() {
-        return openCounter.get();
-    }
-
-    public static int getTopCount() {
-        return topCounter.get();
+    public static void assertAPI() {
+        Assert.assertTrue(openCounter.get() > 0);
+        Assert.assertTrue(topCounter.get() > 0);
+        Assert.assertEquals(1, closeCount.get());
     }
 
     @Override

@@ -25,8 +25,15 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.ObjList;
 
 public interface RowCursorFactory {
+    static void prepareCursor(ObjList<RowCursorFactory> factories, TableReader tableReader) {
+        for (int i = 0, n = factories.size(); i < n; i++) {
+            factories.getQuick(i).prepareCursor(tableReader);
+        }
+    }
+
     RowCursor getCursor(DataFrame dataFrame);
 
     default void prepareCursor(TableReader tableReader) {

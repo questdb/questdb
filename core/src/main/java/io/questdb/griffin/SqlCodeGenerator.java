@@ -721,7 +721,7 @@ public class SqlCodeGenerator {
                             } else {
                                 rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
                             }
-                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, false);
+                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, false, null);
                         }
 
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -1580,7 +1580,7 @@ public class SqlCodeGenerator {
                                 rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf, orderByKeyColumn);
+                        return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf, orderByKeyColumn, filter);
                     }
 
                     symbolValueList.clear();
@@ -1612,7 +1612,7 @@ public class SqlCodeGenerator {
 
                 if (filter != null) {
                     // filter lifecycle is managed by top level
-                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false), filter);
+                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false, null), filter);
                 }
 
                 if (intervalHitsOnlyOnePartition) {
@@ -1651,7 +1651,7 @@ public class SqlCodeGenerator {
                         }
                     }
                 }
-                return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false);
+                return new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false, null);
             }
 
             // no where clause
