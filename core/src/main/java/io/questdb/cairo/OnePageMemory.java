@@ -44,7 +44,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     private FilesFacade ff;
     private long fd = -1;
     private long size = 0;
-    private long pageLo = -1;
     private long absolutePointer;
 
     public OnePageMemory(FilesFacade ff, LPSZ name, long size) {
@@ -56,7 +55,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         if (page != -1) {
             ff.munmap(page, size);
         }
-        pageLo = -1;
         if (fd != -1) {
             ff.close(fd);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
@@ -103,6 +101,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     }
 
     public long addressOf(long offset) {
+        assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return absolutePointer + offset;
     }
 
