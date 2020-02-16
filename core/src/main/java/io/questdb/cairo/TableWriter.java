@@ -377,6 +377,7 @@ public class TableWriter implements Closeable {
      * @param type                    {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+     * @param isSequential            for columns that contain sequential values query optimiser can make assuptions on range searches (future feature)
      */
     public void addColumn(
             CharSequence name,
@@ -683,6 +684,8 @@ public class TableWriter implements Closeable {
      * <p>
      * <b>Pending rows</b>
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
+     *
+     * @param commitMode commit durability mode.
      */
     public void commit(int commitMode) {
 

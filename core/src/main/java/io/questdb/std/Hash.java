@@ -79,6 +79,9 @@ public final class Hash {
      * cheapest possible way to reduce systematic lossage, as well as
      * to incorporate impact of the highest bits that would otherwise
      * never be used in index calculations because of table bounds.
+     *
+     * @param h hash code
+     * @return adjusted hash code
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & HASH_BITS;

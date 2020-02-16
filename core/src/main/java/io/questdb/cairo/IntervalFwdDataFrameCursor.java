@@ -32,8 +32,9 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      * Data frame low and high row will be within intervals inclusive of edges. Intervals
      * themselves are pairs of microsecond time.
      *
-     * @param intervals pairs of microsecond interval values, as in "low" and "high" inclusive of
-     *                  edges.
+     * @param intervals      pairs of microsecond interval values, as in "low" and "high" inclusive of
+     *                       edges.
+     * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
     public IntervalFwdDataFrameCursor(LongList intervals, int timestampIndex) {
         super(intervals, timestampIndex);
