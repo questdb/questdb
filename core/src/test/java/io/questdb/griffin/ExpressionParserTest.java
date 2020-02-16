@@ -54,6 +54,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseWithCast() throws SqlException {
+        x("1castint1'th1'2'th2'0case5*1+",
+                "case (cast 1 as int)" +
+                        " when 1" +
+                        " then 'th1'" +
+                        " when 2" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end * 5 + 1");
+    }
+
+    @Test
     public void testCaseLikeSwitch() throws SqlException {
         x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
     }

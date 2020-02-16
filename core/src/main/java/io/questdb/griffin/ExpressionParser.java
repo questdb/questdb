@@ -232,7 +232,7 @@ class ExpressionParser {
                     case 'C':
                         if (Chars.equalsLowerCaseAscii(tok, "cast")) {
                             castBraceCountStack.push(-1);
-                            thisBranch = BRANCH_LITERAL;
+                            thisBranch = BRANCH_OPERATOR;
                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lexer.lastTokenPosition()));
                             break;
                         }
