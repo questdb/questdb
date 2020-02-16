@@ -68,6 +68,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingBrace() {
+        assertFail(
+                "1 + (case x when 1 then 'a') when 2 then 'b' end",
+                5,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
     public void testCaseDanglingOperatorAfterWhen() {
         assertFail(
                 "1 + case x when 1* then 'a' when 2 then 'b' end",

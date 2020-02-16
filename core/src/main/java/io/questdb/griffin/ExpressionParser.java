@@ -59,10 +59,12 @@ class ExpressionParser {
     private final IntStack paramCountStack = new IntStack();
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack castBraceCountStack = new IntStack();
+    private final IntStack caseBraceCountStack = new IntStack();
 
     private final IntStack backupParamCountStack = new IntStack();
     private final IntStack backupArgStackDepthStack = new IntStack();
     private final IntStack backupCastBraceCountStack = new IntStack();
+    private final IntStack backupCaseBraceCountStack = new IntStack();
 
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final SqlParser sqlParser;
@@ -376,6 +378,9 @@ class ExpressionParser {
                             paramCountStack.push(paramCount);
                             paramCount = 0;
 
+                            caseBraceCountStack.push(braceCount);
+                            braceCount = 0;
+
                             argStackDepthStack.push(argStackDepth);
                             argStackDepth = 0;
                             opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lexer.lastTokenPosition()));
@@ -408,9 +413,13 @@ class ExpressionParser {
 
                                         // 'when/else' have been clearing argStackDepth to ensure
                                         // expressions between 'when' and 'when' do not pick up arguments outside of scope
-                                        // now we need to restore sstack depth before 'case' entry
+                                        // now we need to restore stack depth before 'case' entry
                                         if (argStackDepthStack.notEmpty()) {
                                             argStackDepth += argStackDepthStack.pop();
+                                        }
+
+                                        if (caseBraceCountStack.notEmpty()) {
+                                            braceCount = caseBraceCountStack.pop();
                                         }
 
                                         node.paramCount = paramCount;
@@ -547,6 +556,9 @@ class ExpressionParser {
         final int castBraceCountStackSize = castBraceCountStack.size();
         castBraceCountStack.copyTo(backupCastBraceCountStack, castBraceCountStackSize);
 
+        final int caseBraceCountStackSize = caseBraceCountStack.size();
+        caseBraceCountStack.copyTo(backupCaseBraceCountStack, caseBraceCountStackSize);
+
         int pos = lexer.lastTokenPosition();
         // allow sub-query to parse "select" keyword
         lexer.unparse();
@@ -567,6 +579,7 @@ class ExpressionParser {
         backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
         backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
         backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
+        backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
 
         // re-introduce closing brace to this loop
         lexer.unparse();
