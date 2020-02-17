@@ -38,6 +38,37 @@ import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
 
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            CairoEngine engine,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels) {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            compiler.compile(query, sqlExecutionContext);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
+    }
+
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
+    }
+
     @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (x 'b a' where x > 1)",
@@ -4829,6 +4860,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRedundantSelect() {
+        assertSyntaxError(
+                "select x from select (select x from a) timestamp(x)",
+                22,
+                "query is not expected",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testTimestampOnTable() throws Exception {
         assertQuery(
                 "select-choose x from (a b timestamp (x) where x > y)",
@@ -5091,37 +5132,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab").col("a", ColumnType.INT)
 
         );
-    }
-
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            CairoEngine engine,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels) {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            compiler.compile(query, sqlExecutionContext);
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
-    }
-
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

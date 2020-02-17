@@ -1073,6 +1073,9 @@ public final class SqlParser {
                 model.addColumn(col);
                 tok = tok(lexer, "'from' or ','");
             } else {
+                if (expr.type == ExpressionNode.QUERY) {
+                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                }
                 model.addColumn(queryColumnPool.next().of(alias, expr));
             }
 
