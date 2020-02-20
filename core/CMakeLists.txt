@@ -103,6 +103,7 @@ if (AARCH64)
     set(
             AARCH64_FILES
             src/main/c/aarch64/vect.cpp
+            src/main/c/share/vect_vanilla.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
