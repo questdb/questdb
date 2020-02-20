@@ -137,7 +137,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
         this.pageSize = pageSize;
         grow(size);
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", size=").$(this.size).$(']').$();
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(", size=").$(this.size).$(']').$();
     }
 
     public long size() {

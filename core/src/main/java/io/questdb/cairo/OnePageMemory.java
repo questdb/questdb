@@ -50,6 +50,11 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         of(ff, name, 0, size);
     }
 
+    public long addressOf(long offset) {
+        assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return absolutePointer + offset;
+    }
+
     @Override
     public void close() {
         if (page != -1) {
@@ -61,20 +66,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
             fd = -1;
             this.size = 0;
         }
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public void grow(long size) {
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
     }
 
     @Override
@@ -93,16 +84,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         this.size = size;
         this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
         this.absolutePointer = page;
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", size=").$(this.size).$(']').$();
-    }
-
-    public long size() {
-        return size;
-    }
-
-    public long addressOf(long offset) {
-        assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return absolutePointer + offset;
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 
     public final BinarySequence getBin(long offset) {
@@ -125,12 +107,13 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         return Unsafe.getUnsafe().getByte(addressOf(offset));
     }
 
-    public final char getChar(long offset) {
-        return Unsafe.getUnsafe().getChar(addressOf(offset));
-    }
-
     public final double getDouble(long offset) {
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
     }
 
     public final float getFloat(long offset) {
@@ -145,6 +128,23 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
+    public final short getShort(long offset) {
+        return Unsafe.getUnsafe().getShort(absolutePointer + offset);
+    }
+
+    public final CharSequence getStr(long offset) {
+        return getStr0(offset, csview);
+    }
+
+    public final CharSequence getStr2(long offset) {
+        return getStr0(offset, csview2);
+    }
+
+    public Long256 getLong256A(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
     public void getLong256(long offset, CharSink sink) {
         final long a, b, c, d;
         a = Unsafe.getUnsafe().getLong(addressOf(offset));
@@ -154,29 +154,47 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
-    public void getLong256(long offset, Long256Sink sink) {
-        sink.setLong0(Unsafe.getUnsafe().getLong(addressOf(offset)));
-        sink.setLong1(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES)));
-        sink.setLong2(Unsafe.getUnsafe().getLong(addressOf(+offset + Long.BYTES * 2)));
-        sink.setLong3(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES * 3)));
-    }
-
-    public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
-    }
-
     public Long256 getLong256B(long offset) {
         getLong256(offset, long256B);
         return long256B;
     }
 
-    public final short getShort(long offset) {
-        return Unsafe.getUnsafe().getShort(absolutePointer + offset);
+    public final char getChar(long offset) {
+        return Unsafe.getUnsafe().getChar(addressOf(offset));
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr0(offset, csview);
+    public final int getStrLen(long offset) {
+        return getInt(offset);
+    }
+
+    @Override
+    public void grow(long size) {
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    @Override
+    public int getPageCount() {
+        return 1;
+    }
+
+    @Override
+    public long getPageSize(int pageIndex) {
+        return size;
+    }
+
+    public long getPageAddress(int pageIndex) {
+        return absolutePointer;
+    }
+
+    public void getLong256(long offset, Long256Sink sink) {
+        sink.setLong0(Unsafe.getUnsafe().getLong(addressOf(offset)));
+        sink.setLong1(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES)));
+        sink.setLong2(Unsafe.getUnsafe().getLong(addressOf(+offset + Long.BYTES * 2)));
+        sink.setLong3(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES * 3)));
     }
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
@@ -194,25 +212,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(']');
     }
 
-    public final CharSequence getStr2(long offset) {
-        return getStr0(offset, csview2);
-    }
-
-    public final int getStrLen(long offset) {
-        return getInt(offset);
-    }
-
-    public long getPageAddress(int pageIndex) {
-        return absolutePointer;
-    }
-
-    @Override
-    public int getPageCount() {
-        return 1;
-    }
-
-    @Override
-    public long getPageSize(int pageIndex) {
+    public long size() {
         return size;
     }
 

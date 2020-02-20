@@ -116,7 +116,7 @@ public class AppendMemory extends VirtualMemory {
         if (fd == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
         }
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
     }
 
     FilesFacade getFilesFacade() {
