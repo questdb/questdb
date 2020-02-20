@@ -463,7 +463,7 @@ public class TableReader implements Closeable {
     }
 
     public double minDouble(int columnIndex) {
-        double min = Double.MAX_VALUE;
+        double min = Double.POSITIVE_INFINITY;
         for (int i = 0; i < partitionCount; i++) {
             openPartition(i);
             final int base = getColumnBase(i);
@@ -482,7 +482,7 @@ public class TableReader implements Closeable {
     }
 
     public double maxDouble(int columnIndex) {
-        double max = Double.MIN_VALUE;
+        double max = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < partitionCount; i++) {
             openPartition(i);
             final int base = getColumnBase(i);

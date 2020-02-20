@@ -1169,7 +1169,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(78.07372283716164, r.maxDouble(0), 0.00001);
+            Assert.assertEquals(99.99975504094375, r.maxDouble(0), 0.00001);
         }
     }
 
@@ -1215,7 +1215,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(72.03170014947307, r.maxDouble(0), 0.00001);
+            Assert.assertEquals(98.8401109488745, r.maxDouble(0), 0.00001);
         }
     }
 

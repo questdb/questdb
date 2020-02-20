@@ -172,7 +172,7 @@ public class TextDelimiterScanner implements Closeable {
             throw TextException.$("not enough lines [table=").put(tableName).put(']');
         }
 
-        double lastDelimiterStdDev = Double.MAX_VALUE;
+        double lastDelimiterStdDev = Double.POSITIVE_INFINITY;
         byte lastDelimiterPriority = Byte.MIN_VALUE;
         double lastDelimiterMean = 0;
         double lineLengthStdDev = 0;

@@ -179,7 +179,7 @@ double MAX_DOUBLE(double *d, long count) {
     double max = LDBL_MIN;
     for (; pd < vec_lim; pd += step) {
         vec.load(pd);
-        double x = horizontal_min1(vec);
+        double x = horizontal_max1(vec);
         if (x > max) {
             max = x;
         }
