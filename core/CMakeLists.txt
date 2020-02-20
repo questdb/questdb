@@ -92,10 +92,6 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
-set_target_properties(
-        questdb PROPERTIES
-        COMPILE_FLAGS "-m64 -O2"
-)
 
 if (AARCH64)
 
@@ -164,6 +160,11 @@ else ()
     set_target_properties(
             questdb-sse2 PROPERTIES
             COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17"
+    )
+
+    set_target_properties(
+            questdb PROPERTIES
+            COMPILE_FLAGS "-m64 -O2"
     )
 
     target_link_libraries(
