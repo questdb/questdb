@@ -445,6 +445,41 @@ public class TableReader implements Closeable {
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
     }
 
+    public double sumDouble(int columnIndex) {
+
+        double result = 0;
+
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                long a = column.getPageAddress(pageIndex);
+                long count = column.getPageSize(pageIndex) / Double.BYTES;
+                result += Vect.sumDouble(a, count);
+            }
+        }
+
+        return result;
+//
+//        if (partitionCount > 0) {
+//            openPartition(0);
+//            int base = getColumnBase(0);
+//            int index = getPrimaryColumnIndex(base, columnIndex);
+//            final ReadOnlyColumn column = columns.getQuick(index);
+//            if (column instanceof OnePageMemory) {
+//                OnePageMemory opm = (OnePageMemory) column;
+//                final long addr = opm.getPageAddress();
+//
+//                long size = opm.size();
+//
+//                return Vect.sumDouble(addr, size / Double.BYTES);
+//            }
+//        }
+//        return 0;
+    }
+
     private void closeRemovedPartitions() {
         for (int i = 0, n = removedPartitions.size(); i < n; i++) {
             final long timestamp = removedPartitions.get(i);

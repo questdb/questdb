@@ -202,6 +202,20 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         return getInt(offset);
     }
 
+    public long getPageAddress(int pageIndex) {
+        return absolutePointer;
+    }
+
+    @Override
+    public int getPageCount() {
+        return 1;
+    }
+
+    @Override
+    public long getPageSize(int pageIndex) {
+        return size;
+    }
+
     public class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;

@@ -1,14 +1,22 @@
 cmake_minimum_required(VERSION 3.3)
 project(questdb)
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -m64 -Wimplicit-function-declaration")
-set(CMAKE_BUILD_TYPE MinSizeRel)
-
+#set(CMAKE_CXX_FLAGS "-m64 -O2 -march=native -std=c++17")
 
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
 endif ($ENV{JAVA_HOME})
+
+set(
+        VCL_FILES
+        src/main/c/share/vect.cpp
+)
+
+set(
+        VCL_FILES2
+        src/main/c/share/vect.cpp
+        src/main/c/share/vcl/instrset_detect.cpp
+)
 
 set(
         SOURCE_FILES
@@ -37,6 +45,7 @@ elseif (UNIX)
     message(${CMAKE_SYSTEM_PROCESSOR})
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
         set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/armlinux)
+        set(AARCH64 1)
     else ()
         set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
     endif ()
@@ -79,9 +88,88 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
+
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
+# ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
+set_target_properties(
+        questdb PROPERTIES
+        COMPILE_FLAGS "-m64 -O2"
+)
+
+if (AARCH64)
+
+    ## on ARM64 we use vanilla arithmetic functions for now
+
+    set(
+            AARCH64_FILES
+            src/main/c/aarch64/vect.cpp
+    )
+
+    add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
+    set_target_properties(
+            questdb-aarch64 PROPERTIES
+            COMPILE_FLAGS "-m64 -O2 -std=c++17"
+    )
+
+    target_link_libraries(
+            questdb
+            questdb-aarch64
+    )
+
+else ()
+
+    ## We need to compile VCL four different times with different CXX options
+    ## for different instruction sets. As vect.cpp compiles it will produce
+    ## different function names for corresponding instruction sets.
+    ## Results of these compilations are then combined together in a single library.
+    ## This way same library will have a set of functions for each instruction sets.
+
+    ## Java will then call a dispatcher, which will check instruction set for the runtime
+    ## and fetch method pointer to the relevant implementation.
+    # SSE 4.1 lib
+    add_library(questdb-sse4 OBJECT ${VCL_FILES})
+    set_target_properties(
+            questdb-sse4 PROPERTIES
+            COMPILE_FLAGS "-m64 -O2 -msse4.1 -std=c++17"
+    )
+
+    # AVX2 lib
+    add_library(questdb-avx2 OBJECT ${VCL_FILES})
+    set_target_properties(
+            questdb-avx2 PROPERTIES
+            COMPILE_FLAGS "-m64 -O2 -mavx2 -mfma -std=c++17"
+    )
+
+    #AVX512 lib
+    add_library(questdb-avx512 OBJECT ${VCL_FILES})
+    set_target_properties(
+            questdb-avx512 PROPERTIES
+            COMPILE_FLAGS "-m64 -O2 -mavx512f -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
+    )
+
+    #SSE2 lib
+    add_library(questdb-sse2 OBJECT ${VCL_FILES2})
+    target_link_libraries(
+            questdb-sse2
+            questdb-sse4
+            questdb-avx2
+            questdb-avx512
+    )
+    set_target_properties(
+            questdb-sse2 PROPERTIES
+            COMPILE_FLAGS "-m64 -O2 -msse2 -mno-sse3 -std=c++17"
+    )
+
+    target_link_libraries(
+            questdb
+            questdb-sse2
+            questdb-sse4
+            questdb-avx2
+            questdb-avx512
+    )
+endif (AARCH64)
 
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)

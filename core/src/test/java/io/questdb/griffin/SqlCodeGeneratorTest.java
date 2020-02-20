@@ -37,6 +37,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
@@ -1079,6 +1080,30 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    @Ignore
+    public void testSumDoubleColumn() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 60) k" +
+                        " from" +
+                        " long_sequence(1800000000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            System.out.println(r.sumDouble(0));
+        }
     }
 
     @Test

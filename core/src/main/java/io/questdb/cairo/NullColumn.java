@@ -132,4 +132,19 @@ public class NullColumn implements ReadOnlyColumn {
     public boolean isDeleted() {
         return true;
     }
+
+    @Override
+    public int getPageCount() {
+        return 0;
+    }
+
+    @Override
+    public long getPageSize(int pageIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
+        throw new UnsupportedOperationException();
+    }
 }

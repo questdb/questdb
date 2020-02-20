@@ -60,7 +60,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         long address = super.getPageAddress(page);
         if (address != 0) {
             return address;
@@ -69,7 +69,12 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    protected long getPageSize(int page) {
+    public int getPageCount() {
+        return pageIndex(size) + 1;
+    }
+
+    @Override
+    public long getPageSize(int page) {
         // in some cases VirtualMemory.getPageSize() is called
         // before page is mapped, where lastPageIndex is set
         // if this is the case I need to test better
