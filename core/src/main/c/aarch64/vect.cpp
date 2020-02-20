@@ -41,4 +41,8 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_minDouble(JNIEnv *env, jclass
     return minDouble_Vanilla((double*) pDouble, count);
 }
 
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_maxDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+    return maxDouble_Vanilla((double*) pDouble, count);
+}
+
 }
