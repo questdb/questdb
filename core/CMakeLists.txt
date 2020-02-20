@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.3)
 project(questdb)
-#set(CMAKE_CXX_FLAGS "-m64 -O2 -march=native -std=c++17")
 
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
@@ -110,13 +109,18 @@ if (AARCH64)
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -std=c++17"
+            COMPILE_FLAGS "-O2 -std=c++17"
     )
 
     target_link_libraries(
             questdb
             questdb-aarch64
     )
+
+   set_target_properties(
+         questdb PROPERTIES
+         COMPILE_FLAGS "-O2"
+   )
 
 else ()
 

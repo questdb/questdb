@@ -39,8 +39,8 @@ extern "C" {
 
 
 JNIEXPORT jdouble
-JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong size) {
-    return sumDouble_Vanilla(pDouble, size);
+JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+    return sumDouble_Vanilla((double*) pDouble, count);
 }
 
 }
