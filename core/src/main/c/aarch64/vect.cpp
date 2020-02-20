@@ -24,23 +24,21 @@
 
 #include <cstdio>
 #include <jni.h>
+#include "../share/vect_vanilla.h"
 
-inline double sumDouble_Vanilla(double *d, long count) {
-    const double *ext = d + count;
-    double result = 0;
-    double *pd = d;
-    for (; pd < ext; pd++) {
-        result += *pd;
-    }
-    return result;
-}
 
 extern "C" {
 
-
-JNIEXPORT jdouble
-JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
     return sumDouble_Vanilla((double*) pDouble, count);
+}
+
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_avgDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+    return avgDouble_Vanilla((double*) pDouble, count);
+}
+
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_minDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
+    return minDouble_Vanilla((double*) pDouble, count);
 }
 
 }

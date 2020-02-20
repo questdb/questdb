@@ -13,6 +13,8 @@ set(
 
 set(
         VCL_FILES2
+        src/main/c/share/vect_vanilla.h
+        src/main/c/share/vect_vanilla.cpp
         src/main/c/share/vect.cpp
         src/main/c/share/vcl/instrset_detect.cpp
 )
@@ -24,6 +26,7 @@ set(
         src/main/c/share/net.h
         src/main/c/share/zip.c
         src/main/c/share/os.h
+        src/main/c/share/vect_vanilla.h
 )
 
 # JNI includes
@@ -113,10 +116,10 @@ if (AARCH64)
             questdb-aarch64
     )
 
-   set_target_properties(
-         questdb PROPERTIES
-         COMPILE_FLAGS "-O2"
-   )
+    set_target_properties(
+            questdb PROPERTIES
+            COMPILE_FLAGS "-O2"
+    )
 
 else ()
 
@@ -159,12 +162,24 @@ else ()
     )
     set_target_properties(
             questdb-sse2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17"
+            COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17 -Wno-attributes"
     )
+
+    if (WIN32)
+        set_target_properties(
+                questdb-sse2 PROPERTIES
+                COMPILE_FLAGS "-m64 -O2 -msse2 -std=c++17 -Wno-attributes"
+        )
+    else ()
+        set_target_properties(
+                questdb-sse2 PROPERTIES
+                COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17"
+        )
+    endif (WIN32)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O2"
+            COMPILE_FLAGS "-m64 -O2 "
     )
 
     target_link_libraries(

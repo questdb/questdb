@@ -22,14 +22,50 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+#ifndef VECT_VANILLA_H
+#define VECT_VANILLA_H
 
-public final class Vect {
-    public static native double sumDouble(long pDouble, long count);
-
-    public static native double avgDouble(long pDouble, long count);
-
-    public static native double minDouble(long pDouble, long count);
-
-    public static native double maxDouble(long pDouble, long count);
+static inline double sum_nan_as_zero(double *pd, long count) {
+    const double *lim = pd + count;
+    double sum = 0;
+    for (; pd < lim; pd++) {
+        const double d = *pd;
+        if (d == d) {
+            sum += d;
+        }
+    }
+    return sum;
 }
+
+typedef struct _AVG_DOUBLE {
+    double sum;
+    long count;
+} AVG_DOUBLE;
+
+static inline AVG_DOUBLE avg_skip_nan(double *pd, long count) {
+    const double *lim = pd + count;
+    double sum = 0;
+    long sumCount = 0;
+    for (; pd < lim; pd++) {
+        const double d = *pd;
+        if (d == d) {
+            sum += d;
+            sumCount++;
+        }
+    }
+
+    AVG_DOUBLE ad;
+    ad.sum = sum;
+    ad.count = sumCount;
+    return ad;
+}
+
+double sumDouble_Vanilla(double *d, long count);
+
+double avgDouble_Vanilla(double *d, long count);
+
+double minDouble_Vanilla(double *d, long count);
+
+double maxDouble_Vanilla(double *d, long count);
+
+#endif //VECT_VANILLA_H

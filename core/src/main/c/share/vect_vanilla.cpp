@@ -1,3 +1,5 @@
+#include <cfloat>
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -22,14 +24,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+#include "vect_vanilla.h"
 
-public final class Vect {
-    public static native double sumDouble(long pDouble, long count);
+double sumDouble_Vanilla(double *d, long count) {
+    return sum_nan_as_zero(d, count);
+}
 
-    public static native double avgDouble(long pDouble, long count);
+double avgDouble_Vanilla(double *d, long count) {
+    auto v = avg_skip_nan(d, count);
+    return v.sum / v.count;
+}
 
-    public static native double minDouble(long pDouble, long count);
+double minDouble_Vanilla(double *d, long count) {
+    const double *ext = d + count;
+    double min = LDBL_MAX;
+    double *pd = d;
+    for (; pd < ext; pd++) {
+        double x = *pd;
+        if (x < min) {
+            min = x;
+        }
+    }
+    return min;
+}
 
-    public static native double maxDouble(long pDouble, long count);
+double maxDouble_Vanilla(double *d, long count) {
+    const double *ext = d + count;
+    double max = LDBL_MIN;
+    double *pd = d;
+    for (; pd < ext; pd++) {
+        double x = *pd;
+        if (x > max) {
+            max = x;
+        }
+    }
+    return max;
 }

@@ -1105,6 +1105,144 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMinDoubleColumn() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(1.743072089888109E-4, r.minDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testMaxDoubleColumn() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(78.07372283716164, r.maxDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testMinDoubleColumnWithNaNs() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(120)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testMaxDoubleColumnWithNaNs() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(120)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(72.03170014947307, r.maxDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testAvgDoubleColumn() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testAvgDoubleColumnWithNaNs() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(49.99614105606191, r.avgDouble(0), 0.00001);
+        }
+    }
+
+    @Test
     public void testSumDoubleColumnPartitionByNone() throws Exception {
         final String expected = "a\tk\n";
 
@@ -1124,6 +1262,52 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testAvgDoubleColumnPartitionByNone() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k)",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testAvgDoubleEmptyColumn() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k)",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(0, r.avgDouble(0), 0.00001);
         }
     }
 

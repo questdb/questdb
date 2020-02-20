@@ -22,35 +22,72 @@
  *
  ******************************************************************************/
 
-#include <cstdio>
-#include "vcl/vectorclass.h"
+#include <cfloat>
+#include "vect.h"
 
 #define MAX_VECTOR_SIZE 512
 
-// Define function type
-// Change this to fit your purpose. Should not contain vector types:
-typedef double SumDoubleType(double *, long);
-
-// function prototypes for each version
-SumDoubleType sumDouble_SSE2, sumDouble_SSE41, sumDouble_AVX2, sumDouble_AVX512, sumDouble_dispatch;
-
 // Define function name depending on which instruction set we compile for
-#if INSTRSET >= 10                   // AVX512VL
-#define SUM_DOUBLE sumDouble_AVX512
-#elif INSTRSET >= 8                    // AVX2
-#define SUM_DOUBLE sumDouble_AVX2
-#elif INSTRSET >= 5                    // SSE4.1
-#define SUM_DOUBLE sumDouble_SSE41
+#if INSTRSET >= 10
+
+#define SUM_DOUBLE F_AVX512(sumDouble)
+#define AVG_DOUBLE F_AVX512(avgDouble)
+#define MIN_DOUBLE F_AVX512(minDouble)
+#define MAX_DOUBLE F_AVX512(maxDouble)
+
+#elif INSTRSET >= 8
+
+#define SUM_DOUBLE F_AVX2(sumDouble)
+#define AVG_DOUBLE F_AVX2(avgDouble)
+#define MIN_DOUBLE F_AVX2(minDouble)
+#define MAX_DOUBLE F_AVX2(maxDouble)
+
+#elif INSTRSET >= 5
+
+#define SUM_DOUBLE F_SSE41(sumDouble)
+#define AVG_DOUBLE F_SSE41(avgDouble)
+#define MIN_DOUBLE F_SSE41(minDouble)
+#define MAX_DOUBLE F_SSE41(maxDouble)
+
 #elif INSTRSET >= 2
-#define SUM_DOUBLE sumDouble_SSE2           // SSE2
+
+#define SUM_DOUBLE F_SSE2(sumDouble)
+#define AVG_DOUBLE F_SSE2(avgDouble)
+#define MIN_DOUBLE F_SSE2(minDouble)
+#define MAX_DOUBLE F_SSE2(maxDouble)
+
 #else
 
 #endif
 
 #ifdef SUM_DOUBLE
 
-// Dispatched version of the function. Compile this once for each instruction set:
 double SUM_DOUBLE(double *d, long count) {
+    const int step = 8;
+    const long remainder = count - (count / step) * step;
+    const double *vec_lim = d + count - remainder;
+
+    double *pd = d;
+    Vec8d vec;
+    double result = 0;
+    for (; pd < vec_lim; pd += step) {
+        vec.load(pd);
+        double s = horizontal_add(vec);
+        if (s != s) {
+            result += sum_nan_as_zero(pd, step);
+        } else {
+            result += s;
+        }
+    }
+
+    if (remainder > 0) {
+        result += sum_nan_as_zero(pd, remainder);
+    }
+    return result;
+}
+
+/*
+double SUM_DOUBLE_NOT_NULL(double *d, long count) {
     const int step = 8;
     const long remainder = count - (count / step) * step;
     const double *lim = d + count;
@@ -71,63 +108,103 @@ double SUM_DOUBLE(double *d, long count) {
     }
     return result;
 }
+*/
+
+double AVG_DOUBLE(double *d, long count) {
+    const int step = 8;
+    const long remainder = count - (count / step) * step;
+    const double *vec_lim = d + count - remainder;
+
+    double *pd = d;
+    Vec8d vec;
+    double sum = 0;
+    long sumCount = 0;
+    for (; pd < vec_lim; pd += step) {
+        vec.load(pd);
+        double s = horizontal_add(vec);
+        if (s != s) {
+            auto v = avg_skip_nan(pd, step);
+            sum += v.sum;
+            sumCount += v.count;
+        } else {
+            sum += s;
+            sumCount += step;
+        }
+    }
+
+    if (remainder > 0) {
+        auto v = avg_skip_nan(pd, remainder);
+        sum += v.sum;
+        sumCount += v.count;
+    }
+    return sum / sumCount;
+}
+
+double MIN_DOUBLE(double *d, long count) {
+    const int step = 8;
+    const long remainder = count - (count / step) * step;
+    const double *lim = d + count;
+    const double *vec_lim = lim - remainder;
+
+    double *pd = d;
+    Vec8d vec;
+    double min = LDBL_MAX;
+    for (; pd < vec_lim; pd += step) {
+        vec.load(pd);
+        double x = horizontal_min1(vec);
+        if (x < min) {
+            min = x;
+        }
+    }
+
+    if (pd < lim) {
+        for (; pd < lim; pd++) {
+            double x = *pd;
+            if (x < min) {
+                min = x;
+            }
+        }
+    }
+    return min;
+}
+
+double MAX_DOUBLE(double *d, long count) {
+    const int step = 8;
+    const long remainder = count - (count / step) * step;
+    const double *lim = d + count;
+    const double *vec_lim = lim - remainder;
+
+    double *pd = d;
+    Vec8d vec;
+    double max = LDBL_MIN;
+    for (; pd < vec_lim; pd += step) {
+        vec.load(pd);
+        double x = horizontal_min1(vec);
+        if (x > max) {
+            max = x;
+        }
+    }
+
+    if (pd < lim) {
+        for (; pd < lim; pd++) {
+            double x = *pd;
+            if (x > max) {
+                max = x;
+            }
+        }
+    }
+    return max;
+}
 
 #endif
 
 #if INSTRSET < 4
 
-double sumDouble_Vanilla(double *d, long count) {
-    const double *ext = d + count;
-    double result = 0;
-    double *pd = d;
-    for (; pd < ext; pd++) {
-        result += *pd;
-    }
-    return result;
-}
-
-// make dispatcher in only the lowest of the compiled versions
-// This function pointer initially points to the dispatcher.
-// After the first call it points to the selected version:
-
-SumDoubleType * sumDouble_pointer = &sumDouble_dispatch;
-
-// Dispatcher
-double sumDouble_dispatch(double * d, long size) {
-    const int iset = instrset_detect();         // Detect supported instruction set
-    if (iset >= 10) {
-        sumDouble_pointer = &sumDouble_AVX512;  // AVX512 version
-    }
-    else if (iset >=  8) {
-        sumDouble_pointer = &sumDouble_AVX2;    // AVX2 version
-    }
-    else if (iset >=  5) {
-        sumDouble_pointer = &sumDouble_SSE41;   // SSE4.1 version
-    }
-    else if (iset >=  2) {
-        sumDouble_pointer = &sumDouble_SSE2;    // SSE2 version
-    }
-    else {
-        sumDouble_pointer = &sumDouble_Vanilla; // vanilla version
-    }
-    // continue in dispatched version of the function
-    return (*sumDouble_pointer)(d, size);
-}
-
-// Entry to dispatched function call
-inline double sumDouble(double *d, long size) {
-    return (*sumDouble_pointer)(d, size);
-}
-
-extern "C" {
-
-#include <jni.h>
-
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong size) {
-    return sumDouble((double *) pDouble, size);
-}
-
-}
+// Dispatchers
+DISPATCHER(sumDouble)
+DISPATCHER(avgDouble)
+DISPATCHER(minDouble)
+DISPATCHER(maxDouble)
 
 #endif  // INSTRSET == 2
 
