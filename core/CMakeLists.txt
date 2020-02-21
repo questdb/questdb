@@ -161,20 +161,16 @@ else ()
             questdb-avx2
             questdb-avx512
     )
-    set_target_properties(
-            questdb-sse2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17 -Wno-attributes"
-    )
 
     if (WIN32)
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O2 -msse2 -std=c++17 -Wno-attributes"
+                COMPILE_FLAGS "-m64 -O2 -march=core2 -msse2 -std=c++17 -Wno-attributes"
         )
     else ()
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O2 -msse2 -fPIC -std=c++17"
+                COMPILE_FLAGS "-m64 -O2 -march=core2 -msse2 -fPIC -std=c++17"
         )
     endif (WIN32)
 

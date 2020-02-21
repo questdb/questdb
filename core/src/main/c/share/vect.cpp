@@ -198,7 +198,7 @@ double MAX_DOUBLE(double *d, long count) {
 
 #endif
 
-#if INSTRSET < 4
+#if INSTRSET < 5
 
 // Dispatchers
 DISPATCHER(sumDouble)
