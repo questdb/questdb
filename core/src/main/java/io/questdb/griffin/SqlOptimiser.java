@@ -1010,7 +1010,6 @@ class SqlOptimiser {
                 throw SqlException.invalidColumn(position, column);
             }
 
-            return index;
         } else {
             index = model.getAliasIndex(column, 0, dot);
 
@@ -1022,8 +1021,8 @@ class SqlOptimiser {
                 throw SqlException.invalidColumn(position, column);
             }
 
-            return index;
         }
+        return index;
     }
 
     private boolean hasAggregates(ExpressionNode node) {

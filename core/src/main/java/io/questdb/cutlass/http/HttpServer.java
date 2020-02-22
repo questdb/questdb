@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.log.Log;
@@ -108,14 +108,14 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            CairoWorkScheduler workScheduler
+            MessageBus messageBus
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration, sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                workScheduler
+                messageBus
         );
     }
 
@@ -124,7 +124,7 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean localPool,
-            CairoWorkScheduler workScheduler
+            MessageBus messageBus
     ) {
         final HttpServer s = new HttpServer(configuration, workerPool, localPool);
 
@@ -140,7 +140,7 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         queryCache,
-                        workScheduler
+                        messageBus
 
                 );
             }
@@ -170,7 +170,7 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         queryCache,
-                        workScheduler
+                        messageBus
                 );
             }
         });
@@ -200,7 +200,7 @@ public class HttpServer implements Closeable {
         });
 
         // jobs that help parallel execution of queries
-        workerPool.assign(new ColumnIndexerJob(workScheduler));
+        workerPool.assign(new ColumnIndexerJob(messageBus));
 
         return s;
 

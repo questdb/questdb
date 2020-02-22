@@ -25,8 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoWorkScheduler;
-import io.questdb.cairo.CairoWorkSchedulerImpl;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
@@ -127,11 +125,11 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final CairoWorkScheduler workScheduler = new CairoWorkSchedulerImpl();
+        final MessageBus messageBus = new MessageBusImpl();
 
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), workScheduler);
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
         final HttpServer httpServer = HttpServer.create(
@@ -139,7 +137,7 @@ public class ServerMain {
                 workerPool,
                 log,
                 cairoEngine,
-                workScheduler
+                messageBus
         );
 
         final PGWireServer pgWireServer = PGWireServer.create(
@@ -147,7 +145,7 @@ public class ServerMain {
                 workerPool,
                 log,
                 cairoEngine,
-                workScheduler
+                messageBus
         );
 
         final AbstractLineProtoReceiver lineProtocolReceiver;

@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb;
 
 import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 
-public interface CairoWorkScheduler {
+public interface MessageBus {
     Sequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerScope> getIndexerQueue();

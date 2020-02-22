@@ -460,13 +460,12 @@ public class DateFormatCompiler {
                             asm.aload(FA_LOCAL_SINK);
                             asm.ldc(delimiterIndexes.getQuick(-op - 1));
                             asm.invokeInterface(sinkPutStrIndex, 1);
-                            asm.pop();
                         } else {
                             asm.aload(FA_LOCAL_SINK);
                             asm.iconst(delimiter.charAt(0));
                             asm.invokeInterface(sinkPutChrIndex, 1);
-                            asm.pop();
                         }
+                        asm.pop();
                     }
                     break;
 
@@ -1399,6 +1398,19 @@ public class DateFormatCompiler {
             switch (ops.getQuick(i)) {
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
+                    // HOUR
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY:
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     attributes |= (1 << FA_HOUR);
                     break;
                 // MILLIS
@@ -1418,21 +1430,6 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_MINUTE_GREEDY:
                 case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     attributes |= (1 << FA_MINUTE);
-                    break;
-                // HOUR
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY:
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY:
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    attributes |= (1 << FA_HOUR);
                     break;
 
                 // DAY OF MONTH
@@ -1465,9 +1462,7 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                 case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
-                    attributes |= (1 << FA_YEAR);
-                    break;
-                // ERA
+                    // ERA
                 case DateFormatCompiler.OP_ERA:
                     attributes |= (1 << FA_YEAR);
                     break;
@@ -1487,6 +1482,15 @@ public class DateFormatCompiler {
         for (int i = 0, n = ops.size(); i < n; i++) {
             switch (ops.getQuick(i)) {
                 case OP_AM_PM:
+                case OP_DAY_NAME_LONG:
+                case OP_DAY_NAME_SHORT:
+                case OP_TIME_ZONE_SHORT:
+                case OP_TIME_ZONE_GMT_BASED:
+                case OP_TIME_ZONE_ISO_8601_1:
+                case OP_TIME_ZONE_ISO_8601_2:
+                case OP_TIME_ZONE_ISO_8601_3:
+                case OP_TIME_ZONE_LONG:
+                case OP_TIME_ZONE_RFC_822:
                     result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MILLIS_GREEDY:
@@ -1532,10 +1536,6 @@ public class DateFormatCompiler {
                 case OP_DAY_TWO_DIGITS:
                     result |= (1 << LOCAL_DAY);
                     break;
-                case OP_DAY_NAME_LONG:
-                case OP_DAY_NAME_SHORT:
-                    result |= (1 << LOCAL_TEMP_LONG);
-                    break;
                 case OP_MONTH_GREEDY:
                 case OP_MONTH_SHORT_NAME:
                 case OP_MONTH_LONG_NAME:
@@ -1553,15 +1553,6 @@ public class DateFormatCompiler {
                     break;
                 case OP_ERA:
                     result |= (1 << LOCAL_ERA);
-                    break;
-                case OP_TIME_ZONE_SHORT:
-                case OP_TIME_ZONE_GMT_BASED:
-                case OP_TIME_ZONE_ISO_8601_1:
-                case OP_TIME_ZONE_ISO_8601_2:
-                case OP_TIME_ZONE_ISO_8601_3:
-                case OP_TIME_ZONE_LONG:
-                case OP_TIME_ZONE_RFC_822:
-                    result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 default:
                     break;

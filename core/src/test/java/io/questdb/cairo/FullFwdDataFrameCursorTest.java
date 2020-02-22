@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.log.Log;
@@ -2428,7 +2429,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
     }
 
-    final static class MyWorkScheduler implements CairoWorkScheduler {
+    final static class MyWorkScheduler implements MessageBus {
         private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
@@ -2436,6 +2437,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
             this.pubSeq = pubSequence;
             this.subSeq = subSequence;
+            if (subSeq != null) {
+                this.pubSeq.then(this.subSeq).then(this.pubSeq);
+            }
         }
 
         public MyWorkScheduler() {

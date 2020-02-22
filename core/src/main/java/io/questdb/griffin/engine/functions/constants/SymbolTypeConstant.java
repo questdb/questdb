@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 
 public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
 
-    public static SymbolTypeConstant INSTANCE = new SymbolTypeConstant();
+    public static final SymbolTypeConstant INSTANCE = new SymbolTypeConstant();
 
     private SymbolTypeConstant() {
         super(0);

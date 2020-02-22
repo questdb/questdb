@@ -148,12 +148,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 // if we asked for -9,-4 but there are 7 records in cursor
                                 // we would first ignore last 4 and return first 3
                                 limit = count + hi;
-                                size = limit;
                             } else {
                                 skipTo(count + lo);
                                 limit = -lo + hi;
-                                size = limit;
                             }
+                            size = limit;
                         }
                     } else {
                         // this is invalid bottom range, for example -3, -10

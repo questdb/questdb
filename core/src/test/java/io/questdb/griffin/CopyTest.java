@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -39,7 +41,7 @@ import java.io.File;
 public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    private static final CairoWorkScheduler workScheduler = new CairoWorkSchedulerImpl();
+    private static final MessageBus workScheduler = new MessageBusImpl();
     protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(
             AllowAllCairoSecurityContext.INSTANCE,
             bindVariableService,

@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
@@ -300,7 +302,7 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final CairoWorkScheduler workScheduler = new CairoWorkSchedulerImpl();
+        final MessageBus workScheduler = new MessageBusImpl();
 
         try (
                 CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);
@@ -368,7 +370,7 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final CairoWorkScheduler workScheduler = new CairoWorkSchedulerImpl();
+        final MessageBus workScheduler = new MessageBusImpl();
 
         try (
                 CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);

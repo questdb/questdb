@@ -24,8 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,5 +35,5 @@ public interface SqlExecutionContext {
 
     CairoSecurityContext getCairoSecurityContext();
 
-    @Nullable CairoWorkScheduler getWorkScheduler();
+    @Nullable MessageBus getMessageBus();
 }

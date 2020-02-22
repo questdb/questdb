@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
@@ -70,18 +71,18 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final MicrosecondClock clock;
     private final CharSequence root;
     @Nullable
-    private final CairoWorkScheduler workScheduler;
+    private final MessageBus messageBus;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
      * @param configuration configuration parameters.
-     * @param workScheduler scheduler instance to allow index to be built in parallel
+     * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
      */
-    public WriterPool(CairoConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
+    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
-        this.workScheduler = workScheduler;
+        this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
@@ -367,7 +368,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, workScheduler, true, e);
+            e.writer = new TableWriter(configuration, name, messageBus, true, e);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.error().$("could not open [table=`").utf8(name).$("`, thread=").$(e.owner).$(']').$();

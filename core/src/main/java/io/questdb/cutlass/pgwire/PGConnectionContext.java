@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -113,6 +114,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter noopSetter = this::setNoopBindVariable;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
+    @Nullable
+    private final MessageBus messageBus;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitalMessage = false;
@@ -129,10 +132,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
-    @Nullable
-    private final CairoWorkScheduler workScheduler;
 
-    public PGConnectionContext(PGWireConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
+    public PGConnectionContext(PGWireConfiguration configuration, @Nullable MessageBus messageBus) {
         this.nf = configuration.getNetworkFacade();
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
@@ -151,7 +152,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
-        this.workScheduler = workScheduler;
+        this.messageBus = messageBus;
         populateAppender();
     }
 
@@ -817,7 +818,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, workScheduler);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, messageBus);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();

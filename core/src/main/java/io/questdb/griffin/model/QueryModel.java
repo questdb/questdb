@@ -692,16 +692,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         if (tableName != null) {
             tableName.toSink(sink);
-            if (alias != null) {
-                aliasToSink(alias.token, sink);
-            }
         } else {
             sink.put('(');
             nestedModel.toSink(sink);
             sink.put(')');
-            if (alias != null) {
-                aliasToSink(alias.token, sink);
-            }
+        }
+        if (alias != null) {
+            aliasToSink(alias.token, sink);
         }
 
         if (timestamp != null) {

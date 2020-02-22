@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
@@ -32,16 +33,16 @@ import io.questdb.mp.Sequence;
 
 public class ColumnIndexerJob implements Job {
     private final RingQueue<ColumnIndexerScope> queue;
-    private final Sequence sequence;
+    private final Sequence subSeq;
 
-    public ColumnIndexerJob(CairoWorkScheduler workScheduler) {
-        this.queue = workScheduler.getIndexerQueue();
-        this.sequence = workScheduler.getIndexerSubSequence();
+    public ColumnIndexerJob(MessageBus messageBus) {
+        this.queue = messageBus.getIndexerQueue();
+        this.subSeq = messageBus.getIndexerSubSequence();
     }
 
     @Override
     public boolean run() {
-        long cursor = sequence.next();
+        long cursor = subSeq.next();
         if (cursor < 0) {
             return false;
         }
@@ -53,7 +54,7 @@ public class ColumnIndexerJob implements Job {
         final long hi = queueItem.hi;
         final long indexSequence = queueItem.sequence;
         final SOCountDownLatch latch = queueItem.countDownLatch;
-        sequence.done(cursor);
+        subSeq.done(cursor);
 
         // On the face of it main thread could have consumed same sequence as
         // child workers. The reason it is undesirable is because all writers

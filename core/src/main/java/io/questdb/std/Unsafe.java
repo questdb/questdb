@@ -98,7 +98,7 @@ public final class Unsafe {
         return UNSAFE.getByte(address) == 1;
     }
 
-    public static long getFieldOffset(Class clazz, String name) {
+    public static long getFieldOffset(Class<?> clazz, String name) {
         try {
             Field f = clazz.getDeclaredField(name);
             f.setAccessible(true);

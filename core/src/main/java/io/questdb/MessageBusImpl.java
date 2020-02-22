@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb;
 
 import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.MCSequence;
@@ -30,10 +30,14 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 
-public class CairoWorkSchedulerImpl implements CairoWorkScheduler {
+public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
     private final MPSequence pubSeq = new MPSequence(queue.getCapacity());
     private final MCSequence subSeq = new MCSequence(queue.getCapacity());
+
+    public MessageBusImpl() {
+        this.pubSeq.then(this.subSeq).then(this.pubSeq);
+    }
 
     @Override
     public Sequence getIndexerPubSequence() {
