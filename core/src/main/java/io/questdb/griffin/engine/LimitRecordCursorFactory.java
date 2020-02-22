@@ -46,8 +46,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return base.isRandomAccessCursor();
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 
     private static class LimitRecordCursor implements RecordCursor {

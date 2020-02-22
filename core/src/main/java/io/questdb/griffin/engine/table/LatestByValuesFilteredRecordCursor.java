@@ -60,8 +60,8 @@ class LatestByValuesFilteredRecordCursor extends AbstractRecordListCursor {
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         prepare();
 
-        while (this.dataFrameCursor.hasNext()) {
-            final DataFrame frame = this.dataFrameCursor.next();
+        DataFrame frame;
+        while ((frame = this.dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

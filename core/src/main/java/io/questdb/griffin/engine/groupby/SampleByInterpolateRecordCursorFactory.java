@@ -166,7 +166,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(
                 recordFunctions,
                 symbolTableSkewIndex,
-                base.isRandomAccessCursor()
+                base.recordCursorSupportsRandomAccess()
         );
     }
 
@@ -369,7 +369,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

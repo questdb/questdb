@@ -278,7 +278,7 @@ public class SqlCodeGenerator {
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
 
-        if (slave.isRandomAccessCursor() && !fullFatJoins) {
+        if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             if (joinType == QueryModel.JOIN_INNER) {
                 return new HashJoinLightRecordCursorFactory(
                         configuration,
@@ -483,7 +483,7 @@ public class SqlCodeGenerator {
                         case QueryModel.JOIN_ASOF:
                             validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            if (slave.isRandomAccessCursor() && !fullFatJoins) {
+                            if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                 if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
                                     master = createAsOfJoin(
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -527,7 +527,7 @@ public class SqlCodeGenerator {
                         case QueryModel.JOIN_SPLICE:
                             validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            if (slave.isRandomAccessCursor() && master.isRandomAccessCursor() && !fullFatJoins) {
+                            if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                 master = createSpliceJoin(
                                         // splice join result does not have timestamp
                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
@@ -1154,7 +1154,6 @@ public class SqlCodeGenerator {
             valueTypes.reset();
             listColumnFilterA.clear();
 
-
             final int columnCount = model.getColumns().size();
             final RecordMetadata metadata = factory.getMetadata();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
@@ -1372,7 +1371,7 @@ public class SqlCodeGenerator {
                     }
                 }
 
-                if (recordCursorFactory.isRandomAccessCursor()) {
+                if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     return new SortedLightRecordCursorFactory(
                             configuration,
                             orderedMetadata,

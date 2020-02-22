@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -47,9 +48,10 @@ public class PGWireServer implements Closeable {
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
-            WorkerPool pool
+            WorkerPool pool,
+            CairoWorkScheduler workScheduler
     ) {
-        this.contextFactory = new PGConnectionContextFactory(configuration);
+        this.contextFactory = new PGConnectionContextFactory(configuration, workScheduler);
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -93,14 +95,16 @@ public class PGWireServer implements Closeable {
             PGWireConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log log,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            CairoWorkScheduler workScheduler
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (configuration1, engine, workerPool, local) -> new PGWireServer(configuration1, cairoEngine, workerPool)
+                (configuration1, engine, workerPool, local, workScheduler1) -> new PGWireServer(configuration1, cairoEngine, workerPool, workScheduler1),
+                workScheduler
         );
     }
 
@@ -114,9 +118,9 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(PGWireConfiguration configuration) {
+        public PGConnectionContextFactory(PGWireConfiguration configuration, CairoWorkScheduler cairoWorkScheduler) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(configuration), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(configuration, cairoWorkScheduler), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

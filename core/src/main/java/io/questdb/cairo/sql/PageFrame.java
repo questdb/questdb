@@ -24,18 +24,10 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
-import org.jetbrains.annotations.Nullable;
+public interface PageFrame {
 
-public interface DataFrameCursor extends PageFrameCursor {
+    long getPageAddress(int columnIndex);
 
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
+    long getPageValueCount(int columnIndex);
 
-    boolean reload();
-
-    @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
-    @Nullable DataFrame next();
 }

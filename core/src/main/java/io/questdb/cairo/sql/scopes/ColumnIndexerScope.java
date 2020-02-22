@@ -22,20 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.sql.scopes;
 
-import io.questdb.cairo.TableReader;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.ColumnIndexer;
+import io.questdb.mp.SOCountDownLatch;
 
-public interface DataFrameCursor extends PageFrameCursor {
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    boolean reload();
-
-    @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
-    @Nullable DataFrame next();
+public class ColumnIndexerScope {
+    public ColumnIndexer indexer;
+    public long lo;
+    public long hi;
+    public SOCountDownLatch countDownLatch;
+    public long sequence;
 }

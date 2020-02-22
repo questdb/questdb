@@ -69,6 +69,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final Path path = new Path();
     private final MicrosecondClock clock;
     private final CharSequence root;
+    @Nullable
     private final CairoWorkScheduler workScheduler;
 
     /**
@@ -77,7 +78,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      * @param workScheduler scheduler instance to allow index to be built in parallel
      */
-    public WriterPool(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
+    public WriterPool(CairoConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.workScheduler = workScheduler;

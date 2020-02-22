@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -40,6 +41,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.function.LongConsumer;
@@ -140,7 +142,13 @@ public class TableWriter implements Closeable {
         this(configuration, name, workScheduler, true, DefaultLifecycleManager.INSTANCE);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager) {
+    public TableWriter(
+            CairoConfiguration configuration,
+            CharSequence name,
+            @Nullable CairoWorkScheduler workScheduler,
+            boolean lock,
+            LifecycleManager lifecycleManager
+    ) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
         this.workScheduler = workScheduler;
@@ -2247,7 +2255,7 @@ public class TableWriter implements Closeable {
         indexLatch.setCount(indexCount);
         final int nParallelIndexes = indexCount - 1;
         final Sequence indexPubSequence = this.workScheduler.getIndexerPubSequence();
-        final RingQueue<ColumnIndexerEntry> indexerQueue = this.workScheduler.getIndexerQueue();
+        final RingQueue<ColumnIndexerScope> indexerQueue = this.workScheduler.getIndexerQueue();
 
         // we are going to index last column in this thread while other columns are on the queue
         OUT:
@@ -2272,7 +2280,7 @@ public class TableWriter implements Closeable {
                 } while (cursor < 0);
             }
 
-            final ColumnIndexerEntry queueItem = indexerQueue.get(cursor);
+            final ColumnIndexerScope queueItem = indexerQueue.get(cursor);
             final ColumnIndexer indexer = denseIndexers.getQuick(i);
             final long sequence = indexer.getSequence();
             queueItem.indexer = indexer;

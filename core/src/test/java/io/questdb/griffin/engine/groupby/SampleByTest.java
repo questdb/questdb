@@ -248,7 +248,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x").getRecordCursorFactory()) {
@@ -1137,7 +1137,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     }
                 };
 
-                try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration, null)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
                             compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)");

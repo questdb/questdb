@@ -22,14 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.mp.SOCountDownLatch;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
 
-class ColumnIndexerEntry {
-    ColumnIndexer indexer;
-    long lo;
-    long hi;
-    SOCountDownLatch countDownLatch;
-    long sequence;
+public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFactory {
+    private final RecordCursorFactory base;
+
+    public GroupByNotKeyedVectorRecordCursorFactory(RecordCursorFactory base) {
+        this.base = base;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        PageFrame frame;
+        while ((frame = cursor.next()) != null) {
+
+        }
+        return null;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return null;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    private interface VectorAggregateFunction {
+
+    }
 }

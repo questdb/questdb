@@ -42,7 +42,7 @@ import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, workScheduler);
     private static final LongList rows = new LongList();
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
@@ -87,7 +87,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, workScheduler);
         compiler = new SqlCompiler(engine);
         bindVariableService.clear();
     }
@@ -142,7 +142,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             if (supportsRandomAccess) {
 
-                Assert.assertTrue(factory.isRandomAccessCursor());
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
 
                 cursor.toTop();
 
@@ -197,7 +197,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                 }
             } else {
-                Assert.assertFalse(factory.isRandomAccessCursor());
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
                 try {
                     record.getRowId();
                     Assert.fail();

@@ -47,19 +47,21 @@ public class CairoEngine implements Closeable {
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
+    private final WriterMaintenanceJob writerMaintenanceJob;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
     }
 
-    public CairoEngine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
+    public CairoEngine(CairoConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
         this.configuration = configuration;
         this.writerPool = new WriterPool(configuration, workScheduler);
         this.readerPool = new ReaderPool(configuration);
-        if (workScheduler != null) {
-            workScheduler.addJob(new WriterMaintenanceJob(configuration));
-            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
-        }
+        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+    }
+
+    public WriterMaintenanceJob getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
     }
 
     @Override

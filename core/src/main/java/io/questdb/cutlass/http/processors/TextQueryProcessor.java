@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
@@ -66,18 +63,20 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final MillisecondClock clock;
     private final QueryCache queryCache;
+    private final CairoWorkScheduler workScheduler;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            QueryCache queryCache
+            QueryCache queryCache,
+            CairoWorkScheduler workScheduler
     ) {
-        // todo: add scheduler
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.queryCache = queryCache;
+        this.workScheduler = workScheduler;
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -99,7 +98,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = queryCache.poll(state.query);
             int retryCount = 0;
             do {
-                sqlExecutionContext.with(context.getCairoSecurityContext(), null);
+                sqlExecutionContext.with(context.getCairoSecurityContext(), null, workScheduler);
                 if (state.recordCursorFactory == null) {
                     final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT) {

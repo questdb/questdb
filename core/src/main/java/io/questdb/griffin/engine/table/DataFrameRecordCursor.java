@@ -94,8 +94,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     private boolean nextFrame() {
-        while (dataFrameCursor.hasNext()) {
-            DataFrame dataFrame = dataFrameCursor.next();
+        DataFrame dataFrame;
+        while ((dataFrame = dataFrameCursor.next()) != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             if (rowCursor.hasNext()) {
                 recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());

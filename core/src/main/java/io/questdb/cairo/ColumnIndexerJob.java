@@ -24,13 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 
-class ColumnIndexerJob implements Job {
-    private final RingQueue<ColumnIndexerEntry> queue;
+public class ColumnIndexerJob implements Job {
+    private final RingQueue<ColumnIndexerScope> queue;
     private final Sequence sequence;
 
     public ColumnIndexerJob(CairoWorkScheduler workScheduler) {
@@ -45,7 +46,7 @@ class ColumnIndexerJob implements Job {
             return false;
         }
 
-        ColumnIndexerEntry queueItem = queue.get(cursor);
+        final ColumnIndexerScope queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;
         final long lo = queueItem.lo;

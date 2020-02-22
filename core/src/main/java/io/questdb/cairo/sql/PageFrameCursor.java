@@ -24,18 +24,17 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
 import org.jetbrains.annotations.Nullable;
 
-public interface DataFrameCursor extends PageFrameCursor {
+import java.io.Closeable;
 
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    boolean reload();
-
+public interface PageFrameCursor extends Closeable, SymbolTableSource {
     @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
+    void close(); // we don't throw IOException
 
-    @Nullable DataFrame next();
+    @Nullable PageFrame next();
+
+    void toTop();
+
+    long size();
 }

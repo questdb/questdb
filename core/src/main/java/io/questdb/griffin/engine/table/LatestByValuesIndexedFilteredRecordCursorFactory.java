@@ -71,7 +71,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

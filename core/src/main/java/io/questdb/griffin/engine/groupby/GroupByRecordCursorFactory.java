@@ -69,7 +69,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(
                     recordFunctions,
                     symbolTableSkewIndex,
-                    base.isRandomAccessCursor()
+                    base.recordCursorSupportsRandomAccess()
             );
         } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
@@ -116,7 +116,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 }

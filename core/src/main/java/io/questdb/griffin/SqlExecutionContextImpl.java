@@ -25,11 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    @Nullable
+    private CairoWorkScheduler workScheduler;
 
     @Override
     public BindVariableService getBindVariableService() {
@@ -41,9 +45,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return cairoSecurityContext;
     }
 
-    public SqlExecutionContextImpl with(CairoSecurityContext cairoSecurityContext, BindVariableService bindVariableService) {
+    public SqlExecutionContextImpl with(
+            CairoSecurityContext cairoSecurityContext,
+            BindVariableService bindVariableService,
+            @Nullable CairoWorkScheduler workScheduler
+    ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
+        this.workScheduler = workScheduler;
         return this;
+    }
+
+    @Override
+    @Nullable
+    public CairoWorkScheduler getWorkScheduler() {
+        return workScheduler;
     }
 }

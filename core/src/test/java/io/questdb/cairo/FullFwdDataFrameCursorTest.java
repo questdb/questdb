@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatUtils;
@@ -36,8 +39,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     private static final int WORK_STEALING_DONT_TEST = 0;
@@ -45,6 +46,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_BUSY_QUEUE = 2;
     private static final int WORK_STEALING_HIGH_CONTENTION = 3;
     private static final int WORK_STEALING_CAS_FLAP = 4;
+    private static final Log LOG = LogFactory.getLog(FullFwdDataFrameCursorTest.class);
 
     static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
         assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
@@ -58,8 +60,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long rowCount = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
 
@@ -133,8 +135,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                     int frameCount = 0;
                     cursor.of(reader);
-                    while (cursor.hasNext()) {
-                        cursor.next();
+                    while (cursor.next() != null) {
                         frameCount++;
                     }
 
@@ -962,8 +963,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         // data frame here. Get its instance outside of data frame loop.
 
         long rowCount = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
             long recordIndex;
@@ -1025,8 +1026,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     private void assertNoIndex(FullFwdDataFrameCursor cursor) {
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             try {
                 frame.getBitmapIndexReader(4, BitmapIndexReader.DIR_BACKWARD);
                 Assert.fail();
@@ -1042,8 +1043,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long count = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
@@ -1437,9 +1438,28 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             };
 
             MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq);
+            final WorkerPool workerPool;
             if (subSeq != null) {
-                workScheduler.addJob(new ColumnIndexerJob(workScheduler));
-                workScheduler.start();
+                workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int[] getWorkerAffinity() {
+                        return new int[]{-1, -1};
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return 2;
+                    }
+
+                    @Override
+                    public boolean haltOnError() {
+                        return false;
+                    }
+                });
+                workerPool.assign(new ColumnIndexerJob(workScheduler));
+                workerPool.start(LOG);
+            } else {
+                workerPool = null;
             }
 
             long timestamp = 0;
@@ -1455,7 +1475,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            workScheduler.halt();
+            if (workerPool != null) {
+                workerPool.halt();
+            }
 
             try (TableReader reader = new TableReader(configuration, "ABC")) {
 
@@ -1538,8 +1560,23 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             final MyWorkScheduler workScheduler = new MyWorkScheduler();
-            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
-            workScheduler.start();
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            workerPool.assign(new ColumnIndexerJob(workScheduler));
 
             try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
                 try {
@@ -1584,7 +1621,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            workScheduler.halt();
+            workerPool.halt();
 
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
@@ -2392,14 +2429,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     final static class MyWorkScheduler implements CairoWorkScheduler {
-        private final int nWorkers = 2;
-        private final SOCountDownLatch workerHaltLatch = new SOCountDownLatch(nWorkers);
-        private final Worker[] workers = new Worker[nWorkers];
-        private final RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+        private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
-        private final ObjHashSet<Job> jobs = new ObjHashSet<>();
-        private final AtomicBoolean active = new AtomicBoolean(false);
 
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
             this.pubSeq = pubSequence;
@@ -2410,10 +2442,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             this(new MPSequence(1024), new MCSequence(1024));
         }
 
-        @Override
-        public void addJob(Job job) {
-            jobs.add(job);
-        }
 
         @Override
         public Sequence getIndexerPubSequence() {
@@ -2421,32 +2449,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public RingQueue<ColumnIndexerEntry> getIndexerQueue() {
+        public RingQueue<ColumnIndexerScope> getIndexerQueue() {
             return queue;
         }
 
         @Override
         public Sequence getIndexerSubSequence() {
             return subSeq;
-        }
-
-        void halt() {
-            if (active.compareAndSet(true, false)) {
-                for (int i = 0; i < nWorkers; i++) {
-                    workers[i].halt();
-                }
-                workerHaltLatch.await();
-            }
-        }
-
-        void start() {
-            if (active.compareAndSet(false, true)) {
-                pubSeq.then(subSeq).then(pubSeq);
-                for (int i = 0; i < nWorkers; i++) {
-                    workers[i] = new Worker(jobs, workerHaltLatch);
-                    workers[i].start();
-                }
-            }
         }
     }
 }

@@ -22,20 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo;
 
-import io.questdb.cairo.TableReader;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 
-public interface DataFrameCursor extends PageFrameCursor {
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    boolean reload();
+public class CairoWorkSchedulerImpl implements CairoWorkScheduler {
+    private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
+    private final MPSequence pubSeq = new MPSequence(queue.getCapacity());
+    private final MCSequence subSeq = new MCSequence(queue.getCapacity());
 
     @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
+    public Sequence getIndexerPubSequence() {
+        return pubSeq;
+    }
 
-    @Nullable DataFrame next();
+    @Override
+    public RingQueue<ColumnIndexerScope> getIndexerQueue() {
+        return queue;
+    }
+
+    @Override
+    public Sequence getIndexerSubSequence() {
+        return subSeq;
+    }
 }

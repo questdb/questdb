@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -43,6 +44,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -55,13 +57,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final Path path = new Path();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final QueryCache queryCache;
+    private final CairoWorkScheduler workScheduler;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            QueryCache queryCache
+            QueryCache queryCache,
+            @Nullable CairoWorkScheduler workScheduler
     ) {
-        // todo: add scheduler
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
@@ -78,6 +81,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryCache = queryCache;
+        this.workScheduler = workScheduler;
     }
 
     private static void doResumeSend(
@@ -221,7 +225,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null);
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, workScheduler);
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = queryCache.poll(state.getQuery());
         try {

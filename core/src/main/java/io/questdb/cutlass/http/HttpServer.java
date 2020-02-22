@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoWorkScheduler;
+import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -105,13 +107,15 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            CairoWorkScheduler workScheduler
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration, sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                CREATE0
+                CREATE0,
+                workScheduler
         );
     }
 
@@ -119,9 +123,10 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            boolean sharedWorkerPool
+            boolean localPool,
+            CairoWorkScheduler workScheduler
     ) {
-        final HttpServer s = new HttpServer(configuration, workerPool, sharedWorkerPool);
+        final HttpServer s = new HttpServer(configuration, workerPool, localPool);
 
         s.bind(new HttpRequestProcessorFactory() {
             @Override
@@ -134,7 +139,8 @@ public class HttpServer implements Closeable {
                 return new JsonQueryProcessor(
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        queryCache
+                        queryCache,
+                        workScheduler
 
                 );
             }
@@ -163,7 +169,8 @@ public class HttpServer implements Closeable {
                 return new TextQueryProcessor(
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        queryCache
+                        queryCache,
+                        workScheduler
                 );
             }
         });
@@ -191,6 +198,10 @@ public class HttpServer implements Closeable {
                 return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
             }
         });
+
+        // jobs that help parallel execution of queries
+        workerPool.assign(new ColumnIndexerJob(workScheduler));
+
         return s;
 
     }

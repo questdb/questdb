@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.CairoWorkScheduler;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 
@@ -39,5 +40,10 @@ public class DefaultSqlExecutionContext implements SqlExecutionContext {
     @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return AllowAllCairoSecurityContext.INSTANCE;
+    }
+
+    @Override
+    public CairoWorkScheduler getWorkScheduler() {
+        return null;
     }
 }

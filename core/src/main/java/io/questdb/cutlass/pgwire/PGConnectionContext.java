@@ -38,6 +38,7 @@ import io.questdb.std.microtime.DateFormatUtils;
 import io.questdb.std.str.*;
 import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGJobContext.*;
 import static io.questdb.std.time.DateFormatUtils.*;
@@ -128,8 +129,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
+    @Nullable
+    private final CairoWorkScheduler workScheduler;
 
-    public PGConnectionContext(PGWireConfiguration configuration) {
+    public PGConnectionContext(PGWireConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
         this.nf = configuration.getNetworkFacade();
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
@@ -148,6 +151,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
+        this.workScheduler = workScheduler;
         populateAppender();
     }
 
@@ -813,7 +817,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, workScheduler);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();

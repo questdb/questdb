@@ -47,6 +47,7 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static CairoWorkScheduler workScheduler;
 
     @BeforeClass
     public static void setUp() {
@@ -57,6 +58,7 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.getRoot().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
+        workScheduler = new CairoWorkSchedulerImpl();
     }
 
     @Before

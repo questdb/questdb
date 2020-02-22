@@ -24,16 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.mp.Job;
+import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 
 public interface CairoWorkScheduler {
-    void addJob(Job job);
-
     Sequence getIndexerPubSequence();
 
-    RingQueue<ColumnIndexerEntry> getIndexerQueue();
+    RingQueue<ColumnIndexerScope> getIndexerQueue();
 
     Sequence getIndexerSubSequence();
 }
