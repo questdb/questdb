@@ -107,7 +107,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 

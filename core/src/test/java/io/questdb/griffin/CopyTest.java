@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -39,7 +41,13 @@ import java.io.File;
 public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+    private static final MessageBus workScheduler = new MessageBusImpl();
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(
+            AllowAllCairoSecurityContext.INSTANCE,
+            bindVariableService,
+            workScheduler
+    );
+
     private static final LongList rows = new LongList();
     private static CairoEngine engine;
     private static SqlCompiler compiler;
@@ -90,7 +98,7 @@ public class CopyTest extends AbstractCairoTest {
                 return new File(".").getAbsolutePath();
             }
         };
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, workScheduler);
         compiler = new SqlCompiler(engine);
         bindVariableService.clear();
     }
@@ -145,7 +153,7 @@ public class CopyTest extends AbstractCairoTest {
 
             if (supportsRandomAccess) {
 
-                Assert.assertTrue(factory.isRandomAccessCursor());
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
 
                 cursor.toTop();
 
@@ -200,7 +208,7 @@ public class CopyTest extends AbstractCairoTest {
 
                 }
             } else {
-                Assert.assertFalse(factory.isRandomAccessCursor());
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
                 try {
                     record.getRowId();
                     Assert.fail();

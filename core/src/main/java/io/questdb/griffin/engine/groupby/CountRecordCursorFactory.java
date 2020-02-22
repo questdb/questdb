@@ -64,7 +64,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 

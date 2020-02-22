@@ -24,10 +24,13 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.DataFrame;
+import org.jetbrains.annotations.Nullable;
+
 public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     @Override
-    public boolean hasNext() {
+    public @Nullable DataFrame next() {
         while (this.partitionIndex < partitionHi) {
             final long hi = getTableReader().openPartition(partitionIndex);
             if (hi < 1) {
@@ -37,17 +40,13 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 frame.partitionIndex = partitionIndex;
                 frame.rowHi = hi;
                 partitionIndex++;
-                return true;
+                return frame;
 
             }
         }
-        return false;
+        return null;
     }
 
-    @Override
-    public long size() {
-        return reader.size();
-    }
 
     @Override
     public void toTop() {

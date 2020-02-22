@@ -78,4 +78,10 @@ public class SumShortGroupByFunction extends ShortFunction implements GroupByFun
     public Function getArg() {
         return arg;
     }
+
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

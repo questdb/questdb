@@ -43,8 +43,8 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
     private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
-    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
+    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final Timestamps.TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
@@ -157,7 +157,7 @@ public class TableReader implements Closeable {
         return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
     }
 
-    static int getPrimaryColumnIndex(int base, int index) {
+    public static int getPrimaryColumnIndex(int base, int index) {
         return base + index * 2;
     }
 
@@ -702,6 +702,24 @@ public class TableReader implements Closeable {
             Unsafe.free(tempMem8b, 8);
             tempMem8b = 0;
         }
+    }
+
+    public long getPageAddressAt(int partitionIndex, long row, int columnIndex) {
+        final int base = getColumnBase(partitionIndex);
+        final int column = getPrimaryColumnIndex(base, columnIndex);
+        final long r = row - getColumnTop(base, columnIndex);
+        final int columnType = metadata.getColumnType(columnIndex);
+        switch (columnType) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                return getColumn(column + 1).getLong(r * Long.BYTES);
+            default:
+                return r * ColumnType.sizeOf(columnType);
+        }
+    }
+
+    public long getPageValueCount(int partitionIndex, long rowLo, long rowHi, int columnIndex) {
+        return rowHi - rowLo - getColumnTop(getColumnBase(partitionIndex), columnIndex);
     }
 
     ReadOnlyColumn getColumn(int absoluteIndex) {

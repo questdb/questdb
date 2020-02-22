@@ -646,11 +646,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (outPtr != _wPtr) {
                 if (deflateBeforeSend) {
                     flushBufSize = 0;
-                    resumeSend(MULTI_CHUNK);
                 } else {
                     prepareChunk((int) (_wPtr - outPtr));
-                    resumeSend(MULTI_CHUNK);
                 }
+                resumeSend(MULTI_CHUNK);
             }
         }
 

@@ -50,20 +50,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int UNION_MODEL_ALL = 0;
     public static final int UNION_MODEL_DISTINCT = 1;
     private static final ObjList<String> modelTypeName = new ObjList<>();
-
-    static {
-        modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
-        modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
-        modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
-        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
-        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
-        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
-    }
-
     private final ObjList<QueryColumn> columns = new ObjList<>();
-    private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();
+    private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
+    private final CharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new CharSequenceObjHashMap<>();
+    private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -76,7 +69,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
-    private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
@@ -117,87 +109,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
-        }
-    }
-
-    public ObjList<ExpressionNode> getOrderByAdvice() {
-        return orderByAdvice;
-    }
-
-    public IntList getOrderByDirectionAdvice() {
-        return orderByDirectionAdvice;
-    }
-
-    public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
-        this.orderByAdvice.clear();
-        this.orderByAdvice.addAll(orderByAdvice);
-    }
-
-    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
-        this.orderByDirectionAdvice.clear();
-        this.orderByDirectionAdvice.addAll(orderByDirection);
-    }
-
-    public int getOrderByAdviceMnemonic() {
-        return orderByAdviceMnemonic;
-    }
-
-    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
-        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
-    }
-
-    public QueryModel getUnionModel() {
-        return unionModel;
-    }
-
-    public void setUnionModel(QueryModel unionModel) {
-        this.unionModel = unionModel;
-    }
-
-    public int getUnionModelType() {
-        return unionModelType;
-    }
-
-    public void setUnionModelType(int unionModelType) {
-        this.unionModelType = unionModelType;
-    }
-
-    public boolean isDistinct() {
-        return distinct;
-    }
-
-    public void setDistinct(boolean distinct) {
-        this.distinct = distinct;
-    }
-
     public boolean addAliasIndex(ExpressionNode node, int index) {
         return aliasIndexes.put(node.token, index);
     }
 
-    public void addColumn(QueryColumn column) {
+    public void addBottomUpColumn(QueryColumn column) {
         columns.add(column);
-        final CharSequence alias = column.getAlias();
-        final ExpressionNode ast = column.getAst();
-        assert alias != null;
-        aliasToColumnMap.put(alias, ast.token);
-        columnToAliasMap.put(ast.token, alias);
-        columnNameTypeMap.put(alias, ast.type);
-        columnNames.add(alias);
-    }
-
-    public int getModelPosition() {
-        return modelPosition;
-    }
-
-    public void setModelPosition(int modelPosition) {
-        this.modelPosition = modelPosition;
+        addField(column);
     }
 
     public void addDependency(int index) {
@@ -209,10 +127,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         expressionModels.add(node);
     }
 
-    public void addField(CharSequence name) {
-        columnNameTypeMap.put(name, ExpressionNode.LITERAL);
-        aliasToColumnMap.put(name, name);
-        columnNames.add(name);
+    public void addField(QueryColumn column) {
+        final CharSequence alias = column.getAlias();
+        final ExpressionNode ast = column.getAst();
+        assert alias != null;
+        aliasToColumnNameMap.put(alias, ast.token);
+        columnNameToAliasMap.put(ast.token, alias);
+        bottomUpColumnNames.add(alias);
+        aliasToColumnMap.put(alias, column);
     }
 
     public void addJoinColumn(ExpressionNode node) {
@@ -221,6 +143,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void addJoinModel(QueryModel model) {
         joinModels.add(model);
+    }
+
+    public void addLatestBy(ExpressionNode latestBy) {
+        this.latestBy.add(latestBy);
     }
 
     public void addOrderBy(ExpressionNode node, int direction) {
@@ -236,13 +162,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByFill.add(sampleByFill);
     }
 
+    public void addTopDownColumn(QueryColumn column, CharSequence alias) {
+        if (topDownNameSet.add(alias)) {
+            topDownColumns.add(column);
+        }
+    }
+
     public void addWithClause(CharSequence name, WithClauseModel model) {
         withClauses.put(name, model);
     }
 
     public void clear() {
         columns.clear();
-        aliasToColumnMap.clear();
+        aliasToColumnNameMap.clear();
         joinModels.clear();
         joinModels.add(this);
         clearSampleBy();
@@ -268,22 +200,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
         limitLo = null;
-        columnNameTypeMap.clear();
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
         withClauses.clear();
         selectModelType = SELECT_MODEL_NONE;
-        columnToAliasMap.clear();
+        columnNameToAliasMap.clear();
         tableNameFunction = null;
         tableVersion = -1;
-        columnNames.clear();
+        bottomUpColumnNames.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
         unionModel = null;
         orderHash.clear();
         modelPosition = 0;
+        topDownColumns.clear();
+        topDownNameSet.clear();
+        aliasToColumnMap.clear();
+    }
+
+    public void clearColumnMapStructs() {
+        this.aliasToColumnNameMap.clear();
+        this.bottomUpColumnNames.clear();
+        this.aliasToColumnMap.clear();
     }
 
     public void clearOrderBy() {
@@ -298,19 +238,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void copyColumnsFrom(QueryModel other) {
         clearColumnMapStructs();
-        this.columnNameTypeMap.putAll(other.columnNameTypeMap);
-        ObjList<CharSequence> columnNames = other.columnNames;
-        this.columnNames.addAll(columnNames);
+        this.aliasToColumnMap.putAll(other.aliasToColumnMap);
+        ObjList<CharSequence> columnNames = other.bottomUpColumnNames;
+        this.bottomUpColumnNames.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
-            this.aliasToColumnMap.put(name, name);
+            this.aliasToColumnNameMap.put(name, name);
         }
     }
 
-    public void clearColumnMapStructs() {
-        this.columnNameTypeMap.clear();
-        this.aliasToColumnMap.clear();
-        this.columnNames.clear();
+    public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
+        this.orderByAdvice.clear();
+        this.orderByAdvice.addAll(orderByAdvice);
+    }
+
+    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
+        this.orderByDirectionAdvice.clear();
+        this.orderByDirectionAdvice.addAll(orderByDirection);
     }
 
     public ExpressionNode getAlias() {
@@ -329,28 +273,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return -1;
     }
 
-    public boolean isNestedModelIsSubQuery() {
-        return nestedModelIsSubQuery;
-    }
-
-    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
-        this.nestedModelIsSubQuery = nestedModelIsSubQuery;
-    }
-
-    public CharSequenceObjHashMap<CharSequence> getAliasToColumnMap() {
+    public CharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
     }
 
-    public CharSequenceIntHashMap getColumnNameTypeMap() {
-        return columnNameTypeMap;
+    public CharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
+        return aliasToColumnNameMap;
     }
 
-    public ObjList<CharSequence> getColumnNames() {
-        return columnNames;
+    public ObjList<CharSequence> getBottomUpColumnNames() {
+        return bottomUpColumnNames;
     }
 
-    public CharSequenceObjHashMap<CharSequence> getColumnToAliasMap() {
-        return columnToAliasMap;
+    public CharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
+        return columnNameToAliasMap;
     }
 
     public ObjList<QueryColumn> getColumns() {
@@ -393,6 +329,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinCriteria = joinCriteria;
     }
 
+    public int getJoinKeywordPosition() {
+        return joinKeywordPosition;
+    }
+
+    public void setJoinKeywordPosition(int position) {
+        this.joinKeywordPosition = position;
+    }
+
     public ObjList<QueryModel> getJoinModels() {
         return joinModels;
     }
@@ -405,20 +349,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinType = joinType;
     }
 
-    public int getJoinKeywordPosition() {
-        return joinKeywordPosition;
-    }
-
-    public void setJoinKeywordPosition(int position) {
-        this.joinKeywordPosition = position;
-    }
-
     public ObjList<ExpressionNode> getLatestBy() {
         return latestBy;
-    }
-
-    public void addLatestBy(ExpressionNode latestBy) {
-        this.latestBy.add(latestBy);
     }
 
     public ExpressionNode getLimitHi() {
@@ -427,6 +359,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getLimitLo() {
         return limitLo;
+    }
+
+    public int getModelPosition() {
+        return modelPosition;
+    }
+
+    public void setModelPosition(int modelPosition) {
+        this.modelPosition = modelPosition;
     }
 
     @Override
@@ -458,8 +398,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderBy;
     }
 
+    public ObjList<ExpressionNode> getOrderByAdvice() {
+        return orderByAdvice;
+    }
+
+    public int getOrderByAdviceMnemonic() {
+        return orderByAdviceMnemonic;
+    }
+
+    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
+        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
+    }
+
     public IntList getOrderByDirection() {
         return orderByDirection;
+    }
+
+    public IntList getOrderByDirectionAdvice() {
+        return orderByDirectionAdvice;
     }
 
     public CharSequenceIntHashMap getOrderHash() {
@@ -539,6 +495,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.timestamp = timestamp;
     }
 
+    public ObjList<QueryColumn> getTopDownColumns() {
+        return topDownColumns;
+    }
+
+    public QueryModel getUnionModel() {
+        return unionModel;
+    }
+
+    public void setUnionModel(QueryModel unionModel) {
+        this.unionModel = unionModel;
+    }
+
+    public int getUnionModelType() {
+        return unionModelType;
+    }
+
+    public void setUnionModelType(int unionModelType) {
+        this.unionModelType = unionModelType;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -549,6 +525,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WithClauseModel getWithClause(CharSequence name) {
         return withClauses.get(name);
+    }
+
+    public boolean isDistinct() {
+        return distinct;
+    }
+
+    public void setDistinct(boolean distinct) {
+        this.distinct = distinct;
+    }
+
+    public boolean isNestedModelIsSubQuery() {
+        return nestedModelIsSubQuery;
+    }
+
+    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+        this.nestedModelIsSubQuery = nestedModelIsSubQuery;
+    }
+
+    public boolean isTopDownNameMissing(CharSequence columnName) {
+        return topDownNameSet.excludes(columnName);
+    }
+
+    public void moveLimitFrom(QueryModel baseModel) {
+        this.limitLo = baseModel.getLimitLo();
+        this.limitHi = baseModel.getLimitHi();
+        baseModel.setLimit(null, null);
     }
 
     public void moveSampleByFrom(QueryModel model) {
@@ -622,86 +624,107 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public CharSequence translateAlias(CharSequence column) {
-        return aliasToColumnMap.get(column);
+        return aliasToColumnNameMap.get(column);
+    }
+
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+        sink.put(' ');
+        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        if (quote) {
+            sink.put('\'').put(alias).put('\'');
+        } else {
+            sink.put(alias);
+        }
     }
 
     private String getSelectModelTypeText() {
         return modelTypeName.get(selectModelType);
     }
 
-    private void toSink0(CharSink sink, boolean joinSlave) {
-        if (columns.size() > 0) {
-            sink.put(getSelectModelTypeText()).put(' ');
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(", ");
-                }
-                QueryColumn column = columns.getQuick(i);
-                CharSequence name = column.getName();
-                CharSequence alias = column.getAlias();
-                ExpressionNode ast = column.getAst();
-                if (column instanceof AnalyticColumn || name == null) {
-                    ast.toSink(sink);
+    private void sinkColumns(CharSink sink, ObjList<QueryColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            QueryColumn column = columns.getQuick(i);
+            CharSequence name = column.getName();
+            CharSequence alias = column.getAlias();
+            ExpressionNode ast = column.getAst();
+            if (column instanceof AnalyticColumn || name == null) {
+                ast.toSink(sink);
 
-                    if (alias != null) {
-                        aliasToSink(alias, sink);
+                if (alias != null) {
+                    aliasToSink(alias, sink);
+                }
+
+                // this can only be analytic column
+                if (name != null) {
+                    AnalyticColumn ac = (AnalyticColumn) column;
+                    sink.put(" over (");
+                    final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
+                    if (partitionBy.size() > 0) {
+                        sink.put("partition by ");
+                        for (int k = 0, z = partitionBy.size(); k < z; k++) {
+                            if (k > 0) {
+                                sink.put(", ");
+                            }
+                            partitionBy.getQuick(k).toSink(sink);
+                        }
                     }
 
-                    // this can only be analytic column
-                    if (name != null) {
-                        AnalyticColumn ac = (AnalyticColumn) column;
-                        sink.put(" over (");
-                        final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
+                    final ObjList<ExpressionNode> orderBy = ac.getOrderBy();
+                    if (orderBy.size() > 0) {
                         if (partitionBy.size() > 0) {
-                            sink.put("partition by ");
-                            for (int k = 0, z = partitionBy.size(); k < z; k++) {
-                                if (k > 0) {
-                                    sink.put(", ");
-                                }
-                                partitionBy.getQuick(k).toSink(sink);
+                            sink.put(' ');
+                        }
+                        sink.put("order by ");
+                        for (int k = 0, z = orderBy.size(); k < z; k++) {
+                            if (k > 0) {
+                                sink.put(", ");
+                            }
+                            orderBy.getQuick(k).toSink(sink);
+                            if (ac.getOrderByDirection().getQuick(k) == 1) {
+                                sink.put(" desc");
                             }
                         }
-
-                        final ObjList<ExpressionNode> orderBy = ac.getOrderBy();
-                        if (orderBy.size() > 0) {
-                            if (partitionBy.size() > 0) {
-                                sink.put(' ');
-                            }
-                            sink.put("order by ");
-                            for (int k = 0, z = orderBy.size(); k < z; k++) {
-                                if (k > 0) {
-                                    sink.put(", ");
-                                }
-                                orderBy.getQuick(k).toSink(sink);
-                                if (ac.getOrderByDirection().getQuick(k) == 1) {
-                                    sink.put(" desc");
-                                }
-                            }
-                        }
-                        sink.put(')');
                     }
-                } else {
-                    ast.toSink(sink);
-                    // do not repeat alias when it is the same as AST token, provided AST is a literal
-                    if (alias != null && (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {
-                        aliasToSink(alias, sink);
-                    }
+                    sink.put(')');
                 }
+            } else {
+                ast.toSink(sink);
+                // do not repeat alias when it is the same as AST token, provided AST is a literal
+                if (alias != null && (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {
+                    aliasToSink(alias, sink);
+                }
+            }
+        }
+    }
+
+    private void toSink0(CharSink sink, boolean joinSlave) {
+        final boolean hasColumns = this.topDownColumns.size() > 0 || this.columns.size() > 0;
+        if (hasColumns) {
+            sink.put(getSelectModelTypeText());
+            if (this.topDownColumns.size() > 0) {
+                sink.put(' ');
+                sink.put('[');
+                sinkColumns(sink, this.topDownColumns);
+                sink.put(']');
+            }
+            if (this.columns.size() > 0) {
+                sink.put(' ');
+                sinkColumns(sink, this.columns);
             }
             sink.put(" from ");
         }
         if (tableName != null) {
             tableName.toSink(sink);
-            if (alias != null) {
-                aliasToSink(alias.token, sink);
-            }
         } else {
             sink.put('(');
             nestedModel.toSink(sink);
             sink.put(')');
-            if (alias != null) {
-                aliasToSink(alias.token, sink);
-            }
+        }
+        if (alias != null) {
+            aliasToSink(alias.token, sink);
         }
 
         if (timestamp != null) {
@@ -845,16 +868,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void moveLimitFrom(QueryModel baseModel) {
-        this.limitLo = baseModel.getLimitLo();
-        this.limitHi = baseModel.getLimitHi();
-        baseModel.setLimit(null, null);
-    }
-
     public static final class QueryModelFactory implements ObjectFactory<QueryModel> {
         @Override
         public QueryModel newInstance() {
             return new QueryModel();
         }
+    }
+
+    static {
+        modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
+        modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
+        modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
+        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
+        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
+        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
     }
 }

@@ -84,4 +84,9 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

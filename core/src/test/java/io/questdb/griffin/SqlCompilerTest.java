@@ -111,7 +111,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
 
-        CairoEngine engine = new CairoEngine(configuration);
+        CairoEngine engine = new CairoEngine(configuration, null);
         SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
@@ -1835,7 +1835,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 };
 
                 try (
-                        CairoEngine engine = new CairoEngine(configuration);
+                        CairoEngine engine = new CairoEngine(configuration, null);
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     try {
@@ -1892,7 +1892,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 };
 
-                try (CairoEngine engine = new CairoEngine(configuration); SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (CairoEngine engine = new CairoEngine(configuration, null); SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         compiler.compile(sql);
                         Assert.fail();
@@ -2240,7 +2240,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration, null);
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
@@ -2932,7 +2932,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration) {
+            try (CairoEngine engine = new CairoEngine(configuration, null) {
                 @Override
                 public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
                     fiddler.run(this);
@@ -3312,7 +3312,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         // create source table
         compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)");
 
-        try (CairoEngine engine = new CairoEngine(configuration) {
+        try (CairoEngine engine = new CairoEngine(configuration, null) {
             @Override
             public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
@@ -3358,7 +3358,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
 
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration, null)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                 compiler.compile("create table x (a INT, b INT)");

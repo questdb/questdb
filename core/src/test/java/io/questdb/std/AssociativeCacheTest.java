@@ -95,4 +95,15 @@ public class AssociativeCacheTest {
             Unsafe.free(mem, 1024);
         }
     }
+
+    @Test
+    public void testNoUnnecessaryShift() {
+        final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
+        String value = "myval";
+
+        cache.put("x", value);
+        Assert.assertEquals(value, cache.poll("x"));
+        cache.put("x", value);
+
+    }
 }

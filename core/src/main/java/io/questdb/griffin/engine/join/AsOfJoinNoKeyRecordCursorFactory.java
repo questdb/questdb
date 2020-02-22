@@ -69,7 +69,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 

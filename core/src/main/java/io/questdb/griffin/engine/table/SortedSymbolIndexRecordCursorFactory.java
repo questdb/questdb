@@ -60,7 +60,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

@@ -123,6 +123,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     };
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
+    private final String inputRoot;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -178,7 +179,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlRenameTableModelPoolCapacity;
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
-    private final String inputRoot;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -268,7 +268,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", false);
         this.defaultSymbolCapacity = getInt(properties, "cairo.default.symbol.capacity", 256);
         this.fileOperationRetryCount = getInt(properties, "cairo.file.operation.retry.count", 30);
-        this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 100);
+        this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 5 * 60 * 1000L);
         this.inactiveReaderTTL = getLong(properties, "cairo.inactive.reader.ttl", -10000);
         this.inactiveWriterTTL = getLong(properties, "cairo.inactive.writer.ttl", -10000);
         this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, "cairo.index.value.block.size", 256));
@@ -755,6 +755,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQueryCacheBlocks() {
+            return sqlCacheBlocks;
+        }
+
+        @Override
+        public int getQueryCacheRows() {
+            return sqlCacheRows;
+        }
+
+        @Override
         public MillisecondClock getClock() {
             return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
         }
@@ -872,11 +882,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getInputRoot() {
-            return inputRoot;
-        }
-
-        @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
         }
@@ -912,18 +917,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CharSequence getInputRoot() {
+            return inputRoot;
+        }
+
+        @Override
         public long getSpinLockTimeoutUs() {
             return spinLockTimeoutUs;
-        }
-
-        @Override
-        public int getSqlCacheBlocks() {
-            return sqlCacheBlocks;
-        }
-
-        @Override
-        public int getSqlCacheRows() {
-            return sqlCacheRows;
         }
 
         @Override

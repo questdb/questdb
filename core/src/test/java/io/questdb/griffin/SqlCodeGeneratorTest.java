@@ -210,6 +210,59 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testVectorSumOneDouble() throws Exception {
+        assertQuery("sum\n" +
+                        "9278.190426088848\n",
+                "select sum(d) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testVectorSumOneDoubleInPos2() throws Exception {
+        assertQuery("sum\n" +
+                        "8872.339577332146\n",
+                "select sum(d) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() i," +
+                        " rnd_double(2)*100 d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testVectorSumOneDoubleMultiplePartitions() throws Exception {
+        assertQuery("sum\n" +
+                        "9278.19042608885\n",
+                "select sum(d) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 d," +
+                        " timestamp_sequence(0, 10000000000) k" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testFilterAPI() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index

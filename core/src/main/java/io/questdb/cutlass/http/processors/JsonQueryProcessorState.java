@@ -87,9 +87,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
     private final ObjList<ValueWriter> skewedValueWriters = new ObjList<>();
-    private final QueryCache queryCache;
-    RecordCursorFactory recordCursorFactory;
-    RecordCursor cursor;
+    private RecordCursorFactory recordCursorFactory;
+    private RecordCursor cursor;
     private boolean noMeta = false;
     private Record record;
     private int queryState = QUERY_PREFIX;
@@ -100,11 +99,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long stop;
     private int columnCount;
 
-
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            int connectionCheckFrequency,
-            QueryCache queryCache
+            int connectionCheckFrequency
     ) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -130,8 +127,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skewedValueWriters.extendAndSet(ColumnType.SYMBOL, this::putSkewedSymValue);
         skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
         skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
+    }
 
-        this.queryCache = queryCache;
+    boolean noCursor() {
+        return cursor == null;
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -336,7 +335,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
     }
 
-    boolean of(RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    boolean of(RecordCursorFactory factory, RecordCursor cursor) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        this.recordCursorFactory = factory;
+        this.cursor = cursor;
+        final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");
         this.valueWriters.clear();
@@ -646,7 +648,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
-        queryCache.push(query, recordCursorFactory);
+        QueryCache.getInstance().push(query, recordCursorFactory);
         recordCursorFactory = null;
         query.clear();
         columnsQueryParameter.clear();

@@ -82,7 +82,7 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isRandomAccessCursor() {
+        public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
     }

@@ -22,14 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.tasks;
 
+import io.questdb.cairo.ColumnIndexer;
 import io.questdb.mp.SOCountDownLatch;
 
-class ColumnIndexerEntry {
-    ColumnIndexer indexer;
-    long lo;
-    long hi;
-    SOCountDownLatch countDownLatch;
-    long sequence;
+public class ColumnIndexerTask {
+    public ColumnIndexer indexer;
+    public long lo;
+    public long hi;
+    public SOCountDownLatch countDownLatch;
+    public long sequence;
 }

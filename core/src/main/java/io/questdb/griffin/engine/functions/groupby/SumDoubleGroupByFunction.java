@@ -86,4 +86,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public Function getArg() {
         return arg;
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

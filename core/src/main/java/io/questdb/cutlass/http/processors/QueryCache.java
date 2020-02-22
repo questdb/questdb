@@ -25,21 +25,48 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.ThreadLocal;
 
 import java.io.Closeable;
 
 public final class QueryCache implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(QueryCache.class);
+    private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
     private final AssociativeCache<RecordCursorFactory> cache;
     private final int index;
 
     public QueryCache(int index, int blocks, int rows) {
         this.index = index;
         this.cache = new AssociativeCache<>(blocks, rows);
+    }
+
+    public static void configure(HttpServerConfiguration configuration) {
+        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(0, configuration.getQueryCacheBlocks(), configuration.getQueryCacheRows()));
+    }
+
+    public static void configureDefault() {
+        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(0, 16, 32));
+    }
+
+    public static QueryCache getInstance() {
+        return TL_QUERY_CACHE.get();
+    }
+
+    @Override
+    public void close() {
+        cache.close();
+        LOG.info().$("closed").$();
+    }
+
+    public RecordCursorFactory poll(CharSequence sql) {
+        final RecordCursorFactory factory = cache.poll(sql);
+        log(factory == null ? "miss" : "hit", sql);
+        return factory;
     }
 
     public void push(CharSequence sql, RecordCursorFactory factory) {
@@ -54,19 +81,7 @@ public final class QueryCache implements Closeable {
         log("remove", sql);
     }
 
-    public RecordCursorFactory poll(CharSequence sql) {
-        final RecordCursorFactory factory = cache.poll(sql);
-        log(factory == null ? "miss" : "hit", sql);
-        return factory;
-    }
-
     private void log(CharSequence action, CharSequence sql) {
         LOG.info().$(action).$(" [index=").$(index).$(", sql=").$(sql).$(']').$();
-    }
-
-    @Override
-    public void close() {
-        cache.close();
-        LOG.info().$("closed").$();
     }
 }

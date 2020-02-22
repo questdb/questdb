@@ -959,7 +959,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             };
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, null);
                     TextLoader loader = new TextLoader(engine)
             ) {
                 configureLoaderDefaults(loader, (byte) ',');
@@ -1090,7 +1090,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration, null)) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1174,7 +1174,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 try (TextLoader loader = new TextLoader(engine)) {
                     configureLoaderDefaults(loader, (byte) ',');
                     playText(
@@ -1680,7 +1680,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration, null)) {
             assertNoLeak(
                     engine,
                     textLoader -> {

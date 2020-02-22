@@ -24,9 +24,12 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -50,16 +53,11 @@ public class HttpServer implements Closeable {
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
     private final WorkerPool workerPool;
-    private final ObjList<QueryCache> queryCacheList;
 
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
-        this.queryCacheList = new ObjList<>(workerCount);
-
-        for (int i = 0; i < workerCount; i++) {
-            queryCacheList.add(new QueryCache(i, 8, 8));
-        }
+        QueryCache.configure(configuration);
 
         if (localPool) {
             workerPool = pool;
@@ -96,6 +94,7 @@ public class HttpServer implements Closeable {
             pool.assign(i, () -> {
                 Misc.free(selectors.getQuick(index));
                 httpContextFactory.closeContextPool();
+                Misc.free(QueryCache.getInstance());
             });
         }
     }
@@ -105,94 +104,16 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            MessageBus messageBus
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration, sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                CREATE0
+                CREATE0,
+                messageBus
         );
-    }
-
-    private static HttpServer create0(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            boolean sharedWorkerPool
-    ) {
-        final HttpServer s = new HttpServer(configuration, workerPool, sharedWorkerPool);
-
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return "/exec";
-            }
-
-            @Override
-            public HttpRequestProcessor newInstance(QueryCache queryCache) {
-                return new JsonQueryProcessor(
-                        configuration.getJsonQueryProcessorConfiguration(),
-                        cairoEngine,
-                        queryCache
-
-                );
-            }
-        });
-
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return "/imp";
-            }
-
-            @Override
-            public HttpRequestProcessor newInstance(QueryCache queryCache) {
-                return new TextImportProcessor(cairoEngine);
-            }
-        });
-
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return "/exp";
-            }
-
-            @Override
-            public HttpRequestProcessor newInstance(QueryCache queryCache) {
-                return new TextQueryProcessor(
-                        configuration.getJsonQueryProcessorConfiguration(),
-                        cairoEngine,
-                        queryCache
-                );
-            }
-        });
-
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return "/chk";
-            }
-
-            @Override
-            public HttpRequestProcessor newInstance(QueryCache queryCache) {
-                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
-            }
-        });
-
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-            }
-
-            @Override
-            public HttpRequestProcessor newInstance(QueryCache queryCache) {
-                return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
-            }
-        });
-        return s;
-
     }
 
     public void bind(HttpRequestProcessorFactory factory) {
@@ -201,9 +122,9 @@ public class HttpServer implements Closeable {
         for (int i = 0; i < workerCount; i++) {
             HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
             if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance(queryCacheList.getQuick(i));
+                selector.defaultRequestProcessor = factory.newInstance();
             } else {
-                selector.processorMap.put(url, factory.newInstance(queryCacheList.getQuick(i)));
+                selector.processorMap.put(url, factory.newInstance());
             }
         }
     }
@@ -213,9 +134,94 @@ public class HttpServer implements Closeable {
         if (workerPool != null) {
             workerPool.halt();
         }
-        Misc.freeObjList(queryCacheList);
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
+    }
+
+    private static HttpServer create0(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            boolean localPool,
+            MessageBus messageBus
+    ) {
+        final HttpServer s = new HttpServer(configuration, workerPool, localPool);
+        QueryCache.configure(configuration);
+
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new JsonQueryProcessor(
+                        configuration.getJsonQueryProcessorConfiguration(),
+                        cairoEngine,
+                        messageBus
+
+                );
+            }
+
+            @Override
+            public String getUrl() {
+                return "/exec";
+            }
+        });
+
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TextImportProcessor(cairoEngine);
+            }
+
+            @Override
+            public String getUrl() {
+                return "/imp";
+            }
+        });
+
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TextQueryProcessor(
+                        configuration.getJsonQueryProcessorConfiguration(),
+                        cairoEngine,
+                        messageBus
+                );
+            }
+
+            @Override
+            public String getUrl() {
+                return "/exp";
+            }
+        });
+
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
+            }
+
+            @Override
+            public String getUrl() {
+                return "/chk";
+            }
+        });
+
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+            }
+
+            @Override
+            public String getUrl() {
+                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+            }
+        });
+
+        // jobs that help parallel execution of queries
+        workerPool.assign(new ColumnIndexerJob(messageBus));
+        workerPool.assign(new GroupByNotKeyedJob(messageBus));
+        return s;
+
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {

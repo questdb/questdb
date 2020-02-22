@@ -53,8 +53,8 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         int localLo = Integer.MAX_VALUE;
         int localHi = Integer.MIN_VALUE;
 
-        while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {
-            final DataFrame frame = this.dataFrameCursor.next();
+        DataFrame frame;
+        while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

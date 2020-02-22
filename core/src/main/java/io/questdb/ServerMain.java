@@ -125,22 +125,27 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
+        final MessageBus messageBus = new MessageBusImpl();
+
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
+        workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
         final HttpServer httpServer = HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
-                cairoEngine
+                cairoEngine,
+                messageBus
         );
 
         final PGWireServer pgWireServer = PGWireServer.create(
                 configuration.getPGWireConfiguration(),
                 workerPool,
                 log,
-                cairoEngine
+                cairoEngine,
+                messageBus
         );
 
         final AbstractLineProtoReceiver lineProtocolReceiver;
@@ -159,7 +164,7 @@ public class ServerMain {
             );
         }
 
-        startQuestDb(workerPool, lineProtocolReceiver, log, cairoEngine);
+        startQuestDb(workerPool, lineProtocolReceiver, log);
 
         if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
             // suppress HUP signal
@@ -172,23 +177,6 @@ public class ServerMain {
             shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
             System.err.println(new Date() + " QuestDB is down");
         }));
-    }
-
-    protected void startQuestDb(final WorkerPool workerPool, final AbstractLineProtoReceiver lineProtocolReceiver,
-                                final Log log, final CairoEngine cairoEngine) {
-        workerPool.start(log);
-        lineProtocolReceiver.start();
-    }
-
-    protected void shutdownQuestDb(final WorkerPool workerPool, final CairoEngine cairoEngine,
-                                   final HttpServer httpServer, final PGWireServer pgWireServer,
-                                   final AbstractLineProtoReceiver lineProtocolReceiver) {
-        lineProtocolReceiver.halt();
-        workerPool.halt();
-        Misc.free(pgWireServer);
-        Misc.free(httpServer);
-        Misc.free(cairoEngine);
-        Misc.free(lineProtocolReceiver);
     }
 
     public static void main(String[] args) throws Exception {
@@ -363,6 +351,29 @@ public class ServerMain {
 
     static void delete(File file) {
         deleteOrException(file);
+    }
+
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final Log log
+    ) {
+        workerPool.start(log);
+        lineProtocolReceiver.start();
+    }
+
+    protected void shutdownQuestDb(final WorkerPool workerPool,
+                                   final CairoEngine cairoEngine,
+                                   final HttpServer httpServer,
+                                   final PGWireServer pgWireServer,
+                                   final AbstractLineProtoReceiver lineProtocolReceiver
+    ) {
+        lineProtocolReceiver.halt();
+        workerPool.halt();
+        Misc.free(pgWireServer);
+        Misc.free(httpServer);
+        Misc.free(cairoEngine);
+        Misc.free(lineProtocolReceiver);
     }
 
     private String getVersion() throws IOException {
