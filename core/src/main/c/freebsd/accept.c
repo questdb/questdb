@@ -22,30 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+#include <jni.h>
+#include <unistd.h>
+#include <sys/socket.h>
 
-import io.questdb.std.Os;
-
-public class IODispatchers {
-
-    private IODispatchers() {
-    }
-
-    public static <C extends IOContext> IODispatcher<C> create(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
-    ) {
-        switch (Os.type) {
-            case Os.LINUX_AMD64:
-            case Os.LINUX_ARM64:
-                return new IODispatcherLinux<>(configuration, ioContextFactory);
-            case Os.OSX:
-            case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory);
-            case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory);
-            default:
-                throw new RuntimeException();
-        }
-    }
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return shutdown((int) fd, SHUT_RDWR);
 }
