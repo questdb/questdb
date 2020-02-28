@@ -257,20 +257,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReusePort
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
-#ifdef __APPLE__
     return set_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY, noDelay);
-#else
-    return set_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY, noDelay);
-#endif
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd) {
-#ifdef __APPLE__
     return get_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY);
-#else
-    return get_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY);
-#endif
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEwouldblock

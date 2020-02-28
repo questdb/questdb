@@ -22,30 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+#define _GNU_SOURCE
 
-import io.questdb.std.Os;
+#include <string.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <pthread_np.h>
+#include "../share/os.h"
 
-public class IODispatchers {
-
-    private IODispatchers() {
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
+        (JNIEnv *e, jclass cl, jint cpu) {
+    cpuset_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset_t), &set);
+    if (rc != 0) {
+     fprintf(stderr, "Failed to set affinity to cpu %d, got errno %d: %s", cpu, errno, strerror(errno));
     }
-
-    public static <C extends IOContext> IODispatcher<C> create(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
-    ) {
-        switch (Os.type) {
-            case Os.LINUX_AMD64:
-            case Os.LINUX_ARM64:
-                return new IODispatcherLinux<>(configuration, ioContextFactory);
-            case Os.OSX:
-            case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory);
-            case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory);
-            default:
-                throw new RuntimeException();
-        }
-    }
+    return rc;
 }
+
