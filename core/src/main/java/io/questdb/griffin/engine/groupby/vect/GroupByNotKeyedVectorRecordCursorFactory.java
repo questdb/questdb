@@ -24,29 +24,92 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.tasks.VectorAggregateTask;
 
 public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
+    private final ObjList<VectorAggregateFunction> vafList;
+    private final ObjectPool<VectorAggregateEntry> entryPool = new ObjectPool<>(VectorAggregateEntry::new, 64);
+    private final ObjList<VectorAggregateEntry> activeEntries = new ObjList<>();
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final RecordMetadata metadata;
+    private final GroupByNotKeyedVectorRecordCursor cursor;
 
-    public GroupByNotKeyedVectorRecordCursorFactory(RecordCursorFactory base) {
+    public GroupByNotKeyedVectorRecordCursorFactory(
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            ObjList<VectorAggregateFunction> vafList
+    ) {
         this.base = base;
+        this.metadata = metadata;
+        this.vafList = vafList;
+        this.cursor = new GroupByNotKeyedVectorRecordCursor(vafList);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final MessageBus bus = executionContext.getMessageBus();
+        assert bus != null;
+
         final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        final int vafCount = vafList.size();
+        final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
+        final Sequence pubSeq = bus.getVectorAggregatePubSequence();
+
+        this.entryPool.clear();
+        int counter = 0;
+
         PageFrame frame;
         while ((frame = cursor.next()) != null) {
-
+            for (int i = 0; i < vafCount; i++) {
+                final VectorAggregateFunction vaf = vafList.getQuick(i);
+                final int columnIndex = vaf.getColumnIndex();
+                final long pageAddress = frame.getPageAddress(columnIndex);
+                final long pageValueCount = frame.getPageValueCount(columnIndex);
+                long seq = pubSeq.next();
+                if (seq < 0) {
+                    // diy the func
+                    // vaf need to know which column it is hitting int he frame and will need to
+                    // aggregate between frames until done
+                    vaf.aggregate(pageAddress, pageValueCount);
+                } else {
+                    final VectorAggregateEntry entry = entryPool.next();
+                    entry.of(counter++, vaf, pageAddress, pageValueCount, doneLatch);
+                    activeEntries.add(entry);
+                    queue.get(seq).entry = entry;
+                    pubSeq.done(seq);
+                }
+            }
         }
-        return null;
+
+        // all done? great start consuming the queue we just published
+        // how do we get to the end? If we consume our own queue there is chance we will be consuming
+        // aggregation tasks not related to this execution (we work in concurrent environment)
+        // To deal with that we need to have our own checklist.
+
+        // start at the back to reduce chance of clashing
+        for (int i = activeEntries.size() - 1; i > -1; i--) {
+            activeEntries.getQuick(i).run();
+        }
+
+        doneLatch.await(counter);
+
+        this.cursor.toTop();
+
+        return this.cursor;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return null;
+        return metadata;
     }
 
     @Override
@@ -54,7 +117,37 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         return false;
     }
 
-    private interface VectorAggregateFunction {
+    private static class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {
+        private final Record recordA;
+        private int countDown = 1;
 
+        public GroupByNotKeyedVectorRecordCursor(ObjList<? extends Function> functions) {
+            this.recordA = new VirtualRecordNoRowid(functions);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return recordA;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return countDown-- > 0;
+        }
+
+
+        @Override
+        public void toTop() {
+            countDown = 1;
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
     }
 }

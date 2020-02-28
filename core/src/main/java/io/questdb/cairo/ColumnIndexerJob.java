@@ -25,14 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.tasks.ColumnIndexerTask;
 
 public class ColumnIndexerJob implements Job {
-    private final RingQueue<ColumnIndexerScope> queue;
+    private final RingQueue<ColumnIndexerTask> queue;
     private final Sequence subSeq;
 
     public ColumnIndexerJob(MessageBus messageBus) {
@@ -47,7 +47,7 @@ public class ColumnIndexerJob implements Job {
             return false;
         }
 
-        final ColumnIndexerScope queueItem = queue.get(cursor);
+        final ColumnIndexerTask queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;
         final long lo = queueItem.lo;

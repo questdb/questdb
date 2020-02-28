@@ -31,63 +31,36 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * Single owner count down latch. This latch is mutable and it does not actively
  */
-public class SOCountDownLatch implements CountDownLatchSPI {
+public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
     private static final long VALUE_OFFSET;
 
     static {
-        VALUE_OFFSET = Unsafe.getFieldOffset(SOCountDownLatch.class, "count");
+        VALUE_OFFSET = Unsafe.getFieldOffset(SOUnboundedCountDownLatch.class, "count");
     }
 
     private volatile int count = 0;
     private volatile Thread waiter = null;
+    private volatile int target = 0;
 
-    public SOCountDownLatch(int count) {
-        this.count = count;
+    public SOUnboundedCountDownLatch() {
     }
 
-    public SOCountDownLatch() {
-    }
-
-    public void await() {
+    public void await(int count) {
+        this.target = -count;
         this.waiter = Thread.currentThread();
-        while (getCount() > 0) {
+        while (this.count > -count) {
             LockSupport.park();
-        }
-    }
-
-    public boolean await(long nanos) {
-        this.waiter = Thread.currentThread();
-        if (getCount() == 0) {
-            return true;
-        }
-
-        while (true) {
-            long deadline = System.nanoTime() + nanos;
-            LockSupport.parkNanos(nanos);
-
-            if (System.nanoTime() < deadline) {
-                // this could be spurious wakeup, ignore if count is non-zero
-                if (getCount() == 0) {
-                    return true;
-                }
-            } else {
-                return false;
-            }
         }
     }
 
     @Override
     public void countDown() {
         do {
-            int current = getCount();
-
-            if (current < 1) {
-                break;
-            }
+            int current = this.count;
 
             int next = current - 1;
             if (Unsafe.cas(this, VALUE_OFFSET, current, next)) {
-                if (next == 0) {
+                if (next <= target) {
                     unparkWaiter();
                 }
                 break;
@@ -95,12 +68,8 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         } while (true);
     }
 
-    public int getCount() {
-        return count;
-    }
-
-    public void setCount(int count) {
-        this.count = count;
+    public void reset() {
+        count = 0;
     }
 
     private void unparkWaiter() {

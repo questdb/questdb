@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -41,6 +40,7 @@ import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnIndexerTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2255,7 +2255,7 @@ public class TableWriter implements Closeable {
         indexLatch.setCount(indexCount);
         final int nParallelIndexes = indexCount - 1;
         final Sequence indexPubSequence = this.messageBus.getIndexerPubSequence();
-        final RingQueue<ColumnIndexerScope> indexerQueue = this.messageBus.getIndexerQueue();
+        final RingQueue<ColumnIndexerTask> indexerQueue = this.messageBus.getIndexerQueue();
 
         LOG.info().$("parallel indexing [indexCount=").$(indexCount).$(']').$();
         int serialIndexCount = 0;
@@ -2285,7 +2285,7 @@ public class TableWriter implements Closeable {
                 } while (cursor < 0);
             }
 
-            final ColumnIndexerScope queueItem = indexerQueue.get(cursor);
+            final ColumnIndexerTask queueItem = indexerQueue.get(cursor);
             final ColumnIndexer indexer = denseIndexers.getQuick(i);
             final long sequence = indexer.getSequence();
             queueItem.indexer = indexer;

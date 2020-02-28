@@ -22,23 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.tasks;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.cairo.ColumnIndexer;
+import io.questdb.mp.SOCountDownLatch;
 
-public interface MessageBus {
-    Sequence getIndexerPubSequence();
-
-    RingQueue<ColumnIndexerTask> getIndexerQueue();
-
-    Sequence getIndexerSubSequence();
-
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
-
-    Sequence getVectorAggregatePubSequence();
-
-    Sequence getVectorAggregateSubSequence();
+public class ColumnIndexerTask {
+    public ColumnIndexer indexer;
+    public long lo;
+    public long hi;
+    public SOCountDownLatch countDownLatch;
+    public long sequence;
 }

@@ -22,23 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.mp;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
-
-public interface MessageBus {
-    Sequence getIndexerPubSequence();
-
-    RingQueue<ColumnIndexerTask> getIndexerQueue();
-
-    Sequence getIndexerSubSequence();
-
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
-
-    Sequence getVectorAggregatePubSequence();
-
-    Sequence getVectorAggregateSubSequence();
+public interface CountDownLatchSPI {
+    void countDown();
 }

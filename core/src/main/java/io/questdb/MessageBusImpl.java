@@ -24,33 +24,53 @@
 
 package io.questdb;
 
-import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.VectorAggregateTask;
 
 public class MessageBusImpl implements MessageBus {
-    private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
-    private final MPSequence pubSeq = new MPSequence(queue.getCapacity());
-    private final MCSequence subSeq = new MCSequence(queue.getCapacity());
+    private final RingQueue<ColumnIndexerTask> indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
+    private final MPSequence indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
+    private final MCSequence indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
+
+    private final RingQueue<VectorAggregateTask> vectorAggregaterQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
+    private final MPSequence vectorAggregatePubSeq = new MPSequence(vectorAggregaterQueue.getCapacity());
+    private final MCSequence vectorAggregateSubSeq = new MCSequence(vectorAggregaterQueue.getCapacity());
 
     public MessageBusImpl() {
-        this.pubSeq.then(this.subSeq).then(this.pubSeq);
+        this.indexerPubSeq.then(this.indexerSubSeq).then(this.indexerPubSeq);
     }
 
     @Override
     public Sequence getIndexerPubSequence() {
-        return pubSeq;
+        return indexerPubSeq;
     }
 
     @Override
-    public RingQueue<ColumnIndexerScope> getIndexerQueue() {
-        return queue;
+    public RingQueue<ColumnIndexerTask> getIndexerQueue() {
+        return indexerQueue;
     }
 
     @Override
     public Sequence getIndexerSubSequence() {
-        return subSeq;
+        return indexerSubSeq;
+    }
+
+    @Override
+    public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
+        return vectorAggregaterQueue;
+    }
+
+    @Override
+    public Sequence getVectorAggregatePubSequence() {
+        return vectorAggregatePubSeq;
+    }
+
+    @Override
+    public Sequence getVectorAggregateSubSequence() {
+        return vectorAggregateSubSeq;
     }
 }

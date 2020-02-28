@@ -22,23 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.cairo.sql.Function;
 
-public interface MessageBus {
-    Sequence getIndexerPubSequence();
+public interface VectorAggregateFunction extends Function {
+    int getColumnIndex();
 
-    RingQueue<ColumnIndexerTask> getIndexerQueue();
-
-    Sequence getIndexerSubSequence();
-
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
-
-    Sequence getVectorAggregatePubSequence();
-
-    Sequence getVectorAggregateSubSequence();
+    void aggregate(long address, long count);
 }

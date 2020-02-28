@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql.scopes;
+package io.questdb.tasks;
 
-import io.questdb.cairo.ColumnIndexer;
-import io.questdb.mp.SOCountDownLatch;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 
-public class ColumnIndexerScope {
-    public ColumnIndexer indexer;
-    public long lo;
-    public long hi;
-    public SOCountDownLatch countDownLatch;
-    public long sequence;
+public class VectorAggregateTask {
+    public VectorAggregateEntry entry;
 }

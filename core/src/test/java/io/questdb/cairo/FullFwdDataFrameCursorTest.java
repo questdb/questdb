@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.scopes.ColumnIndexerScope;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -35,6 +34,8 @@ import io.questdb.std.microtime.DateFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -2430,7 +2431,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     final static class MyWorkScheduler implements MessageBus {
-        private final RingQueue<ColumnIndexerScope> queue = new RingQueue<>(ColumnIndexerScope::new, 1024);
+        private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
 
@@ -2453,13 +2454,28 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public RingQueue<ColumnIndexerScope> getIndexerQueue() {
+        public RingQueue<ColumnIndexerTask> getIndexerQueue() {
             return queue;
         }
 
         @Override
         public Sequence getIndexerSubSequence() {
             return subSeq;
+        }
+
+        @Override
+        public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
+            return null;
+        }
+
+        @Override
+        public Sequence getVectorAggregatePubSequence() {
+            return null;
+        }
+
+        @Override
+        public Sequence getVectorAggregateSubSequence() {
+            return null;
         }
     }
 }
