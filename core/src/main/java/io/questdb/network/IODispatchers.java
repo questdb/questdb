@@ -40,7 +40,6 @@ public class IODispatchers {
             case Os.LINUX_ARM64:
                 return new IODispatcherLinux<>(configuration, ioContextFactory);
             case Os.OSX:
-            case Os.FREEBSD:
                 return new IODispatcherOsx<>(configuration, ioContextFactory);
             case Os.WINDOWS:
                 return new IODispatcherWindows<>(configuration, ioContextFactory);

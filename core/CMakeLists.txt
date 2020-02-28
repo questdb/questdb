@@ -33,7 +33,6 @@ set(
 include_directories($ENV{JAVA_HOME}/include/)
 
 if (APPLE)
-    MESSAGE("Building for Darwin")
     include_directories($ENV{JAVA_HOME}/include/darwin/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
     set(
@@ -44,40 +43,21 @@ if (APPLE)
             src/main/c/osx/accept.c
     )
 elseif (UNIX)
-    EXEC_PROGRAM(uname OUTPUT_VARIABLE SYSTEM_NAME)
-    SET(SYSTEM_NAME "${SYSTEM_NAME}" CACHE INTERNAL "")
-
-    if (SYSTEM_NAME STREQUAL "FreeBSD")
-        MESSAGE("Building for FreeBSD")
-        include_directories($ENV{JAVA_HOME}/include/freebsd/)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/freebsd)
-        set(
-            SOURCE_FILES ${SOURCE_FILES}
-            src/main/c/freebsd/kqueue.c
-            src/main/c/share/net.c
-            src/main/c/freebsd/affinity.c
-            src/main/c/freebsd/accept.c
-        )
-    else (SYSTEM_NAME STREQUAL "FreeBSD")
-        MESSAGE("Building for GNU/Linux")
-        include_directories($ENV{JAVA_HOME}/include/linux/)
-        message(${CMAKE_SYSTEM_PROCESSOR})
-        if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/armlinux)
-            set(AARCH64 1)
-        else ()
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
-        endif ()
-        set(
+    include_directories($ENV{JAVA_HOME}/include/linux/)
+    message(${CMAKE_SYSTEM_PROCESSOR})
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/armlinux)
+        set(AARCH64 1)
+    else ()
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+    endif ()
+    set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
             src/main/c/linux/epoll.c
             src/main/c/linux/recvmmsg.c
             src/main/c/linux/affinity.c
-            src/main/c/linux/accept.c
-            )
-
-    endif (SYSTEM_NAME STREQUAL "FreeBSD")
+            src/main/c/linux/accept.c)
 endif (APPLE)
 
 if (WIN32)

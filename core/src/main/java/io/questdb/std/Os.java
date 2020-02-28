@@ -43,7 +43,6 @@ public final class Os {
     public static final int OSX = 1;
     public static final int LINUX_AMD64 = 2;
     public static final int LINUX_ARM64 = 4;
-    public static final int FREEBSD = 5;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     static {
@@ -58,14 +57,11 @@ public final class Os {
                     loadLib("/binaries/linux/libquestdb.so");
                 }
             } else if (osName.contains("Mac")) {
-                type = OSX; // darwin
+                type = OSX;
                 loadLib("/binaries/osx/libquestdb.dylib");
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/binaries/windows/libquestdb.dll");
-             } else if (osName.contains("FreeBSD")) {
-                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/binaries/freebsd/libquestdb.so");
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }

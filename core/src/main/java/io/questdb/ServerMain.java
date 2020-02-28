@@ -116,9 +116,6 @@ public class ServerMain {
             case Os.LINUX_ARM64:
                 System.out.println("OS: linux-arm64");
                 break;
-            case Os.FREEBSD:
-                System.out.println("OS: freebsd-amd64");
-                break;
             default:
                 System.err.println("Unsupported OS");
                 break;
