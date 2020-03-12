@@ -1110,6 +1110,21 @@ public class SqlCodeGenerator {
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
+            if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
+                ExpressionNode tableName = model.getNestedModel().getNestedModel().getTableName();
+                TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName.token);
+                CharSequence columnName = model.getColumnNames().get(0);
+                int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+                int columnType = reader.getMetadata().getColumnType(columnIndex);
+                if (columnType == ColumnType.SYMBOL) {
+                    return new DistinctSymbolRecordCursorFactory(
+                            factory,
+                            entityColumnFilter,
+                            reader,
+                            columnName
+                    );
+                }
+            }
             return new DistinctRecordCursorFactory(
                     configuration,
                     factory,
