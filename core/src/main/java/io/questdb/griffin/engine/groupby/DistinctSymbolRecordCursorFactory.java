@@ -24,29 +24,34 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
-    private final RecordMetadata metadata;
-    private final TableReader reader;
-    private final CharSequence columnName;
+    private final CairoEngine engine;
+    private final GenericRecordMetadata metadata;
+    private final CharSequence tableName;
+    private final int columnIndex;
+    private final long tableVersion;
 
     public DistinctSymbolRecordCursorFactory(
-            RecordCursorFactory base,
-            EntityColumnFilter columnFilter,
-            TableReader reader,
-            CharSequence columnName) {
-        final RecordMetadata metadata = base.getMetadata();
-        columnFilter.of(metadata.getColumnCount());
+            final CairoEngine engine,
+            final GenericRecordMetadata metadata,
+            final CharSequence tableName,
+            final int columnIndex,
+            final long tableVersion) {
+        this.engine = engine;
         this.metadata = metadata;
+        this.tableName = tableName;
+        this.columnIndex = columnIndex;
+        this.tableVersion = tableVersion;
         this.cursor = new DistinctSymbolRecordCursor();
-        this.reader = reader;
-        this.columnName = columnName;
     }
 
     @Override
@@ -55,7 +60,10 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.of(reader, columnName);
+        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion);
+        CharSequence columnName = reader.getMetadata().getColumnName(columnIndex);
+        int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        cursor.of(reader, columnIndex);
         return cursor;
     }
 
@@ -81,10 +89,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void close() {
-            if (reader != null) {
-                reader.close();
-                reader = null;
-            }
+            Misc.free(reader);
         }
 
         @Override
@@ -121,8 +126,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             recordA.recordIndex = -1;
         }
 
-        public void of(TableReader reader, CharSequence columnName) {
-            int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+        public void of(TableReader reader, int columnIndex) {
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
             this.numberOfSymbols = symbolMapReader.size();
             this.reader = reader;

@@ -1108,30 +1108,45 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+
+        if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
+            ExpressionNode tableNameExpressionNode = model.getNestedModel().getNestedModel().getTableName();
+            CharSequence tableName = tableNameExpressionNode.token;
+            TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+            CharSequence columnName = model.getColumnNames().get(0);
+            RecordMetadata readerMetadata = reader.getMetadata();
+            int columnIndex = readerMetadata.getColumnIndex(columnName);
+            int columnType = readerMetadata.getColumnType(columnIndex);
+            if (columnType == ColumnType.SYMBOL) {
+                final GenericRecordMetadata disticntSymbolMetadata = new GenericRecordMetadata();
+                long tableVersion = reader.getVersion();
+                disticntSymbolMetadata.add(
+                        new TableColumnMetadata(
+                                Chars.toString(columnName),
+                                readerMetadata.getColumnType(columnIndex),
+                                readerMetadata.isColumnIndexed(columnIndex),
+                                readerMetadata.getIndexValueBlockCapacity(columnIndex),
+                                readerMetadata.isSymbolTableStatic(columnIndex)
+                        )
+                );
+                reader.close();
+                return new DistinctSymbolRecordCursorFactory(
+                        engine,
+                        disticntSymbolMetadata,
+                        tableName,
+                        columnIndex,
+                        tableVersion
+                );
+            }
+        }
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
-            if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
-                ExpressionNode tableName = model.getNestedModel().getNestedModel().getTableName();
-                TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName.token);
-                CharSequence columnName = model.getColumnNames().get(0);
-                int columnIndex = reader.getMetadata().getColumnIndex(columnName);
-                int columnType = reader.getMetadata().getColumnType(columnIndex);
-                if (columnType == ColumnType.SYMBOL) {
-                    return new DistinctSymbolRecordCursorFactory(
-                            factory,
-                            entityColumnFilter,
-                            reader,
-                            columnName
-                    );
-                }
-            }
             return new DistinctRecordCursorFactory(
                     configuration,
                     factory,
                     entityColumnFilter,
                     asm
             );
-
         } catch (CairoException e) {
             factory.close();
             throw e;
