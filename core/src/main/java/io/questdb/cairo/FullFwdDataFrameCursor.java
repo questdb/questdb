@@ -47,10 +47,6 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
         return null;
     }
 
-    @Override
-    public long size() {
-        return reader.size();
-    }
 
     @Override
     public void toTop() {

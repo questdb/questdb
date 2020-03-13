@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import org.jetbrains.annotations.Nullable;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
     private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
@@ -50,5 +50,75 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+        return null;
+    }
+
+    @Override
+    public boolean supportPageFrameCursor() {
+        return true;
+    }
+
+    private static class TableReaderPageFrameCursor implements PageFrameCursor {
+        private TableReader reader;
+
+
+        @Override
+        public void close() {
+
+        }
+
+        @Override
+        public @Nullable PageFrame next() {
+
+//            double result = 0;
+//            for (int i = 0; i < partitionCount; i++) {
+//                openPartition(i);
+//                final int base = getColumnBase(i);
+//                final int index = getPrimaryColumnIndex(base, columnIndex);
+//                final ReadOnlyColumn column = columns.getQuick(index);
+//                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+//                    long a = column.getPageAddress(pageIndex);
+//                    long count = column.getPageSize(pageIndex) / Double.BYTES;
+//                    result += Vect.sumDouble(a, count);
+//                }
+//            }
+//
+//            return result;
+//
+
+            return null;
+        }
+
+        @Override
+        public void toTop() {
+
+        }
+
+        @Override
+        public long size() {
+            return reader.size();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndex);
+        }
+    }
+
+    private static class TableReaderPageFrame implements PageFrame {
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getPageValueCount(int columnIndex) {
+            return 0;
+        }
     }
 }

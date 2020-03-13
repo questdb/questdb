@@ -77,11 +77,16 @@ public class SqlUtil {
         return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }
 
-    static CharSequence createColumnAlias(CharacterStore store, CharSequence base, int indexOfDot, CharSequenceIntHashMap nameTypeMap) {
+    static CharSequence createColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            int indexOfDot,
+            CharSequenceObjHashMap<QueryColumn> aliasToColumnMap
+    ) {
         final boolean disallowed = disallowedAliases.contains(base);
 
         // short and sweet version
-        if (indexOfDot == -1 && !disallowed && nameTypeMap.excludes(base)) {
+        if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
             return base;
         }
 
@@ -107,7 +112,7 @@ public class SqlUtil {
             }
             sequence++;
             CharSequence alias = characterStoreEntry.toImmutable();
-            if (nameTypeMap.excludes(alias)) {
+            if (aliasToColumnMap.excludes(alias)) {
                 return alias;
             }
         }

@@ -70,6 +70,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
+        clear();
         this.type = type;
         this.precedence = precedence;
         this.token = token;

@@ -49,14 +49,6 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 
 public class SqlCodeGenerator {
     private static final IntHashSet limitTypes = new IntHashSet();
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
-    }
-
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -72,7 +64,6 @@ public class SqlCodeGenerator {
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjList<CharSequence> symbolValueList = new ObjList<>();
     private boolean fullFatJoins = false;
-
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
@@ -595,70 +586,6 @@ public class SqlCodeGenerator {
         }
     }
 
-    private void validateBothTimestamps(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
-        if (masterMetadata.getTimestampIndex() == -1) {
-            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
-        }
-
-        if (slaveMetadata.getTimestampIndex() == -1) {
-            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
-        }
-    }
-
-    private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        ExpressionNode limitLo = model.getLimitLo();
-        ExpressionNode limitHi = model.getLimitHi();
-
-        if (limitLo == null && limitHi == null) {
-            return factory;
-        }
-
-        final Function loFunc;
-        final Function hiFunc;
-
-        if (limitLo == null) {
-            loFunc = new LongConstant(0, 0L);
-        } else {
-            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
-            final int type = loFunc.getType();
-            if (limitTypes.excludes(type)) {
-                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
-            }
-        }
-
-        if (limitHi != null) {
-            hiFunc = functionParser.parseFunction(limitHi, EmptyRecordMetadata.INSTANCE, executionContext);
-            final int type = hiFunc.getType();
-            if (limitTypes.excludes(type)) {
-                throw SqlException.$(limitHi.position, "invalid type: ").put(ColumnType.nameOf(type));
-            }
-        } else {
-            hiFunc = null;
-        }
-        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
-    }
-
-    private RecordCursorFactory generateNoSelect(
-            QueryModel model,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        ExpressionNode tableName = model.getTableName();
-        if (tableName != null) {
-            if (tableName.type == FUNCTION) {
-                return generateFunctionQuery(model, executionContext);
-            } else {
-                return generateTableQuery(model, executionContext);
-            }
-        }
-
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        final ExpressionNode filter = model.getWhereClause();
-        if (filter != null) {
-            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
-        }
-        return factory;
-    }
-
     @NotNull
     private RecordCursorFactory generateLatestByQuery(
             QueryModel model,
@@ -721,19 +648,19 @@ public class SqlCodeGenerator {
                             } else {
                                 rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
                             }
-                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, false, null);
+                            return new DataFrameRecordCursorFactory(metadata, dataFrameCursorFactory, rcf, false, null);
                         }
 
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                             return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
-                                    copyMetadata(metadata),
+                                    metadata,
                                     dataFrameCursorFactory,
                                     latestByIndex,
                                     Chars.toString(symbolValue),
                                     filter);
                         }
                         return new LatestByValueIndexedFilteredRecordCursorFactory(
-                                copyMetadata(metadata),
+                                metadata,
                                 dataFrameCursorFactory,
                                 latestByIndex,
                                 symbol,
@@ -743,8 +670,7 @@ public class SqlCodeGenerator {
 
                     return new LatestByValuesIndexedFilteredRecordCursorFactory(
                             configuration,
-                            // todo: check if metadata copy is needed here
-                            copyMetadata(metadata),
+                            metadata,
                             dataFrameCursorFactory,
                             latestByIndex,
                             intrinsicModel.keyValues,
@@ -761,7 +687,7 @@ public class SqlCodeGenerator {
                 if (nKeyValues > 1) {
                     return new LatestByValuesFilteredRecordCursorFactory(
                             configuration,
-                            copyMetadata(metadata),
+                            metadata,
                             dataFrameCursorFactory,
                             latestByIndex,
                             intrinsicModel.keyValues,
@@ -774,7 +700,7 @@ public class SqlCodeGenerator {
                 int symbolKey = symbolMapReader.keyOf(intrinsicModel.keyValues.get(0));
                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                     return new LatestByValueDeferredFilteredRecordCursorFactory(
-                            copyMetadata(metadata),
+                            metadata,
                             dataFrameCursorFactory,
                             latestByIndex,
                             Chars.toString(intrinsicModel.keyValues.get(0)),
@@ -782,7 +708,7 @@ public class SqlCodeGenerator {
                     );
                 }
 
-                return new LatestByValueFilteredRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, latestByIndex, symbolKey, filter);
+                return new LatestByValueFilteredRecordCursorFactory(metadata, dataFrameCursorFactory, latestByIndex, symbolKey, filter);
             }
             // we select all values of "latest by" column
 
@@ -792,7 +718,7 @@ public class SqlCodeGenerator {
             if (indexed) {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
-                        copyMetadata(metadata),
+                        metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
                         filter);
@@ -800,13 +726,173 @@ public class SqlCodeGenerator {
         }
 
         return new LatestByAllFilteredRecordCursorFactory(
-                copyMetadata(metadata),
+                metadata,
                 configuration,
                 dataFrameCursorFactory,
                 RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
                 keyTypes,
                 filter
         );
+    }
+
+    private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        ExpressionNode limitLo = model.getLimitLo();
+        ExpressionNode limitHi = model.getLimitHi();
+
+        if (limitLo == null && limitHi == null) {
+            return factory;
+        }
+
+        final Function loFunc;
+        final Function hiFunc;
+
+        if (limitLo == null) {
+            loFunc = new LongConstant(0, 0L);
+        } else {
+            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
+            final int type = loFunc.getType();
+            if (limitTypes.excludes(type)) {
+                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
+            }
+        }
+
+        if (limitHi != null) {
+            hiFunc = functionParser.parseFunction(limitHi, EmptyRecordMetadata.INSTANCE, executionContext);
+            final int type = hiFunc.getType();
+            if (limitTypes.excludes(type)) {
+                throw SqlException.$(limitHi.position, "invalid type: ").put(ColumnType.nameOf(type));
+            }
+        } else {
+            hiFunc = null;
+        }
+        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+    }
+
+    private RecordCursorFactory generateNoSelect(
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ExpressionNode tableName = model.getTableName();
+        if (tableName != null) {
+            if (tableName.type == FUNCTION) {
+                return generateFunctionQuery(model, executionContext);
+            } else {
+                return generateTableQuery(model, executionContext);
+            }
+        }
+
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        final ExpressionNode filter = model.getWhereClause();
+        if (filter != null) {
+            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
+        }
+        return factory;
+    }
+
+    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
+        if (recordCursorFactory.followedOrderByAdvice()) {
+            return recordCursorFactory;
+        }
+        try {
+            final CharSequenceIntHashMap orderBy = model.getOrderHash();
+            final ObjList<CharSequence> columnNames = orderBy.keys();
+            final int size = columnNames.size();
+
+            if (size > 0) {
+
+                final RecordMetadata metadata = recordCursorFactory.getMetadata();
+                listColumnFilterA.clear();
+                intHashSet.clear();
+
+                // column index sign indicates direction
+                // therefore 0 index is not allowed
+                for (int i = 0; i < size; i++) {
+                    final CharSequence column = columnNames.getQuick(i);
+                    int index = metadata.getColumnIndexQuiet(column);
+
+                    // check if column type is supported
+                    if (metadata.getColumnType(index) == ColumnType.BINARY) {
+                        // find position of offending column
+
+                        ObjList<ExpressionNode> nodes = model.getOrderBy();
+                        int position = 0;
+                        for (int j = 0, y = nodes.size(); j < y; j++) {
+                            if (Chars.equals(column, nodes.getQuick(i).token)) {
+                                position = nodes.getQuick(i).position;
+                                break;
+                            }
+                        }
+                        throw SqlException.$(position, "unsupported column type: ").put(ColumnType.nameOf(metadata.getColumnType(index)));
+                    }
+
+                    // we also maintain unique set of column indexes for better performance
+                    if (intHashSet.add(index)) {
+                        if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                            listColumnFilterA.add(-index - 1);
+                        } else {
+                            listColumnFilterA.add(index + 1);
+                        }
+                    }
+                }
+
+                // if first column index is the same as timestamp of underling record cursor factory
+                // we could have two possibilities:
+                // 1. if we only have one column to order by - the cursor would already be ordered
+                //    by timestamp; we have nothing to do
+                // 2. metadata of the new cursor will have timestamp
+
+                RecordMetadata orderedMetadata;
+                if (metadata.getTimestampIndex() == -1) {
+                    orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                } else {
+                    int index = metadata.getColumnIndexQuiet(columnNames.getQuick(0));
+                    if (index == metadata.getTimestampIndex()) {
+
+                        if (size == 1) {
+                            return recordCursorFactory;
+                        }
+
+                        orderedMetadata = copyMetadata(metadata);
+
+                    } else {
+                        orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                    }
+                }
+
+                if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
+                    return new SortedLightRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            recordCursorFactory,
+                            recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                    );
+                }
+
+                // when base record cursor does not support random access
+                // we have to copy entire record into ordered structure
+
+                entityColumnFilter.of(orderedMetadata.getColumnCount());
+
+                return new SortedRecordCursorFactory(
+                        configuration,
+                        orderedMetadata,
+                        recordCursorFactory,
+                        orderedMetadata,
+                        RecordSinkFactory.getInstance(
+                                asm,
+                                orderedMetadata,
+                                entityColumnFilter,
+                                false
+                        ),
+                        recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                );
+            }
+
+            return recordCursorFactory;
+        } catch (SqlException | CairoException e) {
+            recordCursorFactory.close();
+            throw e;
+        }
     }
 
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
@@ -1058,7 +1144,7 @@ public class SqlCodeGenerator {
                 QueryColumn qc = model.getColumns().getQuick(i);
                 if (
                         !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
-                                qc.getAlias() != null
+                                qc.getAlias() != null && !(Chars.equals(qc.getAlias(), qc.getAst().token))
                 ) {
                     entity = false;
                     break;
@@ -1301,112 +1387,6 @@ public class SqlCodeGenerator {
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
-    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
-        if (recordCursorFactory.followedOrderByAdvice()) {
-            return recordCursorFactory;
-        }
-        try {
-            final CharSequenceIntHashMap orderBy = model.getOrderHash();
-            final ObjList<CharSequence> columnNames = orderBy.keys();
-            final int size = columnNames.size();
-
-            if (size > 0) {
-
-                final RecordMetadata metadata = recordCursorFactory.getMetadata();
-                listColumnFilterA.clear();
-                intHashSet.clear();
-
-                // column index sign indicates direction
-                // therefore 0 index is not allowed
-                for (int i = 0; i < size; i++) {
-                    final CharSequence column = columnNames.getQuick(i);
-                    int index = metadata.getColumnIndexQuiet(column);
-
-                    // check if column type is supported
-                    if (metadata.getColumnType(index) == ColumnType.BINARY) {
-                        // find position of offending column
-
-                        ObjList<ExpressionNode> nodes = model.getOrderBy();
-                        int position = 0;
-                        for (int j = 0, y = nodes.size(); j < y; j++) {
-                            if (Chars.equals(column, nodes.getQuick(i).token)) {
-                                position = nodes.getQuick(i).position;
-                                break;
-                            }
-                        }
-                        throw SqlException.$(position, "unsupported column type: ").put(ColumnType.nameOf(metadata.getColumnType(index)));
-                    }
-
-                    // we also maintain unique set of column indexes for better performance
-                    if (intHashSet.add(index)) {
-                        if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                            listColumnFilterA.add(-index - 1);
-                        } else {
-                            listColumnFilterA.add(index + 1);
-                        }
-                    }
-                }
-
-                // if first column index is the same as timestamp of underling record cursor factory
-                // we could have two possibilities:
-                // 1. if we only have one column to order by - the cursor would already be ordered
-                //    by timestamp; we have nothing to do
-                // 2. metadata of the new cursor will have timestamp
-
-                RecordMetadata orderedMetadata;
-                if (metadata.getTimestampIndex() == -1) {
-                    orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-                } else {
-                    int index = metadata.getColumnIndexQuiet(columnNames.getQuick(0));
-                    if (index == metadata.getTimestampIndex()) {
-
-                        if (size == 1) {
-                            return recordCursorFactory;
-                        }
-
-                        orderedMetadata = copyMetadata(metadata);
-
-                    } else {
-                        orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-                    }
-                }
-
-                if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
-                    return new SortedLightRecordCursorFactory(
-                            configuration,
-                            orderedMetadata,
-                            recordCursorFactory,
-                            recordComparatorCompiler.compile(metadata, listColumnFilterA)
-                    );
-                }
-
-                // when base record cursor does not support random access
-                // we have to copy entire record into ordered structure
-
-                entityColumnFilter.of(orderedMetadata.getColumnCount());
-
-                return new SortedRecordCursorFactory(
-                        configuration,
-                        orderedMetadata,
-                        recordCursorFactory,
-                        orderedMetadata,
-                        RecordSinkFactory.getInstance(
-                                asm,
-                                orderedMetadata,
-                                entityColumnFilter,
-                                false
-                        ),
-                        recordComparatorCompiler.compile(metadata, listColumnFilterA)
-                );
-            }
-
-            return recordCursorFactory;
-        } catch (SqlException | CairoException e) {
-            recordCursorFactory.close();
-            throw e;
-        }
-    }
-
     private RecordCursorFactory generateTableQuery(
             QueryModel model,
             SqlExecutionContext executionContext
@@ -1419,6 +1399,25 @@ public class SqlCodeGenerator {
                 model.getTableName().token,
                 model.getTableVersion())
         ) {
+            // use top down columns to create metadata
+//            final ObjList<QueryColumn> columns = model.getTopDownColumns();
+//            final int columnCount = columns.size();
+//            assert columnCount > 0;
+//            final RecordMetadata readerMetadata = reader.getMetadata();
+//            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+//
+//            for (int i = 0; i < columnCount; i++) {
+//                final QueryColumn col = columns.getQuick(i);
+//                final int index = readerMetadata.getColumnIndexQuiet(col.getAst().token);
+//                final CharSequence alias = col.getAlias();
+//                metadata.add(new TableColumnMetadata(
+//                   alias != null ? Chars.toString(alias) : readerMetadata.getColumnName(index),
+//                   readerMetadata.getColumnType(index),
+//                   readerMetadata.isColumnIndexed(index),
+//                   readerMetadata.getIndexValueBlockCapacity(index),
+//                   readerMetadata.isSymbolTableStatic(index)
+//                ));
+//            }
             final GenericRecordMetadata metadata = copyMetadata(reader.getMetadata());
             final int timestampIndex;
 
@@ -1655,6 +1654,7 @@ public class SqlCodeGenerator {
 
             // no where clause
             if (latestByColumnCount == 0) {
+                // we had already created metadata, which could be redundant
                 return new TableReaderRecordCursorFactory(metadata, engine, tableName, model.getTableVersion());
             }
 
@@ -1677,16 +1677,6 @@ public class SqlCodeGenerator {
                     null
             );
         }
-    }
-
-    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
@@ -1723,6 +1713,16 @@ public class SqlCodeGenerator {
             return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
         }
         return unionFactory;
+    }
+
+    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void lookupColumnIndexes(
@@ -1771,6 +1771,16 @@ public class SqlCodeGenerator {
         this.fullFatJoins = fullFatJoins;
     }
 
+    private void validateBothTimestamps(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+        if (masterMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
+        }
+
+        if (slaveMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
+        }
+    }
+
     private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
         final RecordMetadata metadata = masterFactory.getMetadata();
         final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
@@ -1800,5 +1810,12 @@ public class SqlCodeGenerator {
                     .put(": ")
                     .put(ColumnType.nameOf(firstColumnType));
         }
+    }
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
     }
 }
