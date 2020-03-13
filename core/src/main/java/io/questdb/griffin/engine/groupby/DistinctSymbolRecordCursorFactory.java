@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,6 +82,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         private TableReader reader;
         private int columnIndex;
         private int numberOfSymbols;
+        private SymbolMapReader symbolMapReader;
 
         @Override
         public void close() {
@@ -94,7 +96,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return reader.getSymbolMapReader(this.columnIndex);
+            return symbolMapReader;
         }
 
         @Override
@@ -128,7 +130,8 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         public void of(TableReader reader, int columnIndex) {
             this.reader = reader;
             this.columnIndex = columnIndex;
-            this.numberOfSymbols = reader.getSymbolMapReader(columnIndex).size();
+            this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
+            this.numberOfSymbols = symbolMapReader.size();
             this.recordA.reset();
         }
 
