@@ -1121,7 +1121,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " x ID, --increasing integer\n" +
                         " rnd_symbol('A', 'B', 'C') pair, \n" +
                         " rnd_double(0) length,\n" +
-                        " rnd_double(0) height"+
+                        " rnd_double(0) height" +
                         " from" +
                         " long_sequence(1200000)" +
                         ")",
@@ -2907,7 +2907,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected2);
     }
 
-    @Test @Ignore
+    @Test
+    @Ignore
     public void testSelectDistinct() throws Exception {
         final String expected = "a\n" +
                 "0\n" +
@@ -2939,11 +2940,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected, true);
     }
 
-    @Test @Ignore
+    @Test
     public void testSelectDistinctSymbol() throws Exception {
         final String expected = "a\n" +
                 "EHNRX\n" +
-                "\n" +
                 "BHFOW\n" +
                 "QULOF\n" +
                 "RUEDR\n" +
@@ -2962,11 +2962,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "DZJMY\n" +
                 "GETJ\n" +
                 "FBVTMH\n" +
-                "UICW\n";
+                "UICW\n" +
+                "\n";
 
         final String expected2 = "a\n" +
                 "EHNRX\n" +
-                "\n" +
                 "BHFOW\n" +
                 "QULOF\n" +
                 "RUEDR\n" +
@@ -2995,7 +2995,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "VZKE\n" +
                 "NDMRS\n" +
                 "SVNVD\n" +
-                "ILQP\n";
+                "ILQP\n" +
+                "\n";
 
         assertQuery(expected,
                 "select distinct a from x",
