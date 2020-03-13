@@ -142,7 +142,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public CharSequence getSym(int col) {
-                return getSymbolTable(0).valueOf(recordIndex);
+                return reader.getSymbolMapReader(columnIndex).valueOf(recordIndex);
             }
 
             @Override
