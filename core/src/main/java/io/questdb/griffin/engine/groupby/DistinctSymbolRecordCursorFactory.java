@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,13 +55,12 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
+        cursor.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion);
-        CharSequence columnName = reader.getMetadata().getColumnName(columnIndex);
-        int columnIndex = reader.getMetadata().getColumnIndex(columnName);
         cursor.of(reader, columnIndex);
         return cursor;
     }
@@ -79,9 +77,9 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
     private static class DistinctSymbolRecordCursor implements RecordCursor {
         private DistinctSymbolRecord recordA = new DistinctSymbolRecord();
-        private DistinctSymbolRecord recordB = new DistinctSymbolRecord();
+        private DistinctSymbolRecord recordB = null;
         private TableReader reader;
-        private SymbolMapReader symbolMapReader;
+        private int columnIndex;
         private int numberOfSymbols;
 
         DistinctSymbolRecordCursor() {
@@ -89,7 +87,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(reader);
+            reader = Misc.free(reader);
         }
 
         @Override
@@ -99,7 +97,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return symbolMapReader;
+            return reader.getSymbolMapReader(this.columnIndex);
         }
 
         @Override
@@ -113,6 +111,10 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecordB() {
+            if (recordB == null) {
+                recordB = new DistinctSymbolRecord();
+            }
+            recordB.reset();
             return recordB;
         }
 
@@ -127,54 +129,46 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         }
 
         public void of(TableReader reader, int columnIndex) {
-            this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
-            this.numberOfSymbols = symbolMapReader.size();
             this.reader = reader;
-            this.recordA.of(reader, columnIndex);
-            this.recordB.of(reader, columnIndex);
+            this.columnIndex = columnIndex;
+            this.numberOfSymbols = reader.getSymbolMapReader(columnIndex).size();
+            this.recordA.reset();
         }
 
         @Override
         public long size() {
             return numberOfSymbols;
         }
-    }
 
-    public static class DistinctSymbolRecord implements Record {
-        private int columnIndex;
-        private int recordIndex = -1;
-        private TableReader reader;
+        public class DistinctSymbolRecord implements Record {
+            private int recordIndex = -1;
 
-        @Override
-        public CharSequence getSym(int col) {
-            if (reader != null) {
-                return reader.getSymbolMapReader(columnIndex).valueOf(recordIndex);
+            @Override
+            public CharSequence getSym(int col) {
+                return getSymbolTable(0).valueOf(recordIndex);
             }
-            return null;
-        }
 
-        @Override
-        public int getInt(int col) {
-            return recordIndex;
-        }
+            @Override
+            public int getInt(int col) {
+                return recordIndex;
+            }
 
-        @Override
-        public long getRowId() {
-            return recordIndex;
-        }
+            @Override
+            public long getRowId() {
+                return recordIndex;
+            }
 
-        public void of(TableReader reader, int columnIndex) {
-            this.reader = reader;
-            this.columnIndex = columnIndex;
-            this.recordIndex = -1;
-        }
+            public void reset() {
+                this.recordIndex = -1;
+            }
 
-        public long getRecordIndex() {
-            return recordIndex;
-        }
+            public long getRecordIndex() {
+                return recordIndex;
+            }
 
-        public void incrementRecordIndex() {
-            recordIndex++;
+            public void incrementRecordIndex() {
+                recordIndex++;
+            }
         }
     }
 }

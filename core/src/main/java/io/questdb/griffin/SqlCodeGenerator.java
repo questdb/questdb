@@ -1118,9 +1118,9 @@ public class SqlCodeGenerator {
             int columnIndex = readerMetadata.getColumnIndex(columnName);
             int columnType = readerMetadata.getColumnType(columnIndex);
             if (columnType == ColumnType.SYMBOL) {
-                final GenericRecordMetadata disticntSymbolMetadata = new GenericRecordMetadata();
+                final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
                 long tableVersion = reader.getVersion();
-                disticntSymbolMetadata.add(
+                distinctSymbolMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(columnName),
                                 readerMetadata.getColumnType(columnIndex),
@@ -1132,7 +1132,7 @@ public class SqlCodeGenerator {
                 reader.close();
                 return new DistinctSymbolRecordCursorFactory(
                         engine,
-                        disticntSymbolMetadata,
+                        distinctSymbolMetadata,
                         tableName,
                         columnIndex,
                         tableVersion
