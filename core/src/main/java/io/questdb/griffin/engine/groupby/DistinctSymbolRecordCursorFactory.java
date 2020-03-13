@@ -82,9 +82,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         private int columnIndex;
         private int numberOfSymbols;
 
-        DistinctSymbolRecordCursor() {
-        }
-
         @Override
         public void close() {
             reader = Misc.free(reader);
