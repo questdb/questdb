@@ -2940,7 +2940,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected, true);
     }
 
-    @Test
+    @Test @Ignore
     public void testSelectDistinctSymbol() throws Exception {
         final String expected = "a\n" +
                 "EHNRX\n" +
