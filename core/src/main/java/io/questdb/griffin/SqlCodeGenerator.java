@@ -1108,37 +1108,37 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-        if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
-            ExpressionNode tableNameExpressionNode = model.getNestedModel().getNestedModel().getTableName();
-            CharSequence tableName = tableNameExpressionNode.token;
-            TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-            CharSequence columnName = model.getColumnNames().get(0);
-            RecordMetadata readerMetadata = reader.getMetadata();
-            int columnIndex = readerMetadata.getColumnIndex(columnName);
-            int columnType = readerMetadata.getColumnType(columnIndex);
-            if (columnType == ColumnType.SYMBOL) {
-                final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
-                long tableVersion = reader.getVersion();
-                distinctSymbolMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(columnName),
-                                readerMetadata.getColumnType(columnIndex),
-                                readerMetadata.isColumnIndexed(columnIndex),
-                                readerMetadata.getIndexValueBlockCapacity(columnIndex),
-                                readerMetadata.isSymbolTableStatic(columnIndex)
-                        )
-                );
-                reader.close();
-                return new DistinctSymbolRecordCursorFactory(
-                        engine,
-                        distinctSymbolMetadata,
-                        tableName,
-                        columnIndex,
-                        tableVersion
-                );
+            if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
+                ExpressionNode tableNameExpressionNode = model.getNestedModel().getNestedModel().getTableName();
+                CharSequence tableName = tableNameExpressionNode.token;
+                try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);) {
+                    CharSequence columnName = model.getColumnNames().get(0);
+                    RecordMetadata readerMetadata = reader.getMetadata();
+                    int columnIndex = readerMetadata.getColumnIndex(columnName);
+                    int columnType = readerMetadata.getColumnType(columnIndex);
+                    if (columnType == ColumnType.SYMBOL) {
+                        final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
+                        long tableVersion = reader.getVersion();
+                        distinctSymbolMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(columnName),
+                                        readerMetadata.getColumnType(columnIndex),
+                                        readerMetadata.isColumnIndexed(columnIndex),
+                                        readerMetadata.getIndexValueBlockCapacity(columnIndex),
+                                        readerMetadata.isSymbolTableStatic(columnIndex)
+                                )
+                        );
+                        return new DistinctSymbolRecordCursorFactory(
+                                engine,
+                                distinctSymbolMetadata,
+                                Chars.toString(tableName),
+                                columnIndex,
+                                tableVersion
+                        );
+                    }
+                }
             }
-        }
+
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
             return new DistinctRecordCursorFactory(

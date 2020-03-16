@@ -36,5 +36,4 @@ public interface SymbolMapReader extends StaticSymbolTable {
 
     void updateSymbolCount(int count);
 
-    boolean containsNullValue();
 }

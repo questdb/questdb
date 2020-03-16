@@ -28,4 +28,6 @@ public interface StaticSymbolTable extends SymbolTable {
     int size();
 
     int keyOf(CharSequence value);
+
+    boolean containsNullValue();
 }

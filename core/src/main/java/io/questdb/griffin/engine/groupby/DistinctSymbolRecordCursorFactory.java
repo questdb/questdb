@@ -36,14 +36,14 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
     private final CairoEngine engine;
     private final GenericRecordMetadata metadata;
-    private final CharSequence tableName;
+    private final String tableName;
     private final int columnIndex;
     private final long tableVersion;
 
     public DistinctSymbolRecordCursorFactory(
             final CairoEngine engine,
             final GenericRecordMetadata metadata,
-            final CharSequence tableName,
+            final String tableName,
             final int columnIndex,
             final long tableVersion) {
         this.engine = engine;

@@ -287,8 +287,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     if (symbolTable instanceof StaticSymbolTable) {
                         CharSequence sym = record.getSym(column);
                         int value = record.getInt(column);
-                        if (symbolTable instanceof SymbolMapReader && ((SymbolMapReader) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).size()) {
-                            Assert.assertEquals(Integer.MIN_VALUE, ((SymbolMapReader) symbolTable).keyOf(sym));
+                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).size()) {
+                            Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
                         } else {
                             Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
                         }

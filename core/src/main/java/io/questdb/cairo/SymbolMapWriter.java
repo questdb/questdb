@@ -45,6 +45,7 @@ public class SymbolMapWriter implements Closeable {
     private final ReadWriteMemory offsetMem;
     private final CharSequenceIntHashMap cache;
     private final int maxHash;
+    private boolean nullValue = false;
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         final int plen = path.length();
@@ -149,6 +150,7 @@ public class SymbolMapWriter implements Closeable {
             Misc.free(offsetMem);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
         }
+        nullValue = false;
     }
 
     public int getSymbolCount() {
@@ -158,7 +160,10 @@ public class SymbolMapWriter implements Closeable {
     public int put(CharSequence symbol) {
 
         if (symbol == null) {
-            offsetMem.putBool(HEADER_NULL_FLAG, true);
+            if (!nullValue) {
+                nullValue = true;
+                offsetMem.putBool(HEADER_NULL_FLAG, true);
+            }
             return SymbolTable.VALUE_IS_NULL;
         }
 
