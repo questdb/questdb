@@ -101,10 +101,10 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (recordA.getRecordIndex() + 1 < numberOfSymbols) {
-                recordA.incrementRecordIndex();
+            if (recordA.getAndIncrementRecordIndex() < numberOfSymbols) {
                 return true;
             }
+            recordA.decrementRecordIndex();
             return false;
         }
 
@@ -124,7 +124,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void toTop() {
-            recordA.recordIndex = -1;
+            recordA.reset();
         }
 
         public void of(TableReader reader, int columnIndex) {
@@ -142,6 +142,10 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         public class DistinctSymbolRecord implements Record {
             private int recordIndex = -1;
+
+            public void decrementRecordIndex() {
+                recordIndex--;
+            }
 
             @Override
             public CharSequence getSym(int col) {
@@ -162,12 +166,8 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
                 this.recordIndex = -1;
             }
 
-            public long getRecordIndex() {
-                return recordIndex;
-            }
-
-            public void incrementRecordIndex() {
-                recordIndex++;
+            public long getAndIncrementRecordIndex() {
+                return ++recordIndex;
             }
         }
     }
