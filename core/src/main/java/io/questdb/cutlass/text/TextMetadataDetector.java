@@ -227,6 +227,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                 case '%':
                 case '~':
                     capNext = true;
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     break;
                 default:
 
