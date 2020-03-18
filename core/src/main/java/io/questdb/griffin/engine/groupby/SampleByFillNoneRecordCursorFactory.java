@@ -55,8 +55,8 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
-            @Transient @NotNull ArrayColumnTypes valueTypes
-
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            int timestampIndex
     ) {
         this.recordFunctions = recordFunctions;
         // sink will be storing record columns to map key
@@ -66,7 +66,6 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
         try {
             this.base = base;
             this.metadata = groupByMetadata;
-            int timestampIndex = base.getMetadata().getTimestampIndex();
             this.cursor = new SampleByFillNoneRecordCursor(
                     this.map,
                     mapSink,

@@ -60,7 +60,8 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
+            IntList symbolTableSkewIndex,
+            int timestampIndex
     ) throws SqlException {
 
         // sink will be storing record columns to map key
@@ -79,7 +80,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
                     groupByFunctions,
                     recordFunctions,
                     placeholderFunctions,
-                    base.getMetadata().getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableSkewIndex
             );

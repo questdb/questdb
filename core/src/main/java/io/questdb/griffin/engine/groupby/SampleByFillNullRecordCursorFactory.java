@@ -59,7 +59,8 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
+            IntList symbolTableSkewIndex,
+            int timestampIndex
     ) throws SqlException {
 
         this.recordFunctions = recordFunctions;
@@ -78,7 +79,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
                     groupByFunctions,
                     recordFunctions,
                     createPlaceholderFunctions(recordFunctions),
-                    base.getMetadata().getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableSkewIndex
             );
