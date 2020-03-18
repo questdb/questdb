@@ -49,8 +49,8 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
-
+            IntList symbolTableSkewIndex,
+            int timestampIndex
     ) {
         try {
             this.base = base;
@@ -60,7 +60,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
             this.cursor = new SampleByFillPrevNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,
-                    base.getMetadata().getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableSkewIndex,
                     simpleMapValue

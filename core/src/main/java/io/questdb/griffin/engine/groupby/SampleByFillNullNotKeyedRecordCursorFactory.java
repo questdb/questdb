@@ -52,7 +52,8 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             IntList symbolTableSkewIndex,
-            int valueCount
+            int valueCount,
+            int timestampIndex
     ) throws SqlException {
         try {
             this.base = base;
@@ -63,7 +64,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
                     groupByFunctions,
                     recordFunctions,
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions),
-                    base.getMetadata().getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableSkewIndex,
                     simpleMapValue

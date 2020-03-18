@@ -50,7 +50,8 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             IntList symbolTableIndex,
-            int valueCount
+            int valueCount,
+            int timestampIndex
     ) {
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
         final RecordMetadata metadata = base.getMetadata();
@@ -63,7 +64,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
                     simpleMapValue,
                     groupByFunctions,
                     recordFunctions,
-                    metadata.getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableIndex
             );

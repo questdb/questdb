@@ -86,7 +86,8 @@ public class GroupByUtils {
             GenericRecordMetadata groupByMetadata,
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
-            boolean timestampUnimportant
+            boolean timestampUnimportant,
+            int timestampIndex
     ) {
 
         // Process group-by functions first to get the idea of
@@ -94,11 +95,8 @@ public class GroupByUtils {
         // Map value count is needed to calculate offsets for
         // map key columns.
 
-        final int timestampIndex = metadata.getTimestampIndex();
         final ObjList<QueryColumn> columns = model.getColumns();
         IntList symbolTableSkewIndex = null;
-//        assert timestampIndex != -1;
-
         int valueColumnIndex = 0;
 
         // when we have same column several times in a row
