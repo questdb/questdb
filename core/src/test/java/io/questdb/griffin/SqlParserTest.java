@@ -3988,6 +3988,18 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByFillMinAsSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b from ((select-group-by a, sum(b) b from (tab timestamp (t)) sample by 10m fill(mid)) _xQdbA1)",
+                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testSampleByFillMissingCloseBrace() {
         assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill (21231.2344",
