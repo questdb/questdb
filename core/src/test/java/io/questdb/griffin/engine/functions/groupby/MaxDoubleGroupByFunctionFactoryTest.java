@@ -316,5 +316,4 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
-
 }
