@@ -4000,6 +4000,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBadTableExpression() {
+        assertSyntaxError(")", 0, "table name expected");
+    }
+
+    @Test
     public void testSampleByFillMissingCloseBrace() {
         assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill (21231.2344",

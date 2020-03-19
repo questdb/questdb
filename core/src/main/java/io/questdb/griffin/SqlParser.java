@@ -1090,7 +1090,10 @@ public final class SqlParser {
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
-        ExpressionNode expr = expr(lexer, model);
+        final ExpressionNode expr = expr(lexer, model);
+        if (expr == null) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
+        }
         CharSequence name = expr.token;
 
         switch (expr.type) {
