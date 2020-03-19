@@ -37,12 +37,8 @@ public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunc
     private final IntList symbolTableSkewIndex;
     private SymbolTableSource symbolTableSource;
 
-    public VirtualFunctionSkewedSymbolRecordCursor(
-            ObjList<Function> functions,
-            IntList symbolTableSkewIndex,
-            boolean supportRandomAccess
-    ) {
-        super(functions, supportRandomAccess);
+    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntList symbolTableSkewIndex) {
+        super(functions, true);
         this.symbolTableSkewIndex = symbolTableSkewIndex;
     }
 

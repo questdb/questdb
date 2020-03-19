@@ -44,6 +44,29 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAllNull() throws SqlException {
+
+        compiler.compile("create table tab (f double)");
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor()) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
+            }
+        }
+    }
+
+    @Test
     public void testFirstNull() throws SqlException {
 
         compiler.compile("create table tab (f double)");
@@ -66,29 +89,6 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(0.9856290845874263, record.getDouble(0), 0.0001);
-            }
-        }
-    }
-
-    @Test
-    public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f double)");
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
             }
         }
     }
@@ -287,4 +287,34 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z\n",
                 true);
     }
+
+    @Test
+    public void testSampleInterpolateRandomAccessConsistency() throws Exception {
+        assertQuery(
+                "b\tmax\tk\n" +
+                        "PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n",
+                "select b, max(a), k from " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) " +
+                        "sample by 3h fill(linear) order by 3, 2, 1",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true
+        );
+    }
+
 }

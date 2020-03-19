@@ -165,11 +165,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.base = base;
         this.metadata = groupByMetadata;
         this.sampler = timestampSampler;
-        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(
-                recordFunctions,
-                symbolTableSkewIndex,
-                base.isRandomAccessCursor()
-        );
+        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
     }
 
     @Override

@@ -475,6 +475,25 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByRandomAccessConsistency() throws Exception {
+        assertQuery("c\tcount\n" +
+                        "XY\t6\n" +
+                        "ZP\t5\n",
+                "select c, count() count from (x where c = 'ZP' union all x where c = 'XY') order by 1, 2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testSampleBadFunction() throws Exception {
         assertFailure(
                 "select b, sumx(a, 'ab') k from x sample by 3h fill(none)",
