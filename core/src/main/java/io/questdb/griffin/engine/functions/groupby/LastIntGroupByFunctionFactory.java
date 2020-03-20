@@ -22,39 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
-    private final IntList symbolTableSkewIndex;
-    private SymbolTableSource symbolTableSource;
-
-    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntList symbolTableSkewIndex) {
-        super(functions, true);
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
+public class LastIntGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last(I)";
     }
 
     @Override
-    public void close() {
-        Misc.free(symbolTableSource);
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolTableSource.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
-    }
-
-
-    public void of(SymbolTableSource symbolTableSource, RecordCursor mapCursor) {
-        this.symbolTableSource = symbolTableSource;
-        of(mapCursor);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new LastIntGroupByFunction(position, args.getQuick(0));
     }
 }

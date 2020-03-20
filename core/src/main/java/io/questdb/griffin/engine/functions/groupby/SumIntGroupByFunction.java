@@ -46,12 +46,20 @@ public class SumIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getInt(record));
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.putInt(valueIndex, value);
+        } else {
+            mapValue.putInt(valueIndex, 0);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addInt(valueIndex, arg.getInt(record));
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.addInt(valueIndex, arg.getInt(record));
+        }
     }
 
     @Override

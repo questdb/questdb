@@ -835,10 +835,29 @@ public class SqlCodeGenerator {
     @NotNull
     private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        final RecordMetadata metadata = factory.getMetadata();
+
         // we require timestamp
-        if (factory.getMetadata().getTimestampIndex() == -1) {
+        final int timestampIndex;
+        ExpressionNode timestamp = model.getTimestamp();
+        if (timestamp != null) {
+            timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+            if (timestampIndex == -1) {
+                Misc.free(factory);
+                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            }
+            if (metadata.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
+                Misc.free(factory);
+                throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+            }
+        } else {
+            timestampIndex = metadata.getTimestampIndex();
+        }
+
+        if (timestampIndex == -1) {
             throw SqlException.$(model.getSampleBy().position, "base query does not provide dedicated TIMESTAMP column");
         }
+
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
@@ -861,12 +880,12 @@ public class SqlCodeGenerator {
                         asm,
                         keyTypes,
                         valueTypes,
-                        entityColumnFilter
+                        entityColumnFilter,
+                        timestampIndex
                 );
             }
 
             final int columnCount = model.getColumns().size();
-            final RecordMetadata metadata = factory.getMetadata();
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
             valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
 
@@ -890,7 +909,8 @@ public class SqlCodeGenerator {
                     groupByMetadata,
                     keyTypes,
                     valueTypes.getColumnCount(),
-                    false
+                    false,
+                    timestampIndex
             );
 
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
@@ -901,7 +921,8 @@ public class SqlCodeGenerator {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            symbolTableSkewIndex
+                            symbolTableSkewIndex,
+                            timestampIndex
                     );
                 }
 
@@ -916,10 +937,10 @@ public class SqlCodeGenerator {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
-                        symbolTableSkewIndex
+                        symbolTableSkewIndex,
+                        timestampIndex
                 );
             }
-
 
             if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
 
@@ -932,7 +953,8 @@ public class SqlCodeGenerator {
                             groupByFunctions,
                             recordFunctions,
                             symbolTableSkewIndex,
-                            valueTypes.getColumnCount()
+                            valueTypes.getColumnCount(),
+                            timestampIndex
                     );
                 }
 
@@ -947,7 +969,8 @@ public class SqlCodeGenerator {
                         listColumnFilterA,
                         asm,
                         keyTypes,
-                        valueTypes
+                        valueTypes,
+                        timestampIndex
                 );
             }
 
@@ -960,7 +983,8 @@ public class SqlCodeGenerator {
                             groupByFunctions,
                             recordFunctions,
                             symbolTableSkewIndex,
-                            valueTypes.getColumnCount()
+                            valueTypes.getColumnCount(),
+                            timestampIndex
                     );
                 }
 
@@ -975,7 +999,8 @@ public class SqlCodeGenerator {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
-                        symbolTableSkewIndex
+                        symbolTableSkewIndex,
+                        timestampIndex
                 );
             }
 
@@ -990,7 +1015,8 @@ public class SqlCodeGenerator {
                         groupByFunctions,
                         recordFunctions,
                         symbolTableSkewIndex,
-                        valueTypes.getColumnCount()
+                        valueTypes.getColumnCount(),
+                        timestampIndex
                 );
             }
 
@@ -1006,7 +1032,8 @@ public class SqlCodeGenerator {
                     groupByMetadata,
                     groupByFunctions,
                     recordFunctions,
-                    symbolTableSkewIndex
+                    symbolTableSkewIndex,
+                    timestampIndex
             );
         } catch (SqlException | CairoException e) {
             factory.close();
@@ -1180,13 +1207,33 @@ public class SqlCodeGenerator {
                 }
             }
 
+            final RecordMetadata metadata = factory.getMetadata();
+            ExpressionNode timestamp = model.getTimestamp();
+            int timestampIndex = -1;
+            if (timestamp != null) {
+                timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+                if (timestampIndex == -1) {
+                    Misc.free(factory);
+                    throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+                }
+                if (metadata.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
+                    Misc.free(factory);
+                    throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+                }
+            } else {
+                // when nested model has timestamp, it is possible we do not have it selected
+                // lets exercise caution and check
+                timestamp = model.getNestedModel().getTimestamp();
+                if (timestamp != null) {
+                    timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+                }
+            }
+
             keyTypes.reset();
             valueTypes.reset();
             listColumnFilterA.clear();
 
-
             final int columnCount = model.getColumns().size();
-            final RecordMetadata metadata = factory.getMetadata();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
             GroupByUtils.prepareGroupByFunctions(
                     model,
@@ -1208,7 +1255,8 @@ public class SqlCodeGenerator {
                     groupByMetadata,
                     keyTypes,
                     valueTypes.getColumnCount(),
-                    true
+                    true,
+                    timestampIndex
             );
 
             if (keyTypes.getColumnCount() == 0) {

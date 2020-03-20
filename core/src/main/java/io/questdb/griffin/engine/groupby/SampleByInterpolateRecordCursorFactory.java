@@ -70,7 +70,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
-            @Transient @NotNull EntityColumnFilter entityColumnFilter
+            @Transient @NotNull EntityColumnFilter entityColumnFilter,
+            int timestampIndex
     ) throws SqlException {
         final int columnCount = model.getColumns().size();
         final RecordMetadata metadata = base.getMetadata();
@@ -97,7 +98,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
-                false
+                false,
+                timestampIndex
         );
 
         this.storeYFunctions = new ObjList<>(columnCount);
@@ -144,7 +146,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
-        this.timestampIndex = metadata.getTimestampIndex();
+        this.timestampIndex = timestampIndex;
         this.yDataSize = groupByFunctions.size() * 16;
         this.yData = Unsafe.malloc(yDataSize);
 
@@ -163,11 +165,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.base = base;
         this.metadata = groupByMetadata;
         this.sampler = timestampSampler;
-        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(
-                recordFunctions,
-                symbolTableSkewIndex,
-                base.isRandomAccessCursor()
-        );
+        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions, symbolTableSkewIndex);
     }
 
     @Override

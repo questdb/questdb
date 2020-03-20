@@ -818,6 +818,37 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCsvWithByteOrderMark() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "type\tvalue\tactive\tdesc\tgrp\n" +
+                    "ABC\t13\ttrue\tbrown fox jumped over the fence\tGROUP1\n" +
+                    "CDE\t14\tfalse\tsentence 1\n" +
+                    "sentence 2\tGROUP1\n" +
+                    "XYZ\t16\ttrue\t\tGROUP2\n" +
+                    "XCB\t29\ttrue\tthis is not the end\tGROUP2\n";
+
+            String csv = (char)0xfeff + "type,value,active,desc,grp\n" +
+                    "ABC,13,TRUE,brown fox jumped over the fence,GROUP1\n" +
+                    "CDE,14,FALSE,\"sentence 1\n" +
+                    "sentence 2\",GROUP1\n" +
+                    "EFD,14.4,FALSE,xyz > ?abc?,GROUP1\n" +
+                    "XYZ,16,TRUE,,GROUP2\n" +
+                    "XCB,29,TRUE,this is not the end,GROUP2\n";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText(
+                    textLoader,
+                    csv,
+                    85,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"INT\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    5,
+                    4
+            );
+        });
+    }
+
+    @Test
     public void testHeadersLargerBuffer() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "type\tvalue\tactive\tdesc\tgrp\n" +

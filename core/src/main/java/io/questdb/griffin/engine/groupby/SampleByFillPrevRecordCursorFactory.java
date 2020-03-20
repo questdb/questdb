@@ -56,7 +56,8 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex
+            IntList symbolTableSkewIndex,
+            int timestampIndex
     ) {
 
         // sink will be storing record columns to map key
@@ -73,7 +74,7 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
                     mapSink,
                     groupByFunctions,
                     recordFunctions,
-                    base.getMetadata().getTimestampIndex(),
+                    timestampIndex,
                     timestampSampler,
                     symbolTableSkewIndex
             );

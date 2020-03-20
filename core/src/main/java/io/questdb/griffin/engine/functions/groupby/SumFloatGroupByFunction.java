@@ -45,12 +45,20 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putFloat(valueIndex, arg.getFloat(record));
+        final float value = arg.getFloat(record);
+        if (value == value) {
+            mapValue.putFloat(valueIndex, value);
+        } else {
+            mapValue.putFloat(valueIndex, 0f);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addFloat(valueIndex, arg.getFloat(record));
+        final float value = arg.getFloat(record);
+        if (value == value) {
+            mapValue.addFloat(valueIndex, value);
+        }
     }
 
     @Override
@@ -70,12 +78,12 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public float getFloat(Record rec) {
+        return rec.getFloat(valueIndex);
     }
 }

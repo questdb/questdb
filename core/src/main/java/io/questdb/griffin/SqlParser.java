@@ -725,7 +725,7 @@ public final class SqlParser {
                 do {
                     final ExpressionNode fillNode = expectLiteral(lexer, "'none', 'prev', 'mid', 'null' or number");
                     model.addSampleByFill(fillNode);
-                    tok = tok(lexer, "',' or ')'");
+                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                     if (Chars.equals(tok, ')')) {
                         break;
                     }
@@ -1090,7 +1090,10 @@ public final class SqlParser {
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
-        ExpressionNode expr = expr(lexer, model);
+        final ExpressionNode expr = expr(lexer, model);
+        if (expr == null) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
+        }
         CharSequence name = expr.token;
 
         switch (expr.type) {
@@ -1141,7 +1144,7 @@ public final class SqlParser {
         if (Chars.equalsLowerCaseAsciiNc(tok, "timestamp")) {
             expectTok(lexer, '(');
             final ExpressionNode result = expectLiteral(lexer);
-            expectTok(SqlUtil.fetchNext(lexer), lexer.lastTokenPosition(), ')');
+            tokIncludingLocalBrace(lexer, "')'");
             return result;
         }
         return null;
@@ -1332,6 +1335,15 @@ public final class SqlParser {
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();
         CharSequence tok = optTok(lexer);
+        if (tok == null) {
+            throw SqlException.position(pos).put(expectedList).put(" expected");
+        }
+        return tok;
+    }
+
+    private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {
+        final int pos = lexer.getPosition();
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             throw SqlException.position(pos).put(expectedList).put(" expected");
         }
