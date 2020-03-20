@@ -602,7 +602,11 @@ public final class SqlParser {
 
             tok = tok(lexer, "all or select");
             if (Chars.equalsLowerCaseAscii(tok, "all")) {
-                prevModel.setUnionModelType(QueryModel.UNION_MODEL_ALL);
+                if (!model.isDistinct()){
+                    prevModel.setUnionModelType(QueryModel.UNION_MODEL_ALL);
+                } else {
+                    prevModel.setUnionModelType(QueryModel.UNION_MODEL_DISTINCT);
+                }
             } else {
                 prevModel.setUnionModelType(QueryModel.UNION_MODEL_DISTINCT);
                 lexer.unparse();

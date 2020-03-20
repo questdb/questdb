@@ -460,4 +460,100 @@ public class UnionTest extends AbstractGriffinTest {
             }
         });
     }
+
+    //select distinct sym from a union all b
+    @Test
+    public void testUnionAllOfSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "t\n" +
+                    "CAR\n" +
+                    "CAR\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n";
+
+            final String expected2 = "t\n" +
+                    "CAR\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "BICYCLE\n" +
+                    "SCOOTER\n";
+
+            compiler.compile("CREATE TABLE x as " +
+                    "(SELECT " +
+                    " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
+                    " FROM long_sequence(7) x)" +
+                    " partition by NONE");
+
+            try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
+                assertCursor(expected, rcf, true, true);
+            }
+
+            SharedRandom.RANDOM.get().reset();
+
+            compiler.compile("CREATE TABLE y as " +
+                    "(SELECT " +
+                    " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
+                    " FROM long_sequence(7) x)" +
+                    " partition by NONE");
+
+            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, false, true);
+            }
+        });
+    }
+
+    //select distinct sym from a union all b
+    @Test
+    public void testUnionAllOfSymboFor3Tablesl() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "t\n" +
+                    "CAR\n" +
+                    "CAR\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n";
+
+            final String expected2 = "t\n" +
+                    "CAR\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "BICYCLE\n" +
+                    "SCOOTER\n" +
+                    "HELICOPTER\n" +
+                    "MOTORBIKE\n";
+
+            compiler.compile("CREATE TABLE x as " +
+                    "(SELECT " +
+                    " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
+                    " FROM long_sequence(7) x)" +
+                    " partition by NONE");
+
+            try (RecordCursorFactory rcf = compiler.compile("x").getRecordCursorFactory()) {
+                assertCursor(expected, rcf, true, true);
+            }
+
+            SharedRandom.RANDOM.get().reset();
+
+            compiler.compile("CREATE TABLE y as " +
+                    "(SELECT " +
+                    " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
+                    " FROM long_sequence(7) x)" +
+                    " partition by NONE");
+
+            compiler.compile("CREATE TABLE z as " +
+                    "(SELECT " +
+                    " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
+                    " FROM long_sequence(13) x)" +
+                    " partition by NONE");
+
+            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y union all z", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, false, true);
+            }
+        });
+    }
 }
