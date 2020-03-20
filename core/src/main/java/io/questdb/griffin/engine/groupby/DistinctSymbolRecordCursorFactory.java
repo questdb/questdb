@@ -80,7 +80,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         private DistinctSymbolRecord recordA = new DistinctSymbolRecord();
         private DistinctSymbolRecord recordB = null;
         private TableReader reader;
-        private int columnIndex;
         private int numberOfSymbols;
         private SymbolMapReader symbolMapReader;
 
@@ -129,7 +128,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         public void of(TableReader reader, int columnIndex) {
             this.reader = reader;
-            this.columnIndex = columnIndex;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
             this.numberOfSymbols = symbolMapReader.size() + (symbolMapReader.containsNullValue() ? 1 : 0);
             this.recordA.reset();
@@ -149,7 +147,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public CharSequence getSym(int col) {
-                return reader.getSymbolMapReader(columnIndex).valueOf(recordIndex);
+                return symbolMapReader.valueOf(recordIndex);
             }
 
             @Override
