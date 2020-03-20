@@ -37,6 +37,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
@@ -1102,6 +1103,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
         }
+    }
+
+
+    @Test
+    public void testDistinctSymbolColumn() throws Exception {
+        final String expected = "pair\n" +
+                "A\n" +
+                "B\n" +
+                "C\n";
+
+        assertQuery(expected,
+                "select distinct pair from prices",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " x ID, --increasing integer\n" +
+                        " rnd_symbol('A', 'B', 'C') pair, \n" +
+                        " rnd_double(0) length,\n" +
+                        " rnd_double(0) height" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true
+        );
     }
 
     @Test
@@ -2917,7 +2943,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSelectDistinctSymbol() throws Exception {
         final String expected = "a\n" +
                 "EHNRX\n" +
-                "\n" +
                 "BHFOW\n" +
                 "QULOF\n" +
                 "RUEDR\n" +
@@ -2936,11 +2961,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "DZJMY\n" +
                 "GETJ\n" +
                 "FBVTMH\n" +
-                "UICW\n";
+                "UICW\n" +
+                "\n";
 
         final String expected2 = "a\n" +
                 "EHNRX\n" +
-                "\n" +
                 "BHFOW\n" +
                 "QULOF\n" +
                 "RUEDR\n" +
@@ -2969,7 +2994,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "VZKE\n" +
                 "NDMRS\n" +
                 "SVNVD\n" +
-                "ILQP\n";
+                "ILQP\n" +
+                "\n";
 
         assertQuery(expected,
                 "select distinct a from x",

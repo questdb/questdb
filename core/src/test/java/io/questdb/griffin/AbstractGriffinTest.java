@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -290,7 +287,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     if (symbolTable instanceof StaticSymbolTable) {
                         CharSequence sym = record.getSym(column);
                         int value = record.getInt(column);
-                        Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).size()) {
+                            Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                        } else {
+                            Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                        }
                         TestUtils.assertEquals(sym, symbolTable.valueOf(value));
                     } else {
                         final int value = record.getInt(column);

@@ -63,4 +63,9 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     @Override
     public void updateSymbolCount(int count) {
     }
+
+    @Override
+    public boolean containsNullValue() {
+        return false;
+    }
 }

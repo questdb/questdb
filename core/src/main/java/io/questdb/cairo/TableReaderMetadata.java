@@ -29,7 +29,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
+public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
     private final ReadOnlyColumn metaMem;
     private final Path path;
     private final FilesFacade ff;
@@ -251,6 +251,10 @@ class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
 
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+    }
+
+    public int getVersion() {
+        return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

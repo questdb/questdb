@@ -44,6 +44,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCount;
     private long maxOffset;
     private int symbolCapacity;
+    private boolean nullValue;
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
@@ -57,6 +58,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         LOG.info().$("closed [fd=").$(fd).$(']').$();
+    }
+
+    public boolean containsNullValue() {
+        return nullValue;
     }
 
     @Override
@@ -133,8 +138,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem.of(ff, path, mapPageSize, SymbolMapWriter.keyToOffset(symbolCount));
-            symbolCapacity = offsetMem.getInt(0);
-            this.cached = offsetMem.getBool(4);
+            symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
+            this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
+            this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
             this.offsetMem.grow(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value

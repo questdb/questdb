@@ -36,12 +36,16 @@ import java.io.Closeable;
 public class SymbolMapWriter implements Closeable {
     public static final int HEADER_SIZE = 64;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
+    public static final int HEADER_CAPACITY = 0;
+    public static final int HEADER_CACHE_ENABLED = 4;
+    public static final int HEADER_NULL_FLAG = 8;
 
     private final BitmapIndexWriter indexWriter;
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
     private final CharSequenceIntHashMap cache;
     private final int maxHash;
+    private boolean nullValue = false;
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         final int plen = path.length();
@@ -67,8 +71,8 @@ public class SymbolMapWriter implements Closeable {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = new ReadWriteMemory(ff, path, mapPageSize);
-            final int symbolCapacity = offsetMem.getInt(0);
-            final boolean useCache = offsetMem.getBool(4);
+            final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+            final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
 
             // index writer is used to identify attempts to store duplicate symbol value
@@ -146,6 +150,7 @@ public class SymbolMapWriter implements Closeable {
             Misc.free(offsetMem);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
         }
+        nullValue = false;
     }
 
     public int getSymbolCount() {
@@ -155,6 +160,10 @@ public class SymbolMapWriter implements Closeable {
     public int put(CharSequence symbol) {
 
         if (symbol == null) {
+            if (!nullValue) {
+                nullValue = true;
+                offsetMem.putBool(HEADER_NULL_FLAG, true);
+            }
             return SymbolTable.VALUE_IS_NULL;
         }
 

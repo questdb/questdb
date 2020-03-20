@@ -35,4 +35,5 @@ public interface SymbolMapReader extends StaticSymbolTable {
     boolean isDeleted();
 
     void updateSymbolCount(int count);
+
 }
