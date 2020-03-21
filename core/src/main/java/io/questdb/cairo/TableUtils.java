@@ -271,7 +271,8 @@ public final class TableUtils {
 
     public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {
         try {
-            if (ColumnType.VERSION != metaMem.getInt(TableUtils.META_OFFSET_VERSION)) {
+            final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+            if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
                 throw validationException(metaMem).put("Metadata version does not match runtime version");
             }
 
