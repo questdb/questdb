@@ -38,19 +38,13 @@ public final class QueryCache implements Closeable {
     private static final Log LOG = LogFactory.getLog(QueryCache.class);
     private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
     private final AssociativeCache<RecordCursorFactory> cache;
-    private final int index;
 
-    public QueryCache(int index, int blocks, int rows) {
-        this.index = index;
+    public QueryCache(int blocks, int rows) {
         this.cache = new AssociativeCache<>(blocks, rows);
     }
 
     public static void configure(HttpServerConfiguration configuration) {
-        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(0, configuration.getQueryCacheBlocks(), configuration.getQueryCacheRows()));
-    }
-
-    public static void configureDefault() {
-        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(0, 16, 32));
+        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(configuration.getQueryCacheBlocks(), configuration.getQueryCacheRows()));
     }
 
     public static QueryCache getInstance() {
@@ -82,6 +76,6 @@ public final class QueryCache implements Closeable {
     }
 
     private void log(CharSequence action, CharSequence sql) {
-        LOG.info().$(action).$(" [index=").$(index).$(", sql=").$(sql).$(']').$();
+        LOG.info().$(action).$(" [thread=").$(Thread.currentThread().getName()).$(", sql=").$(sql).$(']').$();
     }
 }
