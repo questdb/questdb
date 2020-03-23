@@ -34,30 +34,22 @@ import java.util.concurrent.locks.LockSupport;
 public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
     private static final long COUNT_OFFSET;
     private volatile int count = 0;
-    private volatile Thread waiter = null;
-    private volatile int target = 0;
 
     public SOUnboundedCountDownLatch() {
     }
 
     public void await(int count) {
-        this.waiter = Thread.currentThread();
-        this.target = -count;
         while (this.count > -count) {
-            LockSupport.park();
+            LockSupport.parkNanos(1);
         }
     }
 
     @Override
     public void countDown() {
         do {
-            int current = this.count;
-
-            int next = current - 1;
+            final int current = this.count;
+            final int next = current - 1;
             if (Unsafe.cas(this, COUNT_OFFSET, current, next)) {
-                if (next <= target) {
-                    unpark();
-                }
                 break;
             }
         } while (true);
@@ -65,13 +57,6 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
 
     public void reset() {
         count = 0;
-    }
-
-    private void unpark() {
-        final Thread waiter = this.waiter;
-        if (waiter != null) {
-            LockSupport.unpark(waiter);
-        }
     }
 
     static {
