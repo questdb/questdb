@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include <cfloat>
+#include <cmath>
 #include "vect.h"
 
 #define MAX_VECTOR_SIZE 512
@@ -72,19 +73,21 @@
 
 long SUM_INT(int *pi, long count) {
     const int step = 4;
-    const long remainder = count - (count / step) * step;
+    const int remainder = (int) (count - (count / step) * step);
     const int *vec_lim = pi + count - remainder;
 
     Vec4i vec, d;
     int64_t result = 0;
     for (; pi < vec_lim; pi += step) {
         vec.load(pi);
-        d = select (vec != INT_MIN , vec , 0) ;
+        d = select(vec != INT_MIN, vec, 0);
         result += horizontal_add_x(d);
     }
 
     if (remainder > 0) {
-        result += sum_nan_as_zero(pi, remainder);
+        vec.load_partial(remainder, pi);
+        d = select(vec != INT_MIN, vec, 0);
+        result += horizontal_add_x(d);
     }
     return result;
 }
@@ -95,51 +98,25 @@ long SUM_INT(int *pi, long count) {
 
 double SUM_DOUBLE(double *d, long count) {
     const int step = 8;
-    const long remainder = count - (count / step) * step;
+    const int remainder = (int) (count - (count / step) * step);
     const double *vec_lim = d + count - remainder;
 
     double *pd = d;
-    Vec8d vec;
+    Vec8d vec, v;
     double result = 0;
     for (; pd < vec_lim; pd += step) {
         vec.load(pd);
-        double s = horizontal_add(vec);
-        if (s != s) {
-            result += sum_nan_as_zero(pd, step);
-        } else {
-            result += s;
-        }
+        v = select(is_nan(vec), 0.0, vec);
+        result += horizontal_add(v);
     }
 
     if (remainder > 0) {
-        result += sum_nan_as_zero(pd, remainder);
+        vec.load_partial(remainder, pd);
+        v = select(is_nan(vec), 0.0, vec);
+        result += horizontal_add(v);
     }
     return result;
 }
-
-/*
-double SUM_DOUBLE_NOT_NULL(double *d, long count) {
-    const int step = 8;
-    const long remainder = count - (count / step) * step;
-    const double *lim = d + count;
-    const double *vec_lim = lim - remainder;
-
-    double *pd = d;
-    Vec8d vec1;
-    double result = 0;
-    for (; pd < vec_lim; pd += step) {
-        vec1.load(pd);
-        result += horizontal_add(vec1);
-    }
-
-    if (pd < lim) {
-        for (; pd < lim; pd++) {
-            result += *pd;
-        }
-    }
-    return result;
-}
-*/
 
 double AVG_DOUBLE(double *d, long count) {
     const int step = 8;

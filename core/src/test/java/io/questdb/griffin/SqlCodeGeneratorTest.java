@@ -3771,6 +3771,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testVectorSumDoubleAndIntWithNullsDanglingEdge() throws Exception {
+        assertQuery("sum\tsum1\n" +
+                        "1824\t20.7839974146286\n",
+                "select sum(a),sum(b) from x",
+                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testVectorSumOneDouble() throws Exception {
         assertQuery("sum\n" +
                         "9278.190426088848\n",
