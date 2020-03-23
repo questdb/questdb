@@ -25,6 +25,20 @@
 #ifndef VECT_VANILLA_H
 #define VECT_VANILLA_H
 
+#include <climits>
+
+static inline long sum_nan_as_zero(int *pi, long count) {
+    const int *lim = pi + count;
+    long sum = 0;
+    for (; pi < lim; pi++) {
+        const int i = *pi;
+        if (i != INT_MAX) {
+            sum += i;
+        }
+    }
+    return sum;
+}
+
 static inline double sum_nan_as_zero(double *pd, long count) {
     const double *lim = pd + count;
     double sum = 0;
@@ -67,5 +81,7 @@ double avgDouble_Vanilla(double *d, long count);
 double minDouble_Vanilla(double *d, long count);
 
 double maxDouble_Vanilla(double *d, long count);
+
+long sumInt_Vanilla(int *pi, long count);
 
 #endif //VECT_VANILLA_H

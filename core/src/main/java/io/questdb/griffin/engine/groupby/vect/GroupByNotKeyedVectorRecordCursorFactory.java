@@ -42,8 +42,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final ObjList<VectorAggregateFunction> vafList;
-    private final ObjectPool<VectorAggregateEntry> entryPool = new ObjectPool<>(VectorAggregateEntry::new, 64);
-    private final ObjList<VectorAggregateEntry> activeEntries = new ObjList<>();
+    private final ObjectPool<VectorAggregateEntry> entryPool = new ObjectPool<>(VectorAggregateEntry::new, 1024);
+    private final ObjList<VectorAggregateEntry> activeEntries = new ObjList<>(1024);
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final RecordMetadata metadata;
     private final GroupByNotKeyedVectorRecordCursor cursor;
@@ -76,6 +76,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         final Sequence pubSeq = bus.getVectorAggregatePubSequence();
 
         this.entryPool.clear();
+        this.activeEntries.clear();
         int count = 0;
         int ownCount = 0;
 

@@ -30,6 +30,10 @@ double sumDouble_Vanilla(double *d, long count) {
     return sum_nan_as_zero(d, count);
 }
 
+long sumInt_Vanilla(int *pi, long count) {
+    return sum_nan_as_zero(pi, count);
+}
+
 double avgDouble_Vanilla(double *d, long count) {
     auto v = avg_skip_nan(d, count);
     return v.sum / v.count;

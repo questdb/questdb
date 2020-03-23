@@ -35,12 +35,16 @@
 #define MIN_DOUBLE F_AVX512(minDouble)
 #define MAX_DOUBLE F_AVX512(maxDouble)
 
+#define SUM_INT F_AVX512(sumInt)
+
 #elif INSTRSET >= 8
 
 #define SUM_DOUBLE F_AVX2(sumDouble)
 #define AVG_DOUBLE F_AVX2(avgDouble)
 #define MIN_DOUBLE F_AVX2(minDouble)
 #define MAX_DOUBLE F_AVX2(maxDouble)
+
+#define SUM_INT F_AVX2(sumInt)
 
 #elif INSTRSET >= 5
 
@@ -49,6 +53,8 @@
 #define MIN_DOUBLE F_SSE41(minDouble)
 #define MAX_DOUBLE F_SSE41(maxDouble)
 
+#define SUM_INT F_SSE41(sumInt)
+
 #elif INSTRSET >= 2
 
 #define SUM_DOUBLE F_SSE2(sumDouble)
@@ -56,7 +62,32 @@
 #define MIN_DOUBLE F_SSE2(minDouble)
 #define MAX_DOUBLE F_SSE2(maxDouble)
 
+#define SUM_INT F_SSE2(sumInt)
+
 #else
+
+#endif
+
+#ifdef SUM_INT
+
+long SUM_INT(int *pi, long count) {
+    const int step = 4;
+    const long remainder = count - (count / step) * step;
+    const int *vec_lim = pi + count - remainder;
+
+    Vec4i vec, d;
+    int64_t result = 0;
+    for (; pi < vec_lim; pi += step) {
+        vec.load(pi);
+        d = select (vec != INT_MIN , vec , 0) ;
+        result += horizontal_add_x(d);
+    }
+
+    if (remainder > 0) {
+        result += sum_nan_as_zero(pi, remainder);
+    }
+    return result;
+}
 
 #endif
 
@@ -201,10 +232,12 @@ double MAX_DOUBLE(double *d, long count) {
 #if INSTRSET < 5
 
 // Dispatchers
-DISPATCHER(sumDouble)
-DISPATCHER(avgDouble)
-DISPATCHER(minDouble)
-DISPATCHER(maxDouble)
+DOUBLE_DISPATCHER(sumDouble)
+DOUBLE_DISPATCHER(avgDouble)
+DOUBLE_DISPATCHER(minDouble)
+DOUBLE_DISPATCHER(maxDouble)
+
+INT_LONG_DISPATCHER(sumInt)
 
 #endif  // INSTRSET == 2
 

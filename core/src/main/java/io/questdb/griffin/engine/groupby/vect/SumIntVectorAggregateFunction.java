@@ -22,16 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.groupby.vect;
 
-public final class Vect {
-    public static native double sumDouble(long pDouble, long count);
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Vect;
 
-    public static native double avgDouble(long pDouble, long count);
+import java.util.concurrent.atomic.LongAdder;
 
-    public static native double minDouble(long pDouble, long count);
+public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+    private final LongAdder adder = new LongAdder();
 
-    public static native double maxDouble(long pDouble, long count);
+    public SumIntVectorAggregateFunction(int position) {
+        super(position);
+    }
 
-    public static native long sumInt(long pInt, long count);
+    @Override
+    public void aggregate(long address, long count) {
+        assert address % 64 == 0;
+        assert address > 0;
+
+        adder.add(Vect.sumInt(address, count));
+    }
+
+    @Override
+    public void clear() {
+        adder.reset();
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return adder.sum();
+    }
 }

@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.SumDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.join.*;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
@@ -937,6 +938,12 @@ public class SqlCodeGenerator {
                     }
                     vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position));
                     continue;
+                } else if (type == ColumnType.INT) {
+                    if (vafList == null) {
+                        vafList = new ObjList<>();
+                    }
+                    vafList.add(new SumIntVectorAggregateFunction(ast.rhs.position));
+                    continue;
                 }
             }
             return null;
@@ -1792,7 +1799,7 @@ public class SqlCodeGenerator {
                             break;
                         }
                         columnIndexes.add(columnIndex);
-                        columnSizes.add(Numbers.ceilPow2(typeSize));
+                        columnSizes.add((Numbers.msb(typeSize)));
                     }
 
 

@@ -96,14 +96,15 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         private final TableReaderPageFrame frame = new TableReaderPageFrame();
         private final LongList topsRemaining = new LongList();
         private final IntList pages = new IntList();
-        private TableReader reader;
         private final int columnCount;
+        private TableReader reader;
         private IntList columnIndexes;
         private IntList columnSizes;
         private int partitionIndex;
         private int partitionCount;
         private LongList pageSizes = new LongList();
         private long pageValueCount;
+        private long partitionRemaining = 0L;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes) {
             this.columnIndexes = columnIndexes;
@@ -117,33 +118,23 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndex);
+        }
+
+        @Override
         public @Nullable PageFrame next() {
 
-            // find min frame length
-            long min = Long.MAX_VALUE;
-            for (int i = 0; i < columnCount; i++) {
-                final long top = topsRemaining.getQuick(i);
-                if (top > 0) {
-                    if (min > top) {
-                        min = top;
-                    }
-                } else {
-                    long psz = pageSizes.getQuick(i);
-                    if (psz > 0) {
-                        if (min > psz) {
-                            min = psz;
-                        }
-                    }
+            if (partitionIndex > -1) {
+                final long m = computePageMin(reader.getColumnBase(partitionIndex));
+                if (m < Long.MAX_VALUE) {
+                    return computeFrame(m);
                 }
-            }
-            final long m = min;
-            if (m < Long.MAX_VALUE) {
-                return computeFrame(m);
             }
 
             while (++partitionIndex < partitionCount) {
-                long size = reader.openPartition(partitionIndex);
-                if (size > 0) {
+                partitionRemaining = reader.openPartition(partitionIndex);
+                if (partitionRemaining > 0) {
                     final int base = reader.getColumnBase(partitionIndex);
                     // copy table tops
                     for (int i = 0, n = columnIndexes.size(); i < n; i++) {
@@ -168,6 +159,12 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
             columnPageAddress.setAll(columnCount, 0);
             columnPageNextAddress.setAll(columnCount, 0);
             pageSizes.setAll(columnCount, -1L);
+            pageValueCount = 0;
+        }
+
+        @Override
+        public long size() {
+            return reader.size();
         }
 
         public TableReaderPageFrameCursor of(TableReader reader) {
@@ -188,10 +185,11 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
                     long psz = pageSizes.getQuick(i);
                     pageSizes.setQuick(i, psz - min);
                     columnPageAddress.setQuick(i, addr);
-                    columnPageNextAddress.setQuick(i, addr + (psz * columnSizes.getQuick(i)));
+                    columnPageNextAddress.setQuick(i, addr + (min << columnSizes.getQuick(i)));
                 }
             }
             pageValueCount = min;
+            partitionRemaining -= min;
             return frame;
         }
 
@@ -210,12 +208,15 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
                         if (min > psz) {
                             min = psz;
                         }
-                    } else {
+                    } else if (partitionRemaining > 0) {
                         final int page = pages.getQuick(i);
                         pages.setQuick(i, page + 1);
                         final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
-                        long m = col.getPageSize(page) / columnSizes.getQuick(i);
+                        // page size is liable to change after it is mapped
+                        // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
+                        psz = col.getPageSize(page);
+                        final long m = Math.min(psz >> columnSizes.getQuick(i), partitionRemaining);
                         pageSizes.setQuick(i, m);
                         if (min > m) {
                             min = m;
@@ -224,16 +225,6 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
             }
             return min;
-        }
-
-        @Override
-        public long size() {
-            return reader.size();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return reader.getSymbolMapReader(columnIndex);
         }
 
         private class TableReaderPageFrame implements PageFrame {
