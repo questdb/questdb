@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.str.Path;
 
-interface ColumnIndexer {
+public interface ColumnIndexer {
     void distress();
 
     long getFd();

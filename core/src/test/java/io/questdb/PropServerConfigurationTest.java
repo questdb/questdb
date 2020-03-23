@@ -75,6 +75,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().allowDeflateBeforeSend());
+        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRows());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
 
         // this is going to need interesting validation logic
@@ -120,7 +122,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
-        Assert.assertEquals(100, configuration.getCairoConfiguration().getIdleCheckInterval());
+        Assert.assertEquals(300000, configuration.getCairoConfiguration().getIdleCheckInterval());
         Assert.assertEquals(-10_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
         Assert.assertEquals(-10_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
@@ -130,8 +132,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSpinLockTimeoutUs());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlCacheRows());
-        Assert.assertEquals(4, configuration.getCairoConfiguration().getSqlCacheBlocks());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
@@ -321,6 +321,8 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
+            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
+            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -373,8 +375,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeoutUs());
-            Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlCacheRows());
-            Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlCacheBlocks());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());

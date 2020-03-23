@@ -22,16 +22,16 @@
  *
  ******************************************************************************/
 
+.navbar-static-side {
+  z-index: 2001;
+  position: absolute;
+  width: $sidebar-width;
+}
+
 @media (min-width: 768px) {
   #page-wrapper {
     position: inherit;
     margin: 0 0 0 $sidebar-width;
-  }
-
-  .navbar-static-side {
-    z-index: 2001;
-    position: absolute;
-    width: $sidebar-width;
   }
 
   .navbar-top-links .dropdown-messages,

@@ -285,6 +285,13 @@ public class LongList implements Mutable {
         this.pos = pos;
     }
 
+
+    public void setAll(int capacity, long value) {
+        ensureCapacity(capacity);
+        pos = capacity;
+        Arrays.fill(buffer, value);
+    }
+
     public void setQuick(int index, long value) {
         buffer[index] = value;
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
@@ -47,9 +48,10 @@ public class PGWireServer implements Closeable {
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
-            WorkerPool pool
+            WorkerPool pool,
+            MessageBus messageBus
     ) {
-        this.contextFactory = new PGConnectionContextFactory(configuration);
+        this.contextFactory = new PGConnectionContextFactory(configuration, messageBus);
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -93,14 +95,16 @@ public class PGWireServer implements Closeable {
             PGWireConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log log,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            MessageBus messageBus
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (configuration1, engine, workerPool, local) -> new PGWireServer(configuration1, cairoEngine, workerPool)
+                (conf, engine, workerPool, local, bus) -> new PGWireServer(conf, cairoEngine, workerPool, bus),
+                messageBus
         );
     }
 
@@ -114,9 +118,9 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(PGWireConfiguration configuration) {
+        public PGConnectionContextFactory(PGWireConfiguration configuration, MessageBus messageBus) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(configuration), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(configuration, messageBus), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

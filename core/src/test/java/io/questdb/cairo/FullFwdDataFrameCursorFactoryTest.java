@@ -72,12 +72,12 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
-                    while (cursor.hasNext()) {
-                        DataFrame frame = cursor.next();
+                    DataFrame frame;
+                    while ((frame = cursor.next()) != null) {
                         count += frame.getRowHi() - frame.getRowLo();
                     }
                 }

@@ -26,7 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
 
-public interface DataFrame {
+public interface DataFrame extends PageFrame {
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     int getPartitionIndex();

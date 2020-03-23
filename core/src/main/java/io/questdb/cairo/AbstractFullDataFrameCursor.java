@@ -61,8 +61,8 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public DataFrame next() {
-        return frame;
+    public long size() {
+        return reader.size();
     }
 
     public DataFrameCursor of(TableReader reader) {
@@ -95,6 +95,16 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return reader.getPageAddressAt(partitionIndex, rowLo, columnIndex);
+        }
+
+        @Override
+        public long getPageValueCount(int columnIndex) {
+            return reader.getPageValueCount(partitionIndex, rowLo, rowHi, columnIndex);
         }
     }
 }

@@ -75,4 +75,10 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
 }

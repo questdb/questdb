@@ -102,7 +102,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 

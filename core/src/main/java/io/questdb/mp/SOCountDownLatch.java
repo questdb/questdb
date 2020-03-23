@@ -31,7 +31,7 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * Single owner count down latch. This latch is mutable and it does not actively
  */
-public class SOCountDownLatch {
+public class SOCountDownLatch implements CountDownLatchSPI {
     private static final long VALUE_OFFSET;
 
     static {
@@ -76,6 +76,7 @@ public class SOCountDownLatch {
         }
     }
 
+    @Override
     public void countDown() {
         do {
             int current = getCount();

@@ -81,16 +81,16 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, workScheduler)) {
 
                 final RecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", TableUtils.ANY_TABLE_VERSION)) {
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", TableUtils.ANY_TABLE_VERSION, null, null)) {
 
                     long count = 0;
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService());
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), workScheduler);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final Record record = cursor.getRecord();
                         rnd.reset();
@@ -108,7 +108,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(M, count);
 
-                    Assert.assertTrue(factory.isRandomAccessCursor());
+                    Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
                 }
             }
         });

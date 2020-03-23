@@ -43,8 +43,8 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long rowCount = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
             final long low = frame.getRowLo();
@@ -383,7 +383,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 final int timestampIndex;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     timestampIndex = reader.getMetadata().getTimestampIndex();
@@ -542,8 +542,8 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
     private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record) {
         int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), frame.getRowHi() - 1);
             long limit = frame.getRowLo() - 1;
             long recordIndex;

@@ -85,7 +85,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 w.commit();
 
-                try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration, null)) {
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 
@@ -127,8 +127,8 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
     private void printCursor(TableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         record.of(cursor.getTableReader());
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), 0);
             for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
                 record.setRecordIndex(index);

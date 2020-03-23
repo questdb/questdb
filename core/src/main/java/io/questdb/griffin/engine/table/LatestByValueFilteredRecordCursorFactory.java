@@ -58,7 +58,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

@@ -45,7 +45,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     };
     private static final FieldNameParser NOOP_FIELD_NAME = name -> {
     };
-    private static ObjList<ColumnWriter> writers = new ObjList<>();
+    private static final ObjList<ColumnWriter> writers = new ObjList<>();
 
     static {
         writers.extendAndSet(ColumnType.LONG, CairoLineProtoParser::putLong);

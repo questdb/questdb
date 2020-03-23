@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -38,6 +39,7 @@ import io.questdb.std.microtime.DateFormatUtils;
 import io.questdb.std.str.*;
 import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGJobContext.*;
 import static io.questdb.std.time.DateFormatUtils.*;
@@ -112,6 +114,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter noopSetter = this::setNoopBindVariable;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
+    @Nullable
+    private final MessageBus messageBus;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitalMessage = false;
@@ -129,7 +133,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
 
-    public PGConnectionContext(PGWireConfiguration configuration) {
+    public PGConnectionContext(PGWireConfiguration configuration, @Nullable MessageBus messageBus) {
         this.nf = configuration.getNetworkFacade();
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
@@ -148,6 +152,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
+        this.messageBus = messageBus;
         populateAppender();
     }
 
@@ -813,7 +818,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, messageBus);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();

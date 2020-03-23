@@ -24,12 +24,16 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    @Nullable
+    private MessageBus messageBus;
 
     @Override
     public BindVariableService getBindVariableService() {
@@ -41,9 +45,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return cairoSecurityContext;
     }
 
-    public SqlExecutionContextImpl with(CairoSecurityContext cairoSecurityContext, BindVariableService bindVariableService) {
+    public SqlExecutionContextImpl with(
+            CairoSecurityContext cairoSecurityContext,
+            BindVariableService bindVariableService,
+            @Nullable MessageBus messageBus
+    ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
+        this.messageBus = messageBus;
         return this;
+    }
+
+    @Override
+    @Nullable
+    public MessageBus getMessageBus() {
+        return messageBus;
     }
 }

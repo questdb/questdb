@@ -24,35 +24,37 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.tasks.ColumnIndexerTask;
 
-class ColumnIndexerJob implements Job {
-    private final RingQueue<ColumnIndexerEntry> queue;
-    private final Sequence sequence;
+public class ColumnIndexerJob implements Job {
+    private final RingQueue<ColumnIndexerTask> queue;
+    private final Sequence subSeq;
 
-    public ColumnIndexerJob(CairoWorkScheduler workScheduler) {
-        this.queue = workScheduler.getIndexerQueue();
-        this.sequence = workScheduler.getIndexerSubSequence();
+    public ColumnIndexerJob(MessageBus messageBus) {
+        this.queue = messageBus.getIndexerQueue();
+        this.subSeq = messageBus.getIndexerSubSequence();
     }
 
     @Override
     public boolean run() {
-        long cursor = sequence.next();
+        long cursor = subSeq.next();
         if (cursor < 0) {
             return false;
         }
 
-        ColumnIndexerEntry queueItem = queue.get(cursor);
+        final ColumnIndexerTask queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;
         final long lo = queueItem.lo;
         final long hi = queueItem.hi;
         final long indexSequence = queueItem.sequence;
         final SOCountDownLatch latch = queueItem.countDownLatch;
-        sequence.done(cursor);
+        subSeq.done(cursor);
 
         // On the face of it main thread could have consumed same sequence as
         // child workers. The reason it is undesirable is because all writers

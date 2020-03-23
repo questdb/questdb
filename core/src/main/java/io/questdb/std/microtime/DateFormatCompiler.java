@@ -511,13 +511,12 @@ public class DateFormatCompiler {
                             asm.aload(FA_LOCAL_SINK);
                             asm.ldc(delimiterIndexes.getQuick(-op - 1));
                             asm.invokeInterface(sinkPutStrIndex, 1);
-                            asm.pop();
                         } else {
                             asm.aload(FA_LOCAL_SINK);
                             asm.iconst(delimiter.charAt(0));
                             asm.invokeInterface(sinkPutChrIndex, 1);
-                            asm.pop();
                         }
+                        asm.pop();
                     }
                     break;
 

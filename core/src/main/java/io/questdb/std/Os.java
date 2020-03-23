@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import com.sun.management.OperatingSystemMXBean;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.CharSequenceZ;
@@ -34,7 +33,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.management.ManagementFactory;
 
 public final class Os {
     public static final int WINDOWS = 3;
@@ -44,35 +42,6 @@ public final class Os {
     public static final int LINUX_AMD64 = 2;
     public static final int LINUX_ARM64 = 4;
     public static final int FREEBSD = 5;
-    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-
-    static {
-        if ("64".equals(System.getProperty("sun.arch.data.model"))) {
-            String osName = System.getProperty("os.name");
-            if (osName.contains("Linux")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = LINUX_ARM64;
-                    loadLib("/binaries/armlinux/libquestdb.so");
-                } else {
-                    type = LINUX_AMD64;
-                    loadLib("/binaries/linux/libquestdb.so");
-                }
-            } else if (osName.contains("Mac")) {
-                type = OSX; // darwin
-                loadLib("/binaries/osx/libquestdb.dylib");
-            } else if (osName.contains("Windows")) {
-                type = WINDOWS;
-                loadLib("/binaries/windows/libquestdb.dll");
-             } else if (osName.contains("FreeBSD")) {
-                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/binaries/freebsd/libquestdb.so");
-            } else {
-                throw new Error("Unsupported OS: " + osName);
-            }
-        } else {
-            type = _32Bit;
-        }
-    }
 
     private Os() {
     }
@@ -143,10 +112,6 @@ public final class Os {
 
     public static native int getPid();
 
-    public static long getSystemMemory() {
-        return bean.getTotalPhysicalMemorySize();
-    }
-
     @SuppressWarnings("EmptyMethod")
     public static void init() {
     }
@@ -196,6 +161,34 @@ public final class Os {
             }
         } finally {
             Misc.free(is);
+        }
+    }
+
+    static {
+        if ("64".equals(System.getProperty("sun.arch.data.model"))) {
+            String osName = System.getProperty("os.name");
+            if (osName.contains("Linux")) {
+                if ("aarch64".equals(System.getProperty("os.arch"))) {
+                    type = LINUX_ARM64;
+                    loadLib("/binaries/armlinux/libquestdb.so");
+                } else {
+                    type = LINUX_AMD64;
+                    loadLib("/binaries/linux/libquestdb.so");
+                }
+            } else if (osName.contains("Mac")) {
+                type = OSX; // darwin
+                loadLib("/binaries/osx/libquestdb.dylib");
+            } else if (osName.contains("Windows")) {
+                type = WINDOWS;
+                loadLib("/binaries/windows/libquestdb.dll");
+            } else if (osName.contains("FreeBSD")) {
+                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
+                loadLib("/binaries/freebsd/libquestdb.so");
+            } else {
+                throw new Error("Unsupported OS: " + osName);
+            }
+        } else {
+            type = _32Bit;
         }
     }
 }

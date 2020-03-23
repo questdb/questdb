@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
@@ -300,9 +302,10 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
+        final MessageBus workScheduler = new MessageBusImpl();
 
         try (
-                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration() {
                             @Override
@@ -312,7 +315,8 @@ public class IODispatcherTest {
                         },
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        workScheduler
                 )) {
 
             // upload file
@@ -366,9 +370,10 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
+        final MessageBus workScheduler = new MessageBusImpl();
 
         try (
-                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration() {
                             @Override
@@ -378,7 +383,8 @@ public class IODispatcherTest {
                         },
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        workScheduler
                 )) {
 
             // upload file
@@ -429,7 +435,7 @@ public class IODispatcherTest {
                 }
             });
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -438,7 +444,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -450,7 +456,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -1251,7 +1257,7 @@ public class IODispatcherTest {
                 }
             });
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -1261,7 +1267,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -1273,7 +1279,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -1420,7 +1426,7 @@ public class IODispatcherTest {
                 }
             });
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -1430,7 +1436,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -1442,11 +1448,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                queryCache
+                                null
                         );
                     }
                 });
@@ -2654,7 +2660,7 @@ public class IODispatcherTest {
             });
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2664,7 +2670,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -2676,11 +2682,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                queryCache
+                                null
                         );
                     }
                 });
@@ -3035,7 +3041,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -3229,7 +3235,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -4068,7 +4074,7 @@ public class IODispatcherTest {
             });
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4078,7 +4084,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -4090,7 +4096,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new TextImportProcessor(engine);
                     }
                 });
@@ -4102,11 +4108,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                queryCache
+                                null
                         );
                     }
                 });
@@ -4337,7 +4343,7 @@ public class IODispatcherTest {
             });
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4347,7 +4353,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
                     }
                 });
@@ -4359,11 +4365,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                queryCache
+                                null
                         );
                     }
                 });
@@ -4375,7 +4381,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance(QueryCache queryCache) {
+                    public HttpRequestProcessor newInstance() {
                         return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });

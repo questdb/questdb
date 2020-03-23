@@ -22,18 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.tasks;
 
-import io.questdb.mp.Job;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 
-public interface CairoWorkScheduler {
-    void addJob(Job job);
-
-    Sequence getIndexerPubSequence();
-
-    RingQueue<ColumnIndexerEntry> getIndexerQueue();
-
-    Sequence getIndexerSubSequence();
+public class VectorAggregateTask {
+    public VectorAggregateEntry entry;
 }

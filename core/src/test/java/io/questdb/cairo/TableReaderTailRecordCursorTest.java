@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
-    private final static CairoEngine engine = new CairoEngine(configuration);
+    private final static CairoEngine engine = new CairoEngine(configuration, null);
     private final static SqlCompiler compiler = new SqlCompiler(engine);
 
     @Test
