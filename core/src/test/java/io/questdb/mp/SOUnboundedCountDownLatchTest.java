@@ -49,7 +49,7 @@ public class SOUnboundedCountDownLatchTest {
 
         pubSeq.then(subSeq).then(pubSeq);
 
-        int count = 100_000_000;
+        int count = 1_000_000;
 
         doTest(pubSeq, subSeq, latch, dc, count);
 
