@@ -32,9 +32,11 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final LongAdder adder = new LongAdder();
+    private final int columnIndex;
 
-    public SumIntVectorAggregateFunction(int position) {
+    public SumIntVectorAggregateFunction(int position, int columnIndex) {
         super(position);
+        this.columnIndex = columnIndex;
     }
 
     @Override
@@ -43,6 +45,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
         assert address > 0;
 
         adder.add(Vect.sumInt(address, count));
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override

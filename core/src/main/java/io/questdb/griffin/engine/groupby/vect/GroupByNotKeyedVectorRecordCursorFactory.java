@@ -77,15 +77,20 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
 
         this.entryPool.clear();
         this.activeEntries.clear();
-        int count = 0;
+        int queuedCount = 0;
         int ownCount = 0;
+        int reclaimed = 0;
+        int total = 0;
+
+        doneLatch.reset();
 
         PageFrame frame;
         while ((frame = cursor.next()) != null) {
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
-                final long pageAddress = frame.getPageAddress(i);
-                final long pageValueCount = frame.getPageValueCount(i);
+                final int columnIndex = vaf.getColumnIndex();
+                final long pageAddress = frame.getPageAddress(columnIndex);
+                final long pageValueCount = frame.getPageValueCount(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
@@ -95,12 +100,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                     ownCount++;
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
-                    entry.of(count++, vaf, pageAddress, pageValueCount, doneLatch);
+                    entry.of(queuedCount++, vaf, pageAddress, pageValueCount, doneLatch);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);
                 }
             }
+            total++;
         }
 
         // all done? great start consuming the queue we just published
@@ -111,13 +117,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         // start at the back to reduce chance of clashing
         for (int i = activeEntries.size() - 1; i > -1; i--) {
             if (activeEntries.getQuick(i).run()) {
-                ownCount++;
+                reclaimed++;
             }
         }
 
-        LOG.info().$("waiting for parts [count=").$(count).$(']').$();
-        doneLatch.await(count);
-        LOG.info().$("done [count=").$(count).$(", ownCount=").$(ownCount).$(']').$();
+        LOG.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
+        doneLatch.await(queuedCount);
+        LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(cursor);
     }
 

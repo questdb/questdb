@@ -125,25 +125,21 @@ double AVG_DOUBLE(double *d, long count) {
 
     double *pd = d;
     Vec8d vec;
+    Vec8db bVec;
     double sum = 0;
     long sumCount = 0;
     for (; pd < vec_lim; pd += step) {
         vec.load(pd);
-        double s = horizontal_add(vec);
-        if (s != s) {
-            auto v = avg_skip_nan(pd, step);
-            sum += v.sum;
-            sumCount += v.count;
-        } else {
-            sum += s;
-            sumCount += step;
-        }
+        bVec = is_nan(vec);
+        sumCount += step - horizontal_count(bVec);
+        sum += horizontal_add(select(bVec, 0.0, vec));
     }
 
     if (remainder > 0) {
-        auto v = avg_skip_nan(pd, remainder);
-        sum += v.sum;
-        sumCount += v.count;
+        vec.load_partial(remainder, pd);
+        bVec = is_nan(vec);
+        sumCount += step - horizontal_count(bVec);
+        sum += horizontal_add(select(bVec, 0.0, vec));
     }
     return sum / sumCount;
 }

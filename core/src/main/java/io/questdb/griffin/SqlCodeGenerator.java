@@ -33,10 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.groupby.*;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.vect.SumDoubleVectorAggregateFunction;
-import io.questdb.griffin.engine.groupby.vect.SumIntVectorAggregateFunction;
-import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.*;
 import io.questdb.griffin.engine.join.*;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
@@ -411,20 +408,30 @@ public class SqlCodeGenerator {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final ExpressionNode ast = qc.getAst();
-            if (ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, "sum") && ast.rhs.type == LITERAL) {
+            if (isSingleColumnFunction(ast, "sum")) {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
                 final int type = metadata.getColumnType(columnIndex);
                 if (type == ColumnType.DOUBLE) {
                     if (vafList == null) {
                         vafList = new ObjList<>();
                     }
-                    vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position));
+                    vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 } else if (type == ColumnType.INT) {
                     if (vafList == null) {
                         vafList = new ObjList<>();
                     }
-                    vafList.add(new SumIntVectorAggregateFunction(ast.rhs.position));
+                    vafList.add(new SumIntVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                }
+            } else if (isSingleColumnFunction(ast, "avg")) {
+                final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
+                final int type = metadata.getColumnType(columnIndex);
+                if (type == ColumnType.DOUBLE) {
+                    if (vafList == null) {
+                        vafList = new ObjList<>();
+                    }
+                    vafList.add(new AvgDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 }
             }
@@ -949,6 +956,10 @@ public class SqlCodeGenerator {
                 model,
                 executionContext
         );
+    }
+
+    private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
+        return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
     @NotNull
