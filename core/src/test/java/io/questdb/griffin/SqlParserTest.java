@@ -1674,7 +1674,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testGenericPreFilterPlacement() throws Exception {
         assertQuery(
-                "select-choose customerName, orderId, productId from (select [customerName, customerId] from customers join (select [orderId, productId, customerId] from orders where product = 'X') orders on orders.customerId = customers.customerId where customerName ~= 'WTBHZVPVZZ')",
+                "select-choose customerName, orderId, productId from (select [customerName, customerId] from customers join (select [orderId, productId, customerId, product] from orders where product = 'X') orders on orders.customerId = customers.customerId where customerName ~= 'WTBHZVPVZZ')",
                 "select customerName, orderId, productId " +
                         "from customers join orders on customers.customerId = orders.customerId where customerName ~= 'WTBHZVPVZZ' and product = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
@@ -2039,7 +2039,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoin1() throws Exception {
         assertQuery(
-                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 latest by x where x > 100)) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z] from tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b)",
+                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 latest by x where x > 100)) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b)",
                 "select t1.x, y from (select x from tab t2 LATEST BY x where x > 100) t1 " +
                         "join tab2 xx2 on xx2.x = t1.x " +
                         "join tab3 on xx2.x > tab3.b " +
@@ -2537,7 +2537,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithClausesDefaultAlias() throws SqlException {
         assertQuery(
-                "select-choose cust.customerId customerId, cust.name name, ord.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~= 'X')) cust outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId] from orders where amount > 100)) ord on ord.customerId = cust.customerId post-join-where ord.customerId != null) limit 10",
+                "select-choose cust.customerId customerId, cust.name name, ord.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~= 'X')) cust outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) ord on ord.customerId = cust.customerId post-join-where ord.customerId != null) limit 10",
                 "with" +
                         " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -2552,10 +2552,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithClausesExplicitAlias() throws SqlException {
         assertQuery(
-                "select-choose" +
-                        " c.customerId customerId," +
-                        " c.name name," +
-                        " o.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~= 'X')) c outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId] from orders where amount > 100)) o on o.customerId = c.customerId post-join-where o.customerId != null) limit 10",
+                "select-choose c.customerId customerId, c.name name, o.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~= 'X')) c outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) o on o.customerId = c.customerId post-join-where o.customerId != null) limit 10",
                 "with" +
                         " cust as (customers where name ~= 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -2767,7 +2764,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x] from zyzy latest by x where a in (x,y) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -3070,7 +3067,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery() throws SqlException {
         assertQuery(
-                "select-choose x, y from (select-choose [a.x x, b.y y, b.s s] a.x x, b.y y, b.s s from (select [x, z] from (select-choose [x] x, z from (select [x] from tab1 where x = 'Z')) a join select [y, z] from (select-choose [y, z] x, y, z, s from (select [y, z] from tab2 where s ~= 'K')) b on b.z = a.z) order by s)",
+                "select-choose x, y from (select-choose [a.x x, b.y y, b.s s] a.x x, b.y y, b.s s from (select [x, z] from (select-choose [x] x, z from (select [x] from tab1 where x = 'Z')) a join select [y, z] from (select-choose [y, z] x, y, z, s from (select [y, z, s] from tab2 where s ~= 'K')) b on b.z = a.z) order by s)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~= 'K') b on a.z=b.z order by b.s",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
@@ -3086,7 +3083,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery2() throws SqlException {
         assertQuery(
-                "select-choose a.x x, b.y y from (select [x, z] from (select-choose [x] x, z from (select-choose [x, p] x, z, p from (select [x] from tab1 where x = 'Z') order by p)) a join select [y, z] from (select-choose [y, z] x, y, z, s from (select [y, z] from tab2 where s ~= 'K')) b on b.z = a.z)",
+                "select-choose a.x x, b.y y from (select [x, z] from (select-choose [x] x, z from (select-choose [x, p] x, z, p from (select [x] from tab1 where x = 'Z') order by p)) a join select [y, z] from (select-choose [y, z] x, y, z, s from (select [y, z, s] from tab2 where s ~= 'K')) b on b.z = a.z)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~= 'K') b on a.z=b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
@@ -3103,7 +3100,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnJoinSubQuery3() throws SqlException {
         assertQuery(
-                "select-choose a.x x, b.y y from (select [x] from (select-choose [x] x from (select-choose [x, z] x, z from (select [x] from tab1 where x = 'Z') order by z)) a asof join select [y, z] from (select-choose [y, z] y, z from (select-choose [y, z, s] y, z, s from (select [y, z] from tab2 where s ~= 'K') order by s)) b on b.z = a.x)",
+                "select-choose a.x x, b.y y from (select [x] from (select-choose [x] x from (select-choose [x, z] x, z from (select [x] from tab1 where x = 'Z') order by z)) a asof join select [y, z] from (select-choose [y, z] y, z from (select-choose [y, z, s] y, z, s from (select [y, z, s] from tab2 where s ~= 'K') order by s)) b on b.z = a.x)",
                 "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~= 'K' order by s) b where a.x = b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
@@ -3362,7 +3359,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",
+                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -3601,7 +3598,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from ((select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relnamespace] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name) _xQdbA1))",
+        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from ((select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relnamespace, relkind, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name) _xQdbA1))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -3784,7 +3781,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectFromSubQuery() throws SqlException {
-        assertQuery("select-choose x from ((select-choose [x] x, y from (select [x] from tab where y > 10)) a)",
+        assertQuery("select-choose x from ((select-choose [x] x, y from (select [x, y] from tab where y > 10)) a)",
                 "select a.x from (tab where y > 10) a",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -3992,7 +3989,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSingleTableLimit() throws Exception {
         assertQuery(
-                "select-choose x, y from (select [x, y] from tab where x > z) limit 100",
+                "select-choose x, y from (select [x, y, z] from tab where x > z) limit 100",
                 "select x x, y y from tab where x > z limit 100",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -4004,7 +4001,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSingleTableLimitLoHi() throws Exception {
         assertQuery(
-                "select-choose x, y from (select [x, y] from tab where x > z) limit 100,200",
+                "select-choose x, y from (select [x, y, z] from tab where x > z) limit 100,200",
                 "select x x, y y from tab where x > z limit 100,200",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -4196,7 +4193,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSubQueryLimitLoHi() throws Exception {
         assertQuery(
-                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y] from tab where x > z and x = y) limit 100,200) _xQdbA1) limit 150",
+                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y, z] from tab where x > z and x = y) limit 100,200) _xQdbA1) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -4299,7 +4296,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampOnSubQuery() throws Exception {
-        assertQuery("select-choose x from ((select-choose [x] x, y from (select [x] from a b where x > y)) _xQdbA1) timestamp (x)",
+        assertQuery("select-choose x from ((select-choose [x] x, y from (select [x, y] from a b where x > y)) _xQdbA1) timestamp (x)",
                 "select x from (a b) timestamp(x) where x > y",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
@@ -4307,7 +4304,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testTimestampOnTable() throws Exception {
         assertQuery(
-                "select-choose x from (select [x] from a b timestamp (x) where x > y)",
+                "select-choose x from (select [x, y] from a b timestamp (x) where x > y)",
                 "select x from a b timestamp(x) where x > y",
                 modelOf("a")
                         .col("x", ColumnType.TIMESTAMP)

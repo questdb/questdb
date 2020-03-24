@@ -1972,6 +1972,11 @@ class SqlOptimiser {
             emitLiteralsTopDown(model.getTimestamp(), nested);
         }
 
+        // where clause
+        if (model.getWhereClause() != null) {
+            emitLiteralsTopDown(model.getWhereClause(), model);
+        }
+
         // propagate 'order by'
         if (!topLevel) {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
