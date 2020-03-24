@@ -43,8 +43,34 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullRegex() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where name !~ null", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(30, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+            }
+        });
+    }
+
+    @Test
+    public void testRegexSyntaxError() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where name !~ 'XJ**'", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(34, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
+            }
+        });
+    }
+
+    @Test
     public void testSimple() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final String expected = "name\n" +
                     "XYPO\n" +
                     "XTP\n" +
@@ -97,47 +123,15 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "OPY\n" +
                     "YPR\n";
 
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))");
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
-    public void testRegexSyntaxError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))");
-            try {
-                compiler.compile("select * from x where name !~ 'XJ**'");
-            } catch (SqlException e) {
-                Assert.assertEquals(34, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
-            }
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
-    public void testNullRegex() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))");
-            try {
-                compiler.compile("select * from x where name !~ null");
-            } catch (SqlException e) {
-                Assert.assertEquals(30, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-            }
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 }

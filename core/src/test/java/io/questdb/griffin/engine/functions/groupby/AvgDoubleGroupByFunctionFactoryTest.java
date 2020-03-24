@@ -35,12 +35,12 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAll() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cq = compiler.compile("select max(x), avg(x), sum(x) from long_sequence(10)");
+        assertMemoryLeak(() -> {
+            CompiledQuery cq = compiler.compile("select max(x), avg(x), sum(x) from long_sequence(10)", sqlExecutionContext);
 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
-                try (RecordCursor cursor = factory.getCursor()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
             }
@@ -48,9 +48,6 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             TestUtils.assertEquals("max\tavg\tsum\n" +
                             "10.0\t5.5\t55\n",
                     sink);
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 

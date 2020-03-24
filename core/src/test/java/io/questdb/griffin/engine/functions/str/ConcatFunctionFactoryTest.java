@@ -45,30 +45,32 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAll() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CairoTestUtils.createAllTableWithNewTypes(configuration, PartitionBy.NONE);
 
             compiler.compile("insert into all2 select * from (" +
-                    "select" +
-                    " rnd_int()," +
-                    " rnd_short()," +
-                    " rnd_byte()," +
-                    " rnd_double()," +
-                    " rnd_float()," +
-                    " rnd_long()," +
-                    " rnd_str(2,3,0)," +
-                    " rnd_symbol('A','D')," +
-                    " rnd_boolean()," +
-                    " rnd_bin()," +
-                    " rnd_date()," +
-                    " rnd_long256()," +
-                    " rnd_char()," +
-                    " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)");
-            CompiledQuery cq = compiler.compile("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1");
+                            "select" +
+                            " rnd_int()," +
+                            " rnd_short()," +
+                            " rnd_byte()," +
+                            " rnd_double()," +
+                            " rnd_float()," +
+                            " rnd_long()," +
+                            " rnd_str(2,3,0)," +
+                            " rnd_symbol('A','D')," +
+                            " rnd_boolean()," +
+                            " rnd_bin()," +
+                            " rnd_date()," +
+                            " rnd_long256()," +
+                            " rnd_char()," +
+                            " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)",
+                    sqlExecutionContext
+            );
+            CompiledQuery cq = compiler.compile("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1", sqlExecutionContext);
 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
-                try (RecordCursor cursor = factory.getCursor()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
             }
@@ -85,9 +87,6 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
                             "1864113037/-1315/111/0.8940917126581895/0.198/-8082754367165748693/OV/A/false/[]/8611401/0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2/L/30\n" +
                             "2067844108/-6087/114/0.10227682008381178/0.089/-7724577649125721868/GMX/D/false/[]/4170699/0x6fff79101ec5c1cf61ca7a1ff52a4ccf7ab72c8ee7c4dea1c54dc9aa8e01394b/G/70\n",
                     sink);
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 }

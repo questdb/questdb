@@ -434,7 +434,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testSimpleCopy() throws Exception {
         assertMemoryLeak(() -> {
 
-            compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'");
+            compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'", sqlExecutionContext);
 
             final String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                     "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +

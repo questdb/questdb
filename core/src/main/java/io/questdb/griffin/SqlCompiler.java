@@ -642,10 +642,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(textLoader);
     }
 
-    public CompiledQuery compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();

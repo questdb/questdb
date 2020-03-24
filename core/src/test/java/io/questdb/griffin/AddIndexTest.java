@@ -39,6 +39,31 @@ public class AddIndexTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddIndexToIndexedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table trades as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                            "        rnd_double() price, \n" +
+                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                            "    from long_sequence(10000)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+            compiler.compile("alter table trades alter column sym add index", sqlExecutionContext);
+
+            try {
+                compiler.compile("alter table trades alter column sym add index", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "already indexed");
+            }
+        });
+    }
+
+    @Test
     public void testBeforeAndAfterIndex() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
@@ -75,27 +100,5 @@ public class AddIndexTest extends AbstractGriffinTest {
                 true
 
         );
-    }
-
-    @Test
-    public void testAddIndexToIndexedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table trades as (\n" +
-                    "    select \n" +
-                    "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                    "        rnd_double() price, \n" +
-                    "        timestamp_sequence(172800000000, 36000000) ts \n" +
-                    "    from long_sequence(10000)\n" +
-                    ") timestamp(ts) partition by DAY");
-            compiler.compile("alter table trades alter column sym add index");
-
-            try {
-                compiler.compile("alter table trades alter column sym add index");
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "already indexed");
-            }
-        });
     }
 }

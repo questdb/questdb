@@ -44,9 +44,32 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAllNull() throws SqlException {
+
+        compiler.compile("create table tab (f float)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertTrue(Float.isNaN(record.getFloat(0)));
+            }
+        }
+    }
+
+    @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f float)");
+        compiler.compile("create table tab (f float)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
@@ -60,8 +83,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
@@ -71,32 +94,9 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f float)");
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Float.isNaN(record.getFloat(0)));
-            }
-        }
-    }
-
-    @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f float)");
+        compiler.compile("create table tab (f float)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
@@ -107,8 +107,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());

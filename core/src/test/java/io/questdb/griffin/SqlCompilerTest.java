@@ -115,7 +115,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
-            compiler.compile("create table x (a int)");
+            compiler.compile("create table x (a int)", sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
@@ -1670,7 +1670,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String query = "SET x = y";
         TestUtils.assertMemoryLeak(() -> {
             try {
-                Assert.assertEquals(SET, compiler.compile(query).getType());
+                Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
             } finally {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -1839,7 +1839,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     try {
-                        compiler.compile(sql);
+                        compiler.compile(sql, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -1894,7 +1894,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 try (CairoEngine engine = new CairoEngine(configuration, null); SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        compiler.compile(sql);
+                        compiler.compile(sql, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -2037,20 +2037,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateEmptyTableNoPartition() throws SqlException {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL capacity 16 cache, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t)"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 16 cache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t)",
+                sqlExecutionContext
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
@@ -2072,20 +2074,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateEmptyTableNoTimestamp() throws SqlException {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL capacity 16 cache, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "partition by MONTH"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 16 cache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "partition by MONTH",
+                sqlExecutionContext
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
@@ -2107,21 +2111,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateEmptyTableSymbolCache() throws SqlException {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL capacity 16 cache, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 16 cache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                sqlExecutionContext
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
@@ -2143,21 +2149,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateEmptyTableSymbolNoCache() throws SqlException {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL capacity 16 nocache, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 16 nocache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                sqlExecutionContext
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
@@ -2180,21 +2188,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateEmptyTableWithIndex() throws SqlException {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL capacity 16 cache index capacity 2048, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 16 cache index capacity 2048, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                sqlExecutionContext
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
@@ -2244,7 +2254,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
-                    compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))");
+                    compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))", sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -2258,7 +2268,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableUtf8() throws SqlException {
-        compiler.compile("create table доходы(экспорт int)");
+        compiler.compile("create table доходы(экспорт int)", sqlExecutionContext);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "доходы")) {
             for (int i = 0; i < 20; i++) {
@@ -2269,7 +2279,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             writer.commit();
         }
 
-        compiler.compile("create table миллионы as (select * from доходы)");
+        compiler.compile("create table миллионы as (select * from доходы)", sqlExecutionContext);
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "миллионы", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
@@ -2303,13 +2313,15 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testDuplicateTableName() throws Exception {
-        compiler.compile("create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "t TIMESTAMP, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH"
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "t TIMESTAMP, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                sqlExecutionContext
         );
 
         assertFailure(13, "table already exists",
@@ -2318,6 +2330,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH");
+    }
+
+    @Test
+    public void testEmptyQuery() {
+        try {
+            compiler.compile("                        ", sqlExecutionContext);
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
+        }
     }
 
     @Test
@@ -2752,7 +2774,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl);
+                    compiler.compile(ddl, sqlExecutionContext);
                 }
                 assertFailure0(errorPosition, errorMessage, insert);
 
@@ -2769,9 +2791,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
                 try {
-                    compiler.compile("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
+                    compiler.compile("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
                 } catch (SqlException e) {
                     Assert.assertEquals(14, e.getPosition());
                     Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
@@ -2941,11 +2963,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                    compiler.compile("create table x (a INT, b INT)");
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))");
-                    compiler.compile("insert into x select * from y");
+                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
+                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
+                    compiler.compile("insert into x select * from y", sqlExecutionContext);
 
-                    try (RecordCursorFactory factory = compiler.compile("select * from x").getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory()) {
                         sink.clear();
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
@@ -3036,7 +3058,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        compiler.compile("create table x (a INT, b FLOAT)");
+                        compiler.compile("create table x (a INT, b FLOAT)", sqlExecutionContext);
                         index.set(0);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -3049,7 +3071,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        compiler2.compile("create table x (a STRING, b DOUBLE)");
+                        compiler2.compile("create table x (a STRING, b DOUBLE)", sqlExecutionContext);
                         index.set(1);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -3078,18 +3100,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    @Test
-    public void testEmptyQuery() {
-        try {
-            compiler.compile("                        ");
-        } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "empty query");
-        }
-    }
-
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
-        compiler.compile(sql);
+        compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
@@ -3115,11 +3127,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastByteFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_byte(2,50)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_byte(2,50)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(85, e.getPosition());
@@ -3153,11 +3168,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastDoubleFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_double(2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_double(2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(84, e.getPosition());
@@ -3179,11 +3197,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastFloatFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_float(2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_float(2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(83, e.getPosition());
@@ -3205,11 +3226,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastIntFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_int(0, 30, 2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_int(0, 30, 2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(88, e.getPosition());
@@ -3231,11 +3255,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastLongFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_long(0, 30, 2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_long(0, 30, 2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(89, e.getPosition());
@@ -3257,11 +3284,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastShortFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_short(2,10)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_short(2,10)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(86, e.getPosition());
@@ -3271,11 +3301,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastStringFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select * from random_cursor(" +
-                    " 20," + // record count
-                    " 'a', rnd_str(5,10,2)" +
-                    ")), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_str(5,10,2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(86, e.getPosition());
@@ -3285,9 +3318,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertCastSymbolFail(int castTo) {
         try {
-            compiler.compile("create table y as (" +
-                    "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
-                    "), cast(a as " + ColumnType.nameOf(castTo) + ")");
+            compiler.compile(
+                    "create table y as (" +
+                            "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    sqlExecutionContext
+            );
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(84, e.getPosition());
@@ -3310,7 +3346,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException {
 
         // create source table
-        compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)");
+        compiler.compile(
+                "create table X (a int, b int, t timestamp) timestamp(t)",
+                sqlExecutionContext
+        );
 
         try (CairoEngine engine = new CairoEngine(configuration, null) {
             @Override
@@ -3321,7 +3360,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }) {
 
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                compiler.compile(sql);
+                compiler.compile(sql, sqlExecutionContext);
 
                 Assert.assertTrue(fiddler.isHappy());
 
@@ -3342,7 +3381,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
         try {
-            compiler.compile(sql);
+            compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -3361,9 +3400,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try (CairoEngine engine = new CairoEngine(configuration, null)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                compiler.compile("create table x (a INT, b INT)");
+                compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
                 try {
-                    compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                    compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -3374,7 +3413,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 inError.set(false);
 
-                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
                 try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     Assert.assertEquals(1000000, w.size());
                 }
@@ -3392,10 +3431,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile(ddl);
-                compiler.compile(insert);
+                compiler.compile(ddl, sqlExecutionContext);
+                compiler.compile(insert, sqlExecutionContext);
 
-                try (RecordCursorFactory factory = compiler.compile(select).getRecordCursorFactory()) {
+                try (RecordCursorFactory factory = compiler.compile(select, sqlExecutionContext).getRecordCursorFactory()) {
                     sink.clear();
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         printer.print(cursor, factory.getMetadata(), true);

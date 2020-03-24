@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -87,8 +89,23 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", TableUtils.ANY_TABLE_VERSION, null, null)) {
 
+                IntList columnIndexes = new IntList();
+                IntList columnSizes = new IntList();
+
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnIndexes.add(i);
+                    columnSizes.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+                }
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(
+                        metadata,
+                        engine,
+                        "x",
+                        TableUtils.ANY_TABLE_VERSION,
+                        columnIndexes,
+                        columnSizes,
+                        false
+                )) {
                     long count = 0;
                     final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), workScheduler);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
