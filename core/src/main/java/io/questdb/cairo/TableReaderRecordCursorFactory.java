@@ -29,31 +29,36 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
+    private final TableReaderSelectedColumnRecordCursor cursor;
     private final CairoEngine engine;
     private final String tableName;
     private final long tableVersion;
     private final IntList columnIndexes;
     private final IntList columnSizes;
     private TableReaderPageFrameCursor pageFrameCursor = null;
+    private final boolean framingSupported;
 
     public TableReaderRecordCursorFactory(
             RecordMetadata metadata,
             CairoEngine engine,
             String tableName,
             long tableVersion,
-            @Nullable IntList columnIndexes,
-            @Nullable IntList columnSizes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizes,
+            boolean framingSupported
     ) {
         super(metadata);
+        this.cursor = new TableReaderSelectedColumnRecordCursor(columnIndexes);
         this.engine = engine;
         this.tableName = tableName;
         this.tableVersion = tableVersion;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
+        this.framingSupported = framingSupported;
     }
 
     @Override
@@ -77,7 +82,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
-        } else if (columnIndexes != null) {
+        } else if (framingSupported) {
             pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
             return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
         } else {

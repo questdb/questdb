@@ -41,11 +41,21 @@ public class RenameTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFunctionDestTableName() throws Exception {
+        assertFailure("rename table x to y()", 18, "literal or constant expected");
+    }
+
+    @Test
+    public void testFunctionSrcTableName() throws Exception {
+        assertFailure("rename table x() to y", 13, "literal or constant expected");
+    }
+
+    @Test
     public void testSimpleRename() throws Exception {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    Assert.assertEquals(RENAME_TABLE, compiler.compile("rename table 'x' to 'y'").getType());
+                    Assert.assertEquals(RENAME_TABLE, compiler.compile("rename table 'x' to 'y'", sqlExecutionContext).getType());
                     assertQuery("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                                     "1\tmsft\t50.938\t2018-01-01T00:12:00.000000Z\tfalse\tXYZ\t0.4621835429127854\t0.5599\t31\t2015-06-22T18:58:53.562Z\tPEHN\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
                                     "2\tgoogl\t42.281\t2018-01-01T00:24:00.000000Z\tfalse\tABC\t0.4138164748227684\t0.5522\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
@@ -68,21 +78,11 @@ public class RenameTableTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testFunctionSrcTableName() throws Exception {
-        assertFailure("rename table x() to y", 13, "literal or constant expected");
-    }
-
-    @Test
-    public void testFunctionDestTableName() throws Exception {
-        assertFailure("rename table x to y()", 18, "literal or constant expected");
-    }
-
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql);
+                compiler.compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -112,7 +112,8 @@ public class RenameTableTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);"
+                        ") timestamp (timestamp);",
+                sqlExecutionContext
         );
     }
 }

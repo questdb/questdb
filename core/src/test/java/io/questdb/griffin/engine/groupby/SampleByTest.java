@@ -384,17 +384,18 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupByFail() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
-            compiler.compile(("create table x as " +
-                    "(" +
-                    "select" +
-                    " x," +
-                    " rnd_double(0) d," +
-                    " rnd_symbol('XY','ZP', null, 'UU') c" +
-                    " from" +
-                    " long_sequence(1000000)" +
-                    ")")
+            compiler.compile("create table x as " +
+                            "(" +
+                            "select" +
+                            " x," +
+                            " rnd_double(0) d," +
+                            " rnd_symbol('XY','ZP', null, 'UU') c" +
+                            " from" +
+                            " long_sequence(1000000)" +
+                            ")",
+                    sqlExecutionContext
             );
 
             engine.releaseAllWriters();
@@ -422,7 +423,7 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x").getRecordCursorFactory()) {
+                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
                             factory.getCursor(sqlExecutionContext);
                         }
                         Assert.fail();
@@ -1385,112 +1386,101 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillLinearConstructorFail() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(172800000000, 3600000000) k" +
+                            " from" +
+                            " long_sequence(20000000)" +
+                            ") timestamp(k) partition by NONE",
+                    sqlExecutionContext
+            );
 
-                compiler.compile(("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20000000)" +
-                        ") timestamp(k) partition by NONE"));
+            FilesFacade ff = new FilesFacadeImpl() {
+                int count = 2;
 
-                FilesFacade ff = new FilesFacadeImpl() {
-                    int count = 2;
-
-                    @Override
-                    public long mmap(long fd, long len, long offset, int mode) {
-                        if (count-- > 0) {
-                            return super.mmap(fd, len, offset, mode);
-                        }
-                        return -1;
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    if (count-- > 0) {
+                        return super.mmap(fd, len, offset, mode);
                     }
-                };
-
-                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-
-                try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                        try {
-                            compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)");
-                            Assert.fail();
-                        } catch (SqlException e) {
-                            Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
-                        }
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                    }
+                    return -1;
                 }
+            };
 
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try {
+                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
             }
         });
     }
 
     @Test
     public void testSampleFillLinearFail() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(172800000000, 3600000000) k" +
+                            " from" +
+                            " long_sequence(20000000)" +
+                            ") timestamp(k) partition by NONE",
+                    sqlExecutionContext
+            );
 
-                compiler.compile(("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20000000)" +
-                        ") timestamp(k) partition by NONE")
-                );
+            FilesFacade ff = new FilesFacadeImpl() {
+                int count = 5;
 
-                FilesFacade ff = new FilesFacadeImpl() {
-                    int count = 5;
-
-                    @Override
-                    public long mmap(long fd, long len, long offset, int mode) {
-                        if (count-- > 0) {
-                            return super.mmap(fd, len, offset, mode);
-                        }
-                        return -1;
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    if (count-- > 0) {
+                        return super.mmap(fd, len, offset, mode);
                     }
-                };
-
-                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-
-                try (CairoEngine engine = new CairoEngine(configuration)) {
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                        try {
-                            try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)").getRecordCursorFactory()) {
-                                // with mmap count = 5 we should get failure in cursor
-                                factory.getCursor(sqlExecutionContext);
-                            }
-                            Assert.fail();
-                        } catch (CairoException e) {
-                            Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
-                        }
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                    }
+                    return -1;
                 }
+            };
 
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    try {
+                        try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
+                            // with mmap count = 5 we should get failure in cursor
+                            factory.getCursor(sqlExecutionContext);
+                        }
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
             }
         });
     }
@@ -4010,7 +4000,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillValueAllTypesAndTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile((
+            compiler.compile(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -4024,9 +4014,11 @@ public class SampleByTest extends AbstractGriffinTest {
                             " timestamp_sequence(172800000000, 3600000000) k" +
                             " from" +
                             " long_sequence(20)" +
-                            ") timestamp(k) partition by NONE"));
+                            ") timestamp(k) partition by NONE",
+                    sqlExecutionContext
+            );
 
-            try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)").getRecordCursorFactory()) {
+            try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -4071,7 +4063,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, true);
 
-                compiler.compile("truncate table x");
+                compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);

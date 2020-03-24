@@ -83,7 +83,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x add column xx int");
+                    compiler.compile("alter table x add column xx int", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -103,7 +103,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int", sqlExecutionContext).getType());
 
                     assertQuery(
                             "c\tmycol\n" +
@@ -121,6 +121,22 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             null,
                             true
                     );
+                }
+        );
+    }
+
+    @Test
+    public void testAddColumnUpperCase() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    try {
+                        compiler.compile("alter table x add column D int", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
+                    }
                 }
         );
     }
@@ -170,7 +186,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration, null)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache").getType());
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext).getType());
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -195,7 +211,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -251,7 +267,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -271,7 +287,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -297,7 +313,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -317,7 +333,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol").getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol", sqlExecutionContext).getType());
 
                     assertQuery(
                             "c\tmycol\tsecond\n" +
@@ -335,22 +351,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             null,
                             true
                     );
-                }
-        );
-    }
-
-    @Test
-    public void testAddColumnUpperCase() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-
-                    try {
-                        compiler.compile("alter table x add column D int");
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
-                    }
                 }
         );
     }
@@ -389,7 +389,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql);
+                compiler.compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -419,7 +419,8 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);"
+                        ") timestamp (timestamp);",
+                sqlExecutionContext
         );
     }
 }

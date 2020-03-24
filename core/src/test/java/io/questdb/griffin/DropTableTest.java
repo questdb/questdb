@@ -35,59 +35,14 @@ import org.junit.Test;
 public class DropTableTest extends AbstractGriffinTest {
 
     @Test
-    public void testDropExisting() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table instrument (a int)");
-            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
-
-            cc = compiler.compile("drop table instrument");
-            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
-
-        });
-    }
-
-    @Test
-    public void testDropUtf8() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table научный (a int)");
-            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
-
-            cc = compiler.compile("drop table научный");
-            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
-        });
-    }
-
-    @Test
-    public void testDropUtf8Quoted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)");
-            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
-
-            cc = compiler.compile("drop table 'научный руководитель'");
-            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
-        });
-    }
-
-    @Test
-    public void testDropQuoted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)");
-            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
-
-            cc = compiler.compile("drop table 'large table'");
-            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
-        });
-    }
-
-    @Test
     public void testDropBusyReader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)");
+            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            try (RecordCursorFactory factory = compiler.compile("'large table'").getRecordCursorFactory()) {
-                try (RecordCursor ignored = factory.getCursor()) {
-                    compiler.compile("drop table 'large table'");
+            try (RecordCursorFactory factory = compiler.compile("'large table'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    compiler.compile("drop table 'large table'", sqlExecutionContext);
                 }
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
@@ -100,11 +55,11 @@ public class DropTableTest extends AbstractGriffinTest {
     @Test
     public void testDropBusyWriter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'large table' (a int)");
+            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "large table")) {
-                compiler.compile("drop table 'large table'");
+                compiler.compile("drop table 'large table'", sqlExecutionContext);
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
             } finally {
@@ -114,14 +69,59 @@ public class DropTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropExisting() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table instrument (a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            cc = compiler.compile("drop table instrument", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+
+        });
+    }
+
+    @Test
     public void testDropMissingFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("drop i_am_missing");
+                compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
                 TestUtils.assertContains("'table' expected", e.getFlyweightMessage());
             }
+        });
+    }
+
+    @Test
+    public void testDropQuoted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            cc = compiler.compile("drop table 'large table'", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
+
+    @Test
+    public void testDropUtf8() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table научный (a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            cc = compiler.compile("drop table научный", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
+
+    @Test
+    public void testDropUtf8Quoted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            cc = compiler.compile("drop table 'научный руководитель'", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
 }

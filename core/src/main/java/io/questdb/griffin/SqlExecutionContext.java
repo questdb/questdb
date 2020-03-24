@@ -36,4 +36,10 @@ public interface SqlExecutionContext {
     CairoSecurityContext getCairoSecurityContext();
 
     @Nullable MessageBus getMessageBus();
+
+    boolean isTimestampRequired();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
 }

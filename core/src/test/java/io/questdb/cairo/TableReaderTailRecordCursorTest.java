@@ -27,11 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,8 +39,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
-    private final static CairoEngine engine = new CairoEngine(configuration, null);
-    private final static SqlCompiler compiler = new SqlCompiler(engine);
 
     @Test
     public void testBusyPollByDay() throws Exception {
@@ -136,139 +132,130 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     }
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile(createStatement);
+        assertMemoryLeak(() -> {
+            compiler.compile(createStatement, sqlExecutionContext);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
-            try {
-                new Thread(() -> {
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
-                        barrier.await();
-                        long ts = 0;
-                        long addr = Unsafe.malloc(128);
-                        try {
-                            Rnd rnd = new Rnd();
-                            for (int i = 0; i < n; i++) {
-                                TableWriter.Row row = writer.newRow(ts);
-                                row.putInt(0, i);
-                                for (int k = 0; k < 128; k++) {
-                                    Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
-                                }
-                                row.putBin(1, addr, 128);
-                                row.putLong(2, rnd.nextLong());
-                                row.append();
-                                writer.commit();
-                                ts += timestampIncrement;
-                            }
-                        } finally {
-                            Unsafe.free(addr, 128);
-                        }
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        errorCount.incrementAndGet();
-                    } finally {
-                        latch.countDown();
-                    }
-                }).start();
-
-                new Thread(() -> {
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION)) {
+            new Thread(() -> {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
+                    barrier.await();
+                    long ts = 0;
+                    long addr = Unsafe.malloc(128);
+                    try {
                         Rnd rnd = new Rnd();
-                        int count = 0;
-                        final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
-                        cursor.of(reader);
-                        final Record record = cursor.getRecord();
-                        barrier.await();
-                        while (count < n) {
-                            if (cursor.reload()) {
-                                while (cursor.hasNext()) {
-                                    Assert.assertEquals(count, record.getInt(0));
-                                    BinarySequence binarySequence = record.getBin(1);
-                                    for (int i = 0; i < 128; i++) {
-                                        Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
-                                    }
-                                    Assert.assertEquals(rnd.nextLong(), record.getLong(2));
-                                    count++;
+                        for (int i = 0; i < n; i++) {
+                            TableWriter.Row row = writer.newRow(ts);
+                            row.putInt(0, i);
+                            for (int k = 0; k < 128; k++) {
+                                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+                            }
+                            row.putBin(1, addr, 128);
+                            row.putLong(2, rnd.nextLong());
+                            row.append();
+                            writer.commit();
+                            ts += timestampIncrement;
+                        }
+                    } finally {
+                        Unsafe.free(addr, 128);
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errorCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+
+            new Thread(() -> {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION)) {
+                    Rnd rnd = new Rnd();
+                    int count = 0;
+                    final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
+                    cursor.of(reader);
+                    final Record record = cursor.getRecord();
+                    barrier.await();
+                    while (count < n) {
+                        if (cursor.reload()) {
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(count, record.getInt(0));
+                                BinarySequence binarySequence = record.getBin(1);
+                                for (int i = 0; i < 128; i++) {
+                                    Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
                                 }
+                                Assert.assertEquals(rnd.nextLong(), record.getLong(2));
+                                count++;
                             }
                         }
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        errorCount.incrementAndGet();
-                    } finally {
-                        latch.countDown();
                     }
-                }).start();
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errorCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
 
-                Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
-                Assert.assertEquals(0, errorCount.get());
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
+            Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errorCount.get());
         });
     }
 
     private void testBusyPollFromBottomOfTable(int partitionBy, long timestampIncrement) throws Exception {
         final int blobSize = 1024;
         final int n = 1000;
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy)
-                );
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
+                    sqlExecutionContext
+            );
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
-                    long ts = 0;
-                    long addr = Unsafe.malloc(blobSize);
-                    try {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
+                long ts = 0;
+                long addr = Unsafe.malloc(blobSize);
+                try {
 
-                        Rnd rnd = new Rnd();
-                        appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
-                        ts = n * timestampIncrement;
-                        try (
-                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
-                                TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
-                        ) {
-                            cursor.of(reader);
-                            cursor.toBottom();
+                    Rnd rnd = new Rnd();
+                    appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
+                    ts = n * timestampIncrement;
+                    try (
+                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
+                            TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
+                    ) {
+                        cursor.of(reader);
+                        cursor.toBottom();
 
-                            Assert.assertFalse(cursor.reload());
-                            Assert.assertFalse(cursor.hasNext());
+                        Assert.assertFalse(cursor.reload());
+                        Assert.assertFalse(cursor.hasNext());
 
-                            appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
-                            Assert.assertTrue(cursor.reload());
+                        appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
+                        Assert.assertTrue(cursor.reload());
 
-                            int count = 0;
-                            final Record record = cursor.getRecord();
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals(n + n - count, record.getLong(2));
-                                count++;
-                            }
-
-                            writer.truncate();
-                            Assert.assertTrue(cursor.reload());
-                            Assert.assertFalse(cursor.hasNext());
-
-                            appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
-                            Assert.assertTrue(cursor.reload());
-
-                            count = 0;
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
-                                count++;
-                            }
-
-                            Assert.assertEquals(n / 2, count);
+                        int count = 0;
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(n + n - count, record.getLong(2));
+                            count++;
                         }
-                    } finally {
-                        Unsafe.free(addr, blobSize);
+
+                        writer.truncate();
+                        Assert.assertTrue(cursor.reload());
+                        Assert.assertFalse(cursor.hasNext());
+
+                        appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
+                        Assert.assertTrue(cursor.reload());
+
+                        count = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
+                            count++;
+                        }
+
+                        Assert.assertEquals(n / 2, count);
                     }
+                } finally {
+                    Unsafe.free(addr, blobSize);
                 }
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
             }
         });
     }
@@ -276,67 +263,63 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     private void testBusyPollFromMidTable(int partitionBy, long timestampIncrement) throws Exception {
         final int blobSize = 1024;
         final int n = 1000;
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy)
-                );
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
+                    sqlExecutionContext
+            );
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
-                    long ts = 0;
-                    long addr = Unsafe.malloc(blobSize);
-                    try {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
+                long ts = 0;
+                long addr = Unsafe.malloc(blobSize);
+                try {
 
-                        Rnd rnd = new Rnd();
-                        appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
-                        ts = n * timestampIncrement;
-                        try (
-                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
-                                TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
-                        ) {
-                            cursor.of(reader);
-                            Assert.assertTrue(cursor.reload());
-                            int count = 0;
-                            Record record = cursor.getRecord();
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals(n - count, record.getLong(2));
-                                count++;
-                            }
-
-                            Assert.assertFalse(cursor.reload());
-                            Assert.assertFalse(cursor.hasNext());
-
-                            appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
-                            Assert.assertTrue(cursor.reload());
-
-                            count = 0;
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals(n + n - count, record.getLong(2));
-                                count++;
-                            }
-
-                            writer.truncate();
-                            Assert.assertTrue(cursor.reload());
-                            Assert.assertFalse(cursor.hasNext());
-
-                            appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
-                            Assert.assertTrue(cursor.reload());
-
-                            count = 0;
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
-                                count++;
-                            }
-
-                            Assert.assertEquals(n / 2, count);
+                    Rnd rnd = new Rnd();
+                    appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
+                    ts = n * timestampIncrement;
+                    try (
+                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
+                            TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
+                    ) {
+                        cursor.of(reader);
+                        Assert.assertTrue(cursor.reload());
+                        int count = 0;
+                        Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(n - count, record.getLong(2));
+                            count++;
                         }
-                    } finally {
-                        Unsafe.free(addr, blobSize);
+
+                        Assert.assertFalse(cursor.reload());
+                        Assert.assertFalse(cursor.hasNext());
+
+                        appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
+                        Assert.assertTrue(cursor.reload());
+
+                        count = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(n + n - count, record.getLong(2));
+                            count++;
+                        }
+
+                        writer.truncate();
+                        Assert.assertTrue(cursor.reload());
+                        Assert.assertFalse(cursor.hasNext());
+
+                        appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
+                        Assert.assertTrue(cursor.reload());
+
+                        count = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
+                            count++;
+                        }
+
+                        Assert.assertEquals(n / 2, count);
                     }
+                } finally {
+                    Unsafe.free(addr, blobSize);
                 }
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
             }
         });
     }
