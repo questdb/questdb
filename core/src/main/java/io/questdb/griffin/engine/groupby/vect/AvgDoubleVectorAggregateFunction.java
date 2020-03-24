@@ -62,8 +62,6 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public double getDouble(Record rec) {
-        double sum = doubleAdder.sum();
-        long count = longAdder.sum();
-        return sum / count;
+        return doubleAdder.sum() / longAdder.sum();
     }
 }
