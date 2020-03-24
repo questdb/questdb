@@ -29,20 +29,24 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.LongAdder;
 
-public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     private final DoubleAdder doubleAdder = new DoubleAdder();
+    private final LongAdder longAdder = new LongAdder();
     private final int columnIndex;
 
-    public SumDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public AvgDoubleVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
     }
 
     @Override
     public void aggregate(long address, long count) {
-        doubleAdder.add(Vect.sumDouble(address, count));
+        double avg = Vect.avgDouble(address, count);
+        doubleAdder.add(avg);
+        longAdder.add(1);
     }
 
     @Override
@@ -53,10 +57,11 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public void clear() {
         doubleAdder.reset();
+        longAdder.reset();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return doubleAdder.sum();
+        return doubleAdder.sum() / longAdder.sum();
     }
 }
