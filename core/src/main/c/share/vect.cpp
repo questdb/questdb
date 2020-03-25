@@ -38,6 +38,8 @@
 
 #define SUM_INT F_AVX512(sumInt)
 
+#define HAS_NULL F_AVX512(hasNull)
+
 #elif INSTRSET >= 8
 
 #define SUM_DOUBLE F_AVX2(sumDouble)
@@ -46,6 +48,8 @@
 #define MAX_DOUBLE F_AVX2(maxDouble)
 
 #define SUM_INT F_AVX2(sumInt)
+
+#define HAS_NULL F_AVX2(hasNull)
 
 #elif INSTRSET >= 5
 
@@ -56,6 +60,8 @@
 
 #define SUM_INT F_SSE41(sumInt)
 
+#define HAS_NULL F_SSE41(hasNull)
+
 #elif INSTRSET >= 2
 
 #define SUM_DOUBLE F_SSE2(sumDouble)
@@ -65,9 +71,31 @@
 
 #define SUM_INT F_SSE2(sumInt)
 
+#define HAS_NULL F_SSE2(hasNull)
+
 #else
 
 #endif
+
+#ifdef HAS_NULL
+
+bool HAS_NULL(int *pi, long count) {
+    const int step = 4;
+    const int remainder = (int) (count - (count / step) * step);
+    const int *vec_lim = pi + count - remainder;
+
+    Vec4i vec;
+    for (; pi < vec_lim; pi += step) {
+        vec.load(pi);
+        if (horizontal_find_first(vec == -1)) {
+           return true;
+        }
+    }
+    return false;
+}
+
+#endif
+
 
 #ifdef SUM_INT
 
@@ -211,6 +239,7 @@ DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 
 INT_LONG_DISPATCHER(sumInt)
+INT_BOOL_DISPATCHER(hasNull)
 
 #endif  // INSTRSET == 2
 

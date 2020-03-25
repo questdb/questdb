@@ -34,4 +34,6 @@ public final class Vect {
     public static native double maxDouble(long pDouble, long count);
 
     public static native long sumInt(long pInt, long count);
+
+    public static native boolean hasNull(long pInt, long count);
 }

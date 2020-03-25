@@ -84,4 +84,6 @@ double maxDouble_Vanilla(double *d, long count);
 
 long sumInt_Vanilla(int *pi, long count);
 
+bool hasNull_Vanilla(int *pi, long count);
+
 #endif //VECT_VANILLA_H
