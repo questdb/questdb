@@ -51,4 +51,6 @@ int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
 
 double avgLong_Vanilla(int64_t *pl, int64_t count);
 
+bool hasNull_Vanilla(int *pi, long count);
+
 #endif //VECT_VANILLA_H

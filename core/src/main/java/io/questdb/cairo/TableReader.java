@@ -458,8 +458,24 @@ public class TableReader implements Closeable {
                 result += Vect.sumDouble(a, count);
             }
         }
-
         return result;
+    }
+
+    boolean hasNull(int columnIndex) {
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                long a = column.getPageAddress(pageIndex);
+                long count = column.getPageSize(pageIndex) / Integer.BYTES;
+                if (Vect.hasNull(a, count)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public double minDouble(int columnIndex) {

@@ -133,6 +133,10 @@ public class SymbolMapWriter implements Closeable {
         return path.concat(columnName).put(".o").$();
     }
 
+    public void updateNullFlag() {
+        offsetMem.putBool(HEADER_NULL_FLAG, true);
+    }
+
     static int offsetToKey(long offset) {
         return (int) ((offset - HEADER_SIZE) / 8L);
     }
@@ -162,7 +166,7 @@ public class SymbolMapWriter implements Closeable {
         if (symbol == null) {
             if (!nullValue) {
                 nullValue = true;
-                offsetMem.putBool(HEADER_NULL_FLAG, true);
+                updateNullFlag();
             }
             return SymbolTable.VALUE_IS_NULL;
         }

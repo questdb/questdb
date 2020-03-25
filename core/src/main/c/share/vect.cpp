@@ -46,6 +46,8 @@
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
+#define HAS_NULL F_AVX512(hasNull)
+
 #elif INSTRSET >= 8
 
 #define SUM_DOUBLE F_AVX2(sumDouble)
@@ -62,6 +64,8 @@
 #define AVG_LONG F_AVX2(avgLong)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
+
+#define HAS_NULL F_AVX2(hasNull)
 
 #elif INSTRSET >= 5
 
@@ -80,6 +84,8 @@
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
+#define HAS_NULL F_SSE41(hasNull)
+
 #elif INSTRSET >= 2
 
 #define SUM_DOUBLE F_SSE2(sumDouble)
@@ -97,9 +103,31 @@
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
 
+#define HAS_NULL F_SSE2(hasNull)
+
 #else
 
 #endif
+
+#ifdef HAS_NULL
+
+bool HAS_NULL(int *pi, long count) {
+    const int step = 4;
+    const int remainder = (int) (count - (count / step) * step);
+    const int *vec_lim = pi + count - remainder;
+
+    Vec4i vec;
+    for (; pi < vec_lim; pi += step) {
+        vec.load(pi);
+        if (horizontal_find_first(vec == -1)) {
+           return true;
+        }
+    }
+    return false;
+}
+
+#endif
+
 
 #ifdef SUM_LONG
 
@@ -462,6 +490,7 @@ DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 
 INT_LONG_DISPATCHER(sumInt)
+INT_BOOL_DISPATCHER(hasNull)
 INT_DOUBLE_DISPATCHER(avgInt)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)

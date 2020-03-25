@@ -184,6 +184,17 @@ int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {
     return max;
 }
 
+bool hasNull_Vanilla(int *pi, long count) {
+    const int *lim = pi + count;
+    for (; pi < lim; pi++) {
+        const int i = *pi;
+        if (i == -1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double avgLong_Vanilla(int64_t *pl, int64_t count) {
     int64_t *p = pl;
     const int64_t *lim = p + count;
