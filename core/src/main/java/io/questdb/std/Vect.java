@@ -35,6 +35,8 @@ public final class Vect {
 
     public static native long sumInt(long pInt, long count);
 
+    public static native boolean hasNull(long pInt, long count);
+
     public static native double avgInt(long pInt, long count);
 
     public static native double avgLong(long pLong, long count);

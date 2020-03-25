@@ -42,6 +42,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnType.SYMBOL;
+
 public class CairoEngine implements Closeable {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
 
@@ -93,6 +95,20 @@ public class CairoEngine implements Closeable {
 
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public void migrateNullFlag(TableWriter writer, CairoSecurityContext cairoSecurityContext, CharSequence tok) {
+        TableReader reader = getReader(cairoSecurityContext, tok);
+        TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
+        if (readerMetadata.getVersion() < 416){
+            for (int i = 0; i < reader.getColumnCount(); i++) {
+                if (readerMetadata.getColumnType(i) == SYMBOL) {
+                    if (reader.hasNull(i)) {
+                        writer.getSymbolMapWriter(i).updateNullFlag();
+                    }
+                }
+            }
+        }
     }
 
     public void releaseInactive() {

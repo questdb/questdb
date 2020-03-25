@@ -193,7 +193,6 @@ public class TableWriter implements Closeable {
                         break;
                 }
             }
-
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize());
@@ -1575,6 +1574,10 @@ public class TableWriter implements Closeable {
 
     boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    SymbolMapWriter getSymbolMapWriter(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex);
     }
 
     private void loadRemovedPartitions() {
