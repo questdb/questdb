@@ -112,11 +112,11 @@
 #ifdef HAS_NULL
 
 bool HAS_NULL(int *pi,  int64_t count) {
-    const int step = 4;
+    const int step = 16;
     const int remainder = (int) (count - (count / step) * step);
     const int *vec_lim = pi + count - remainder;
 
-    Vec4i vec;
+    Vec16i vec;
     for (; pi < vec_lim; pi += step) {
         vec.load(pi);
         if (horizontal_find_first(vec == INT_MIN)) {
