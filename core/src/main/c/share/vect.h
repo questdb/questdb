@@ -87,7 +87,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl
 \
 }
 
-typedef bool IntBoolVectFuncType(int *, long);
+typedef bool IntBoolVectFuncType(int *, int64_t);
 
 #define INT_BOOL_DISPATCHER(func) \
 \
@@ -95,7 +95,7 @@ IntBoolVectFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F
 \
 IntBoolVectFuncType *POINTER_NAME(func) = &func ## _dispatch; \
 \
-bool F_DISPATCH(func) (int *pi, long count) { \
+bool F_DISPATCH(func) (int *pi, int64_t count) { \
     const int iset = instrset_detect();  \
     if (iset >= 10) { \
         POINTER_NAME(func) = &F_AVX512(func); \
@@ -111,7 +111,7 @@ bool F_DISPATCH(func) (int *pi, long count) { \
     return (*POINTER_NAME(func))(pi, count); \
 } \
 \
-inline bool func(int *i, long count) { \
+inline bool func(int *i, int64_t count) { \
 return (*POINTER_NAME(func))(i, count); \
 }\
 \

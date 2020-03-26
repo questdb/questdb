@@ -79,7 +79,7 @@
 
 #ifdef HAS_NULL
 
-bool HAS_NULL(int *pi, long count) {
+bool HAS_NULL(int *pi,  int64_t count) {
     const int step = 4;
     const int remainder = (int) (count - (count / step) * step);
     const int *vec_lim = pi + count - remainder;
@@ -87,8 +87,15 @@ bool HAS_NULL(int *pi, long count) {
     Vec4i vec;
     for (; pi < vec_lim; pi += step) {
         vec.load(pi);
-        if (horizontal_find_first(vec == -1)) {
+        if (horizontal_find_first(vec == INT_MIN)) {
            return true;
+        }
+    }
+
+    if (remainder > 0) {
+        vec.load_partial(remainder, pi);
+        if (horizontal_find_first(vec == INT_MIN)) {
+            return true;
         }
     }
     return false;
