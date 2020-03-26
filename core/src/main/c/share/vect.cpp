@@ -348,27 +348,28 @@ double SUM_DOUBLE(double *d, int64_t count) {
     const auto *lim = d + count;
     const auto *vec_lim = lim - remainder;
 
+    double *pd = d;
     Vec8d vec;
     Vec8db bVec;
-    bool hasData = false;
-    double result = 0;
-    for (; d < vec_lim; d += step) {
-        vec.load(d);
+    double sum = 0;
+    long sumCount = 0;
+    for (; pd < vec_lim; pd += step) {
+        vec.load(pd);
         bVec = is_nan(vec);
-        hasData = hasData || horizontal_count(bVec) != step;
-        result += horizontal_add(select(bVec, 0.0, vec));
+        sumCount += step - horizontal_count(bVec);
+        sum += horizontal_add(select(bVec, 0.0, vec));
     }
 
-    if (d < lim) {
-        for (; d < lim; d++) {
-            double x = *d;
+    if (pd < lim) {
+        for (; pd < lim; pd++) {
+            double x = *pd;
             if (x == x) {
-                result += x;
-                hasData = true;
+                sum += x;
+                sumCount++;
             }
         }
     }
-    return hasData ? result : NAN;
+    return sumCount > 0 ? sum : NAN;
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
