@@ -30,13 +30,13 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
-    private final ReadOnlyMemory metaMem;
     private int symbolMapCount;
+    private int version;
 
     public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
-        this.metaMem = metaMem;
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+        this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
@@ -103,10 +103,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     }
 
     public int getTableVersion() {
-        return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        return version;
     }
 
     public void setTableVersion() {
-        metaMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
+        version = ColumnType.VERSION;
     }
 }

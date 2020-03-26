@@ -1154,6 +1154,66 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
+
+    public void updateMetadataVersion() {
+
+        checkDistressed();
+
+        LOG.info().$("Upgrading table version '").utf8(name).$("' to ").$('[').$(ColumnType.VERSION).$(']').$();
+
+        commit();
+        // create new _meta.swp
+        this.metaSwapIndex = copyMetadataAndUpdateVersion();
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // rename _meta to _meta.prev
+        this.metaPrevIndex = rename(fileOperationRetryCount);
+
+        // rename _meta.swp to -_meta
+        restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+
+        try {
+            // open _meta file
+            openMetaFile();
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        metadata.setTableVersion();
+        LOG.info().$("Upgraded table version '").utf8(name).$("' to ").$('[').$(ColumnType.VERSION).$(']').$();
+    }
+
+
+    private int copyMetadataAndUpdateVersion() {
+        int index;
+        try {
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += VirtualMemory.getStorageLength(columnName);
+            }
+            return index;
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+
     private void cancelRow() {
 
         if ((masterRef & 1) == 0) {
