@@ -33,10 +33,7 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import sun.misc.Signal;
 
 import java.io.File;
@@ -46,6 +43,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
@@ -105,19 +103,19 @@ public class ServerMain {
         }
         switch (Os.type) {
             case Os.WINDOWS:
-                System.out.println("OS: windows-amd64");
+                System.out.println("OS: windows-amd64 " + Vect.getSupportedInstructionSetName());
                 break;
             case Os.LINUX_AMD64:
-                System.out.println("OS: linux-amd64");
+                System.out.println("OS: linux-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.OSX:
-                System.out.println("OS: apple-amd64");
+                System.out.println("OS: apple-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.LINUX_ARM64:
-                System.out.println("OS: linux-arm64");
+                System.out.println("OS: linux-arm64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.FREEBSD:
-                System.out.println("OS: freebsd-amd64");
+                System.out.println("OS: freebsd-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             default:
                 System.err.println("Unsupported OS");
@@ -177,6 +175,24 @@ public class ServerMain {
             shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
             System.err.println(new Date() + " QuestDB is down");
         }));
+    }
+
+    public static void deleteOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        deleteDirContentsOrException(file);
+
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
+            throw new RuntimeException("Cannot delete file " + file);
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -259,12 +275,6 @@ public class ServerMain {
                     return FileVisitResult.CONTINUE;
                 }
 
-                private void doCopy(Path dir) throws IOException {
-                    Path to = toDestination(dir);
-                    Files.copy(dir, to, copyOptions);
-                    System.out.println("Extracted " + dir + " -> " + to);
-                }
-
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                     doCopy(file);
@@ -281,6 +291,12 @@ public class ServerMain {
                     return FileVisitResult.CONTINUE;
                 }
 
+                private void doCopy(Path dir) throws IOException {
+                    Path to = toDestination(dir);
+                    Files.copy(dir, to, copyOptions);
+                    System.out.println("Extracted " + dir + " -> " + to);
+                }
+
                 private Path toDestination(final Path path) {
                     final Path tmp = path.toAbsolutePath();
                     return target.resolve(tmp.toString().substring(sourceLen));
@@ -291,24 +307,6 @@ public class ServerMain {
             if (fs != null) {
                 fs.close();
             }
-        }
-    }
-
-    public static void deleteOrException(File file) {
-        if (!file.exists()) {
-            return;
-        }
-        deleteDirContentsOrException(file);
-
-        int retryCount = 3;
-        boolean deleted = false;
-        while (retryCount > 0 && !(deleted = file.delete())) {
-            retryCount--;
-            Thread.yield();
-        }
-
-        if (!deleted) {
-            throw new RuntimeException("Cannot delete file " + file);
         }
     }
 
@@ -353,13 +351,19 @@ public class ServerMain {
         deleteOrException(file);
     }
 
-    protected void startQuestDb(
-            final WorkerPool workerPool,
-            final AbstractLineProtoReceiver lineProtocolReceiver,
-            final Log log
-    ) {
-        workerPool.start(log);
-        lineProtocolReceiver.start();
+    private String getVersion() throws IOException {
+        Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                Manifest manifest = new Manifest(is);
+                Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes().getValue("Implementation-Version");
+                }
+            }
+        }
+        return "[DEVELOPMENT]";
     }
 
     protected void shutdownQuestDb(final WorkerPool workerPool,
@@ -376,18 +380,12 @@ public class ServerMain {
         Misc.free(lineProtocolReceiver);
     }
 
-    private String getVersion() throws IOException {
-        Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                Manifest manifest = new Manifest(is);
-                Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes().getValue("Implementation-Version");
-                }
-            }
-        }
-        return "[DEVELOPMENT]";
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final Log log
+    ) {
+        workerPool.start(log);
+        lineProtocolReceiver.start();
     }
 }

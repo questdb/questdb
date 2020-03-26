@@ -25,27 +25,47 @@
 package io.questdb.std;
 
 public final class Vect {
-    public static native double sumDouble(long pDouble, long count);
 
     public static native double avgDouble(long pDouble, long count);
-
-    public static native double minDouble(long pDouble, long count);
-
-    public static native double maxDouble(long pDouble, long count);
-
-    public static native long sumInt(long pInt, long count);
 
     public static native double avgInt(long pInt, long count);
 
     public static native double avgLong(long pLong, long count);
 
+    public static native int getSupportedInstructionSet();
+
+    public static String getSupportedInstructionSetName() {
+        int inst = getSupportedInstructionSet();
+        String base;
+        if (inst >= 10) {
+            base = "AVX512";
+        } else if (inst >= 8) {
+            base = "AVX2";
+        } else if (inst >= 5) {
+            base = "SSE4.1";
+        } else if (inst >= 2) {
+            base = "SSE2";
+        } else {
+            base = "Vanilla";
+        }
+        return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
+    }
+
+    public static native double maxDouble(long pDouble, long count);
+
     public static native int maxInt(long pInt, long count);
 
     public static native long maxLong(long pLong, long count);
 
+    public static native double minDouble(long pDouble, long count);
+
     public static native int minInt(long pInt, long count);
 
     public static native long minLong(long pLong, long count);
+
+    public static native double sumDouble(long pDouble, long count);
+
+    public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
 }
