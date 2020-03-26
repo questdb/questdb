@@ -111,10 +111,10 @@
 
 #ifdef HAS_NULL
 
-bool HAS_NULL(int *pi,  int64_t count) {
-    const int step = 16;
-    const int remainder = (int) (count - (count / step) * step);
-    const int *vec_lim = pi + count - remainder;
+bool HAS_NULL(int32_t *pi,  int64_t count) {
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto *vec_lim = pi + count - remainder;
 
     Vec16i vec;
     for (; pi < vec_lim; pi += step) {
