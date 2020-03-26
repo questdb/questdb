@@ -25,23 +25,28 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.LongAccumulator;
+import java.util.function.LongBinaryOperator;
 
-public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder adder = new LongAdder();
+public class MaxIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
+
+    public static final LongBinaryOperator MAX = Math::max;
+    private final LongAccumulator accumulator = new LongAccumulator(
+            MAX, Integer.MIN_VALUE
+    );
     private final int columnIndex;
 
-    public SumIntVectorAggregateFunction(int position, int columnIndex) {
+    public MaxIntVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
     }
 
     @Override
     public void aggregate(long address, long count) {
-        adder.add(Vect.sumInt(address, count));
+        accumulator.accumulate(Vect.maxInt(address, count));
     }
 
     @Override
@@ -51,11 +56,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void clear() {
-        adder.reset();
+        accumulator.reset();
     }
 
     @Override
-    public long getLong(Record rec) {
-        return adder.sum();
+    public int getInt(Record rec) {
+        return accumulator.intValue();
     }
 }
