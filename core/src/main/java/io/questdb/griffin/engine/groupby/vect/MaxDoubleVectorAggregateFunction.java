@@ -25,23 +25,30 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.DoubleAccumulator;
+import java.util.function.DoubleBinaryOperator;
 
-public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder adder = new LongAdder();
+public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+
+    public static final DoubleBinaryOperator MAX = Math::max;
+
+    private final DoubleAccumulator doubleAdder = new DoubleAccumulator(
+            MAX, Double.NEGATIVE_INFINITY
+    );
+
     private final int columnIndex;
 
-    public SumIntVectorAggregateFunction(int position, int columnIndex) {
+    public MaxDoubleVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
     }
 
     @Override
     public void aggregate(long address, long count) {
-        adder.add(Vect.sumInt(address, count));
+        doubleAdder.accumulate(Vect.maxDouble(address, count));
     }
 
     @Override
@@ -51,11 +58,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void clear() {
-        adder.reset();
+        doubleAdder.reset();
     }
 
     @Override
-    public long getLong(Record rec) {
-        return adder.sum();
+    public double getDouble(Record rec) {
+        return doubleAdder.get();
     }
 }

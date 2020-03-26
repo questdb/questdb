@@ -404,7 +404,7 @@ public class SqlCodeGenerator {
     }
 
     private ObjList<VectorAggregateFunction> createVectorAggregateFunctions(ObjList<QueryColumn> columns, RecordMetadata metadata) {
-        ObjList<VectorAggregateFunction> vafList = null;
+        ObjList<VectorAggregateFunction> vafList = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final ExpressionNode ast = qc.getAst();
@@ -412,26 +412,52 @@ public class SqlCodeGenerator {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
                 final int type = metadata.getColumnType(columnIndex);
                 if (type == ColumnType.DOUBLE) {
-                    if (vafList == null) {
-                        vafList = new ObjList<>();
-                    }
                     vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 } else if (type == ColumnType.INT) {
-                    if (vafList == null) {
-                        vafList = new ObjList<>();
-                    }
                     vafList.add(new SumIntVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.LONG) {
+                    vafList.add(new SumLongVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 }
             } else if (isSingleColumnFunction(ast, "avg")) {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
                 final int type = metadata.getColumnType(columnIndex);
                 if (type == ColumnType.DOUBLE) {
-                    if (vafList == null) {
-                        vafList = new ObjList<>();
-                    }
                     vafList.add(new AvgDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.INT) {
+                    vafList.add(new AvgIntVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.LONG) {
+                    vafList.add(new AvgLongVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                }
+            } else if (isSingleColumnFunction(ast, "min")) {
+                final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
+                final int type = metadata.getColumnType(columnIndex);
+                if (type == ColumnType.DOUBLE) {
+                    vafList.add(new MinDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.INT) {
+                    vafList.add(new MinIntVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.LONG) {
+                    vafList.add(new MinLongVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                }
+            } else if (isSingleColumnFunction(ast, "max")) {
+                final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
+                final int type = metadata.getColumnType(columnIndex);
+                if (type == ColumnType.DOUBLE) {
+                    vafList.add(new MaxDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.INT) {
+                    vafList.add(new MaxIntVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.LONG) {
+                    vafList.add(new MaxLongVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 }
             }

@@ -28,20 +28,25 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.LongAccumulator;
+import java.util.function.LongBinaryOperator;
 
-public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder adder = new LongAdder();
+public class MinLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+
+    public static final LongBinaryOperator MIN = Math::min;
+    private final LongAccumulator accumulator = new LongAccumulator(
+            MIN, Long.MAX_VALUE
+    );
     private final int columnIndex;
 
-    public SumIntVectorAggregateFunction(int position, int columnIndex) {
+    public MinLongVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
     }
 
     @Override
     public void aggregate(long address, long count) {
-        adder.add(Vect.sumInt(address, count));
+        accumulator.accumulate(Vect.minLong(address, count));
     }
 
     @Override
@@ -51,11 +56,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void clear() {
-        adder.reset();
+        accumulator.reset();
     }
 
     @Override
     public long getLong(Record rec) {
-        return adder.sum();
+        return accumulator.longValue();
     }
 }

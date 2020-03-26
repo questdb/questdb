@@ -49,7 +49,7 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
-    protected static MessageBus workScheduler;
+    protected static MessageBus messageBus;
 
     @BeforeClass
     public static void setUp() {
@@ -60,7 +60,7 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.getRoot().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
-        workScheduler = new MessageBusImpl();
+        messageBus = new MessageBusImpl();
     }
 
     @Before

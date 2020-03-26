@@ -29,6 +29,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
+import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -38,6 +41,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.griffin.CompiledQuery.CREATE_TABLE;
 
@@ -3773,12 +3778,51 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
         assertQuery("avg\tsum\n" +
-                        "0.4269566237932423\t17.932178199316176\n",
+                        "0.49811606109211604\t17.932178199316176\n",
                 "select avg(c),sum(c) from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
+
+        Sequence seq = messageBus.getVectorAggregateSubSequence();
+        // consume sequence fully and do nothing
+        // this might be needed to make sure we don't consume things other tests publish here
+        while (true) {
+            long cursor = seq.next();
+            if (cursor == -1) {
+                break;
+            } else if (cursor > -1) {
+                seq.done(cursor);
+            }
+        }
+
+        final AtomicBoolean running = new AtomicBoolean(true);
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(messageBus);
+        new Thread(() -> {
+            while (running.get()) {
+                job.run();
+            }
+            haltLatch.countDown();
+        }).start();
+
+        try {
+            assertQuery("avg\tsum\n" +
+                            "0.50035043\t834470.4372884\n",
+                    "select round(avg(c), 9) avg, round(sum(c), 7) sum from x",
+                    "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
+                    null,
+                    false
+            );
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
     }
 
     @Test

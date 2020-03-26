@@ -34,4 +34,18 @@ public final class Vect {
     public static native double maxDouble(long pDouble, long count);
 
     public static native long sumInt(long pInt, long count);
+
+    public static native double avgInt(long pInt, long count);
+
+    public static native double avgLong(long pLong, long count);
+
+    public static native int maxInt(long pInt, long count);
+
+    public static native long maxLong(long pLong, long count);
+
+    public static native int minInt(long pInt, long count);
+
+    public static native long minLong(long pLong, long count);
+
+    public static native long sumLong(long pLong, long count);
 }

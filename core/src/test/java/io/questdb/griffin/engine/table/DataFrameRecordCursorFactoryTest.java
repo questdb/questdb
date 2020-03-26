@@ -76,7 +76,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, workScheduler)) {
+            try (CairoEngine engine = new CairoEngine(configuration, messageBus)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -90,7 +90,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null);
 
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, null, workScheduler);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, null, messageBus);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
