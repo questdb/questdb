@@ -100,11 +100,12 @@ public class CairoEngine implements Closeable {
     public void migrateNullFlag(TableWriter writer, CairoSecurityContext cairoSecurityContext, CharSequence tok) {
         TableReader reader = getReader(cairoSecurityContext, tok);
         TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
-        if (readerMetadata.getVersion() < 416){
-            for (int i = 0; i < reader.getColumnCount(); i++) {
+        if (readerMetadata.getVersion() < 416) {
+            for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
                 if (readerMetadata.getColumnType(i) == SYMBOL) {
                     if (reader.hasNull(i)) {
                         writer.getSymbolMapWriter(i).updateNullFlag();
+                        ((TableWriterMetadata) writer.getMetadata()).setTableVersion();
                     }
                 }
             }
