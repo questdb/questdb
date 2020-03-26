@@ -179,6 +179,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlRenameTableModelPoolCapacity;
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
+    private final String backupRoot;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -321,6 +322,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
+        this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -881,6 +883,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return indexValueBlockSize;
         }
 
+        @Override
+        public CharSequence getBackupRoot() {
+        	return backupRoot;
+        }
+        
         @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;

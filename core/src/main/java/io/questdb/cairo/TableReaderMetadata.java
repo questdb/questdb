@@ -277,4 +277,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 true
         );
     }
+
+	public void cloneTo(AppendMemory mem) {
+		long len = ff.length(metaMem.getFd());
+		for (long p = 0; p < len; p++) {
+			mem.putByte(metaMem.getByte(p));
+		}
+	}
 }
