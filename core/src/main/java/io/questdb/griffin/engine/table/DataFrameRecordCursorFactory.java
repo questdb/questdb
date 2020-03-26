@@ -54,7 +54,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

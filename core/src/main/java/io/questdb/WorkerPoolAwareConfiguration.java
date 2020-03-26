@@ -53,15 +53,22 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             WorkerPool sharedWorkerPool,
             Log log,
             CairoEngine cairoEngine,
-            ServerFactory<T, C> factory
+            ServerFactory<T, C> factory,
+            MessageBus messageBus
     ) {
         final T server;
         if (configuration.isEnabled()) {
 
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
             final boolean local = localPool != sharedWorkerPool;
+            final MessageBus bus;
+            if (local) {
+                bus = new MessageBusImpl();
+            } else {
+                bus = messageBus;
+            }
 
-            server = factory.create(configuration, cairoEngine, localPool, local);
+            server = factory.create(configuration, cairoEngine, localPool, local, bus);
 
             if (local) {
                 localPool.start(log);
@@ -76,6 +83,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
     @FunctionalInterface
     interface ServerFactory<T extends Closeable, C> {
-        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local);
+        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus);
     }
 }

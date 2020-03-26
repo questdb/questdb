@@ -79,4 +79,10 @@ public class LastIntGroupByFunction extends IntFunction implements GroupByFuncti
     public int getInt(Record rec) {
         return rec.getInt(valueIndex);
     }
+
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

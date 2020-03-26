@@ -148,7 +148,11 @@ public final class SqlParser {
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getColumnNameTypeMap());
+        return SqlUtil.createColumnAlias(
+                characterStore, node.token,
+                Chars.indexOf(node.token, '.'),
+                model.getAliasToColumnMap()
+        );
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
@@ -634,7 +638,7 @@ public final class SqlParser {
             parseSelectClause(lexer, model);
         } else {
             lexer.unparse();
-            model.addColumn(SqlUtil.nextColumn(queryColumnPool, sqlNodePool, "*", "*"));
+            model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, sqlNodePool, "*", "*"));
         }
 
         QueryModel nestedModel = queryModelPool.next();
@@ -1074,13 +1078,13 @@ public final class SqlParser {
                     } while (Chars.equals(tok, ','));
                 }
                 expectTok(tok, lexer.lastTokenPosition(), ')');
-                model.addColumn(col);
+                model.addBottomUpColumn(col);
                 tok = tok(lexer, "'from' or ','");
             } else {
                 if (expr.type == ExpressionNode.QUERY) {
                     throw SqlException.$(expr.position, "query is not expected, did you mean column?");
                 }
-                model.addColumn(queryColumnPool.next().of(alias, expr));
+                model.addBottomUpColumn(queryColumnPool.next().of(alias, expr));
             }
 
             if (Chars.equalsLowerCaseAscii(tok, "from")) {

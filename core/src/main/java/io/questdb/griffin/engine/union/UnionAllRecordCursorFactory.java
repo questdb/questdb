@@ -62,7 +62,7 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 }

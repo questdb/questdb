@@ -86,4 +86,9 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public float getFloat(Record rec) {
         return rec.getFloat(valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

@@ -77,10 +77,6 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeoutUs();
 
-    int getSqlCacheBlocks();
-
-    int getSqlCacheRows();
-
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();

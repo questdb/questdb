@@ -22,22 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Vect;
 
-public class DefaultSqlExecutionContext implements SqlExecutionContext {
-    public static final DefaultSqlExecutionContext INSTANCE = new DefaultSqlExecutionContext();
+import java.util.concurrent.atomic.DoubleAdder;
 
-    @Override
-    public BindVariableService getBindVariableService() {
-        return null;
+public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+
+    private final DoubleAdder doubleAdder = new DoubleAdder();
+    private final int columnIndex;
+
+    public SumDoubleVectorAggregateFunction(int position, int columnIndex) {
+        super(position);
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public void aggregate(long address, long count) {
+        doubleAdder.add(Vect.sumDouble(address, count));
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
+    public void clear() {
+        doubleAdder.reset();
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return doubleAdder.sum();
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -65,25 +66,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
     private final MillisecondClock clock;
-    private final QueryCache queryCache;
+    private final MessageBus messageBus;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            QueryCache queryCache
+            MessageBus messageBus
     ) {
-        // todo: add scheduler
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.queryCache = queryCache;
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
+        this.messageBus = messageBus;
     }
 
     @Override
@@ -96,55 +90,38 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            state.recordCursorFactory = queryCache.poll(state.query);
-            int retryCount = 0;
-            do {
-                sqlExecutionContext.with(context.getCairoSecurityContext(), null);
-                if (state.recordCursorFactory == null) {
-                    final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                    if (cc.getType() == CompiledQuery.SELECT) {
-                        state.recordCursorFactory = cc.getRecordCursorFactory();
-                    }
-                    info(state).$("execute-new [q=`").utf8(state.query).
-                            $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop).
-                            $(']').$();
-                } else {
-                    info(state).$("execute-cached [q=`").utf8(state.query).
-                            $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop).
-                            $(']').$();
+            state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, messageBus);
+            if (state.recordCursorFactory == null) {
+                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                if (cc.getType() == CompiledQuery.SELECT) {
+                    state.recordCursorFactory = cc.getRecordCursorFactory();
                 }
+                info(state).$("execute-new [q=`").utf8(state.query).
+                        $("`, skip: ").$(state.skip).
+                        $(", stop: ").$(state.stop).
+                        $(']').$();
+            } else {
+                info(state).$("execute-cached [q=`").utf8(state.query).
+                        $("`, skip: ").$(state.skip).
+                        $(", stop: ").$(state.stop).
+                        $(']').$();
+            }
 
-                if (state.recordCursorFactory != null) {
-                    try {
-                        state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
-                        state.metadata = state.recordCursorFactory.getMetadata();
-                        header(context.getChunkedResponseSocket(), 200);
-                        resumeSend(context);
-                        break;
-                    } catch (CairoError | CairoException e) {
-                        // todo: investigate why we need to keep retrying to execute query when it is failing
-                        //  perhaps this is unnecessary because we don't even check the type of error it is
-                        //  we could be having severe hardware issues and continue trying
-                        if (retryCount == 0) {
-                            // todo: we want to clear cache, no need to create string to achieve this
-                            queryCache.remove(state.query);
-                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);
-                            LOG.error().$("RecordSource execution failed. ").$(e.getMessage()).$(". Retrying ...").$();
-                            retryCount++;
-                        } else {
-                            internalError(context.getChunkedResponseSocket(), e, state);
-                            break;
-                        }
-                    }
-                } else {
+            if (state.recordCursorFactory != null) {
+                try {
+                    state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                    state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), 200);
-                    sendConfirmation(context.getChunkedResponseSocket());
-                    readyForNextRequest(context);
-                    break;
+                    resumeSend(context);
+                } catch (CairoError | CairoException e) {
+                    internalError(context.getChunkedResponseSocket(), e, state);
                 }
-            } while (true);
+            } else {
+                header(context.getChunkedResponseSocket(), 200);
+                sendConfirmation(context.getChunkedResponseSocket());
+                readyForNextRequest(context);
+            }
         } catch (SqlException e) {
             syntaxError(context.getChunkedResponseSocket(), e, state);
             readyForNextRequest(context);
@@ -166,8 +143,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(
                             context,
-                            configuration.getConnectionCheckFrequency(),
-                            queryCache
+                    configuration.getConnectionCheckFrequency()
                     )
             );
         }
@@ -289,6 +265,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context);
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
     }
 
     private LogRecord error(TextQueryProcessorState state) {

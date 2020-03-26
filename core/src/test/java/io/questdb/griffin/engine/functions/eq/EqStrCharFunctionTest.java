@@ -42,94 +42,66 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testSymEqChar() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            compiler.compile("insert into tanc2 \n" +
-                    "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                    "1571270400000 + (x-1) * 100 timestamp,\n" +
-                    "rnd_str(2,2,3) instrument,\n" +
-                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                    "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x");
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
+            compiler.compile(
+                    "insert into tanc2 \n" +
+                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
+                            "1571270400000 + (x-1) * 100 timestamp,\n" +
+                            "rnd_str(2,2,3) instrument,\n" +
+                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
+                            "rnd_str('B', 'S') side\n" +
+                            "from long_sequence(100000) x",
+                    sqlExecutionContext
+            );
 
             String expected = "instrument\tsum\n" +
                     "CZ\t2886736\n";
 
-            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
-    public void testSymEqCharNotFound() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            compiler.compile("insert into tanc2 \n" +
-                    "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                    "1571270400000 + (x-1) * 100 timestamp,\n" +
-                    "rnd_str(2,2,3) instrument,\n" +
-                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                    "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x");
-
-            String expected = "instrument\tsum\n";
-
-            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor()) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 
     @Test
     public void testSymEqCharFunction() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
-            compiler.compile("insert into tanc2 \n" +
-                    "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
-                    "1571270400000 + (x-1) * 100 timestamp,\n" +
-                    "rnd_str(2,2,3) instrument,\n" +
-                    "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
-                    "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
-                    "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x");
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
+            compiler.compile(
+                    "insert into tanc2 \n" +
+                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
+                            "1571270400000 + (x-1) * 100 timestamp,\n" +
+                            "rnd_str(2,2,3) instrument,\n" +
+                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
+                            "rnd_str('B', 'S') side\n" +
+                            "from long_sequence(100000) x",
+                    sqlExecutionContext
+            );
 
             String expected = "instrument\tsum\n" +
                     "ML\t563832\n";
 
-            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 
     @Test
     public void testSymEqCharFunctionConst() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
             compiler.compile("insert into tanc2 \n" +
                     "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
                     "1571270400000 + (x-1) * 100 timestamp,\n" +
@@ -137,21 +109,45 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
                     "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
                     "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
                     "rnd_str('B', 'S') side\n" +
-                    "from long_sequence(100000) x");
+                    "from long_sequence(100000) x", sqlExecutionContext);
 
             String expected = "instrument\tsum\n" +
                     "ML\t2617153\n";
 
-            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
+        });
+    }
 
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
+    @Test
+    public void testSymEqCharNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)", sqlExecutionContext);
+            compiler.compile(
+                    "insert into tanc2 \n" +
+                            "select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) ts,\n" +
+                            "1571270400000 + (x-1) * 100 timestamp,\n" +
+                            "rnd_str(2,2,3) instrument,\n" +
+                            "abs(cast(rnd_double(0)*100000 as int)) price,\n" +
+                            "abs(cast(rnd_double(0)*10000 as int)) qty,\n" +
+                            "rnd_str('B', 'S') side\n" +
+                            "from long_sequence(100000) x", sqlExecutionContext
+            );
+
+            String expected = "instrument\tsum\n";
+
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
         });
     }
 }

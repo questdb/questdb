@@ -45,14 +45,23 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, arg.getDouble(record));
-        mapValue.putLong(valueIndex + 1, 1L);
+        final double d = arg.getDouble(record);
+        if (d == d) {
+            mapValue.putDouble(valueIndex, d);
+            mapValue.putLong(valueIndex + 1, 1L);
+        } else {
+            mapValue.putDouble(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addDouble(valueIndex, arg.getDouble(record));
-        mapValue.addLong(valueIndex + 1, 1L);
+        final double d = arg.getDouble(record);
+        if (d == d) {
+            mapValue.addDouble(valueIndex, d);
+            mapValue.addLong(valueIndex + 1, 1L);
+        }
     }
 
     @Override
@@ -73,12 +82,17 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return rec.getDouble(valueIndex) / rec.getLong(valueIndex + 1);
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public boolean isConstant() {
+        return false;
     }
 }

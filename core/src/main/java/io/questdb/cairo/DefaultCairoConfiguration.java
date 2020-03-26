@@ -142,16 +142,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCacheBlocks() {
-        return 4;
-    }
-
-    @Override
-    public int getSqlCacheRows() {
-        return 16;
-    }
-
-    @Override
     public int getSqlCharacterStoreCapacity() {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly

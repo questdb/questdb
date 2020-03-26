@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
@@ -83,7 +84,7 @@ public class SqlCompiler implements Closeable {
     private final Path renamePath = new Path();
     private final AppendMemory mem = new AppendMemory();
     private final BytecodeAssembler asm = new BytecodeAssembler();
-    private final CairoWorkScheduler workScheduler;
+    private final MessageBus messageBus;
     private final CairoEngine engine;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -102,11 +103,11 @@ public class SqlCompiler implements Closeable {
         this(engine, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable CairoWorkScheduler workScheduler) {
+    public SqlCompiler(CairoEngine engine, @Nullable MessageBus messageBus) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
-        this.workScheduler = workScheduler;
+        this.messageBus = messageBus;
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -641,10 +642,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(textLoader);
     }
 
-    public CompiledQuery compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -1036,7 +1033,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
-        TableWriter writer = new TableWriter(configuration, tableName, workScheduler, false, DefaultLifecycleManager.INSTANCE);
+        TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());

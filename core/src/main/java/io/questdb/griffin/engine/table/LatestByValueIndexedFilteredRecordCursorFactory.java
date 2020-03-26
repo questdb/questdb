@@ -52,7 +52,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

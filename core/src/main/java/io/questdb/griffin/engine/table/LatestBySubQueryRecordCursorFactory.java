@@ -104,7 +104,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 }

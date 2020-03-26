@@ -39,7 +39,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public BinarySequence getBin(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return null;
         }
@@ -48,7 +48,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public long getBinLen(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return TableUtils.NULL_LEN;
         }
@@ -57,13 +57,13 @@ public class TableReaderRecord implements Record {
 
     @Override
     public boolean getBool(int col) {
-        long index = getIndex(col);
-        return index >= 0 && colA(col).getBool(index);
+        final long index = getIndex(col);
+        return index > -1 && colA(col).getBool(index);
     }
 
     @Override
     public byte getByte(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return 0;
         }
@@ -72,7 +72,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public double getDouble(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return Double.NaN;
         }
@@ -81,7 +81,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public float getFloat(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return Float.NaN;
         }
@@ -89,44 +89,8 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return;
-        }
-        colA(col).getLong256(index * Long256.BYTES, sink);
-    }
-
-    @Override
-    public Long256 getLong256A(int col) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return null;
-        }
-        return colA(col).getLong256A(index * Long256.BYTES);
-    }
-
-    @Override
-    public Long256 getLong256B(int col) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return null;
-        }
-        return colA(col).getLong256B(index * Long256.BYTES);
-    }
-
-    @Override
-    public CharSequence getStr(int col) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return null;
-        }
-        return colA(col).getStr(colB(col).getLong(index * 8));
-    }
-
-    @Override
     public int getInt(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return Numbers.INT_NaN;
         }
@@ -135,7 +99,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public long getLong(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return Numbers.LONG_NaN;
         }
@@ -143,13 +107,8 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public long getRowId() {
-        return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);
-    }
-
-    @Override
     public short getShort(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return 0;
         }
@@ -158,7 +117,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public char getChar(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return 0;
         }
@@ -166,8 +125,49 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
+    public CharSequence getStr(int col) {
+        final long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getStr(colB(col).getLong(index * 8));
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+        final long index = getIndex(col);
+        if (index < 0) {
+            return;
+        }
+        colA(col).getLong256(index * Long256.BYTES, sink);
+    }
+
+    @Override
+    public long getRowId() {
+        return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        final long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getLong256A(index * Long256.BYTES);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        final long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getLong256B(index * Long256.BYTES);
+    }
+
+    @Override
     public CharSequence getStrB(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return null;
         }
@@ -176,7 +176,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public int getStrLen(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return TableUtils.NULL_LEN;
         }
@@ -185,7 +185,7 @@ public class TableReaderRecord implements Record {
 
     @Override
     public CharSequence getSym(int col) {
-        long index = getIndex(col);
+        final long index = getIndex(col);
         if (index < 0) {
             return null;
         }

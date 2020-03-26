@@ -78,4 +78,9 @@ public class SumByteGroupByFunction extends ByteFunction implements GroupByFunct
     public Function getArg() {
         return arg;
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

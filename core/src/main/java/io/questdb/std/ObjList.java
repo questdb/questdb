@@ -150,7 +150,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      */
     @Override
     public boolean equals(Object that) {
-        return this == that || that instanceof ObjList && equals((ObjList) that);
+        return this == that || that instanceof ObjList && equals((ObjList<?>) that);
     }
 
     /**
@@ -285,7 +285,7 @@ public class ObjList<T> implements Mutable, Sinkable {
         }
     }
 
-    private boolean equals(ObjList that) {
+    private boolean equals(ObjList<?> that) {
         if (this.pos == that.pos) {
             for (int i = 0, n = pos; i < n; i++) {
                 Object lhs = this.getQuick(i);

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
@@ -47,19 +48,21 @@ public class CairoEngine implements Closeable {
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
+    private final WriterMaintenanceJob writerMaintenanceJob;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
     }
 
-    public CairoEngine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
+    public CairoEngine(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
-        this.writerPool = new WriterPool(configuration, workScheduler);
+        this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
-        if (workScheduler != null) {
-            workScheduler.addJob(new WriterMaintenanceJob(configuration));
-            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
-        }
+        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+    }
+
+    public WriterMaintenanceJob getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
     }
 
     @Override

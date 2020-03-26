@@ -66,9 +66,9 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
     private void findRecord() {
 
+        DataFrame frame;
         OUT:
-        while (this.dataFrameCursor.hasNext()) {
-            final DataFrame frame = this.dataFrameCursor.next();
+        while ((frame = this.dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();

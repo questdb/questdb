@@ -140,6 +140,16 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public int getQueryCacheRows() {
+        return 32;
+    }
+
+    @Override
+    public int getQueryCacheBlocks() {
+        return 16;
+    }
+
+    @Override
     public MillisecondClock getClock() {
         return MillisecondClockImpl.INSTANCE;
     }
@@ -160,21 +170,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getWorkerCount() {
-        return 2;
-    }
-
-    @Override
-    public boolean haltOnError() {
-        return false;
-    }
-
-    @Override
-    public int[] getWorkerAffinity() {
-        return new int[]{-1, -1};
-    }
-
-    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }
@@ -191,6 +186,21 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public boolean allowDeflateBeforeSend() {
+        return false;
+    }
+
+    @Override
+    public int[] getWorkerAffinity() {
+        return new int[]{-1, -1};
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return 2;
+    }
+
+    @Override
+    public boolean haltOnError() {
         return false;
     }
 }

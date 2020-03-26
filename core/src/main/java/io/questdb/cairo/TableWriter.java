@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
@@ -39,7 +40,9 @@ import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnIndexerTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.function.LongConsumer;
@@ -94,7 +97,7 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
-    private final CairoWorkScheduler workScheduler;
+    private final MessageBus messageBus;
     private final boolean parallelIndexerEnabled;
     private final LongHashSet removedPartitions = new LongHashSet();
     private final Timestamps.TimestampFloorMethod timestampFloorMethod;
@@ -136,25 +139,38 @@ public class TableWriter implements Closeable {
         this(configuration, name, null, true, DefaultLifecycleManager.INSTANCE);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler) {
-        this(configuration, name, workScheduler, true, DefaultLifecycleManager.INSTANCE);
+    public TableWriter(CairoConfiguration configuration, CharSequence name, MessageBus messageBus) {
+        this(configuration, name, messageBus, true, DefaultLifecycleManager.INSTANCE);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager) {
-    	this(configuration, name, workScheduler, lock, lifecycleManager, configuration.getRoot());
+    public TableWriter(
+            CairoConfiguration configuration,
+            CharSequence name,
+            @Nullable MessageBus messageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager
+    ) {
+    	this(configuration, name, messageBus, lock, lifecycleManager, configuration.getRoot());
     }
  
     public TableWriter(CairoConfiguration configuration, CharSequence name, CharSequence root) {
     	this(configuration, name, null, true, DefaultLifecycleManager.INSTANCE, root);
     }
    
-    private TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager, CharSequence root) {
+    public TableWriter(
+            CairoConfiguration configuration,
+            CharSequence name,
+            @Nullable MessageBus messageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            CharSequence root
+    ) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
-        this.workScheduler = workScheduler;
+        this.messageBus = messageBus;
         this.defaultCommitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
-        this.parallelIndexerEnabled = workScheduler != null && configuration.isParallelIndexingEnabled();
+        this.parallelIndexerEnabled = messageBus != null && configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -2250,12 +2266,14 @@ public class TableWriter implements Closeable {
     }
 
     private void updateIndexesParallel(long lo, long hi) {
-
         indexSequences.clear();
         indexLatch.setCount(indexCount);
         final int nParallelIndexes = indexCount - 1;
-        final Sequence indexPubSequence = this.workScheduler.getIndexerPubSequence();
-        final RingQueue<ColumnIndexerEntry> indexerQueue = this.workScheduler.getIndexerQueue();
+        final Sequence indexPubSequence = this.messageBus.getIndexerPubSequence();
+        final RingQueue<ColumnIndexerTask> indexerQueue = this.messageBus.getIndexerQueue();
+
+        LOG.info().$("parallel indexing [indexCount=").$(indexCount).$(']').$();
+        int serialIndexCount = 0;
 
         // we are going to index last column in this thread while other columns are on the queue
         OUT:
@@ -2265,6 +2283,7 @@ public class TableWriter implements Closeable {
             if (cursor == -1) {
                 // queue is full, process index in the current thread
                 indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                serialIndexCount++;
                 continue;
             }
 
@@ -2274,13 +2293,14 @@ public class TableWriter implements Closeable {
                     cursor = indexPubSequence.next();
                     if (cursor == -1) {
                         indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                        serialIndexCount++;
                         continue OUT;
                     }
 
                 } while (cursor < 0);
             }
 
-            final ColumnIndexerEntry queueItem = indexerQueue.get(cursor);
+            final ColumnIndexerTask queueItem = indexerQueue.get(cursor);
             final ColumnIndexer indexer = denseIndexers.getQuick(i);
             final long sequence = indexer.getSequence();
             queueItem.indexer = indexer;
@@ -2294,6 +2314,7 @@ public class TableWriter implements Closeable {
 
         // index last column while other columns are brewing on the queue
         indexAndCountDown(denseIndexers.getQuick(indexCount - 1), lo, hi, indexLatch);
+        serialIndexCount++;
 
         // At this point we have re-indexed our column and if things are flowing nicely
         // all other columns should have been done by other threads. Instead of actually
@@ -2304,6 +2325,7 @@ public class TableWriter implements Closeable {
                 ColumnIndexer indexer = denseIndexers.getQuick(i);
                 if (indexer.tryLock(indexSequences.getQuick(i))) {
                     indexAndCountDown(indexer, lo, hi, indexLatch);
+                    serialIndexCount++;
                 }
             }
             // wait for the ones we cannot steal
@@ -2320,9 +2342,12 @@ public class TableWriter implements Closeable {
         if (distressed) {
             throwDistressException(null);
         }
+
+        LOG.info().$("parallel indexing done [serialCount=").$(serialIndexCount).$(']').$();
     }
 
     private void updateIndexesSerially(long lo, long hi) {
+        LOG.info().$("serial indexing [indexCount=").$(indexCount).$(']').$();
         for (int i = 0, n = indexCount; i < n; i++) {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
@@ -2332,6 +2357,7 @@ public class TableWriter implements Closeable {
                 throwDistressException(e);
             }
         }
+        LOG.info().$("serial indexing done [indexCount=").$(indexCount).$(']').$();
     }
 
     private void updateMaxTimestamp(long timestamp) {

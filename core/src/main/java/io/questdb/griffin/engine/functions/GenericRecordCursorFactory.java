@@ -50,7 +50,7 @@ public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }
 }

@@ -46,7 +46,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)");
+        compiler.compile("create table tab (f double)", sqlExecutionContext);
 
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
             for (int i = 100; i > 10; i--) {
@@ -56,8 +56,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
@@ -69,7 +69,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)");
+        compiler.compile("create table tab (f double)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
@@ -83,8 +83,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
@@ -96,7 +96,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNonNull() throws SqlException {
 
-        compiler.compile("create table tab (f double)");
+        compiler.compile("create table tab (f double)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
@@ -107,8 +107,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select max(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());

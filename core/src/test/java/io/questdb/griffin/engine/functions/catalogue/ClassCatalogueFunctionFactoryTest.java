@@ -37,14 +37,14 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLeakAfterIncompleteFetch() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class").getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
 
-                    compiler.compile("create table xyz (a int)");
+                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
 
@@ -58,12 +58,12 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table abc (b double)");
+                    compiler.compile("create table abc (b double)", sqlExecutionContext);
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
 
-                    compiler.compile("drop table abc;");
+                    compiler.compile("drop table abc;", sqlExecutionContext);
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -74,9 +74,9 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname").getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true);
@@ -98,7 +98,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    compiler.compile("create table автомобилей (b double)");
+                    compiler.compile("create table автомобилей (b double)", sqlExecutionContext);
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -111,7 +111,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                                     "автомобилей\t1\tr\t0\t0\n"
                             , sink);
 
-                    compiler.compile("drop table автомобилей;");
+                    compiler.compile("drop table автомобилей;", sqlExecutionContext);
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
