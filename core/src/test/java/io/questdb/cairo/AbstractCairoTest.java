@@ -32,6 +32,9 @@ import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+
+import java.io.IOException;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -46,18 +49,20 @@ public class AbstractCairoTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
+    private static CharSequence backupRoot;
     protected static CairoConfiguration configuration;
 
-    @BeforeClass
-    public static void setUp() {
-        // it is necessary to initialise logger before tests start
-        // logger doesn't relinquish memory until JVM stops
-        // which causes memory leak detector to fail should logger be
-        // created mid-test
-        LOG.info().$("begin").$();
-        root = temp.getRoot().getAbsolutePath();
-        configuration = new DefaultCairoConfiguration(root);
-    }
+	@BeforeClass
+	public static void setUp() throws IOException {
+		// it is necessary to initialise logger before tests start
+		// logger doesn't relinquish memory until JVM stops
+		// which causes memory leak detector to fail should logger be
+		// created mid-test
+		LOG.info().$("begin").$();
+		root = temp.newFolder("dbRoot").getAbsolutePath();
+		backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+		configuration = new DefaultCairoConfiguration(root, backupRoot);
+	}
 
     @Before
     public void setUp0() {
@@ -74,6 +79,10 @@ public class AbstractCairoTest {
         try (Path path = new Path().of(root)) {
             Files.rmdir(path.$());
         }
+    }
+    
+    protected CharSequence getBackupRoot() {
+    	return null;
     }
 
     protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {

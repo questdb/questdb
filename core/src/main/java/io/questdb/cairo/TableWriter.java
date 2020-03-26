@@ -133,7 +133,7 @@ public class TableWriter implements Closeable {
     private LifecycleManager lifecycleManager;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
-        this(configuration, name, null);
+        this(configuration, name, null, true, DefaultLifecycleManager.INSTANCE);
     }
 
     public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler) {
@@ -141,6 +141,14 @@ public class TableWriter implements Closeable {
     }
 
     public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager) {
+    	this(configuration, name, workScheduler, lock, lifecycleManager, configuration.getRoot());
+    }
+ 
+    public TableWriter(CairoConfiguration configuration, CharSequence name, CharSequence root) {
+    	this(configuration, name, null, true, DefaultLifecycleManager.INSTANCE, root);
+    }
+   
+    private TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager, CharSequence root) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
         this.workScheduler = workScheduler;
@@ -150,8 +158,8 @@ public class TableWriter implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
-        this.path = new Path().of(configuration.getRoot()).concat(name);
-        this.other = new Path().of(configuration.getRoot()).concat(name);
+        this.path = new Path().of(root).concat(name);
+        this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
         this.rootLen = path.length();
         try {

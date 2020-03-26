@@ -8,3 +8,7 @@ win64svc/cmake-build-debug
 core/cmake-build-debug
 core/cmake-build-release
 core/cmake-build-minsizerel
+**/.project
+**/.settings
+**/.classpath
+**/bin

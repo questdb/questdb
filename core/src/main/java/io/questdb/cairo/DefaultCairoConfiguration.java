@@ -38,10 +38,17 @@ import io.questdb.std.time.MillisecondClockImpl;
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
+    private final CharSequence backupRoot;
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
+        backupRoot = null;
+    }
+
+    public DefaultCairoConfiguration(CharSequence root, CharSequence backupRoot) {
+        this.root = Chars.toString(root);
+        this.backupRoot = Chars.toString(backupRoot);
     }
 
     @Override
@@ -299,5 +306,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getInputRoot() {
         return null;
+    }
+    
+    @Override
+    public CharSequence getBackupRoot() {
+    	return backupRoot;
     }
 }
