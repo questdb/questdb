@@ -152,21 +152,21 @@ else ()
     add_library(questdb-sse4 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-sse4 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -msse4.1 -std=c++17"
+            COMPILE_FLAGS "-m64 -O2 -msse4.1 -fPIC -std=c++17"
     )
 
     # AVX2 lib
     add_library(questdb-avx2 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -mavx2 -mfma -std=c++17"
+            COMPILE_FLAGS "-m64 -O2 -mavx2 -fPIC -mfma -std=c++17"
     )
 
     #AVX512 lib
     add_library(questdb-avx512 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx512 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -mavx512f -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
+            COMPILE_FLAGS "-m64 -O2 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
     )
 
     #SSE2 lib
