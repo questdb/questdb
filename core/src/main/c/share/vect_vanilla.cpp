@@ -69,7 +69,7 @@ bool hasNull_Vanilla(int *pi, long count) {
     const int *lim = pi + count;
     for (; pi < lim; pi++) {
         const int i = *pi;
-        if (i == -1) {
+        if (i == INT_MIN) {
             return true;
         }
     }
