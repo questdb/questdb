@@ -1,4 +1,5 @@
 #include <cfloat>
+#include <cstdint>
 
 /*******************************************************************************
  *     ___                  _   ____  ____
@@ -65,10 +66,10 @@ double maxDouble_Vanilla(double *d, long count) {
     return max;
 }
 
-bool hasNull_Vanilla(int *pi, long count) {
-    const int *lim = pi + count;
+bool hasNull_Vanilla(int32_t *pi, int64_t count) {
+    const int32_t *lim = pi + count;
     for (; pi < lim; pi++) {
-        const int i = *pi;
+        const int32_t i = *pi;
         if (i == INT_MIN) {
             return true;
         }
