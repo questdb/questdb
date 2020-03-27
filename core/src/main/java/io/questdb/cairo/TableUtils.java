@@ -116,6 +116,18 @@ public final class TableUtils {
             TableStructure structure,
             int mkDirMode
     ) {
+        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            AppendMemory memory,
+            Path path,
+            @Transient CharSequence root,
+            TableStructure structure,
+            int mkDirMode,
+            int tableVersion
+    ) {
         path.of(root).concat(structure.getTableName());
 
         if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
@@ -130,7 +142,7 @@ public final class TableUtils {
             mem.putInt(count);
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
-            mem.putInt(ColumnType.VERSION);
+            mem.putInt(tableVersion);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
