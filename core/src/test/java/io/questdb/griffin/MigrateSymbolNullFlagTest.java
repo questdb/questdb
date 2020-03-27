@@ -34,6 +34,16 @@ import static org.junit.Assert.assertTrue;
 public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
 
     @Test
+    public void testTableWithoutData() {
+        String tableName = "test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.createTableWithVersion(model, 404);
+            assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
+    }
+
+    @Test
     public void testTableWithoutNullSymbol() {
         String tableName = "test";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
@@ -48,15 +58,6 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
         }
     }
 
-    private void appendRows(Rnd rnd, TableWriter writer) {
-        int sym = writer.getColumnIndex("aaa");
-        for (int i = 0; i < 10; i++) {
-            TableWriter.Row r = writer.newRow();
-            r.putSym(sym, rnd.nextString(4));
-            r.append();
-        }
-    }
-
     @Test
     public void testTableWithNullSymbol() {
         String tableName = "test";
@@ -68,9 +69,19 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
                 appendRows(rnd, writer);
                 TableWriter.Row r = writer.newRow();
                 r.putSym(writer.getColumnIndex("aaa"), null);
+                r.append();
                 writer.commit();
             }
             assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
+    }
+
+    private void appendRows(Rnd rnd, TableWriter writer) {
+        int sym = writer.getColumnIndex("aaa");
+        for (int i = 0; i < 10; i++) {
+            TableWriter.Row r = writer.newRow();
+            r.putSym(sym, rnd.nextString(4));
+            r.append();
         }
     }
 }
