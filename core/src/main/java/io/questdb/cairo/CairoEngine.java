@@ -97,12 +97,12 @@ public class CairoEngine implements Closeable {
         return writerPool.getBusyCount();
     }
 
-    public void migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
-        try (TableWriter writer = getWriter(cairoSecurityContext, tableName)) {
-            TableReader reader = getReader(cairoSecurityContext, tableName);
+    public boolean migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
+        boolean updated = false;
+        try (TableWriter writer = getWriter(cairoSecurityContext, tableName);
+             TableReader reader = getReader(cairoSecurityContext, tableName)) {
             TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
             if (readerMetadata.getVersion() < 416) {
-                boolean updated = false;
                 for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
                     if (readerMetadata.getColumnType(i) == SYMBOL) {
                         if (reader.hasNull(i)) {
@@ -116,6 +116,7 @@ public class CairoEngine implements Closeable {
                 }
             }
         }
+        return updated;
     }
 
     public void releaseInactive() {
