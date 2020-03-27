@@ -119,14 +119,14 @@ bool HAS_NULL(int32_t *pi,  int64_t count) {
     Vec16i vec;
     for (; pi < vec_lim; pi += step) {
         vec.load(pi);
-        if (horizontal_find_first(vec == INT_MIN)) {
+        if (horizontal_find_first(vec == INT_MIN) > -1) {
            return true;
         }
     }
 
     if (remainder > 0) {
         vec.load_partial(remainder, pi);
-        return horizontal_find_first(vec == INT_MIN);
+        return horizontal_find_first(vec == INT_MIN) > -1;
     }
     return false;
 }
