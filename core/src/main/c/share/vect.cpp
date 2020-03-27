@@ -126,9 +126,7 @@ bool HAS_NULL(int32_t *pi,  int64_t count) {
 
     if (remainder > 0) {
         vec.load_partial(remainder, pi);
-        if (horizontal_find_first(vec == INT_MIN)) {
-            return true;
-        }
+        return horizontal_find_first(vec == INT_MIN);
     }
     return false;
 }

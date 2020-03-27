@@ -97,9 +97,9 @@ public class CairoEngine implements Closeable {
         return writerPool.getBusyCount();
     }
 
-    public void migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tok) {
-        try (TableWriter writer = getWriter(cairoSecurityContext, tok)) {
-            TableReader reader = getReader(cairoSecurityContext, tok);
+    public void migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
+        try (TableWriter writer = getWriter(cairoSecurityContext, tableName)) {
+            TableReader reader = getReader(cairoSecurityContext, tableName);
             TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
             if (readerMetadata.getVersion() < 416) {
                 boolean updated = false;
