@@ -3765,28 +3765,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVectorSumDoubleAndIntWithNulls() throws Exception {
-        assertQuery("sum\tsum1\n" +
-                        "416812847\t4167167.7952510025\n",
-                "select sum(a),sum(b) from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(10000000L))",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
-        assertQuery("avg\tsum\n" +
-                        "0.49811606109211604\t17.932178199316176\n",
-                "select avg(c),sum(c) from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
-                null,
-                false
-        );
-    }
-
-    @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
         Sequence seq = messageBus.getVectorAggregateSubSequence();
@@ -3813,8 +3791,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try {
             assertQuery("avg\tsum\n" +
-                            "0.50035043\t834470.4372884\n",
-                    "select round(avg(c), 9) avg, round(sum(c), 7) sum from x",
+                            "0.50035043\t834470.43729\n",
+                    "select round(avg(c), 9) avg, round(sum(c), 5) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
                     null,
                     false
@@ -3823,6 +3801,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             running.set(false);
             haltLatch.await();
         }
+    }
+
+    @Test
+    public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
+        assertQuery("avg\tsum\n" +
+                        "0.49811606109211604\t17.932178199316176\n",
+                "select avg(c),sum(c) from x",
+                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testVectorSumDoubleAndIntWithNulls() throws Exception {
+        assertQuery("sum\tsum1\n" +
+                        "416812847\t4167167.795\n",
+                "select sum(a),round(sum(b), 3) sum1 from x",
+                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(10000000L))",
+                null,
+                false
+        );
     }
 
     @Test
@@ -3839,8 +3839,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumOneDouble() throws Exception {
         assertQuery("sum\n" +
-                        "9278.190426088848\n",
-                "select sum(d) from x",
+                        "9278.19043\n",
+                "select round(sum(d),5) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3856,8 +3856,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumOneDoubleInPos2() throws Exception {
         assertQuery("sum\n" +
-                        "8872.339577332146\n",
-                "select sum(d) from x",
+                        "8872.33958\n",
+                "select round(sum(d),5) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
