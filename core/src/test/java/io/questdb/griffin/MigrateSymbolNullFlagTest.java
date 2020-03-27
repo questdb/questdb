@@ -24,7 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.cairo.*;
+import io.questdb.std.Rnd;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
@@ -32,27 +33,44 @@ import static org.junit.Assert.assertTrue;
 
 public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
 
-
-    //select distinct sym from a union all b
     @Test
-    public void testTableWithoutNull() throws Exception {
-        assertMemoryLeak(() -> {
-
-            compiler.compile(
-                    "CREATE TABLE x as " +
-                            "(SELECT " +
-                            " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)" +
-                            " partition by NONE",
-                    sqlExecutionContext
-            );
-
-            SharedRandom.RANDOM.get().reset();
-
-            assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), "x"));
-
-        });
+    public void testTableWithoutNullSymbol() {
+        String tableName = "test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.createTableWithVersion(model, 404);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                appendRows(rnd, writer);
+                writer.commit();
+            }
+            assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
     }
 
+    private void appendRows(Rnd rnd, TableWriter writer) {
+        int sym = writer.getColumnIndex("aaa");
+        for (int i = 0; i < 10; i++) {
+            TableWriter.Row r = writer.newRow();
+            r.putSym(sym, rnd.nextString(4));
+            r.append();
+        }
+    }
 
+    @Test
+    public void testTableWithNullSymbol() {
+        String tableName = "test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.createTableWithVersion(model, 404);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                appendRows(rnd, writer);
+                TableWriter.Row r = writer.newRow();
+                r.putSym(writer.getColumnIndex("aaa"), null);
+                writer.commit();
+            }
+            assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
+    }
 }
