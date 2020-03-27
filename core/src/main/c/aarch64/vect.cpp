@@ -77,7 +77,7 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_avgLong(JNIEnv *env, jclass c
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_minLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
-    return minlong_Vanilla((int64_t *) ppLong, count);
+    return minLong_Vanilla((int64_t *) pLong, count);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_maxLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
