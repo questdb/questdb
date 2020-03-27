@@ -104,118 +104,115 @@
 #ifdef SUM_LONG
 
 int64_t SUM_LONG(int64_t *pl, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pl + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec8q vec;
+    const int step = 8;
+    Vec8q vecsum = 0.;
     Vec8qb bVec;
-    bool hasData = false;
-    int64_t result = 0;
-    for (; pl < vec_lim; pl += step) {
-        vec.load(pl);
-        bVec = vec != LLONG_MIN;
-        hasData = hasData || horizontal_count(bVec) > 0;
-        result += horizontal_add(select(bVec, vec, 0));
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(pl + i);
+        bVec = vec == LLONG_MIN;
+        vecsum = if_add(!bVec, vecsum, vec);
+        nancount = if_add(bVec, nancount, 1);
     }
 
-    if (pl < lim) {
-        for (; pl < lim; pl++) {
-            int64_t v = *pl;
-            if (v != LLONG_MIN) {
-                result += v;
-                hasData = true;
-            }
+    int64_t sum = 0;
+    int n = 0;
+    for (; i < count; i++) {
+        int64_t x = *(pl + i);
+        if (x != LLONG_MIN) {
+            sum += x;
+        } else {
+            n++;
         }
     }
 
-    return hasData > 0 ? result : LLONG_MIN;
+    if (horizontal_add(nancount) + n < count) {
+        return horizontal_add(vecsum) + sum;
+    }
+
+    return LLONG_MIN;
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pl + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec8q vec;
-    int64_t min = LLONG_MAX;
-    int64_t v;
-    for (; pl < vec_lim; pl += step) {
-        vec.load(pl);
-        v = horizontal_min1(select(vec != LLONG_MIN, vec, LLONG_MAX));
-        if (v < min) {
-            min = v;
+    const int step = 8;
+    Vec8q vecMin = LLONG_MAX;
+    Vec8qb bVec;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(pl + i);
+        bVec = vec == LLONG_MIN;
+        vecMin = select(bVec, vecMin, min(vecMin, vec));
+    }
+
+    int64_t min = horizontal_min(vecMin);
+    for (; i < count; i++) {
+        int64_t x = *(pl + i);
+        if (x != LLONG_MIN && x < min) {
+            min = x;
         }
     }
 
-    if (pl < lim) {
-        for (; pl < lim; pl++) {
-            v = *pl;
-            if (v != LLONG_MIN && v < min) {
-                min = v;
-            }
-        }
+    if (min < LLONG_MAX) {
+        return min;
     }
-    return min == LLONG_MAX ? LLONG_MIN : min;
+
+    return LLONG_MIN;
 }
 
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pl + count;
-    const auto *vec_lim = lim - remainder;
-
+    const int step = 8;
     Vec8q vec;
-    int64_t max = LLONG_MIN;
-    int64_t v;
-    for (; pl < vec_lim; pl += step) {
-        vec.load(pl);
-        v = horizontal_max(vec);
-        if (v > max) {
-            max = v;
-        }
+    Vec8q vecMax = LLONG_MIN;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(pl + i);
+        vecMax = max(vecMax, vec);
     }
 
-    if (pl < lim) {
-        for (; pl < lim; pl++) {
-            v = *pl;
-            if (v > max) {
-                max = v;
-            }
+    int64_t max = horizontal_max(vecMax);
+    for (; i < count; i++) {
+        int64_t x = *(pl + i);
+        if (x > max) {
+            max = x;
         }
     }
     return max;
 }
 
 double AVG_LONG(int64_t *pl, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pl + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec8q vec;
+    const int step = 8;
+    Vec8q vecsum = 0.;
     Vec8qb bVec;
-    int64_t sum = 0;
-    int64_t sumCount = 0;
-    for (; pl < vec_lim; pl += step) {
-        vec.load(pl);
-        bVec = vec != LLONG_MIN;
-        sumCount += horizontal_count(bVec);
-        sum += horizontal_add(select(bVec, vec, 0));
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(pl + i);
+        bVec = vec == LLONG_MIN;
+        vecsum = if_add(!bVec, vecsum, vec);
+        nancount = if_add(bVec, nancount, 1);
     }
 
-    if (pl < lim) {
-        for (; pl < lim; pl++) {
-            int64_t v = *pl;
-            if (v != LLONG_MIN) {
-                sum += v;
-                sumCount++;
-            }
+    int64_t sum = 0;
+    int n = 0;
+    for (; i < count; i++) {
+        int64_t x = *(pl + i);
+        if (x != LLONG_MIN) {
+            sum += x;
+        } else {
+            n++;
         }
     }
-    return (double) sum / sumCount;
+
+    const int64_t nans = horizontal_add(nancount) + n;
+    if (nans < count) {
+        return (double) (horizontal_add(vecsum) + sum) / (double) (count - nans);
+    }
+
+    return NAN;
 }
 
 #endif
@@ -253,57 +250,47 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
 }
 
 int32_t MIN_INT(int32_t *pi, int64_t count) {
-    const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pi + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec16i vec;
-    int32_t min = INT_MAX;
-    int32_t v;
-    for (; pi < vec_lim; pi += step) {
-        vec.load(pi);
-        v = horizontal_min1(select(vec != INT_MIN, vec, min));
-        if (v < min) {
-            min = v;
+    const int step = 16;
+    Vec16i vecMin = INT_MAX;
+    Vec16ib bVec;
+    int i;
+    for (i = 0; i < count - 15; i += step) {
+        vec.load(pi + i);
+        bVec = vec == INT_MIN;
+        vecMin = select(bVec, vecMin, min(vecMin, vec));
+    }
+
+    int32_t min = horizontal_min(vecMin);
+    for (; i < count; i++) {
+        int32_t x = *(pi + i);
+        if (x != INT_MIN && x < min) {
+            min = x;
         }
     }
 
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            v = *pi;
-            if (v != INT_MIN && v < min) {
-                min = v;
-            }
-        }
+    if (min < INT_MAX) {
+        return min;
     }
-    return min == INT_MAX ? INT_MIN : min;
+
+    return INT_MIN;
 }
 
 int32_t MAX_INT(int32_t *pi, int64_t count) {
-    const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pi + count;
-    const auto *vec_lim = lim - remainder;
-
+    const int step = 16;
     Vec16i vec;
-    int32_t max = INT_MIN;
-    int32_t v;
-    for (; pi < vec_lim; pi += step) {
-        vec.load(pi);
-        // we can use "max" directly because our "null" is INT_MIN
-        v = horizontal_max(vec);
-        if (v > max) {
-            max = v;
-        }
+    Vec16i vecMax = INT_MIN;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(pi + i);
+        vecMax = max(vecMax, vec);
     }
 
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            v = *pi;
-            if (v > max) {
-                max = v;
-            }
+    int32_t max = horizontal_max(vecMax);
+    for (; i < count; i++) {
+        int32_t x = *(pi + i);
+        if (x > max) {
+            max = x;
         }
     }
     return max;
@@ -343,119 +330,125 @@ double AVG_INT(int32_t *pi, int64_t count) {
 #ifdef SUM_DOUBLE
 
 double SUM_DOUBLE(double *d, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = d + count;
-    const auto *vec_lim = lim - remainder;
-
-    double *pd = d;
     Vec8d vec;
+    const int step = 8;
+    const double *lim = d + count;
+    const double *lim_vec = lim - step + 1;
+    Vec8d vecsum = 0.;
     Vec8db bVec;
-    double sum = 0;
-    long sumCount = 0;
-    for (; pd < vec_lim; pd += step) {
-        vec.load(pd);
+    Vec8q nancount = 0;
+    for (; d < lim_vec; d += step) {
+        vec.load(d);
         bVec = is_nan(vec);
-        sumCount += step - horizontal_count(bVec);
-        sum += horizontal_add(select(bVec, 0.0, vec));
+        vecsum = if_add(!bVec, vecsum, vec);
+        nancount = if_add(bVec, nancount, 1);
     }
 
-    if (pd < lim) {
-        for (; pd < lim; pd++) {
-            double x = *pd;
-            if (x == x) {
-                sum += x;
-                sumCount++;
-            }
+    double sum = 0;
+    int n = 0;
+    for (; d < lim; d++) {
+        double x = *d;
+        if (x == x) {
+            sum += x;
+        } else {
+            n++;
         }
     }
-    return sumCount > 0 ? sum : NAN;
+
+    if (horizontal_add(nancount) + n < count) {
+        return horizontal_add(vecsum) + sum;
+    }
+
+    return NAN;
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = d + count;
-    const auto *vec_lim = lim - remainder;
-
-    double *pd = d;
     Vec8d vec;
+    const int step = 8;
+    Vec8d vecsum = 0.;
     Vec8db bVec;
-    double sum = 0;
-    long sumCount = 0;
-    for (; pd < vec_lim; pd += step) {
-        vec.load(pd);
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        vec.load(d + i);
         bVec = is_nan(vec);
-        sumCount += step - horizontal_count(bVec);
-        sum += horizontal_add(select(bVec, 0.0, vec));
+        vecsum = if_add(!bVec, vecsum, vec);
+        nancount = if_add(bVec, nancount, 1);
     }
 
-    if (pd < lim) {
-        for (; pd < lim; pd++) {
-            double x = *pd;
-            if (x == x) {
-                sum += x;
-                sumCount++;
-            }
+    double sum = 0;
+    int n = 0;
+    for (; i < count; i++) {
+        double x = *(d + i);
+        if (x == x) {
+            sum += x;
+        } else {
+            n++;
         }
     }
-    return sum / sumCount;
+
+    const int64_t nans = horizontal_add(nancount) + n;
+    if (nans < count) {
+        return (horizontal_add(vecsum) + sum) / (double) (count - nans);
+    }
+
+    return NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = d + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec8d vec;
-    double min = INFINITY;
-    double x;
-    for (; d < vec_lim; d += step) {
+    const int step = 8;
+    const double *lim = d + count;
+    const double *lim_vec = lim - step + 1;
+    Vec8d vecMin = INFINITY;
+    Vec8db bVec;
+    for (; d < lim_vec; d += step) {
         vec.load(d);
-        x = horizontal_min(select(is_nan(vec), INFINITY, vec));
-        if (x < min) {
+        bVec = is_nan(vec);
+        vecMin = select(bVec, vecMin, min(vecMin, vec));
+    }
+
+    double min = horizontal_min(vecMin);
+    for (; d < lim; d++) {
+        double x = *d;
+        if (x == x && x < min) {
             min = x;
         }
     }
 
-    if (d < lim) {
-        for (; d < lim; d++) {
-            x = *d;
-            if (x < min) {
-                min = x;
-            }
-        }
+    if (min < INFINITY) {
+        return min;
     }
-    return min == INFINITY ? NAN : min;
+
+    return NAN;
 }
 
 double MAX_DOUBLE(double *d, int64_t count) {
-    const int32_t step = 8;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = d + count;
-    const auto *vec_lim = lim - remainder;
-
     Vec8d vec;
-    double x;
-    double max = -INFINITY;
-    for (; d < vec_lim; d += step) {
+    const int step = 8;
+    const double *lim = d + count;
+    const double *lim_vec = lim - step + 1;
+    Vec8d vecMax = -INFINITY;
+    Vec8db bVec;
+    for (; d < lim_vec; d += step) {
         vec.load(d);
-        x = horizontal_max(select(is_nan(vec), -INFINITY, vec));
-        if (x > max) {
+        bVec = is_nan(vec);
+        vecMax = select(bVec, vecMax, max(vecMax, vec));
+    }
+
+    double max = horizontal_max(vecMax);
+    for (; d < lim; d++) {
+        double x = *d;
+        if (x == x && x > max) {
             max = x;
         }
     }
 
-    if (d < lim) {
-        for (; d < lim; d++) {
-            x = *d;
-            if (x > max) {
-                max = x;
-            }
-        }
+    if (max > -INFINITY) {
+        return max;
     }
-    return max == -INFINITY ? NAN : max;
+
+    return NAN;
 }
 
 #endif
@@ -479,8 +472,8 @@ LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
 extern "C" {
-    JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
-        return instrset_detect();
-    }
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
+    return instrset_detect();
+}
 }
 #endif  // INSTRSET == 2
