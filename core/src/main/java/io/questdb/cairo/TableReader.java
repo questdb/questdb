@@ -153,60 +153,33 @@ public class TableReader implements Closeable {
         }
     }
 
-    private static int getColumnBits(int columnCount) {
-        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
-    }
-
     public static int getPrimaryColumnIndex(int base, int index) {
         return base + index * 2;
     }
 
-    private static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
-    }
-
-    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
-        if (rowCount > 0) {
-            // subtract column top
-            switch (type) {
-                case ColumnType.BINARY:
-                    growBin(mem1, mem2, rowCount);
-                    break;
-                case ColumnType.STRING:
-                    growStr(mem1, mem2, rowCount);
-                    break;
-                default:
-                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
-                    break;
+    public double avgDouble(int columnIndex) {
+        double result = 0;
+        long countTotal = 0;
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            if (column != null) {
+                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                    final long a = column.getPageAddress(pageIndex);
+                    final long count = column.getPageSize(pageIndex) / Double.BYTES;
+                    result += Vect.avgDouble(a, count);
+                    countTotal++;
+                }
             }
         }
-    }
 
-    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.grow(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        mem1.grow(offset + 4);
-        final long len = mem1.getInt(offset);
-        if (len > 0) {
-            mem1.grow(offset + len * 2 + 4);
+        if (countTotal == 0) {
+            return 0;
         }
-    }
 
-    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.grow(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        // grow data column to value offset + length, so that we can read length
-        mem1.grow(offset + 8);
-        final long len = mem1.getLong(offset);
-        if (len > 0) {
-            mem1.grow(offset + len + 8);
-        }
+        return result / countTotal;
     }
 
     @Override
@@ -265,6 +238,10 @@ public class TableReader implements Closeable {
         return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction) : reader;
     }
 
+    public int getColumnBase(int partitionIndex) {
+        return partitionIndex << columnCountBits;
+    }
+
     public TableReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -284,6 +261,24 @@ public class TableReader implements Closeable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    public long getPageAddressAt(int partitionIndex, long row, int columnIndex) {
+        final int base = getColumnBase(partitionIndex);
+        final int column = getPrimaryColumnIndex(base, columnIndex);
+        final long r = row - getColumnTop(base, columnIndex);
+        final int columnType = metadata.getColumnType(columnIndex);
+        switch (columnType) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                return getColumn(column + 1).getLong(r * Long.BYTES);
+            default:
+                return r * ColumnType.sizeOf(columnType);
+        }
+    }
+
+    public long getPageValueCount(int partitionIndex, long rowLo, long rowHi, int columnIndex) {
+        return rowHi - rowLo - getColumnTop(getColumnBase(partitionIndex), columnIndex);
     }
 
     public int getPartitionCount() {
@@ -312,6 +307,48 @@ public class TableReader implements Closeable {
 
     public boolean isOpen() {
         return tempMem8b != 0;
+    }
+
+    public double maxDouble(int columnIndex) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            if (column != null) {
+                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                    long a = column.getPageAddress(pageIndex);
+                    long count = column.getPageSize(pageIndex) / Double.BYTES;
+                    double x = Vect.maxDouble(a, count);
+                    if (x > max) {
+                        max = x;
+                    }
+                }
+            }
+        }
+        return max;
+    }
+
+    public double minDouble(int columnIndex) {
+        double min = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            if (column != null) {
+                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                    long a = column.getPageAddress(pageIndex);
+                    long count = column.getPageSize(pageIndex) / Double.BYTES;
+                    double x = Vect.minDouble(a, count);
+                    if (x < min) {
+                        min = x;
+                    }
+                }
+            }
+        }
+        return min;
     }
 
     public boolean reload() {
@@ -393,6 +430,76 @@ public class TableReader implements Closeable {
         return rowCount;
     }
 
+    public double sumDouble(int columnIndex) {
+        double result = 0;
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            if (column != null) {
+                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                    long a = column.getPageAddress(pageIndex);
+                    long count = column.getPageSize(pageIndex) / Double.BYTES;
+                    result += Vect.sumDouble(a, count);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static int getColumnBits(int columnCount) {
+        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
+    }
+
+    private static boolean isEntryToBeProcessed(long address, int index) {
+        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
+            return false;
+        }
+        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
+        return true;
+    }
+
+    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
+        if (rowCount > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    growBin(mem1, mem2, rowCount);
+                    break;
+                case ColumnType.STRING:
+                    growStr(mem1, mem2, rowCount);
+                    break;
+                default:
+                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
+                    break;
+            }
+        }
+    }
+
+    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        mem1.grow(offset + 4);
+        final long len = mem1.getInt(offset);
+        if (len > 0) {
+            mem1.grow(offset + len * 2 + 4);
+        }
+    }
+
+    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+        assert mem2 != null;
+        mem2.grow(rowCount * 8);
+        final long offset = mem2.getLong((rowCount - 1) * 8);
+        // grow data column to value offset + length, so that we can read length
+        mem1.grow(offset + 8);
+        final long len = mem1.getLong(offset);
+        if (len > 0) {
+            mem1.grow(offset + len + 8);
+        }
+    }
+
     private void applyTruncate() {
         LOG.info().$("truncate detected").$();
         for (int i = 0, n = partitionCount; i < n; i++) {
@@ -443,100 +550,6 @@ public class TableReader implements Closeable {
         Misc.free(columns.getAndSetQuick(index + 1, ForceNullColumn.INSTANCE));
         Misc.free(bitmapIndexes.getAndSetQuick(index, null));
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
-    }
-
-    public double sumDouble(int columnIndex) {
-        double result = 0;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
-            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                long a = column.getPageAddress(pageIndex);
-                long count = column.getPageSize(pageIndex) / Double.BYTES;
-                result += Vect.sumDouble(a, count);
-            }
-        }
-        return result;
-    }
-
-    boolean hasNull(int columnIndex) {
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
-            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                long a = column.getPageAddress(pageIndex);
-                long count = column.getPageSize(pageIndex) / Integer.BYTES;
-                if (Vect.hasNull(a, count)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    public double minDouble(int columnIndex) {
-        double min = Double.POSITIVE_INFINITY;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
-            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                long a = column.getPageAddress(pageIndex);
-                long count = column.getPageSize(pageIndex) / Double.BYTES;
-                double x = Vect.minDouble(a, count);
-                if (x < min) {
-                    min = x;
-                }
-            }
-        }
-        return min;
-    }
-
-    public double maxDouble(int columnIndex) {
-        double max = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
-            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                long a = column.getPageAddress(pageIndex);
-                long count = column.getPageSize(pageIndex) / Double.BYTES;
-                double x = Vect.maxDouble(a, count);
-                if (x > max) {
-                    max = x;
-                }
-            }
-        }
-        return max;
-    }
-
-    public double avgDouble(int columnIndex) {
-        double result = 0;
-        long countTotal = 0;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
-            for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                final long a = column.getPageAddress(pageIndex);
-                final long count = column.getPageSize(pageIndex) / Double.BYTES;
-                result += Vect.avgDouble(a, count);
-                countTotal++;
-            }
-        }
-
-        if (countTotal == 0) {
-            return 0;
-        }
-
-        return result / countTotal;
     }
 
     private void closeRemovedPartitions() {
@@ -720,30 +733,8 @@ public class TableReader implements Closeable {
         }
     }
 
-    public long getPageAddressAt(int partitionIndex, long row, int columnIndex) {
-        final int base = getColumnBase(partitionIndex);
-        final int column = getPrimaryColumnIndex(base, columnIndex);
-        final long r = row - getColumnTop(base, columnIndex);
-        final int columnType = metadata.getColumnType(columnIndex);
-        switch (columnType) {
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-                return getColumn(column + 1).getLong(r * Long.BYTES);
-            default:
-                return r * ColumnType.sizeOf(columnType);
-        }
-    }
-
-    public long getPageValueCount(int partitionIndex, long rowLo, long rowHi, int columnIndex) {
-        return rowHi - rowLo - getColumnTop(getColumnBase(partitionIndex), columnIndex);
-    }
-
     ReadOnlyColumn getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
-    }
-
-    public int getColumnBase(int partitionIndex) {
-        return partitionIndex << columnCountBits;
     }
 
     int getColumnCount() {
@@ -769,6 +760,25 @@ public class TableReader implements Closeable {
 
     long getTxn() {
         return txn;
+    }
+
+    boolean hasNull(int columnIndex) {
+        for (int i = 0; i < partitionCount; i++) {
+            openPartition(i);
+            final int base = getColumnBase(i);
+            final int index = getPrimaryColumnIndex(base, columnIndex);
+            final ReadOnlyColumn column = columns.getQuick(index);
+            if (column != null) {
+                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
+                    long a = column.getPageAddress(pageIndex);
+                    long count = column.getPageSize(pageIndex) / Integer.BYTES;
+                    if (Vect.hasNull(a, count)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private void incrementPartitionCountBy(int delta) {

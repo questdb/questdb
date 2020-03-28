@@ -3742,6 +3742,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testVectorAggregateOnSparsePartitions() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, (x/100) * 1000000*60*60*24*2 + (x%100)) k" +
+                        " from" +
+                        " long_sequence(120)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(6158.373651379578, r.sumDouble(0), 0.00001);
+            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
+            Assert.assertEquals(99.1809311486223, r.maxDouble(0), 0.00001);
+            Assert.assertEquals(53.20159680986086, r.avgDouble(0), 0.00001);
+        }
+    }
+
+    @Test
     public void testSumDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
@@ -3762,6 +3788,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
         }
+    }
+
+    @Test
+    public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
+        assertQuery("avg\tsum\n" +
+                        "0.49811606109211604\t17.932178199316176\n",
+                "select avg(c),sum(c) from x",
+                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
+                null,
+                false
+        );
     }
 
     @Test
@@ -3801,17 +3838,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             running.set(false);
             haltLatch.await();
         }
-    }
-
-    @Test
-    public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
-        assertQuery("avg\tsum\n" +
-                        "0.49811606109211604\t17.932178199316176\n",
-                "select avg(c),sum(c) from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
-                null,
-                false
-        );
     }
 
     @Test

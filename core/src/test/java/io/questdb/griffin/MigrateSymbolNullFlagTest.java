@@ -28,34 +28,35 @@ import io.questdb.cairo.*;
 import io.questdb.std.Rnd;
 import org.junit.Test;
 
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
 
     @Test
-    public void testTableWithoutData() {
-        String tableName = "test";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
-        ) {
-            CairoTestUtils.createTableWithVersion(model, 404);
-            assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
-        }
-    }
+    public void testMigrateTableWithSparsePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "test";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
+            ) {
+                CairoTestUtils.createTableWithVersion(model, 404);
+                compiler.compile(
+                        "insert into test select * from (" +
+                                "select" +
+                                " rnd_symbol('xx', 'yy', 'zz')," +
+                                " timestamp_sequence(0, (x/100) * 1000000*60*60*24*2 + (x%100)) k" +
+                                " from" +
+                                " long_sequence(120)) timestamp(k)"
+                        ,
+                        sqlExecutionContext
+                );
 
-    @Test
-    public void testTableWithoutNullSymbol() {
-        String tableName = "test";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
-        ) {
-            CairoTestUtils.createTableWithVersion(model, 404);
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
-                appendRows(rnd, writer);
-                writer.commit();
+                assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+                // second time must not update
+                // todo: bump transaction on writer so that pooled reader can recognise the situation
+                //   and patch effects can be used without server restart
+                //assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
             }
-            assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
-        }
+        });
     }
 
     @Test
@@ -70,6 +71,31 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
                 TableWriter.Row r = writer.newRow();
                 r.putSym(writer.getColumnIndex("aaa"), null);
                 r.append();
+                writer.commit();
+            }
+            assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
+    }
+
+    @Test
+    public void testTableWithoutData() {
+        String tableName = "test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.createTableWithVersion(model, 404);
+            assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+        }
+    }
+
+    @Test
+    public void testTableWithoutNullSymbol() {
+        String tableName = "test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.createTableWithVersion(model, 404);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                appendRows(rnd, writer);
                 writer.commit();
             }
             assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
