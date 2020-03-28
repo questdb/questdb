@@ -3791,8 +3791,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try {
             assertQuery("avg\tsum\n" +
-                            "0.50035043\t834470.43729\n",
-                    "select round(avg(c), 9) avg, round(sum(c), 5) sum from x",
+                            "0.50035043\t834470.437288\n",
+                    "select round(avg(c), 9) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
                     null,
                     false
@@ -3817,9 +3817,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumDoubleAndIntWithNulls() throws Exception {
         assertQuery("sum\tsum1\n" +
-                        "416812847\t4167167.795\n",
-                "select sum(a),round(sum(b), 3) sum1 from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(10000000L))",
+                        "41676799\t416969.81549\n",
+                "select sum(a),round(sum(b),5) sum1 from x",
+                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(1000035L))",
                 null,
                 false
         );
@@ -3839,8 +3839,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumOneDouble() throws Exception {
         assertQuery("sum\n" +
-                        "9278.19043\n",
-                "select round(sum(d),5) sum from x",
+                        "9278.190426\n",
+                "select round(sum(d),6) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3856,15 +3856,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumOneDoubleInPos2() throws Exception {
         assertQuery("sum\n" +
-                        "8872.33958\n",
-                "select round(sum(d),5) sum from x",
+                        "83462.04211\n",
+                "select round(sum(d),6) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_int() i," +
-                        " rnd_double(2)*100 d" +
+                        " rnd_double(2) d" +
                         " from" +
-                        " long_sequence(200)" +
+                        " long_sequence(200921)" +
                         ")",
                 null,
                 false
