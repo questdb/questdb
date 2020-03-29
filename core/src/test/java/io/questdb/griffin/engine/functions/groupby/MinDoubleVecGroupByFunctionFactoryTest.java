@@ -63,4 +63,28 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 false
         );
     }
+
+    @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "0.511848387\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_double(2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b double",
+                "avg\n" +
+                        "0.511848387\n",
+                false
+        );
+
+        assertQuery(
+                "avg\tmin\n" +
+                        "0.504722\t0.0032519916115479885\n",
+                "select round(avg(f),6) avg, min(b) min from tab",
+                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
+                null,
+                false
+        );
+    }
 }

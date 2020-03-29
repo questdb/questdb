@@ -29,10 +29,12 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAdder;
+import java.util.concurrent.atomic.LongAdder;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
-    private final DoubleAdder doubleAdder = new DoubleAdder();
+    private final DoubleAdder sum = new DoubleAdder();
+    private final LongAdder count = new LongAdder();
     private final int columnIndex;
 
     public SumDoubleVectorAggregateFunction(int position, int columnIndex) {
@@ -42,7 +44,13 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long address, long count) {
-        doubleAdder.add(Vect.sumDouble(address, count));
+        if (address != 0) {
+            final double value = Vect.sumDouble(address, count);
+            if (value == value) {
+                sum.add(value);
+                this.count.increment();
+            }
+        }
     }
 
     @Override
@@ -52,11 +60,12 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void clear() {
-        doubleAdder.reset();
+        sum.reset();
+        count.reset();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return doubleAdder.sum();
+        return this.count.sum() > 0 ? sum.sum() : Double.NaN;
     }
 }

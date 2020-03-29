@@ -33,8 +33,8 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
-    private final DoubleAdder doubleAdder = new DoubleAdder();
-    private final LongAdder longAdder = new LongAdder();
+    private final DoubleAdder sum = new DoubleAdder();
+    private final LongAdder count = new LongAdder();
     private final int columnIndex;
 
     public AvgDoubleVectorAggregateFunction(int position, int columnIndex) {
@@ -44,9 +44,13 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long address, long count) {
-        double avg = Vect.avgDouble(address, count);
-        doubleAdder.add(avg);
-        longAdder.add(1);
+        if (address != 0) {
+            double value = Vect.avgDouble(address, count);
+            if (value == value) {
+                sum.add(value);
+                this.count.increment();
+            }
+        }
     }
 
     @Override
@@ -56,12 +60,16 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void clear() {
-        doubleAdder.reset();
-        longAdder.reset();
+        sum.reset();
+        count.reset();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return doubleAdder.sum() / longAdder.sum();
+        final long count = this.count.sum();
+        if (count > 0) {
+            return sum.sum() / count;
+        }
+        return Double.NaN;
     }
 }
