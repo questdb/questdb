@@ -151,7 +151,7 @@ function start {
     -XX:BiasedLockingStartupDelay=0"
 
     JAVA_MAIN="io.questdb.ServerMain"
-    DATE=`date +%Y-%m-%d:%H:%M:%S`
+    DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
         ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
