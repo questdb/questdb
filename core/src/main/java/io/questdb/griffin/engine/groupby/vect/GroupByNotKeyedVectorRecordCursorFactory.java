@@ -115,7 +115,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         // To deal with that we need to have our own checklist.
 
         // start at the back to reduce chance of clashing
-        for (int i = activeEntries.size() - 1; i > -1; i--) {
+        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
             if (activeEntries.getQuick(i).run()) {
                 reclaimed++;
             }
@@ -151,12 +151,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
             Misc.free(pageFrameCursor);
         }
 
-        private GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor) {
-            this.pageFrameCursor = pageFrameCursor;
-            toTop();
-            return this;
-        }
-
         @Override
         public Record getRecord() {
             return recordA;
@@ -167,7 +161,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
             return countDown-- > 0;
         }
 
-
         @Override
         public void toTop() {
             countDown = 1;
@@ -176,6 +169,12 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         @Override
         public long size() {
             return 1;
+        }
+
+        private GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor) {
+            this.pageFrameCursor = pageFrameCursor;
+            toTop();
+            return this;
         }
     }
 }

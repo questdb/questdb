@@ -125,7 +125,7 @@ if (AARCH64)
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-O2 -std=c++17"
+            COMPILE_FLAGS "-O3 -std=c++17"
     )
 
     target_link_libraries(
@@ -135,7 +135,7 @@ if (AARCH64)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-O2"
+            COMPILE_FLAGS "-O3"
     )
 
 else ()
@@ -152,21 +152,21 @@ else ()
     add_library(questdb-sse4 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-sse4 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -msse4.1 -fPIC -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC -std=c++17"
     )
 
     # AVX2 lib
     add_library(questdb-avx2 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -mavx2 -fPIC -mfma -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"
     )
 
     #AVX512 lib
     add_library(questdb-avx512 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx512 PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
     )
 
     #SSE2 lib
@@ -181,18 +181,18 @@ else ()
     if (WIN32)
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O2 -march=core2 -msse2 -std=c++17 -Wno-attributes"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -std=c++17 -Wno-attributes"
         )
     else ()
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O2 -march=core2 -msse2 -fPIC -std=c++17"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC -std=c++17"
         )
     endif (WIN32)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O2 "
+            COMPILE_FLAGS "-m64 -O3 "
     )
 
     target_link_libraries(

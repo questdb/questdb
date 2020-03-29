@@ -55,6 +55,10 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
         } while (true);
     }
 
+    public int getCount() {
+        return count;
+    }
+
     public void reset() {
         count = 0;
     }
