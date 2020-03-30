@@ -35,7 +35,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     public static final DoubleBinaryOperator MAX = Math::max;
 
-    private final DoubleAccumulator doubleAdder = new DoubleAccumulator(
+    private final DoubleAccumulator max = new DoubleAccumulator(
             MAX, Double.NEGATIVE_INFINITY
     );
 
@@ -48,7 +48,12 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long address, long count) {
-        doubleAdder.accumulate(Vect.maxDouble(address, count));
+        if (address != 0) {
+            final double value = Vect.maxDouble(address, count);
+            if (value == value) {
+                max.accumulate(value);
+            }
+        }
     }
 
     @Override
@@ -58,11 +63,12 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void clear() {
-        doubleAdder.reset();
+        max.reset();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return doubleAdder.get();
+        final double value = max.get();
+        return Double.isInfinite(value) ? Double.NaN : value;
     }
 }

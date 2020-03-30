@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAccumulator;
@@ -46,7 +47,12 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void aggregate(long address, long count) {
-        accumulator.accumulate(Vect.minInt(address, count));
+        if (address != 0) {
+            final int value = Vect.minInt(address, count);
+            if (value != Numbers.INT_NaN) {
+                accumulator.accumulate(value);
+            }
+        }
     }
 
     @Override
@@ -61,6 +67,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public int getInt(Record rec) {
-        return accumulator.intValue();
+        final int value = accumulator.intValue();
+        return value == Integer.MAX_VALUE ? Numbers.INT_NaN : value;
     }
 }

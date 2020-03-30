@@ -34,8 +34,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
-    private static final long YIELD_THRESHOLD = 100000L;
-    private static final long SLEEP_THRESHOLD = 10000000L;
+    private static final long YIELD_THRESHOLD = 10L;
+    private static final long SLEEP_THRESHOLD = 10000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
     private final SOCountDownLatch haltLatch;

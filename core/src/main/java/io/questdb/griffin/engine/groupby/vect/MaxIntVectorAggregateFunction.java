@@ -34,7 +34,7 @@ import java.util.function.LongBinaryOperator;
 public class MaxIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
-    private final LongAccumulator accumulator = new LongAccumulator(
+    private final LongAccumulator max = new LongAccumulator(
             MAX, Integer.MIN_VALUE
     );
     private final int columnIndex;
@@ -46,7 +46,9 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void aggregate(long address, long count) {
-        accumulator.accumulate(Vect.maxInt(address, count));
+        if (address != 0) {
+            max.accumulate(Vect.maxInt(address, count));
+        }
     }
 
     @Override
@@ -56,11 +58,11 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void clear() {
-        accumulator.reset();
+        max.reset();
     }
 
     @Override
     public int getInt(Record rec) {
-        return accumulator.intValue();
+        return max.intValue();
     }
 }
