@@ -70,7 +70,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
     @Override
     public int getPageCount() {
-        return pageIndex(size) + 1;
+        return pageIndex(userSize) + 1;
     }
 
     @Override

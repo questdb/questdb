@@ -40,6 +40,19 @@ public class CairoTestUtils {
         );
     }
 
+
+    public static void createTableWithVersion(TableModel model, int version) {
+        TableUtils.createTable(
+                model.getCairoCfg().getFilesFacade(),
+                model.getMem(),
+                model.getPath(),
+                model.getCairoCfg().getRoot(),
+                model,
+                model.getCairoCfg().getMkDirMode(),
+                version
+        );
+    }
+
     public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
         try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
             create(model);

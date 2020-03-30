@@ -32,6 +32,8 @@ public final class Vect {
 
     public static native double avgLong(long pLong, long count);
 
+    public static native boolean hasNull(long pInt, long count);
+
     public static native int getSupportedInstructionSet();
 
     public static String getSupportedInstructionSetName() {

@@ -1441,7 +1441,8 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
             try {
-                engine.getWriter(executionContext.getCairoSecurityContext(), tok).close();
+                //opening the writer will attempt to fix/repair the table. The writer is now opened inside migrateNullFlag()
+                engine.migrateNullFlag(executionContext.getCairoSecurityContext(), tok);
             } catch (CairoException e) {
                 LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
                 throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");

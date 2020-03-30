@@ -31,10 +31,12 @@ import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
     private int symbolMapCount;
+    private int version;
 
     public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+        this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
@@ -98,5 +100,13 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         for (int i = columnIndex; i < columnCount; i++) {
             columnNameIndexMap.put(columnMetadata.getQuick(i).getName(), i);
         }
+    }
+
+    public int getTableVersion() {
+        return version;
+    }
+
+    public void setTableVersion() {
+        version = ColumnType.VERSION;
     }
 }
