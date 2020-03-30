@@ -180,18 +180,15 @@ public class CairoEngine implements Closeable {
         ) {
             TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
             if (readerMetadata.getVersion() < 416) {
-                LOG.info().$("Migrating null flag for all symbols in table '").utf8(tableName).$("'").$();
+                LOG.info().$("migrating null flag for symbols [table=").utf8(tableName).$(']').$();
                 for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
                     if (readerMetadata.getColumnType(i) == SYMBOL) {
-                        boolean hasNullSymbol = reader.hasNull(i);
-                        if (hasNullSymbol) {
-                            LOG.info().$("Updating null flag for column '").utf8(readerMetadata.getColumnName(i)).$("'").$();
-                            writer.getSymbolMapWriter(i).updateNullFlag(hasNullSymbol);
-                        }
+                        LOG.info().$("updating null flag [column=").utf8(readerMetadata.getColumnName(i)).$(']').$();
+                        writer.getSymbolMapWriter(i).updateNullFlag(reader.hasNull(i));
                     }
                 }
                 writer.updateMetadataVersion();
-                LOG.info().$("Migrated null flag for all symbols in table '").utf8(tableName).$("'. New table version ").$('[').$(ColumnType.VERSION).$(']').$();
+                LOG.info().$("migrated null flag for symbols [table=").utf8(tableName).$(", tableVersion=").$(ColumnType.VERSION).$(']').$();
                 return true;
             }
         }
