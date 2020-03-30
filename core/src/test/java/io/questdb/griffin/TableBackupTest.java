@@ -3,21 +3,35 @@ package io.questdb.griffin;
 import java.io.IOException;
 
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.str.Path;
 
-public class BackupTest extends AbstractGriffinTest {
+public class TableBackupTest extends AbstractGriffinTest {
+	@BeforeClass
+	public static void setUp3() throws IOException {
+		final CharSequence backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+		configuration = new DefaultCairoConfiguration(root) {
+			@Override
+			public CharSequence getBackupRoot() {
+				return backupRoot;
+			}
+		};
+		engine = new CairoEngine(configuration, messageBus);
+		compiler = new SqlCompiler(engine);
+	}
+
 	@Test
-	public void simpleTableTest() throws Exception {
+	public void simpleTableTest2() throws Exception {
 		String tableName = "testTable";
-		assertMemoryLeak(() -> {
+		Path path = new Path();
+		AbstractGriffinTest.assertMemoryLeak(() -> {
 			// @formatter:off
 			compiler.compile("create table " + tableName + " as (select" + 
 					" rnd_symbol(4,4,4,2) sym," + 
@@ -27,7 +41,9 @@ public class BackupTest extends AbstractGriffinTest {
 			// @formatter:on
 		});
 
-		TableUtils.backupTable(tableName, configuration);
+		AbstractGriffinTest.assertMemoryLeak(() -> {
+			engine.backupTable(sqlExecutionContext.getCairoSecurityContext(), tableName, path);
+		});
 
 		String sourceSelectAll = selectAll(tableName);
 		engine.close();
@@ -55,14 +71,4 @@ public class BackupTest extends AbstractGriffinTest {
 		return sink.toString();
 	}
 
-	@Before
-	public void setupConfig() throws IOException {
-		final CharSequence backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
-		configuration = new DefaultCairoConfiguration(root) {
-			@Override
-			public CharSequence getBackupRoot() {
-				return backupRoot;
-			}
-		};
-	}
 }

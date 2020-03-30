@@ -152,7 +152,6 @@ public class TableWriter implements Closeable {
     ) {
     	this(configuration, name, messageBus, lock, lifecycleManager, configuration.getRoot());
     }
-    
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence name,

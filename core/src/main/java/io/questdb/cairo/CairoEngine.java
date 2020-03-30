@@ -24,11 +24,18 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -38,10 +45,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
-
 import static io.questdb.cairo.ColumnType.SYMBOL;
 
 public class CairoEngine implements Closeable {
@@ -51,6 +54,7 @@ public class CairoEngine implements Closeable {
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
     private final WriterMaintenanceJob writerMaintenanceJob;
+    private final WriterPool backupWriterPool;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
@@ -58,16 +62,24 @@ public class CairoEngine implements Closeable {
 
     public CairoEngine(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
-        this.writerPool = new WriterPool(configuration, messageBus);
+        this.writerPool = new WriterPool(configuration, messageBus, false);
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+        if (null != configuration.getBackupRoot()) {
+        	backupWriterPool = new WriterPool(configuration, messageBus, true);
+        } else {
+        	backupWriterPool = null;
+        }
     }
 
     @Override
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-    }
+        if (null != backupWriterPool) {
+        	Misc.free(backupWriterPool);
+        }
+   }
 
     public void creatTable(
             CairoSecurityContext securityContext,
@@ -155,6 +167,13 @@ public class CairoEngine implements Closeable {
         return writerMaintenanceJob;
     }
 
+    private TableWriter getBackupWriter(
+            CairoSecurityContext securityContext,
+            CharSequence tableName
+    ) {
+        return backupWriterPool.get(tableName);
+    }
+
     public boolean lock(
             CairoSecurityContext securityContext,
             CharSequence tableName
@@ -200,9 +219,13 @@ public class CairoEngine implements Closeable {
     }
 
     public boolean releaseAllWriters() {
-        return writerPool.releaseAll();
+        boolean released = writerPool.releaseAll();
+        if (null != backupWriterPool) {
+        	return backupWriterPool.releaseAll() || released;
+        }
+        return released;
     }
-
+    
     public void releaseInactive() {
         writerPool.releaseInactive();
         readerPool.releaseInactive();
@@ -318,4 +341,78 @@ public class CairoEngine implements Closeable {
             return false;
         }
     }
+     
+	public void backupTable(CairoSecurityContext securityContext, CharSequence tableName, Path path) {
+		if (null == configuration.getBackupRoot()) {
+			throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+		}
+		
+		try (TableReader reader = getReader(securityContext, tableName)) {
+			cloneMetaData(tableName, configuration.getFilesFacade(), path, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode());
+			RecordMetadata metaData = reader.getMetadata();
+			int timestampCol = metaData.getTimestampIndex();
+
+			try (TableWriter backupWriter = getBackupWriter(securityContext, tableName); RecordCursor cursor = reader.getCursor()) {
+				Record record = cursor.getRecord();
+				while (cursor.hasNext()) {
+					TableWriter.Row row;
+					if (timestampCol > 0) {
+						row = backupWriter.newRow(record.getTimestamp(timestampCol));
+					} else {
+						row = backupWriter.newRow();
+					}
+					for (int col = 0; col < metaData.getColumnCount(); col++) {
+						if (col == timestampCol) {
+							continue;
+						}
+						switch (metaData.getColumnType(col)) {
+						case ColumnType.DOUBLE:
+							row.putDouble(col, record.getDouble(col));
+							break;
+						case ColumnType.SYMBOL:
+							row.putSym(col, record.getSym(col));
+							break;
+						default:
+							throw CairoException.instance(0).put("Unsupported column type " + metaData.getColumnType(col));
+						}
+					}
+					row.append();
+				}
+				backupWriter.commit();
+			}
+		}
+	}
+
+	private static void cloneMetaData(CharSequence tableName, FilesFacade ff, Path path, CharSequence root, CharSequence backupRoot, int mkDirMode) {
+		path.of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+		try (TableReaderMetadata sourceMetaData = new TableReaderMetadata(ff, path)) {
+			path.of(backupRoot).concat(tableName);
+
+			if (ff.exists(path)) {
+				throw CairoException.instance(0).put("Backup dir for table \""+tableName+"\" already exists [dir=").put(path).put(']');
+			}
+			
+			if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+				throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+			}
+
+			final int rootLen = path.length();
+			try (AppendMemory backupMem = new AppendMemory()) {
+				backupMem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+				sourceMetaData.cloneTo(backupMem);
+
+				// create symbol maps
+				int symbolMapCount = 0;
+				for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
+					if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
+						SymbolMapWriter.createSymbolMapFiles(ff, backupMem, path.trimTo(rootLen), sourceMetaData.getColumnName(i), 128, true);
+						symbolMapCount++;
+					}
+				}
+				backupMem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+				TableUtils.resetTxn(backupMem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+
+			}
+		}
+	}
 }
