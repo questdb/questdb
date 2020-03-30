@@ -79,12 +79,12 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
      */
-    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
+    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus, boolean backupWriter) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
-        this.root = configuration.getRoot();
+        this.root = backupWriter ? configuration.getBackupRoot() : configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -368,7 +368,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, messageBus, true, e);
+            e.writer = new TableWriter(configuration, name, messageBus, true, e, root);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.error().$("could not open [table=`").utf8(name).$("`, thread=").$(e.owner).$(']').$();
