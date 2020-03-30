@@ -1,15 +1,11 @@
 //
 // Created by Vlad Ilyushchenko on 06/08/2016.
 //
-
-#include <ntdef.h>
-#include <stdio.h>
-#include <windows.h>
-
 #ifndef WIN64SVC_COMMON_H
 #define WIN64SVC_COMMON_H
 
-#endif //WIN64SVC_COMMON_H
+#include <windows.h>
+#include <stdio.h>
 
 #define E_CREATE_SERVICE 101
 #define E_ACCESS_DENIED  102
@@ -64,3 +60,5 @@ int svcStart(CONFIG *config);
 int svcStop(CONFIG *config);
 
 void log_event(WORD logType, char* serviceName, char *message);
+
+#endif //WIN64SVC_COMMON_H

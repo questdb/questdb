@@ -41,14 +41,20 @@ public class GroupByNotKeyedJob implements Job {
 
     @Override
     public boolean run() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-            return false;
-        }
+        while (true) {
+            long cursor = subSeq.next();
+            if (cursor == -1) {
+                return false;
+            }
 
-        final VectorAggregateTask queueItem = queue.get(cursor);
-        final VectorAggregateEntry entry = queueItem.entry;
-        subSeq.done(cursor);
-        return entry.run();
+            if (cursor == -2) {
+                continue;
+            }
+
+            final VectorAggregateTask queueItem = queue.get(cursor);
+            final VectorAggregateEntry entry = queueItem.entry;
+            subSeq.done(cursor);
+            return entry.run();
+        }
     }
 }

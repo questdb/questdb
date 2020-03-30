@@ -373,7 +373,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
     for (; d < lim_vec; d += step) {
         vec.load(d);
         bVec = is_nan(vec);
-        vecsum = if_add(!bVec, vecsum, vec);
+        vecsum += select(bVec, 0, vec);
         nancount = if_add(bVec, nancount, 1);
     }
 
@@ -405,7 +405,7 @@ double AVG_DOUBLE(double *d, int64_t count) {
     for (i = 0; i < count - 7; i += step) {
         vec.load(d + i);
         bVec = is_nan(vec);
-        vecsum = if_add(!bVec, vecsum, vec);
+        vecsum += select(bVec, 0, vec);
         nancount = if_add(bVec, nancount, 1);
     }
 

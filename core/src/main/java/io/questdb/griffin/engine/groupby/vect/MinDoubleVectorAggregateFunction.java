@@ -35,7 +35,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     public static final DoubleBinaryOperator MIN = Math::min;
 
-    private final DoubleAccumulator doubleAdder = new DoubleAccumulator(
+    private final DoubleAccumulator min = new DoubleAccumulator(
             MIN, Double.POSITIVE_INFINITY
     );
 
@@ -48,7 +48,12 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long address, long count) {
-        doubleAdder.accumulate(Vect.minDouble(address, count));
+        if (address != 0) {
+            final double value = Vect.minDouble(address, count);
+            if (value == value) {
+                min.accumulate(value);
+            }
+        }
     }
 
     @Override
@@ -58,11 +63,15 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void clear() {
-        doubleAdder.reset();
+        min.reset();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return doubleAdder.get();
+        final double min = this.min.get();
+        if (Double.isInfinite(min)) {
+            return Double.NaN;
+        }
+        return min;
     }
 }

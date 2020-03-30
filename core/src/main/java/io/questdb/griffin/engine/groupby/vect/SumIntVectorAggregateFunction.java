@@ -26,12 +26,15 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
 
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder adder = new LongAdder();
+    private final LongAdder sum = new LongAdder();
+    private final LongAdder count = new LongAdder();
+
     private final int columnIndex;
 
     public SumIntVectorAggregateFunction(int position, int columnIndex) {
@@ -41,7 +44,13 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void aggregate(long address, long count) {
-        adder.add(Vect.sumInt(address, count));
+        if (address != 0) {
+            final long value = Vect.sumInt(address, count);
+            if (value != Numbers.LONG_NaN) {
+                this.sum.add(value);
+                this.count.increment();
+            }
+        }
     }
 
     @Override
@@ -51,11 +60,12 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void clear() {
-        adder.reset();
+        this.sum.reset();
+        this.count.reset();
     }
 
     @Override
     public long getLong(Record rec) {
-        return adder.sum();
+        return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
     }
 }

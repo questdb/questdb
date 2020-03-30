@@ -63,4 +63,28 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 false
         );
     }
+
+    @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "5261.376146789\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b int",
+                "avg\n" +
+                        "5261.376146789\n",
+                false
+        );
+
+        assertQuery(
+                "avg\tmin\n" +
+                        "2633.684612\t93\n",
+                "select round(avg(f),6) avg, min(b) min from tab",
+                "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
+                null,
+                false
+        );
+    }
 }
