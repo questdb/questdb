@@ -1159,8 +1159,6 @@ public class TableWriter implements Closeable {
 
         checkDistressed();
 
-        LOG.info().$("Upgrading table version '").utf8(name).$("' to ").$('[').$(ColumnType.VERSION).$(']').$();
-
         commit();
         // create new _meta.swp
         this.metaSwapIndex = copyMetadataAndUpdateVersion();
@@ -1183,7 +1181,6 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
         metadata.setTableVersion();
-        LOG.info().$("Upgraded table version '").utf8(name).$("' to ").$('[').$(ColumnType.VERSION).$(']').$();
     }
 
 
