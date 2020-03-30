@@ -51,7 +51,6 @@ public class AbstractCairoTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
-    private static CharSequence backupRoot;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
 
@@ -63,8 +62,7 @@ public class AbstractCairoTest {
 		// created mid-test
 		LOG.info().$("begin").$();
 		root = temp.newFolder("dbRoot").getAbsolutePath();
-		backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
-		configuration = new DefaultCairoConfiguration(root, backupRoot);
+		configuration = new DefaultCairoConfiguration(root);
         messageBus = new MessageBusImpl();
 	}
 

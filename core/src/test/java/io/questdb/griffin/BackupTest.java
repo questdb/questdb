@@ -1,6 +1,9 @@
 package io.questdb.griffin;
 
+import java.io.IOException;
+
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import io.questdb.cairo.CairoEngine;
@@ -11,7 +14,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 
 public class BackupTest extends AbstractGriffinTest {
-
 	@Test
 	public void simpleTableTest() throws Exception {
 		String tableName = "testTable";
@@ -51,5 +53,16 @@ public class BackupTest extends AbstractGriffinTest {
 			}
 		});
 		return sink.toString();
+	}
+
+	@Before
+	public void setupConfig() throws IOException {
+		final CharSequence backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+		configuration = new DefaultCairoConfiguration(root) {
+			@Override
+			public CharSequence getBackupRoot() {
+				return backupRoot;
+			}
+		};
 	}
 }
