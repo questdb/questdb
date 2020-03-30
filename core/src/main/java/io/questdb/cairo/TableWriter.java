@@ -1181,6 +1181,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
+        bumpStructureVersion();
         metadata.setTableVersion();
         LOG.info().$("Upgraded table version '").utf8(name).$("' to ").$('[').$(ColumnType.VERSION).$(']').$();
     }

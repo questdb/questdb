@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.std.Rnd;
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
@@ -52,9 +53,7 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
 
                 assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
                 // second time must not update
-                // todo: bump transaction on writer so that pooled reader can recognise the situation
-                //   and patch effects can be used without server restart
-                //assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
+                assertFalse(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
             }
         });
     }
