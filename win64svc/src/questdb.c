@@ -1,12 +1,19 @@
+#include <windows.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <time.h>
+#include "common.h"
+#ifdef _MSC_VER
+#include "getopt.h"
+#else
+#include <rpc.h>
 #include <handleapi.h>
 #include <synchapi.h>
-#include <errhandlingapi.h>
-#include <stdio.h>
-#include <getopt.h>
-#include <sys/stat.h>
 #include <processthreadsapi.h>
-#include <rpc.h>
-#include "common.h"
+#include <errhandlingapi.h>
+#include <getopt.h>
+#endif // __MSVC__
 
 #define CMD_START   1
 #define CMD_STOP    2
@@ -71,7 +78,7 @@ void buildJavaArgs(CONFIG *config) {
     " -XX:BiasedLockingStartupDelay=0";
 
     // put together classpath
-    char classpath[strlen(config->exeName) + 64];
+    char classpath[MAX_PATH + 64];
     memset(classpath, 0, sizeof(classpath));
     pathCopy(classpath, config->exeName);
     strcat(classpath, "\\questdb.jar");
@@ -228,14 +235,19 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
 
 FILE *redirectStdout(CONFIG *config) {
     // create log dir
-    char log[strlen(config->dir) + 64];
+    char log[MAX_PATH];
     strcpy(log, config->dir);
     strcat(log, "\\log");
 
     if (!makeDir(log)) {
         return NULL;
     }
-    strcat(log, "\\stdout.txt");
+
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strcat(log, "\\stdout-");
+    strftime(log + strlen(log), MAX_PATH - strlen(log) - 4, "%Y-%m-%dT%H-%M-%S", t);
+    strcat(log, ".txt");
 
     FILE *stream;
     if ((stream = freopen(log, "w", stdout)) == NULL) {

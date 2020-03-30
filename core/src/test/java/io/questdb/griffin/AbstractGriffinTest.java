@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -39,7 +42,7 @@ import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, workScheduler);
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, messageBus);
     private static final LongList rows = new LongList();
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
@@ -84,7 +87,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new CairoEngine(configuration, workScheduler);
+        engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
         bindVariableService.clear();
     }

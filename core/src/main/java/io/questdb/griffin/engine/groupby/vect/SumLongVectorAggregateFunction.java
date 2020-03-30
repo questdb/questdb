@@ -22,33 +22,40 @@
  *
  ******************************************************************************/
 
-#ifndef VECT_VANILLA_H
-#define VECT_VANILLA_H
+package io.questdb.griffin.engine.groupby.vect;
 
-#include <climits>
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Vect;
 
-double sumDouble_Vanilla(double *d, int64_t count);
+import java.util.concurrent.atomic.LongAdder;
 
-double avgDouble_Vanilla(double *d, int64_t count);
+public class SumLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+    private final LongAdder adder = new LongAdder();
+    private final int columnIndex;
 
-double minDouble_Vanilla(double *d, int64_t count);
+    public SumLongVectorAggregateFunction(int position, int columnIndex) {
+        super(position);
+        this.columnIndex = columnIndex;
+    }
 
-double maxDouble_Vanilla(double *d, int64_t count);
+    @Override
+    public void aggregate(long address, long count) {
+        adder.add(Vect.sumLong(address, count));
+    }
 
-int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
 
-double avgInt_Vanilla(int32_t *pi, int64_t count);
+    @Override
+    public void clear() {
+        adder.reset();
+    }
 
-int32_t minInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t minLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-double avgLong_Vanilla(int64_t *pl, int64_t count);
-
-#endif //VECT_VANILLA_H
+    @Override
+    public long getLong(Record rec) {
+        return adder.sum();
+    }
+}

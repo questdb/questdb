@@ -53,7 +53,7 @@ public class AbstractCairoTest {
     protected static CharSequence root;
     private static CharSequence backupRoot;
     protected static CairoConfiguration configuration;
-    protected static MessageBus workScheduler;
+    protected static MessageBus messageBus;
 
 	@BeforeClass
 	public static void setUp() throws IOException {
@@ -65,7 +65,7 @@ public class AbstractCairoTest {
 		root = temp.newFolder("dbRoot").getAbsolutePath();
 		backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
 		configuration = new DefaultCairoConfiguration(root, backupRoot);
-        workScheduler = new MessageBusImpl();
+        messageBus = new MessageBusImpl();
 	}
 
     @Before
