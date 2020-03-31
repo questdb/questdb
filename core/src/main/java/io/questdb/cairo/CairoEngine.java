@@ -72,6 +72,10 @@ public class CairoEngine implements Closeable {
         }
     }
 
+    public WriterMaintenanceJob getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
+    }
+
     @Override
     public void close() {
         Misc.free(writerPool);
@@ -161,10 +165,6 @@ public class CairoEngine implements Closeable {
             CharSequence tableName
     ) {
         return writerPool.get(tableName);
-    }
-
-    public WriterMaintenanceJob getWriterMaintenanceJob() {
-        return writerMaintenanceJob;
     }
 
     private TableWriter getBackupWriter(
