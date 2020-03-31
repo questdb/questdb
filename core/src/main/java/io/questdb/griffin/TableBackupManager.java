@@ -45,13 +45,13 @@ public class TableBackupManager {
 	private static void cloneMetaData(CharSequence tableName, FilesFacade ff, Path path, CharSequence root, CharSequence backupRoot, int mkDirMode) {
 		path.of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
 		try (TableReaderMetadata sourceMetaData = new TableReaderMetadata(ff, path)) {
-			path.of(backupRoot).concat(tableName);
+			path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
 
 			if (ff.exists(path)) {
 				throw CairoException.instance(0).put("Backup dir for table \"" + tableName + "\" already exists [dir=").put(path).put(']');
 			}
 
-			if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+			if (ff.mkdirs(path, mkDirMode) != 0) {
 				throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
 			}
 
@@ -61,10 +61,11 @@ public class TableBackupManager {
 				sourceMetaData.cloneTo(backupMem);
 
 				// create symbol maps
+				path.trimTo(rootLen).$();
 				int symbolMapCount = 0;
 				for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
 					if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
-						SymbolMapWriter.createSymbolMapFiles(ff, backupMem, path.trimTo(rootLen), sourceMetaData.getColumnName(i), 128, true);
+						SymbolMapWriter.createSymbolMapFiles(ff, backupMem, path, sourceMetaData.getColumnName(i), 128, true);
 						symbolMapCount++;
 					}
 				}
