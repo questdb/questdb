@@ -167,7 +167,7 @@ public class CairoEngine implements Closeable {
         return writerPool.get(tableName);
     }
 
-    private TableWriter getBackupWriter(
+    public TableWriter getBackupWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
@@ -341,78 +341,4 @@ public class CairoEngine implements Closeable {
             return false;
         }
     }
-     
-	public void backupTable(CairoSecurityContext securityContext, CharSequence tableName, Path path) {
-		if (null == configuration.getBackupRoot()) {
-			throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
-		}
-		
-		try (TableReader reader = getReader(securityContext, tableName)) {
-			cloneMetaData(tableName, configuration.getFilesFacade(), path, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode());
-			RecordMetadata metaData = reader.getMetadata();
-			int timestampCol = metaData.getTimestampIndex();
-
-			try (TableWriter backupWriter = getBackupWriter(securityContext, tableName); RecordCursor cursor = reader.getCursor()) {
-				Record record = cursor.getRecord();
-				while (cursor.hasNext()) {
-					TableWriter.Row row;
-					if (timestampCol > 0) {
-						row = backupWriter.newRow(record.getTimestamp(timestampCol));
-					} else {
-						row = backupWriter.newRow();
-					}
-					for (int col = 0; col < metaData.getColumnCount(); col++) {
-						if (col == timestampCol) {
-							continue;
-						}
-						switch (metaData.getColumnType(col)) {
-						case ColumnType.DOUBLE:
-							row.putDouble(col, record.getDouble(col));
-							break;
-						case ColumnType.SYMBOL:
-							row.putSym(col, record.getSym(col));
-							break;
-						default:
-							throw CairoException.instance(0).put("Unsupported column type " + metaData.getColumnType(col));
-						}
-					}
-					row.append();
-				}
-				backupWriter.commit();
-			}
-		}
-	}
-
-	private static void cloneMetaData(CharSequence tableName, FilesFacade ff, Path path, CharSequence root, CharSequence backupRoot, int mkDirMode) {
-		path.of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
-		try (TableReaderMetadata sourceMetaData = new TableReaderMetadata(ff, path)) {
-			path.of(backupRoot).concat(tableName);
-
-			if (ff.exists(path)) {
-				throw CairoException.instance(0).put("Backup dir for table \""+tableName+"\" already exists [dir=").put(path).put(']');
-			}
-			
-			if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
-				throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-			}
-
-			final int rootLen = path.length();
-			try (AppendMemory backupMem = new AppendMemory()) {
-				backupMem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
-				sourceMetaData.cloneTo(backupMem);
-
-				// create symbol maps
-				int symbolMapCount = 0;
-				for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
-					if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
-						SymbolMapWriter.createSymbolMapFiles(ff, backupMem, path.trimTo(rootLen), sourceMetaData.getColumnName(i), 128, true);
-						symbolMapCount++;
-					}
-				}
-				backupMem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
-				TableUtils.resetTxn(backupMem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
-
-			}
-		}
-	}
 }

@@ -28,7 +28,7 @@ public class TableBackupTest extends AbstractGriffinTest {
 	}
 
 	@Test
-	public void simpleTableTest2() throws Exception {
+	public void simpleTableTest1() throws Exception {
 		String tableName = "testTable";
 		Path path = new Path();
 		AbstractGriffinTest.assertMemoryLeak(() -> {
@@ -41,8 +41,9 @@ public class TableBackupTest extends AbstractGriffinTest {
 			// @formatter:on
 		});
 
+		TableBackupManager tableBackupManager = new TableBackupManager(configuration, engine, compiler);
 		AbstractGriffinTest.assertMemoryLeak(() -> {
-			engine.backupTable(sqlExecutionContext.getCairoSecurityContext(), tableName, path);
+			tableBackupManager.backupTable(sqlExecutionContext.getCairoSecurityContext(), tableName, path);
 		});
 
 		String sourceSelectAll = selectAll(tableName);

@@ -1035,22 +1035,26 @@ public class SqlCompiler implements Closeable {
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
         TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
         try {
-            RecordMetadata writerMetadata = writer.getMetadata();
-            entityColumnFilter.of(writerMetadata.getColumnCount());
-            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-
-            int timestampIndex = writerMetadata.getTimestampIndex();
-            if (timestampIndex == -1) {
-                copyUnordered(cursor, writer, recordToRowCopier);
-            } else {
-                copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
-            }
+            copyTableData(cursor, cursorMetadata, writer);
             return writer;
         } catch (CairoException e) {
             writer.close();
             throw e;
         }
     }
+
+	public void copyTableData(RecordCursor cursor, RecordMetadata cursorMetadata, TableWriter writer) {
+		RecordMetadata writerMetadata = writer.getMetadata();
+		entityColumnFilter.of(writerMetadata.getColumnCount());
+		RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+
+		int timestampIndex = writerMetadata.getTimestampIndex();
+		if (timestampIndex == -1) {
+		    copyUnordered(cursor, writer, recordToRowCopier);
+		} else {
+		    copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
+		}
+	}
 
     private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier ccopier) {
         final Record record = cursor.getRecord();
