@@ -224,13 +224,14 @@ public class CairoEngine implements Closeable {
     	return released;
     }
     
-    public void releaseInactive() {
-		writerPool.releaseInactive();
-		readerPool.releaseInactive();
+	public boolean releaseInactive() {
+		boolean useful = writerPool.releaseInactive();
+		useful |= readerPool.releaseInactive();
 		if (null != backupWriterPool) {
-			backupWriterPool.releaseInactive();
+			useful |= backupWriterPool.releaseInactive();
 		}
-    }
+		return useful;
+	}
 
     public void remove(
             CairoSecurityContext securityContext,
@@ -327,12 +328,7 @@ public class CairoEngine implements Closeable {
         }
 
         protected boolean doRun() {
-        	boolean useful = writerPool.releaseInactive();
-            useful |= readerPool.releaseInactive();
-            if (null != backupWriterPool) {
-            	useful |= backupWriterPool.releaseInactive();
-            }
-            return useful;
+        	return releaseInactive();
         }
 
         @Override

@@ -53,7 +53,15 @@ public class TableBackupTest {
 					" from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
 			// @formatter:on
 
+			// Keep on releasing inactive reader/writers until there is no work to do
+			while (mainEngine.releaseInactive()) {
+				;
+			}
 			mainCompiler.backupTable(tableName, mainSqlExecutionContext);
+			// Check we had inactive reader/writers to release  
+			Assert.assertTrue(mainEngine.releaseInactive());
+			// Check we have no more inactive reader/writers to release  
+			Assert.assertFalse(mainEngine.releaseInactive());
 
 			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
 			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
