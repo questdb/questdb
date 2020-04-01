@@ -2,53 +2,72 @@ package io.questdb.griffin;
 
 import java.io.IOException;
 
+import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
-public class TableBackupTest extends AbstractGriffinTest {
-	private CharSequence backupRoot;
+public class TableBackupTest {
+	private static final StringSink sink = new StringSink();
+	private static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+	@ClassRule
+	public static TemporaryFolder temp = new TemporaryFolder();
+
+	private static Path path;
+
+	private static CairoConfiguration mainConfiguration;
+	private static CairoEngine mainEngine;
+	private static SqlCompiler mainCompiler;
+	private static SqlExecutionContext mainSqlExecutionContext;
+
+	private static CairoEngine backupEngine;
+	private static SqlCompiler backupCompiler;
+	private static SqlExecutionContext backupSqlExecutionContext;
 
 	@Test
 	public void simpleTableTest1() throws Exception {
-		String tableName = "testTable";
-		Path path = new Path();
-		AbstractGriffinTest.assertMemoryLeak(() -> {
+		assertMemoryLeak(() -> {
+			String tableName = "testTable1";
 			// @formatter:off
-			compiler.compile("create table " + tableName + " as (select" + 
+			mainCompiler.compile("create table " + tableName + " as (select" + 
 					" rnd_symbol(4,4,4,2) sym," + 
 					" rnd_double(2) d," + 
 					" timestamp_sequence(0, 1000000000) ts" + 
-					" from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+					" from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
 			// @formatter:on
-		});
 
-		TableBackupManager tableBackupManager = new TableBackupManager(configuration, engine, compiler);
-		AbstractGriffinTest.assertMemoryLeak(() -> {
-			tableBackupManager.backupTable(sqlExecutionContext.getCairoSecurityContext(), tableName, path);
-		});
+			TableBackupManager tableBackupManager = new TableBackupManager(mainConfiguration, mainEngine, mainCompiler);
+			tableBackupManager.backupTable(mainSqlExecutionContext.getCairoSecurityContext(), tableName, path);
 
-		String sourceSelectAll = selectAll(tableName);
-		setup(backupRoot, null);
-		String backupSelectAll = selectAll(tableName);
-		Assert.assertEquals(sourceSelectAll, backupSelectAll);
+			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
+			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
+			Assert.assertEquals(sourceSelectAll, backupSelectAll);
+		});
 	}
 
 	@Test
 	public void allTypesPartitionedTableTest1() throws Exception {
-		String tableName = "testTable";
-		Path path = new Path();
-		AbstractGriffinTest.assertMemoryLeak(() -> {
+		assertMemoryLeak(() -> {
+			String tableName = "testTable2";
 			// @formatter:off
-			compiler.compile("create table " + tableName + " as (" +
+			mainCompiler.compile("create table " + tableName + " as (" +
                         "select" +
                         " rnd_char() ch," +
                         " rnd_long256() ll," +
@@ -69,59 +88,77 @@ public class TableBackupTest extends AbstractGriffinTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(1000)" +
-                        ")  timestamp(k) partition by DAY", sqlExecutionContext);
+                        ")  timestamp(k) partition by DAY", mainSqlExecutionContext);
 			// @formatter:on
-		});
 
-		TableBackupManager tableBackupManager = new TableBackupManager(configuration, engine, compiler);
-		AbstractGriffinTest.assertMemoryLeak(() -> {
-			tableBackupManager.backupTable(sqlExecutionContext.getCairoSecurityContext(), tableName, path);
-		});
+			TableBackupManager tableBackupManager = new TableBackupManager(mainConfiguration, mainEngine, mainCompiler);
+			tableBackupManager.backupTable(mainSqlExecutionContext.getCairoSecurityContext(), tableName, path);
 
-		String sourceSelectAll = selectAll(tableName);
-		setup(backupRoot, null);
-		String backupSelectAll = selectAll(tableName);
-		Assert.assertEquals(sourceSelectAll, backupSelectAll);
+			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
+			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
+			Assert.assertEquals(sourceSelectAll, backupSelectAll);
+		});
 	}
 
-	private String selectAll(String tableName) throws Exception {
-		assertMemoryLeak(() -> {
-			CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
-			RecordCursorFactory factory = compiledQuery.getRecordCursorFactory();
-			try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-				sink.clear();
-				printer.print(cursor, factory.getMetadata(), true);
-				cursor.toTop();
-				Record record = cursor.getRecord();
-				while (cursor.hasNext()) {
-					printer.print(record, factory.getMetadata());
-				}
+	private String selectAll(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+		CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
+		try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+			sink.clear();
+			printer.print(cursor, factory.getMetadata(), true);
+			cursor.toTop();
+			Record record = cursor.getRecord();
+			while (cursor.hasNext()) {
+				printer.print(record, factory.getMetadata());
 			}
-		});
+		}
 		return sink.toString();
 	}
 
-	private void setup(CharSequence root, CharSequence backupRoot) {
-		// Tear down previous setup
-		engine.close();
-		compiler.close();
-		configuration = new DefaultCairoConfiguration(root) {
+	@BeforeClass
+	public static void setup() throws IOException {
+		path = new Path();
+		CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
+		CharSequence backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+
+		mainConfiguration = new DefaultCairoConfiguration(root) {
 			@Override
 			public CharSequence getBackupRoot() {
 				return backupRoot;
 			}
 		};
-		engine = new CairoEngine(configuration, messageBus);
-		compiler = new SqlCompiler(engine);
-		AbstractCairoTest.root = root;
-		this.backupRoot = backupRoot;
+		MessageBus mainMessageBus = new MessageBusImpl();
+		mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
+		mainCompiler = new SqlCompiler(mainEngine);
+		mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
+
+		CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(backupRoot);
+		MessageBus backupMessageBus = new MessageBusImpl();
+		backupEngine = new CairoEngine(backupConfiguration, backupMessageBus);
+		backupCompiler = new SqlCompiler(backupEngine);
+		backupSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), backupMessageBus);
 	}
 
-	private static int nBackupRoot = 0;
+	@AfterClass
+	public static void tearDown() {
+		path.close();
+	}
 
-	@Before
-	public void before() throws IOException {
-		backupRoot = temp.newFolder("dbBackupRoot" + ++nBackupRoot).getAbsolutePath();
-		setup(root, backupRoot);
+	private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+		TestUtils.assertMemoryLeak(() -> {
+			try {
+				code.run();
+				mainEngine.releaseInactive();
+				Assert.assertEquals(0, mainEngine.getBusyWriterCount());
+				Assert.assertEquals(0, mainEngine.getBusyReaderCount());
+				backupEngine.releaseInactive();
+				Assert.assertEquals(0, backupEngine.getBusyWriterCount());
+				Assert.assertEquals(0, backupEngine.getBusyReaderCount());
+			} finally {
+				mainEngine.releaseAllReaders();
+				mainEngine.releaseAllWriters();
+				backupEngine.releaseAllReaders();
+				backupEngine.releaseAllWriters();
+			}
+		});
 	}
 }

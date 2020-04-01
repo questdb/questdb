@@ -80,9 +80,7 @@ public class CairoEngine implements Closeable {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-        if (null != backupWriterPool) {
-        	Misc.free(backupWriterPool);
-        }
+       	Misc.free(backupWriterPool);
    }
 
     public void creatTable(
@@ -218,12 +216,12 @@ public class CairoEngine implements Closeable {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters() {
-        boolean released = writerPool.releaseAll();
-        if (null != backupWriterPool) {
-        	return backupWriterPool.releaseAll() || released;
-        }
-        return released;
+    public boolean releaseAllWriters () {
+    	boolean released = writerPool.releaseAll();
+    	if (null != backupWriterPool && backupWriterPool.releaseAll()) {
+    		released = true;
+    	}
+    	return released;
     }
     
     public void releaseInactive() {
@@ -326,9 +324,12 @@ public class CairoEngine implements Closeable {
         }
 
         protected boolean doRun() {
-            boolean w = writerPool.releaseInactive();
-            boolean r = readerPool.releaseInactive();
-            return w || r;
+        	boolean useful = writerPool.releaseInactive();
+            useful |= readerPool.releaseInactive();
+            if (null != backupWriterPool) {
+            	useful |= backupWriterPool.releaseInactive();
+            }
+            return useful;
         }
 
         @Override
