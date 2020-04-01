@@ -24,22 +24,72 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.model.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import java.io.Closeable;
+import java.util.ServiceLoader;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-import java.util.ServiceLoader;
+import io.questdb.MessageBus;
+import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
 
 public class SqlCompiler implements Closeable {
@@ -1611,6 +1661,53 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
     }
+
+	public void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
+		if (null == configuration.getBackupRoot()) {
+			throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+		}
+
+		CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+		try (TableReader reader = engine.getReader(securityContext, tableName)) {
+			cloneMetaData(tableName, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode(), (TableReaderMetadata) reader.getMetadata());
+			try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName); RecordCursor cursor = reader.getCursor()) {
+				copyTableData(cursor, reader.getMetadata(), backupWriter);
+				backupWriter.commit();
+			}
+		}
+	}
+
+	private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReaderMetadata sourceMetaData) {
+		path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
+
+		if (ff.exists(path)) {
+			throw CairoException.instance(0).put("Backup dir for table \"" + tableName + "\" already exists [dir=").put(path).put(']');
+		}
+
+		if (ff.mkdirs(path, mkDirMode) != 0) {
+			throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+		}
+
+		int rootLen = path.length();
+		try {
+			mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+			sourceMetaData.cloneTo(mem);
+	
+			// create symbol maps
+			path.trimTo(rootLen).$();
+			int symbolMapCount = 0;
+			for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
+				if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
+					SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), 128, true);
+					symbolMapCount++;
+				}
+			}
+			mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+			TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+		} finally {
+			mem.close();
+		}
+	}
 
     @FunctionalInterface
     private interface KeywordBasedExecutor {

@@ -53,8 +53,7 @@ public class TableBackupTest {
 					" from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
 			// @formatter:on
 
-			TableBackupManager tableBackupManager = new TableBackupManager(mainConfiguration, mainEngine, mainCompiler);
-			tableBackupManager.backupTable(mainSqlExecutionContext.getCairoSecurityContext(), tableName, path);
+			mainCompiler.backupTable(tableName, mainSqlExecutionContext);
 
 			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
 			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
@@ -91,8 +90,7 @@ public class TableBackupTest {
                         ")  timestamp(k) partition by DAY", mainSqlExecutionContext);
 			// @formatter:on
 
-			TableBackupManager tableBackupManager = new TableBackupManager(mainConfiguration, mainEngine, mainCompiler);
-			tableBackupManager.backupTable(mainSqlExecutionContext.getCairoSecurityContext(), tableName, path);
+			mainCompiler.backupTable(tableName, mainSqlExecutionContext);
 
 			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
 			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
