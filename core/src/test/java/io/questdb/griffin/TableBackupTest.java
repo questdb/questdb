@@ -106,6 +106,26 @@ public class TableBackupTest {
 		});
 	}
 
+	@Test
+	public void sqlTest1() throws Exception {
+		String tableName = "sqlTest1";
+		assertMemoryLeak(() -> {
+			// @formatter:off
+			mainCompiler.compile("create table " + tableName + " as (select" + 
+					" rnd_symbol(4,4,4,2) sym," + 
+					" rnd_double(2) d," + 
+					" timestamp_sequence(0, 1000000000) ts" + 
+					" from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+			// @formatter:on
+			
+			mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+			
+			String sourceSelectAll = selectAll(mainEngine, mainCompiler, mainSqlExecutionContext, tableName);
+			String backupSelectAll = selectAll(backupEngine, backupCompiler, backupSqlExecutionContext, tableName);
+			Assert.assertEquals(sourceSelectAll, backupSelectAll);
+		});
+	}
+
 	private String selectAll(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
 		CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
 		try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

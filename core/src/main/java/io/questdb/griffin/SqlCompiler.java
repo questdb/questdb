@@ -182,6 +182,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SET", this::compileSet);
         keywordBasedExecutors.put("drop", this::dropTable);
         keywordBasedExecutors.put("DROP", this::dropTable);
+        keywordBasedExecutors.put("backup", this::sqlBackup);
+        keywordBasedExecutors.put("BACKUP", this::sqlBackup);
 
         configureLexer(lexer);
 
@@ -1661,8 +1663,49 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
     }
+    
+    private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
+		final CharSequence tok = SqlUtil.fetchNext(lexer);
+		if (null != tok) {
+			if (Chars.equalsLowerCaseAscii(tok, "table")) {
+				return sqlTableBackup(executionContext);
+			}
+		}
+		throw SqlException.position(lexer.getPosition()).put(" expected 'table'");
+      }
+    
+	private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
+		ObjList<CharSequence> tableNames = new ObjList<>();
+		while (true) {
+			CharSequence tok = SqlUtil.fetchNext(lexer);
+			if (null == tok) {
+				throw SqlException.position(lexer.getPosition()).put(" expected a table name");
+			}
+			CharSequence tableName = GenericLexer.unquote(tok);
+			int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
+			if (status != TableUtils.TABLE_EXISTS) {
+				throw SqlException.position(lexer.getPosition()).put(" '").put(tableName).put("' is not  a valid table");
+			}
+			tableNames.add(tableName);
 
+			tok = SqlUtil.fetchNext(lexer);
+			if (null == tok || Chars.equals(tok, ';')) {
+				break;
+			}
+			if (!Chars.equals(tok, ',')) {
+				throw SqlException.position(lexer.getPosition()).put(" expected ','");
+			}
+		}
+		
+		for (int n=0; n<tableNames.size(); n++) {
+			backupTable(tableNames.get(n), executionContext);
+		}
+
+		return compiledQuery.ofRenameTable();
+	}
+    
 	public void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
+		LOG.info().$("Starting backup of ").$(tableName).$();
 		if (null == configuration.getBackupRoot()) {
 			throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
 		}
@@ -1675,6 +1718,7 @@ public class SqlCompiler implements Closeable {
 				backupWriter.commit();
 			}
 		}
+		LOG.info().$("Completed backup of ").$(tableName).$();
 	}
 
 	private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReaderMetadata sourceMetaData) {
