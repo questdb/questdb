@@ -184,6 +184,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBadTableExpression() {
+        assertSyntaxError(")", 0, "table name expected");
+    }
+
+    @Test
     public void testBlockCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
@@ -383,6 +388,23 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
                         .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectMissingTimestamp() {
+        assertSyntaxError(
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000))) partition by DAY",
+                0,
+                "timestamp is not defined"
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectTimestampNotRequired() throws SqlException {
+        assertCreateTable(
+                "create table tst as (select-choose a, b, t from ((select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))) _xQdbA1))",
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
         );
     }
 
@@ -3480,11 +3502,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
-    }
-
-    @Test
-    public void testBadTableExpression() {
-        assertSyntaxError(")", 0, "table name expected");
     }
 
     @Test

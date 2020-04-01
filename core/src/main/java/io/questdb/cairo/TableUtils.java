@@ -110,13 +110,6 @@ public final class TableUtils {
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
-    static {
-        DateFormatCompiler compiler = new DateFormatCompiler();
-        fmtDay = compiler.compile("yyyy-MM-dd");
-        fmtMonth = compiler.compile("yyyy-MM");
-        fmtYear = compiler.compile("yyyy");
-    }
-
     public static void createTable(
             FilesFacade ff,
             AppendMemory memory,
@@ -378,6 +371,22 @@ public final class TableUtils {
         }
     }
 
+    static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+        long fd = ff.openRO(path);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
+        }
+
+        try {
+            if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+            }
+            return Unsafe.getUnsafe().getLong(tempMem8b);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     /**
      * path member variable has to be set to location of "top" file.
      *
@@ -517,5 +526,12 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    static {
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        fmtDay = compiler.compile("yyyy-MM-dd");
+        fmtMonth = compiler.compile("yyyy-MM");
+        fmtYear = compiler.compile("yyyy");
     }
 }
