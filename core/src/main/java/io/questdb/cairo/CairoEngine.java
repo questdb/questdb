@@ -225,8 +225,11 @@ public class CairoEngine implements Closeable {
     }
     
     public void releaseInactive() {
-        writerPool.releaseInactive();
-        readerPool.releaseInactive();
+		writerPool.releaseInactive();
+		readerPool.releaseInactive();
+		if (null != backupWriterPool) {
+			backupWriterPool.releaseInactive();
+		}
     }
 
     public void remove(
