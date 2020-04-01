@@ -24,12 +24,22 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import org.jetbrains.annotations.Nullable;
 
 public interface SqlExecutionContext {
 
     BindVariableService getBindVariableService();
 
     CairoSecurityContext getCairoSecurityContext();
+
+    @Nullable MessageBus getMessageBus();
+
+    boolean isTimestampRequired();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
 }

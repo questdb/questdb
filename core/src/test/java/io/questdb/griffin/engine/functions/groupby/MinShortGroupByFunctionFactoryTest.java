@@ -44,33 +44,9 @@ public class MinShortGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f short)");
-
-        final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.putShort(0, rnd.nextShort());
-                r.append();
-            }
-            w.commit();
-        }
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(-32679, record.getShort(0));
-            }
-        }
-    }
-
-    @Test
     public void testAllNull() throws SqlException {
 
-        compiler.compile("create table tab (f short)");
+        compiler.compile("create table tab (f short)", sqlExecutionContext);
 
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
             for (int i = 100; i > 10; i--) {
@@ -80,8 +56,8 @@ public class MinShortGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
@@ -93,7 +69,7 @@ public class MinShortGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFirstNull() throws SqlException {
 
-        compiler.compile("create table tab (f short)");
+        compiler.compile("create table tab (f short)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
@@ -107,8 +83,32 @@ public class MinShortGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab").getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(-32679, record.getShort(0));
+            }
+        }
+    }
+
+    @Test
+    public void testNonNull() throws SqlException {
+
+        compiler.compile("create table tab (f short)", sqlExecutionContext);
+
+        final Rnd rnd = new Rnd();
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.putShort(0, rnd.nextShort());
+                r.append();
+            }
+            w.commit();
+        }
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());

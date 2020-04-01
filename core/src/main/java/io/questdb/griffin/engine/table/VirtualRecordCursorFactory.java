@@ -43,7 +43,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory base) {
         super(metadata);
         this.functions = functions;
-        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, base.isRandomAccessCursor());
+        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, base.recordCursorSupportsRandomAccess());
         this.base = base;
     }
 
@@ -66,7 +66,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return base.isRandomAccessCursor();
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 }

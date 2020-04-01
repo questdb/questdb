@@ -54,7 +54,7 @@ public class Rnd {
     public byte[] nextBytes(int len) {
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
+            bytes[i] = (byte) (nextPositiveInt() % 25 + 'B');
         }
         return bytes;
     }
@@ -62,12 +62,12 @@ public class Rnd {
     public void nextBytes(byte[] bytes) {
         int len = bytes.length;
         for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
+            bytes[i] = (byte) (nextPositiveInt() % 25 + 'B');
         }
     }
 
     public char nextChar() {
-        return (char) (nextPositiveInt() % 25 + 66);
+        return (char) (nextPositiveInt() % 25 + 'B');
     }
 
     public void nextChars(final long address, int len) {

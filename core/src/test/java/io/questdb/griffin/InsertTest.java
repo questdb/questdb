@@ -93,7 +93,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertContextSwitch() throws Exception {
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
@@ -105,7 +105,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             BindVariableService bindVariableService = new BindVariableService();
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, messageBus);
 
             bindVariableService.setDouble("bal", 56.4);
 
@@ -129,29 +129,15 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertNoSelfReference() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
-            try {
-                compiler.compile("insert into trades_aapl (ts) values (ts)", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
-            }
-        });
-    }
-
-    @Test
     public void testInsertExecutionAfterStructureChange() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
-                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)");
+                CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insertStatement = cq.getInsertStatement();
 
-                compiler.compile("alter table balances drop column ccy");
+                compiler.compile("alter table balances drop column ccy", sqlExecutionContext);
 
                 insertStatement.createMethod(sqlExecutionContext);
                 Assert.fail();
@@ -163,8 +149,31 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertExplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            CompiledQuery cq = compiler.compile("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))");
+            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "timestamp\tfield\tvalue\n" +
+                    "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertImplicitTimestampPos1() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
@@ -194,24 +203,15 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertImplicitTimestampPos1() throws Exception {
+    public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)");
-            CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)");
-            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
-            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
-
-            String expected = "timestamp\tfield\tvalue\n" +
-                    "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
-
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
+            compiler.compile("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into trades_aapl (ts) values (ts)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(37, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
             }
         });
     }
@@ -219,8 +219,8 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
-            CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)");
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
@@ -242,9 +242,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
-                compiler.compile("insert into balances values (1, 'USD')");
+                compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
@@ -255,9 +255,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)");
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
-                compiler.compile("insert into balances values (1, ccy, 356.12)");
+                compiler.compile("insert into balances values (1, ccy, 356.12)", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());

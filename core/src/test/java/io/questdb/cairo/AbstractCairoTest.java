@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
@@ -47,6 +49,7 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static MessageBus messageBus;
 
     @BeforeClass
     public static void setUp() {
@@ -57,6 +60,7 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.getRoot().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
+        messageBus = new MessageBusImpl();
     }
 
     @Before

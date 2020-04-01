@@ -133,6 +133,23 @@ public class SymbolMapWriter implements Closeable {
         return path.concat(columnName).put(".o").$();
     }
 
+    public int put(CharSequence symbol) {
+
+        if (symbol == null) {
+            if (!nullValue) {
+                nullValue = true;
+                updateNullFlag(true);
+            }
+            return SymbolTable.VALUE_IS_NULL;
+        }
+
+        if (cache != null) {
+            int index = cache.keyIndex(symbol);
+            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol);
+        }
+        return lookupAndPut(symbol);
+    }
+
     static int offsetToKey(long offset) {
         return (int) ((offset - HEADER_SIZE) / 8L);
     }
@@ -157,21 +174,8 @@ public class SymbolMapWriter implements Closeable {
         return offsetToKey(offsetMem.getAppendOffset());
     }
 
-    public int put(CharSequence symbol) {
-
-        if (symbol == null) {
-            if (!nullValue) {
-                nullValue = true;
-                offsetMem.putBool(HEADER_NULL_FLAG, true);
-            }
-            return SymbolTable.VALUE_IS_NULL;
-        }
-
-        if (cache != null) {
-            int index = cache.keyIndex(symbol);
-            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol);
-        }
-        return lookupAndPut(symbol);
+    public void updateNullFlag(boolean flag) {
+        offsetMem.putBool(HEADER_NULL_FLAG, flag);
     }
 
     public void rollback(int symbolCount) {

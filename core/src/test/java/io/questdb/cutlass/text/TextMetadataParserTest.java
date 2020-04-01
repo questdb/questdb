@@ -39,7 +39,7 @@ public class TextMetadataParserTest {
     private static DirectCharSink utf8Sink;
 
     @BeforeClass
-    public static void setUpClass() throws JsonException {
+    public static void setUpClass() {
         utf8Sink = new DirectCharSink(1024);
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),

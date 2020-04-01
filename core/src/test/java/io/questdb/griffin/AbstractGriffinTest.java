@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -39,7 +42,7 @@ import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, messageBus);
     private static final LongList rows = new LongList();
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
@@ -84,7 +87,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
         bindVariableService.clear();
     }
@@ -139,7 +142,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             if (supportsRandomAccess) {
 
-                Assert.assertTrue(factory.isRandomAccessCursor());
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
 
                 cursor.toTop();
 
@@ -194,7 +197,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                 }
             } else {
-                Assert.assertFalse(factory.isRandomAccessCursor());
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
                 try {
                     record.getRowId();
                     Assert.fail();

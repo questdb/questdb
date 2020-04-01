@@ -25,47 +25,32 @@
 #ifndef VECT_VANILLA_H
 #define VECT_VANILLA_H
 
-static inline double sum_nan_as_zero(double *pd, long count) {
-    const double *lim = pd + count;
-    double sum = 0;
-    for (; pd < lim; pd++) {
-        const double d = *pd;
-        if (d == d) {
-            sum += d;
-        }
-    }
-    return sum;
-}
+#include <climits>
 
-typedef struct _AVG_DOUBLE {
-    double sum;
-    long count;
-} AVG_DOUBLE;
+double sumDouble_Vanilla(double *d, int64_t count);
 
-static inline AVG_DOUBLE avg_skip_nan(double *pd, long count) {
-    const double *lim = pd + count;
-    double sum = 0;
-    long sumCount = 0;
-    for (; pd < lim; pd++) {
-        const double d = *pd;
-        if (d == d) {
-            sum += d;
-            sumCount++;
-        }
-    }
+double avgDouble_Vanilla(double *d, int64_t count);
 
-    AVG_DOUBLE ad;
-    ad.sum = sum;
-    ad.count = sumCount;
-    return ad;
-}
+double minDouble_Vanilla(double *d, int64_t count);
 
-double sumDouble_Vanilla(double *d, long count);
+double maxDouble_Vanilla(double *d, int64_t count);
 
-double avgDouble_Vanilla(double *d, long count);
+int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
 
-double minDouble_Vanilla(double *d, long count);
+double avgInt_Vanilla(int32_t *pi, int64_t count);
 
-double maxDouble_Vanilla(double *d, long count);
+int32_t minInt_Vanilla(int32_t *pi, int64_t count);
+
+int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
+
+int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
+
+int64_t minLong_Vanilla(int64_t *pl, int64_t count);
+
+int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
+
+double avgLong_Vanilla(int64_t *pl, int64_t count);
+
+bool hasNull_Vanilla(int32_t *pi, int64_t count);
 
 #endif //VECT_VANILLA_H

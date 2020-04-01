@@ -38,7 +38,6 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
-    private final QueryCache queryCache;
     boolean countRows = false;
     boolean noMeta = false;
     RecordCursorFactory recordCursorFactory;
@@ -53,11 +52,9 @@ public class TextQueryProcessorState implements Mutable, Closeable {
 
     public TextQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            int connectionCheckFrequency,
-            QueryCache queryCache
+            int connectionCheckFrequency
     ) {
         this.httpConnectionContext = httpConnectionContext;
-        this.queryCache = queryCache;
     }
 
     @Override
@@ -65,7 +62,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         cursor = Misc.free(cursor);
         record = null;
-        queryCache.push(query, recordCursorFactory);
+        QueryCache.getInstance().push(query, recordCursorFactory);
         recordCursorFactory = null;
         query.clear();
         queryState = JsonQueryProcessorState.QUERY_PREFIX;

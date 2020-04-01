@@ -117,17 +117,17 @@ public class TypeManagerTest {
     }
 
     @Test
-    public void testIllegalMethodParameterBinary() throws JsonException {
+    public void testIllegalMethodParameterBinary() {
         testIllegalParameterForGetTypeAdapter(ColumnType.BINARY);
     }
 
     @Test
-    public void testIllegalMethodParameterDate() throws JsonException {
+    public void testIllegalMethodParameterDate() {
         testIllegalParameterForGetTypeAdapter(ColumnType.DATE);
     }
 
     @Test
-    public void testIllegalMethodParameterTimestamp() throws JsonException {
+    public void testIllegalMethodParameterTimestamp() {
         testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
     }
 
@@ -213,7 +213,7 @@ public class TypeManagerTest {
         return new TypeManager(new DefaultTextConfiguration(fileResource), utf8Sink);
     }
 
-    private void testIllegalParameterForGetTypeAdapter(int columnType) throws JsonException {
+    private void testIllegalParameterForGetTypeAdapter(int columnType) {
         TextConfiguration textConfiguration = new DefaultTextConfiguration();
         TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
         try {

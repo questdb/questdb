@@ -22,22 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.std.ObjList;
 
-public class DefaultSqlExecutionContext implements SqlExecutionContext {
-    public static final DefaultSqlExecutionContext INSTANCE = new DefaultSqlExecutionContext();
-
+public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
     @Override
-    public BindVariableService getBindVariableService() {
-        return null;
+    public String getSignature() {
+        return "last(N)";
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new LastTimestampGroupByFunction(position, args.getQuick(0));
     }
 }

@@ -25,24 +25,17 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.std.ImmutableIterator;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, Closeable, SymbolTableSource {
-
-    @Override
-    void close(); // we don't throw IOException
+public interface DataFrameCursor extends PageFrameCursor {
 
     // same TableReader is available on each data frame
     TableReader getTableReader();
 
     boolean reload();
 
-    void toTop();
-
-    long size();
-
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
+
+    @Nullable DataFrame next();
 }

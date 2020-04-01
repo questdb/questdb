@@ -33,10 +33,7 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import sun.misc.Signal;
 
 import java.io.File;
@@ -46,6 +43,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
@@ -105,19 +103,19 @@ public class ServerMain {
         }
         switch (Os.type) {
             case Os.WINDOWS:
-                System.out.println("OS: windows-amd64");
+                System.out.println("OS: windows-amd64 " + Vect.getSupportedInstructionSetName());
                 break;
             case Os.LINUX_AMD64:
-                System.out.println("OS: linux-amd64");
+                System.out.println("OS: linux-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.OSX:
-                System.out.println("OS: apple-amd64");
+                System.out.println("OS: apple-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.LINUX_ARM64:
-                System.out.println("OS: linux-arm64");
+                System.out.println("OS: linux-arm64" + Vect.getSupportedInstructionSetName());
                 break;
             case Os.FREEBSD:
-                System.out.println("OS: freebsd-amd64");
+                System.out.println("OS: freebsd-amd64" + Vect.getSupportedInstructionSetName());
                 break;
             default:
                 System.err.println("Unsupported OS");
@@ -125,22 +123,27 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
+        final MessageBus messageBus = new MessageBusImpl();
+
         LogFactory.configureFromSystemProperties(workerPool);
         final Log log = LogFactory.getLog("server-main");
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
+        workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
         final HttpServer httpServer = HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
-                cairoEngine
+                cairoEngine,
+                messageBus
         );
 
         final PGWireServer pgWireServer = PGWireServer.create(
                 configuration.getPGWireConfiguration(),
                 workerPool,
                 log,
-                cairoEngine
+                cairoEngine,
+                messageBus
         );
 
         final AbstractLineProtoReceiver lineProtocolReceiver;
@@ -159,7 +162,7 @@ public class ServerMain {
             );
         }
 
-        startQuestDb(workerPool, lineProtocolReceiver, log, cairoEngine);
+        startQuestDb(workerPool, lineProtocolReceiver, log);
 
         if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
             // suppress HUP signal
@@ -174,21 +177,22 @@ public class ServerMain {
         }));
     }
 
-    protected void startQuestDb(final WorkerPool workerPool, final AbstractLineProtoReceiver lineProtocolReceiver,
-                                final Log log, final CairoEngine cairoEngine) {
-        workerPool.start(log);
-        lineProtocolReceiver.start();
-    }
+    public static void deleteOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        deleteDirContentsOrException(file);
 
-    protected void shutdownQuestDb(final WorkerPool workerPool, final CairoEngine cairoEngine,
-                                   final HttpServer httpServer, final PGWireServer pgWireServer,
-                                   final AbstractLineProtoReceiver lineProtocolReceiver) {
-        lineProtocolReceiver.halt();
-        workerPool.halt();
-        Misc.free(pgWireServer);
-        Misc.free(httpServer);
-        Misc.free(cairoEngine);
-        Misc.free(lineProtocolReceiver);
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
+            throw new RuntimeException("Cannot delete file " + file);
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -271,12 +275,6 @@ public class ServerMain {
                     return FileVisitResult.CONTINUE;
                 }
 
-                private void doCopy(Path dir) throws IOException {
-                    Path to = toDestination(dir);
-                    Files.copy(dir, to, copyOptions);
-                    System.out.println("Extracted " + dir + " -> " + to);
-                }
-
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                     doCopy(file);
@@ -293,6 +291,12 @@ public class ServerMain {
                     return FileVisitResult.CONTINUE;
                 }
 
+                private void doCopy(Path dir) throws IOException {
+                    Path to = toDestination(dir);
+                    Files.copy(dir, to, copyOptions);
+                    System.out.println("Extracted " + dir + " -> " + to);
+                }
+
                 private Path toDestination(final Path path) {
                     final Path tmp = path.toAbsolutePath();
                     return target.resolve(tmp.toString().substring(sourceLen));
@@ -303,24 +307,6 @@ public class ServerMain {
             if (fs != null) {
                 fs.close();
             }
-        }
-    }
-
-    public static void deleteOrException(File file) {
-        if (!file.exists()) {
-            return;
-        }
-        deleteDirContentsOrException(file);
-
-        int retryCount = 3;
-        boolean deleted = false;
-        while (retryCount > 0 && !(deleted = file.delete())) {
-            retryCount--;
-            Thread.yield();
-        }
-
-        if (!deleted) {
-            throw new RuntimeException("Cannot delete file " + file);
         }
     }
 
@@ -378,5 +364,28 @@ public class ServerMain {
             }
         }
         return "[DEVELOPMENT]";
+    }
+
+    protected void shutdownQuestDb(final WorkerPool workerPool,
+                                   final CairoEngine cairoEngine,
+                                   final HttpServer httpServer,
+                                   final PGWireServer pgWireServer,
+                                   final AbstractLineProtoReceiver lineProtocolReceiver
+    ) {
+        lineProtocolReceiver.halt();
+        workerPool.halt();
+        Misc.free(pgWireServer);
+        Misc.free(httpServer);
+        Misc.free(cairoEngine);
+        Misc.free(lineProtocolReceiver);
+    }
+
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final Log log
+    ) {
+        workerPool.start(log);
+        lineProtocolReceiver.start();
     }
 }

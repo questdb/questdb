@@ -112,7 +112,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 }

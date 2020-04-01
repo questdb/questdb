@@ -81,9 +81,9 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findRecord() {
         empty = true;
+        DataFrame frame;
         OUT:
-        while (this.dataFrameCursor.hasNext()) {
-            final DataFrame frame = this.dataFrameCursor.next();
+        while ((frame = this.dataFrameCursor.next()) != null) {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 

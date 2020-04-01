@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
@@ -41,25 +42,25 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnType.SYMBOL;
+
 public class CairoEngine implements Closeable {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
 
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
+    private final WriterMaintenanceJob writerMaintenanceJob;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
     }
 
-    public CairoEngine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
+    public CairoEngine(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
-        this.writerPool = new WriterPool(configuration, workScheduler);
+        this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
-        if (workScheduler != null) {
-            workScheduler.addJob(new WriterMaintenanceJob(configuration));
-            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
-        }
+        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
     }
 
     @Override
@@ -90,11 +91,6 @@ public class CairoEngine implements Closeable {
 
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
-    }
-
-    public void releaseInactive() {
-        writerPool.releaseInactive();
-        readerPool.releaseInactive();
     }
 
     public CairoConfiguration getConfiguration() {
@@ -155,6 +151,10 @@ public class CairoEngine implements Closeable {
         return writerPool.get(tableName);
     }
 
+    public WriterMaintenanceJob getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
+    }
+
     public boolean lock(
             CairoSecurityContext securityContext,
             CharSequence tableName
@@ -169,20 +169,43 @@ public class CairoEngine implements Closeable {
         return false;
     }
 
-    public boolean releaseAllReaders() {
-        return readerPool.releaseAll();
-    }
-
     public boolean lockReaders(CharSequence tableName) {
         return readerPool.lock(tableName);
     }
 
-    public void unlockReaders(CharSequence tableName) {
-        readerPool.unlock(tableName);
+    public boolean migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
+        try (
+                TableWriter writer = getWriter(cairoSecurityContext, tableName);
+                TableReader reader = getReader(cairoSecurityContext, tableName)
+        ) {
+            TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
+            if (readerMetadata.getVersion() < 416) {
+                LOG.info().$("migrating null flag for symbols [table=").utf8(tableName).$(']').$();
+                for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
+                    if (readerMetadata.getColumnType(i) == SYMBOL) {
+                        LOG.info().$("updating null flag [column=").utf8(readerMetadata.getColumnName(i)).$(']').$();
+                        writer.getSymbolMapWriter(i).updateNullFlag(reader.hasNull(i));
+                    }
+                }
+                writer.updateMetadataVersion();
+                LOG.info().$("migrated null flag for symbols [table=").utf8(tableName).$(", tableVersion=").$(ColumnType.VERSION).$(']').$();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean releaseAllReaders() {
+        return readerPool.releaseAll();
     }
 
     public boolean releaseAllWriters() {
         return writerPool.releaseAll();
+    }
+
+    public void releaseInactive() {
+        writerPool.releaseInactive();
+        readerPool.releaseInactive();
     }
 
     public void remove(
@@ -238,6 +261,10 @@ public class CairoEngine implements Closeable {
     ) {
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer);
+    }
+
+    public void unlockReaders(CharSequence tableName) {
+        readerPool.unlock(tableName);
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

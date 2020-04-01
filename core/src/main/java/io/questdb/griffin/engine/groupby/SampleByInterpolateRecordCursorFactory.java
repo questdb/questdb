@@ -367,7 +367,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 

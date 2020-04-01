@@ -39,7 +39,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
         super(metadata);
         this.base = base;
-        this.cursor = new SelectedRecordCursor(columnCrossIndex, base.isRandomAccessCursor());
+        this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
     }
 
     @Override
@@ -59,7 +59,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return base.isRandomAccessCursor();
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 }

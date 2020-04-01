@@ -60,7 +60,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return base.isRandomAccessCursor();
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 }

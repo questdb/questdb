@@ -85,8 +85,8 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return base.isRandomAccessCursor();
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 
     private static class DistinctRecordCursor implements RecordCursor {

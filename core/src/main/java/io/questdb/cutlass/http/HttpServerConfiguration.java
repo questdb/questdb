@@ -47,6 +47,10 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
 
     int getResponseHeaderBufferSize();
 
+    int getQueryCacheBlocks();
+
+    int getQueryCacheRows();
+
     MillisecondClock getClock();
 
     IODispatcherConfiguration getDispatcherConfiguration();

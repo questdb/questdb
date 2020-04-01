@@ -24,9 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.griffin.DefaultSqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
 
 import java.io.Closeable;
 
@@ -35,21 +33,21 @@ public interface RecordCursorFactory extends Closeable {
     default void close() {
     }
 
-    default RecordCursor getCursor() {
-        return getCursor(DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    RecordCursor getCursor(SqlExecutionContext executionContext);
-
-    default ObjList<RecordCursor> getCursors(DefaultSqlExecutionContext executionContext) {
-        throw new UnsupportedOperationException();
-    }
-
     default boolean followedOrderByAdvice() {
         return false;
     }
 
+    RecordCursor getCursor(SqlExecutionContext executionContext);
+
     RecordMetadata getMetadata();
 
-    boolean isRandomAccessCursor();
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+        return null;
+    }
+
+    boolean recordCursorSupportsRandomAccess();
+
+    default boolean supportPageFrameCursor() {
+        return false;
+    }
 }

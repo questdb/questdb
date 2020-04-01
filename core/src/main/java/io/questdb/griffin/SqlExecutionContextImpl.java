@@ -24,12 +24,18 @@
 
 package io.questdb.griffin;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.std.IntStack;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private final IntStack timestampRequiredStack = new IntStack();
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    @Nullable
+    private MessageBus messageBus;
 
     @Override
     public BindVariableService getBindVariableService() {
@@ -41,9 +47,35 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return cairoSecurityContext;
     }
 
-    public SqlExecutionContextImpl with(CairoSecurityContext cairoSecurityContext, BindVariableService bindVariableService) {
+    @Override
+    @Nullable
+    public MessageBus getMessageBus() {
+        return messageBus;
+    }
+
+    @Override
+    public boolean isTimestampRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+    }
+
+    @Override
+    public void popTimestampRequiredFlag() {
+        timestampRequiredStack.pop();
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag) {
+        timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    public SqlExecutionContextImpl with(
+            CairoSecurityContext cairoSecurityContext,
+            BindVariableService bindVariableService,
+            @Nullable MessageBus messageBus
+    ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
+        this.messageBus = messageBus;
         return this;
     }
 }

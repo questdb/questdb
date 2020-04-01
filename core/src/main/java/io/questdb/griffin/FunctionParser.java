@@ -763,7 +763,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             if (factory.isGroupBy()) {
                 groupByFunctionNames.add(name);
             }
-//            LOG.info().$("func: ").$(factory.getSignature()).$();
         }
     }
 }

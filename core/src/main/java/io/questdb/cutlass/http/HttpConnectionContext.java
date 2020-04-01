@@ -83,7 +83,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         LOG.debug().$("clear").$();
         this.headerParser.clear();
         this.multipartContentParser.clear();
-        this.multipartContentParser.clear();
+        this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
         this.responseSink.clear();

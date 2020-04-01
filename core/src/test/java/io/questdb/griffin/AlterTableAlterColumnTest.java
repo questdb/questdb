@@ -48,18 +48,40 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidColumnName() throws Exception {
-        assertFailure("alter table x alter column y add index", 27, "Invalid column: y");
+    public void testAddIndexColumns() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        try {
+                            reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
+                            Assert.fail();
+                        } catch (CairoException ignored) {
+                        }
+                    }
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
+
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        Assert.assertNotNull(reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
+                    }
+                }
+        );
     }
 
     @Test
-    public void testInvalidTableName() throws Exception {
-        assertFailure("alter table z alter column y add index", 12, "table 'z' does not exist");
+    public void testAlterExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x alter", 19, "'column' expected");
+    }
+
+    @Test
+    public void testAlterExpectColumnName() throws Exception {
+        assertFailure("alter table x alter column", 26, "column name expected");
     }
 
     @Test
     public void testBusyTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
             try {
                 createX();
@@ -88,7 +110,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x alter column ik add index");
+                    compiler.compile("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -97,44 +119,8 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' is busy");
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
             allHaltLatch.await(2, TimeUnit.SECONDS);
         });
-    }
-
-    @Test
-    public void testAlterExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x alter", 19, "'column' expected");
-    }
-
-    @Test
-    public void testAlterExpectColumnName() throws Exception {
-        assertFailure("alter table x alter column", 26, "column name expected");
-    }
-
-    @Test
-    public void testAddIndexColumns() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                        try {
-                            reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
-                            Assert.fail();
-                        } catch (CairoException ignored) {
-                        }
-                    }
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index").getType());
-
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                        Assert.assertNotNull(reader.getBitmapIndexReader(reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
-                    }
-                }
-        );
     }
 
     @Test
@@ -157,19 +143,26 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertFailure("alter table", 11, "table name expected");
     }
 
+    @Test
+    public void testInvalidColumnName() throws Exception {
+        assertFailure("alter table x alter column y add index", 27, "Invalid column: y");
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        assertFailure("alter table z alter column y add index", 12, "table 'z' does not exist");
+    }
+
     private void assertFailure(String sql, int position, String message) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql);
+                compiler.compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -194,7 +187,8 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)"
+                        ") timestamp (timestamp)",
+                sqlExecutionContext
         );
     }
 }

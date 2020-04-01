@@ -104,11 +104,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         partitionHi = initialPartitionHi;
     }
 
-    @Override
-    public DataFrame next() {
-        return dataFrame;
-    }
-
     public void of(TableReader reader) {
         this.reader = reader;
         calculateRanges();
@@ -186,6 +181,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return reader.getPageAddressAt(partitionIndex, rowLo, columnIndex);
+        }
+
+        @Override
+        public long getPageValueCount(int columnIndex) {
+            return reader.getPageValueCount(partitionIndex, rowLo, rowHi, columnIndex);
         }
     }
 }

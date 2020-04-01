@@ -59,7 +59,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "CO\tCO\t0.00799290812895126\n" +
                 "OS\tOS\t0.7693457725433892\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
@@ -77,9 +77,6 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -116,7 +113,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "\t\t0.36137217390808174\n" +
                 "\t\t0.3295206953565475\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
                     " select" +
                     " rnd_str(4,4,8) a," +
@@ -133,9 +130,6 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -156,7 +150,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "UW\tUW\t0.015101588517183018\n" +
                 "UW\tMK\t0.9642333434663315\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
@@ -174,9 +168,6 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -197,7 +188,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "UW\tUW\t0.015101588517183018\n" +
                 "UW\tMK\t0.9642333434663315\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
@@ -215,9 +206,6 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 
@@ -237,7 +225,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "\tRB\t0.5613422353599637\n" +
                 "\tPD\t0.8501026132754606\n";
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
                     " select" +
                     " rnd_str(2,2,400) a," +
@@ -255,9 +243,6 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
                 TestUtils.assertEquals(expected, sink);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
         });
     }
 }

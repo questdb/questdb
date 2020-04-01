@@ -48,7 +48,7 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
+    public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.DataFrame;
 import io.questdb.std.LongList;
 
 public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
@@ -41,7 +42,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
     }
 
     @Override
-    public boolean hasNext() {
+    public DataFrame next() {
         // order of logical operations is important
         // we are not calculating partition rages when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
@@ -108,7 +109,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                         intervalsLo++;
                     }
 
-                    return true;
+                    return dataFrame;
                 }
                 // interval yielded empty data frame
                 partitionLimit = hi;
@@ -118,7 +119,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 partitionLo++;
             }
         }
-        return false;
+        return null;
     }
 
     @Override

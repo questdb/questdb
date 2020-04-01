@@ -53,7 +53,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("truncate x");
+                compiler.compile("truncate x", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(9, e.getPosition());
@@ -66,7 +66,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableKeyword2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("truncate");
+                compiler.compile("truncate", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(8, e.getPosition());
@@ -79,7 +79,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("truncate table");
+                compiler.compile("truncate table", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
@@ -94,7 +94,7 @@ public class TruncateTest extends AbstractGriffinTest {
             try {
                 createX();
 
-                compiler.compile("truncate table x,");
+                compiler.compile("truncate table x,", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
@@ -121,7 +121,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                 false
                         );
 
-                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x").getType());
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
 
                         assertQuery(
                                 "count\n" +
@@ -182,7 +182,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             useBarrier.await();
             try {
-                Assert.assertNull(compiler.compile("truncate table x,y"));
+                Assert.assertNull(compiler.compile("truncate table x,y", sqlExecutionContext));
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
@@ -237,7 +237,7 @@ public class TruncateTest extends AbstractGriffinTest {
             );
 
             try {
-                Assert.assertNull(compiler.compile("truncate table x, y,z"));
+                Assert.assertNull(compiler.compile("truncate table x, y,z", sqlExecutionContext));
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
@@ -278,8 +278,8 @@ public class TruncateTest extends AbstractGriffinTest {
                     false
             );
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x").getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(DefaultSqlExecutionContext.INSTANCE)) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getInt(0);
@@ -290,7 +290,7 @@ public class TruncateTest extends AbstractGriffinTest {
             }
 
 
-            compiler.compile("truncate table 'x'");
+            compiler.compile("truncate table 'x'", sqlExecutionContext);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -319,7 +319,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     false
             );
 
-            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y").getType());
+            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x, y", sqlExecutionContext).getType());
 
             assertQuery(
                     "count\n" +
@@ -368,7 +368,8 @@ public class TruncateTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(" + count + ")" +
-                        ") timestamp (timestamp)"
+                        ") timestamp (timestamp)",
+                sqlExecutionContext
         );
     }
 
@@ -393,7 +394,8 @@ public class TruncateTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(20)" +
-                        ") timestamp (timestamp)"
+                        ") timestamp (timestamp)",
+                sqlExecutionContext
         );
     }
 }

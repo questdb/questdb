@@ -54,7 +54,7 @@ public class ObjIntHashMapTest {
 
     @Test
     public void testClassBehaviour() {
-        ObjIntHashMap<Class> map = new ObjIntHashMap<>();
+        ObjIntHashMap<Class<?>> map = new ObjIntHashMap<>();
         Assert.assertEquals(-1, map.get(Object.class));
     }
 }

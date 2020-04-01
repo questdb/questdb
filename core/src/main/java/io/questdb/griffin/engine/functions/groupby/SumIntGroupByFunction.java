@@ -87,4 +87,9 @@ public class SumIntGroupByFunction extends IntFunction implements GroupByFunctio
     public Function getArg() {
         return arg;
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }
