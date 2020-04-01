@@ -1606,6 +1606,10 @@ public class SqlCompiler implements Closeable {
         if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
+
+        if (model.getPartitionBy() != PartitionBy.NONE && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
+            throw SqlException.position(0).put("timestamp is not defined");
+        }
     }
 
     @FunctionalInterface
@@ -1626,6 +1630,7 @@ public class SqlCompiler implements Closeable {
         private CreateTableModel model;
         private RecordMetadata metadata;
         private IntIntHashMap typeCast;
+        private int timestampIndex;
 
         @Override
         public int getColumnCount() {
@@ -1692,10 +1697,15 @@ public class SqlCompiler implements Closeable {
 
         @Override
         public int getTimestampIndex() {
-            return model.getTimestampIndex();
+            return timestampIndex;
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
+            if (model.getTimestampIndex() != -1) {
+                timestampIndex = model.getTimestampIndex();
+            } else {
+                timestampIndex = metadata.getTimestampIndex();
+            }
             this.model = model;
             this.metadata = metadata;
             this.typeCast = typeCast;
