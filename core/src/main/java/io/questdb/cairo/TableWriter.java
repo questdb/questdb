@@ -2138,7 +2138,7 @@ public class TableWriter implements Closeable {
 
                         // 2. read max timestamp
                         TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
-                        maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem8b, transientRowCount - Long.BYTES);
+                        maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem8b, (transientRowCount - 1) * Long.BYTES);
                         actualSize -= transientRowCount;
                         LOG.info()
                                 .$("updated active partition [name=").$(path.trimTo(p).$())

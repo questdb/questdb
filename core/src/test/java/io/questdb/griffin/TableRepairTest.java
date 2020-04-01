@@ -61,7 +61,7 @@ public class TableRepairTest extends AbstractGriffinTest {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
 
-                    Assert.assertEquals(874790000000L, w.getMaxTimestamp());
+                    Assert.assertEquals(950390000000L, w.getMaxTimestamp());
 
                     TableWriter.Row row = w.newRow(w.getMaxTimestamp());
                     row.putInt(0, 150);
