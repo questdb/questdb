@@ -292,6 +292,7 @@
             let startPos = -1;
             let sql = null;
             let inQuote = false;
+            let sqlTextStack = [];
 
             for (let i = 0; i < text.length; i++) {
                 const char = text.charAt(i);
@@ -304,6 +305,12 @@
                         }
 
                         if (r < pos.row || (r === pos.row && c < pos.column)) {
+                            sqlTextStack.push({
+                                row: startRow,
+                                col: startCol,
+                                pos: startPos,
+                                lim: i
+                            });
                             startRow = r;
                             startCol = c;
                             startPos = i + 1;
@@ -358,6 +365,14 @@
             }
 
             if (sql.length === 0) {
+                let prev = sqlTextStack.pop();
+                if (prev) {
+                    return {
+                        q: text.substring(prev.pos, prev.lim),
+                        r: prev.row,
+                        c: prev.col
+                    };
+                }
                 return null;
             }
 
