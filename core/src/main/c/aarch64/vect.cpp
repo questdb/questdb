@@ -87,7 +87,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_maxLong(JNIEnv *env, jclass cl,
 // null check
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Vect_hasNull(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return hasNull_Vanilla((int64_t *) pInt, count);
+    return hasNull_Vanilla((int32_t *) pInt, count);
 }
 
 }
