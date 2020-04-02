@@ -1226,7 +1226,8 @@ public class SqlCodeGenerator {
         assert model.getNestedModel() != null;
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         final RecordMetadata metadata = factory.getMetadata();
-        final int selectColumnCount = model.getColumns().size();
+        final ObjList<QueryColumn> columns = model.getTopDownColumns().size() > 0 ? model.getTopDownColumns() : model.getColumns();
+        final int selectColumnCount = columns.size();
         final ExpressionNode timestamp = model.getTimestamp();
 
         boolean entity;
@@ -1235,7 +1236,7 @@ public class SqlCodeGenerator {
         if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
-                QueryColumn qc = model.getColumns().getQuick(i);
+                QueryColumn qc = columns.getQuick(i);
                 if (
                         !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
                                 qc.getAlias() != null && !(Chars.equals(qc.getAlias(), qc.getAst().token))
@@ -1263,8 +1264,10 @@ public class SqlCodeGenerator {
                 throw SqlException.invalidColumn(timestamp.position, timestamp.token);
             }
         }
+
+        boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
-            final QueryColumn queryColumn = model.getColumns().getQuick(i);
+            final QueryColumn queryColumn = columns.getQuick(i);
             int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
@@ -1281,7 +1284,21 @@ public class SqlCodeGenerator {
 
             if (index == timestampIndex) {
                 selectMetadata.setTimestampIndex(i);
+                timestampSet = true;
             }
+        }
+
+        if (!timestampSet && executionContext.isTimestampRequired()) {
+            assert timestampIndex != -1;
+            selectMetadata.add(
+                    new TableColumnMetadata(
+                            Chars.toString(metadata.getColumnName(timestampIndex)),
+                            metadata.getColumnType(timestampIndex),
+                            metadata.isColumnIndexed(timestampIndex),
+                            metadata.getIndexValueBlockCapacity(timestampIndex),
+                            metadata.isSymbolTableStatic(timestampIndex)
+                    )
+            );
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);

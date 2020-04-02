@@ -101,7 +101,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " asof join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -1655,7 +1655,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testFilter2() throws Exception {
-        assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
+        assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -1665,7 +1665,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnGroupBy() throws SqlException {
         assertQuery(
-                "select-choose hash, count from ((select-group-by [hash, count() count] hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
+                "select-choose hash, count from ((select-group-by hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
                 "select * from (select hash, count() from 'transactions.csv') where count > 1;",
                 modelOf("transactions.csv").col("hash", ColumnType.LONG256)
         );
@@ -1674,7 +1674,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [customerId, customerName, count() count] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200)) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN where count > 1) order by customerId",
+                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200)) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN where count > 1) order by customerId",
                 "(select customerId, customerName, count() count from customers) c" +
                         " outer join orders o on c.customerId = o.customerId " +
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
@@ -1749,7 +1749,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testInnerJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -2202,7 +2202,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
-                "select-choose country, sum from ((select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~= '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
+                "select-choose country, sum from ((select-group-by country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~= '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
                 "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -2786,7 +2786,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -2801,7 +2801,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMultipleExpressions() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -3198,7 +3198,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnOuterResult() throws SqlException {
         assertQuery(
-                "select-virtual x, sum1 + sum z from (select-group-by [x, sum(3 / x) sum, sum(2 * y + x) sum1] x, sum(3 / x) sum, sum(2 * y + x) sum1 from (select [x, y] from tab)) order by z",
+                "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (select [x, y] from tab)) order by z",
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
@@ -3298,7 +3298,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by [a, sum(b) b] a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b, t] from tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b, t] from tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3310,7 +3310,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy3() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by [a, sum(b) b] a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b] from tab timestamp (t)) order by t) _xQdbA3) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b] from tab timestamp (t)) order by t) _xQdbA3) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3331,7 +3331,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOuterJoinColumnAlias() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))) _xQdbA1) limit 10",
+        assertQuery("select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
@@ -3343,7 +3343,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOuterJoinColumnAliasConst() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 10) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 10) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = 10 limit 10",
@@ -3354,12 +3354,65 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOuterJoinColumnAliasNull() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+        assertQuery("select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSampleByFillMinAsSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b from ((select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)) _xQdbA1)",
+                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSelectColumnsFromJoinSubQueries() throws SqlException {
+        assertQuery(
+                "select-virtual addr, sum_out - sum_in total from ((select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
+                "select addr, sum_out - sum_in total from (\n" +
+                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
+                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
+                        ")",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.LONG)
+                        .col("toAddress", ColumnType.LONG)
+                        .col("value", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
+        assertQuery("select-choose addr, count, sum_out, toAddress, count1, sum_in from ((select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
+                "(\n" +
+                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
+                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
+                        ")",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.LONG)
+                        .col("toAddress", ColumnType.LONG)
+                        .col("value", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
+        assertQuery("select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)",
+                "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
+                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
+                modelOf("transactions.csv")
+                        .col("fromAddress", ColumnType.LONG)
+                        .col("toAddress", ColumnType.LONG)
+                        .col("value", ColumnType.LONG)
         );
     }
 
@@ -3493,14 +3546,13 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByFillMinAsSubQuery() throws SqlException {
+    public void testSelectDistinctGroupByFunction() throws SqlException {
         assertQuery(
-                "select-choose a, b from ((select-group-by [a, sum(b) b] a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)) _xQdbA1)",
-                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
+                "select-distinct a, bb from (select-group-by a, sum(b) bb from (select [a, b] from tab))",
+                "select distinct a, sum(b) bb from tab",
                 modelOf("tab")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("t", ColumnType.TIMESTAMP)
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
         );
     }
 
@@ -3678,43 +3730,39 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectColumnsFromJoinSubQueries() throws SqlException {
+    public void testSelectDistinctGroupByFunctionArithmetic() throws SqlException {
         assertQuery(
-                "select-virtual addr, sum_out - sum_in total from ((select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [addr, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
-                "select addr, sum_out - sum_in total from (\n" +
-                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
-                        ")",
-                modelOf("transactions.csv")
-                        .col("fromAddress", ColumnType.LONG)
-                        .col("toAddress", ColumnType.LONG)
-                        .col("value", ColumnType.LONG)
+                "select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
+                "select distinct a, sum(b)+sum(c) bb from tab",
+                modelOf("tab")
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.LONG)
         );
     }
 
     @Test
-    public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
-        assertQuery("select-choose addr, count, sum_out, toAddress, count1, sum_in from ((select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
-                "(\n" +
-                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
-                        ")",
-                modelOf("transactions.csv")
-                        .col("fromAddress", ColumnType.LONG)
-                        .col("toAddress", ColumnType.LONG)
-                        .col("value", ColumnType.LONG)
+    public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
+                "select distinct a, sum(b)+sum(c) bb from tab limit 10",
+                modelOf("tab")
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.LONG)
         );
     }
 
     @Test
-    public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
-        assertQuery("select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)",
-                "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
-                modelOf("transactions.csv")
-                        .col("fromAddress", ColumnType.LONG)
-                        .col("toAddress", ColumnType.LONG)
-                        .col("value", ColumnType.LONG)
+    public void testSelectDistinctUnion() throws SqlException {
+        assertQuery("select-choose c from ((select-distinct c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) union select-distinct c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips))) _xQdbA1)",
+                "select c from (select distinct a c, b from trips union all select distinct c, d b from trips)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
         );
     }
 
@@ -3741,36 +3789,36 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectDistinctGroupByFunction() throws SqlException {
-        assertQuery(
-                "select-distinct a, bb from (select-group-by [a, sum(b) bb] a, sum(b) bb from (select [a, b] from tab))",
-                "select distinct a, sum(b) bb from tab",
+    public void testSelectGroupByArithmetic() throws SqlException {
+        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
+                "select sum(x)+10, sum(y) from tab",
                 modelOf("tab")
-                        .col("a", ColumnType.STRING)
-                        .col("b", ColumnType.LONG)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
         );
     }
 
     @Test
-    public void testSelectDistinctGroupByFunctionArithmetic() throws SqlException {
-        assertQuery(
-                "select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
-                "select distinct a, sum(b)+sum(c) bb from tab",
+    public void testSelectGroupByArithmeticAndLimit() throws SqlException {
+        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
+                "select sum(x)+10, sum(y) from tab limit 200",
                 modelOf("tab")
-                        .col("a", ColumnType.STRING)
-                        .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.LONG)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
         );
     }
 
     @Test
-    public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
-                "select distinct a, sum(b)+sum(c) bb from tab limit 10",
-                modelOf("tab")
-                        .col("a", ColumnType.STRING)
-                        .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.LONG)
+    public void testSelectGroupByUnion() throws SqlException {
+        assertQuery("select-choose b from ((select-group-by a, sum(b) b from (select [a, b] from trips) union all select-group-by c, avg(d) b from (select [c, d] from trips)) _xQdbA1)",
+                "select b from (select a, sum(b) b from trips union all select c, avg(d) b from trips)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
         );
     }
 
@@ -3817,22 +3865,30 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectGroupByArithmetic() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
-                "select sum(x)+10, sum(y) from tab",
-                modelOf("tab")
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
+    public void testSelectLatestByUnion() throws SqlException {
+        assertQuery("select-choose b from ((select-choose [b] a, b from (select [b, c] from trips latest by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest by a)) _xQdbA1)",
+                "select b from (select a, b b from trips latest by c union all select c, d b from trips latest by a)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
         );
     }
 
     @Test
-    public void testSelectGroupByArithmeticAndLimit() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
-                "select sum(x)+10, sum(y) from tab limit 200",
-                modelOf("tab")
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
+    public void testSelectSumFromSubQueryLimit() throws SqlException {
+        assertQuery("select-group-by sum(tip_amount) sum from ((select-choose [tip_amount] a, b, c, d, tip_amount, e from (select [tip_amount] from trips) limit 100000000) _xQdbA1)",
+                "select sum(tip_amount) from (trips limit 100000000)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
         );
     }
 
@@ -4049,7 +4105,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " splice join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -4475,7 +4531,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from ((select-choose [z] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from ((select-choose [z, t] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -4513,7 +4569,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from ((select-choose [z] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from ((select-choose [z, t] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -4532,7 +4588,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) AND b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
