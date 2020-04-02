@@ -57,6 +57,7 @@ class SqlOptimiser {
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -150,6 +151,10 @@ class SqlOptimiser {
         }
 
         return true;
+    }
+
+    private static boolean modelIsFlex(QueryModel model) {
+        return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
     /*
@@ -1032,7 +1037,9 @@ class SqlOptimiser {
                         this.sqlNodeStack.push(node.rhs);
                     }
 
-                    addTopDownColumn(node.lhs, model);
+                    if (node.lhs != null) {
+                        addTopDownColumn(node.lhs, model);
+                    }
                     node = node.lhs;
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
@@ -1578,7 +1585,7 @@ class SqlOptimiser {
         moveWhereInsideSubQueries(rewrittenModel);
         eraseColumnPrefixInWhereClauses(rewrittenModel);
         moveTimestampToChooseModel(rewrittenModel);
-        propagateTopDownColumns(rewrittenModel, true, true, null);
+        propagateTopDownColumns(rewrittenModel, true, null);
         return rewrittenModel;
     }
 
@@ -1918,15 +1925,25 @@ class SqlOptimiser {
         parent.addParsedWhereNode(node);
     }
 
-    private void propagateTopDownColumns(QueryModel model, boolean propagateJoinContext, boolean topLevel, @Nullable QueryModel papaModel) {
+    private void propagateTopDownColumns(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel) {
 
         // skip over NONE model that does not have table name
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
+        final boolean nestedIsFlex = modelIsFlex(nested);
 
-        if (nested != null) {
+        if (nestedIsFlex) {
             final ObjList<QueryColumn> columns = model.getTopDownColumns().size() > 0 ? model.getTopDownColumns() : model.getColumns();
             for (int i = 0, n = columns.size(); i < n; i++) {
                 emitLiteralsTopDown(columns.getQuick(i).getAst(), nested);
+            }
+        }
+
+        final QueryModel union = skipNoneTypeModels(model.getUnionModel());
+
+        if (modelIsFlex(union)) {
+            final ObjList<QueryColumn> columns = model.getTopDownColumns().size() > 0 ? model.getTopDownColumns() : model.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                emitLiteralsTopDown(columns.getQuick(i).getAst(), union);
             }
         }
 
@@ -1947,7 +1964,7 @@ class SqlOptimiser {
                     }
                 }
             }
-            propagateTopDownColumns(jm, false, false, model);
+            propagateTopDownColumns(jm, false, model);
 
             // process post-join-where
             final ExpressionNode postJoinWhere = jm.getPostJoinWhereClause();
@@ -1968,7 +1985,7 @@ class SqlOptimiser {
         }
 
         // propagate explicit timestamp declaration
-        if (model.getSampleBy() != null && model.getTimestamp() != null) {
+        if (model.getTimestamp() != null && nestedIsFlex) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
         }
 
@@ -1990,12 +2007,12 @@ class SqlOptimiser {
 
         // go down the nested path
         if (nested != null) {
-            propagateTopDownColumns(nested, true, false, null);
+            propagateTopDownColumns(nested, false, null);
         }
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            propagateTopDownColumns(unionModel, true, true, null);
+            propagateTopDownColumns(unionModel, true, null);
         }
     }
 
@@ -2879,7 +2896,9 @@ class SqlOptimiser {
         joinOps.put("and", JOIN_OP_AND);
         joinOps.put("or", JOIN_OP_OR);
         joinOps.put("~", JOIN_OP_REGEX);
+
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
     }
-
-
 }
