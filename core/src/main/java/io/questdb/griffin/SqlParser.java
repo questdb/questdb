@@ -390,7 +390,7 @@ public final class SqlParser {
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, '(');
         QueryModel queryModel = optimiser.optimise(parseDml(lexer), executionContext);
-        ObjList<QueryColumn> columns = queryModel.getColumns();
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
 
         // we do not know types of columns at this stage

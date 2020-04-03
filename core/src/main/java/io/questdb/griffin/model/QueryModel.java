@@ -50,7 +50,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int UNION_MODEL_ALL = 0;
     public static final int UNION_MODEL_DISTINCT = 1;
     private static final ObjList<String> modelTypeName = new ObjList<>();
-    private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new CharSequenceObjHashMap<>();
@@ -114,7 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void addBottomUpColumn(QueryColumn column) {
-        columns.add(column);
+        bottomUpColumns.add(column);
         addField(column);
     }
 
@@ -173,7 +173,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void clear() {
-        columns.clear();
+        bottomUpColumns.clear();
         aliasToColumnNameMap.clear();
         joinModels.clear();
         joinModels.add(this);
@@ -289,8 +289,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return columnNameToAliasMap;
     }
 
-    public ObjList<QueryColumn> getColumns() {
-        return columns;
+    public ObjList<QueryColumn> getBottomUpColumns() {
+        return bottomUpColumns;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -499,6 +499,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return topDownColumns;
     }
 
+    public ObjList<QueryColumn> getColumns() {
+        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
+    }
+
     public QueryModel getUnionModel() {
         return unionModel;
     }
@@ -701,7 +705,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     private void toSink0(CharSink sink, boolean joinSlave) {
-        final boolean hasColumns = this.topDownColumns.size() > 0 || this.columns.size() > 0;
+        final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
         if (hasColumns) {
             sink.put(getSelectModelTypeText());
             if (this.topDownColumns.size() > 0) {
@@ -710,9 +714,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sinkColumns(sink, this.topDownColumns);
                 sink.put(']');
             }
-            if (this.columns.size() > 0) {
+            if (this.bottomUpColumns.size() > 0) {
                 sink.put(' ');
-                sinkColumns(sink, this.columns);
+                sinkColumns(sink, this.bottomUpColumns);
             }
             sink.put(" from ");
         }

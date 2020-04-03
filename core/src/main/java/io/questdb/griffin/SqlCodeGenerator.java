@@ -984,30 +984,21 @@ public class SqlCodeGenerator {
         );
     }
 
-    private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
-        return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, name) && ast.rhs.type == LITERAL;
-    }
-
     @NotNull
     private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-            final RecordMetadata metadata = factory.getMetadata();
 
             // we require timestamp
-            final int timestampIndex;
-            ExpressionNode timestamp = model.getTimestamp();
-            if (timestamp != null) {
-                timestampIndex = getTimestampIndex(factory, metadata, timestamp);
-            } else {
-                timestampIndex = metadata.getTimestampIndex();
-            }
-
+            // todo: this looks like generic code
+            final int timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1) {
-                throw SqlException.$(model.getSampleBy().position, "base query does not provide dedicated TIMESTAMP column");
+                Misc.free(factory);
+                throw SqlException.$(model.getModelPosition(), "base query does not provide dedicated TIMESTAMP column");
             }
 
+            final RecordMetadata metadata = factory.getMetadata();
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
@@ -1226,7 +1217,7 @@ public class SqlCodeGenerator {
         assert model.getNestedModel() != null;
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         final RecordMetadata metadata = factory.getMetadata();
-        final ObjList<QueryColumn> columns = model.getTopDownColumns().size() > 0 ? model.getTopDownColumns() : model.getColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         final int selectColumnCount = columns.size();
         final ExpressionNode timestamp = model.getTimestamp();
 
@@ -1253,18 +1244,14 @@ public class SqlCodeGenerator {
             return factory;
         }
 
-        IntList columnCrossIndex = new IntList(selectColumnCount);
-        GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
-        final int timestampIndex;
-        if (timestamp == null) {
-            timestampIndex = metadata.getTimestampIndex();
-        } else {
-            timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-            if (timestampIndex == -1) {
-                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-            }
+        final int timestampIndex = getTimestampIndex(model, factory);
+        if (timestampIndex == -1 && executionContext.isTimestampRequired()) {
+            Misc.free(factory);
+            throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
         }
 
+        final IntList columnCrossIndex = new IntList(selectColumnCount);
+        final GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
         boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
@@ -1289,7 +1276,6 @@ public class SqlCodeGenerator {
         }
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
-            assert timestampIndex != -1;
             selectMetadata.add(
                     new TableColumnMetadata(
                             Chars.toString(metadata.getColumnName(timestampIndex)),
@@ -1305,7 +1291,7 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
+        if (model.getBottomUpColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
             ExpressionNode tableNameExpressionNode = model.getNestedModel().getNestedModel().getTableName();
             CharSequence tableName = tableNameExpressionNode.token;
             try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
@@ -1363,7 +1349,7 @@ public class SqlCodeGenerator {
         try {
 
             // generate special case plan for "select count() from somewhere"
-            ObjList<QueryColumn> columns = model.getColumns();
+            ObjList<QueryColumn> columns = model.getBottomUpColumns();
             if (columns.size() == 1) {
                 QueryColumn column = columns.getQuick(0);
                 if (column.getAst().type == FUNCTION && Chars.equalsLowerCaseAscii(column.getAst().token, "count")) {
@@ -1394,24 +1380,13 @@ public class SqlCodeGenerator {
                 }
             }
 
-            ExpressionNode timestamp = model.getTimestamp();
-            int timestampIndex = -1;
-            if (timestamp != null) {
-                timestampIndex = getTimestampIndex(factory, metadata, timestamp);
-            } else {
-                // when nested model has timestamp, it is possible we do not have it selected
-                // lets exercise caution and check
-                timestamp = model.getNestedModel().getTimestamp();
-                if (timestamp != null) {
-                    timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-                }
-            }
+            final int timestampIndex = getTimestampIndex(model, factory);
 
             keyTypes.reset();
             valueTypes.reset();
             listColumnFilterA.clear();
 
-            final int columnCount = model.getColumns().size();
+            final int columnCount = model.getBottomUpColumns().size();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
             GroupByUtils.prepareGroupByFunctions(
                     model,
@@ -1471,7 +1446,7 @@ public class SqlCodeGenerator {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
         try {
-            final int columnCount = model.getColumns().size();
+            final int columnCount = model.getBottomUpColumns().size();
             final RecordMetadata metadata = factory.getMetadata();
             final ObjList<Function> functions = new ObjList<>(columnCount);
             final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
@@ -1486,7 +1461,7 @@ public class SqlCodeGenerator {
             }
 
             for (int i = 0; i < columnCount; i++) {
-                final QueryColumn column = model.getColumns().getQuick(i);
+                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
                 ExpressionNode node = column.getAst();
                 if (timestampColumn != null && node.type == ExpressionNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
                     virtualMetadata.setTimestampIndex(i);
@@ -1570,26 +1545,76 @@ public class SqlCodeGenerator {
                 model.getTableName().token,
                 model.getTableVersion())
         ) {
-            // use top down columns to create metadata
-//            final ObjList<QueryColumn> columns = model.getTopDownColumns();
-//            final int columnCount = columns.size();
-//            assert columnCount > 0;
-//            final RecordMetadata readerMetadata = reader.getMetadata();
-//            final GenericRecordMetadata metadata = new GenericRecordMetadata();
-//
-//            for (int i = 0; i < columnCount; i++) {
-//                final QueryColumn col = columns.getQuick(i);
-//                final int index = readerMetadata.getColumnIndexQuiet(col.getAst().token);
-//                final CharSequence alias = col.getAlias();
-//                metadata.add(new TableColumnMetadata(
-//                   alias != null ? Chars.toString(alias) : readerMetadata.getColumnName(index),
-//                   readerMetadata.getColumnType(index),
-//                   readerMetadata.isColumnIndexed(index),
-//                   readerMetadata.getIndexValueBlockCapacity(index),
-//                   readerMetadata.isSymbolTableStatic(index)
-//                ));
-//            }
             final RecordMetadata readerMeta = reader.getMetadata();
+
+            // create metadata based on top-down columns that are required
+
+            final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+            final int topDownColumnCount = topDownColumns.size();
+            final IntList columnIndexes = new IntList();
+            final IntList columnSizes = new IntList();
+
+            // topDownColumnCount can be 0 for 'select count()' queries
+
+            final int readerTimestampIndex;
+            try {
+                readerTimestampIndex = getTimestampIndex(model, readerMeta);
+            } catch (SqlException e) {
+                Misc.free(reader);
+                throw e;
+            }
+//            if (model.getTimestamp() == null) {
+//                readerTimestampIndex = readerMeta.getTimestampIndex();
+//            } else {
+//                readerTimestampIndex = readerMeta.getColumnIndex(model.getTimestamp().token);
+//            }
+
+            final GenericRecordMetadata myMeta = new GenericRecordMetadata();
+            boolean framingSupported;
+            if (topDownColumnCount > 0) {
+                framingSupported = true;
+                for (int i = 0; i < topDownColumnCount; i++) {
+                    int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                    int type = readerMeta.getColumnType(columnIndex);
+                    int typeSize = ColumnType.sizeOf(type);
+
+                    if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
+                        // we don't frame non-primitive types yet
+                        framingSupported = false;
+                    }
+                    columnIndexes.add(columnIndex);
+                    columnSizes.add((Numbers.msb(typeSize)));
+
+                    myMeta.add(new TableColumnMetadata(
+                            Chars.toString(topDownColumns.getQuick(i).getName()),
+                            type,
+                            readerMeta.isColumnIndexed(columnIndex),
+                            readerMeta.getIndexValueBlockCapacity(columnIndex),
+                            readerMeta.isSymbolTableStatic(columnIndex)
+                    ));
+
+                    if (columnIndex == readerTimestampIndex) {
+                        myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+                    }
+                }
+
+                // select timestamp when it is required but not already selected
+                if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
+                    myMeta.add(new TableColumnMetadata(
+                            readerMeta.getColumnName(readerTimestampIndex),
+                            readerMeta.getColumnType(readerTimestampIndex)
+                    ));
+                    myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+
+                    columnIndexes.add(readerTimestampIndex);
+                    columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
+                }
+            } else {
+                framingSupported = false;
+            }
+
+            // done with myMeta
+
             final GenericRecordMetadata metadata = copyMetadata(readerMeta);
             final int timestampIndex;
 
@@ -1604,7 +1629,7 @@ public class SqlCodeGenerator {
             listColumnFilterA.clear();
             final int latestByColumnCount = latestBy.size();
 
-            if (latestBy.size() > 0) {
+            if (latestByColumnCount > 0) {
                 // validate latest by against current reader
                 // first check if column is valid
                 for (int i = 0; i < latestByColumnCount; i++) {
@@ -1625,7 +1650,13 @@ public class SqlCodeGenerator {
 
             if (whereClause != null) {
 
-                final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestByColumnCount > 0 ? latestBy.getQuick(0).token : null, timestampIndex);
+                final IntrinsicModel intrinsicModel = filterAnalyser.extract(
+                        model,
+                        whereClause,
+                        readerMeta,
+                        latestByColumnCount > 0 ? latestBy.getQuick(0).token : null,
+                        timestampIndex
+                );
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                     return new EmptyTableRecordCursorFactory(metadata);
@@ -1634,7 +1665,7 @@ public class SqlCodeGenerator {
                 Function filter;
 
                 if (intrinsicModel.filter != null) {
-                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, executionContext);
+                    filter = functionParser.parseFunction(intrinsicModel.filter, readerMeta, executionContext);
 
                     if (filter.getType() != ColumnType.BOOLEAN) {
                         throw SqlException.$(intrinsicModel.filter.position, "boolean expression expected");
@@ -1826,70 +1857,12 @@ public class SqlCodeGenerator {
 
             // no where clause
             if (latestByColumnCount == 0) {
-                // we had already created metadata, which could be redundant
-                final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                final int topDownColumnCount = topDownColumns.size();
-                final IntList columnIndexes = new IntList();
-                final IntList columnSizes = new IntList();
-
-                // topDownColumnCount can be 0 for 'select count()' queries
-
-                final GenericRecordMetadata mm = new GenericRecordMetadata();
-                final int readerTimestampIndex;
-                if (model.getTimestamp() == null) {
-                    readerTimestampIndex = readerMeta.getTimestampIndex();
-                } else {
-                    readerTimestampIndex = readerMeta.getColumnIndex(model.getTimestamp().token);
-                }
-
-                boolean framingSupported;
-                if (topDownColumnCount > 0) {
-                    framingSupported = true;
-                    for (int i = 0; i < topDownColumnCount; i++) {
-                        int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
-                        int type = readerMeta.getColumnType(columnIndex);
-                        int typeSize = ColumnType.sizeOf(type);
-
-                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
-                            // we don't frame non-primitive types yet
-                            framingSupported = false;
-                        }
-                        columnIndexes.add(columnIndex);
-                        columnSizes.add((Numbers.msb(typeSize)));
-
-                        mm.add(new TableColumnMetadata(
-                                Chars.toString(topDownColumns.getQuick(i).getName()),
-                                type,
-                                readerMeta.isColumnIndexed(columnIndex),
-                                readerMeta.getIndexValueBlockCapacity(columnIndex),
-                                readerMeta.isSymbolTableStatic(columnIndex)
-                        ));
-
-                        if (columnIndex == readerTimestampIndex) {
-                            mm.setTimestampIndex(mm.getColumnCount() - 1);
-                        }
-                    }
-
-                    // select timestamp when it is required but not already selected
-                    if (readerTimestampIndex != -1 && mm.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
-                        mm.add(new TableColumnMetadata(
-                                readerMeta.getColumnName(readerTimestampIndex),
-                                readerMeta.getColumnType(readerTimestampIndex)
-                        ));
-                        mm.setTimestampIndex(mm.getColumnCount() - 1);
-
-                        columnIndexes.add(readerTimestampIndex);
-                        columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
-                    }
-                } else {
-                    framingSupported = false;
-                }
 
                 // construct new metadata, which is a copy of what we constructed just above, but
                 // in the interest of isolating problems we will only affect this factory
 
                 return new TableReaderRecordCursorFactory(
-                        mm,
+                        myMeta,
                         engine,
                         tableName,
                         model.getTableVersion(),
@@ -1913,7 +1886,7 @@ public class SqlCodeGenerator {
                     metadata,
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, readerMeta, listColumnFilterA, false),
                     keyTypes,
                     null
             );
@@ -1956,18 +1929,29 @@ public class SqlCodeGenerator {
         return unionFactory;
     }
 
-    private int getTimestampIndex(RecordCursorFactory factory, RecordMetadata metadata, ExpressionNode timestamp) throws SqlException {
-        int timestampIndex;
-        timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-        if (timestampIndex == -1) {
+    private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
+        final RecordMetadata metadata = factory.getMetadata();
+        try {
+            return getTimestampIndex(model, metadata);
+        } catch (SqlException e) {
             Misc.free(factory);
-            throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            throw e;
         }
-        if (metadata.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
-            Misc.free(factory);
-            throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+    }
+
+    private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
+        final ExpressionNode timestamp = model.getTimestamp();
+        if (timestamp != null) {
+            int timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+            if (timestampIndex == -1) {
+                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            }
+            if (metadata.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
+                throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+            }
+            return timestampIndex;
         }
-        return timestampIndex;
+        return metadata.getTimestampIndex();
     }
 
     private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
@@ -1978,6 +1962,10 @@ public class SqlCodeGenerator {
             }
         }
         return true;
+    }
+
+    private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
+        return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
     private void lookupColumnIndexes(
@@ -2055,11 +2043,11 @@ public class SqlCodeGenerator {
     private void validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         final int firstColumnType = metadata.getColumnType(0);
         if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
-            assert intrinsicModel.keySubQuery.getColumns() != null;
-            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
+            assert intrinsicModel.keySubQuery.getBottomUpColumns() != null;
+            assert intrinsicModel.keySubQuery.getBottomUpColumns().size() > 0;
 
             throw SqlException
-                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
+                    .position(intrinsicModel.keySubQuery.getBottomUpColumns().getQuick(0).getAst().position)
                     .put("unsupported column type: ")
                     .put(metadata.getColumnName(0))
                     .put(": ")

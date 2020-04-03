@@ -1116,7 +1116,10 @@ public class TableReader implements Closeable {
     }
 
     private boolean reloadInitialNonPartitioned() {
-        long dataVersion = this.dataVersion;
+        final long dataVersion = this.dataVersion;
+        final long structVersion = this.structVersion;
+        final long partitionTableVersion = this.partitionTableVersion;
+
         if (readTxn()) {
             reloadStruct();
             reloadSymbolMapCounts();
@@ -1127,7 +1130,9 @@ public class TableReader implements Closeable {
                 return true;
             }
         }
-        return dataVersion != this.dataVersion;
+        return dataVersion != this.dataVersion
+                || structVersion != this.structVersion
+                || partitionTableVersion != this.partitionTableVersion;
     }
 
     private boolean reloadInitialPartitioned() {

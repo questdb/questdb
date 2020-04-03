@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     final DirectLongList rows;
@@ -47,10 +48,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     @Override
     public void close() {
         rows.close();
-        if (cursor != null) {
-            cursor.close();
-            cursor = null;
-        }
+        cursor = Misc.free(cursor);
     }
 
     @Override

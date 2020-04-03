@@ -73,7 +73,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
             int timestampIndex
     ) throws SqlException {
-        final int columnCount = model.getColumns().size();
+        final int columnCount = model.getBottomUpColumns().size();
         final RecordMetadata metadata = base.getMetadata();
         this.groupByFunctions = new ObjList<>(columnCount);
         valueTypes.add(ColumnType.BYTE); // gap flag

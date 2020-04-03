@@ -612,13 +612,16 @@ public class TableWriter implements Closeable {
         LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
         // check if we are moving timestamp from a partitioned table
-        boolean timestamp = index == metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        boolean timestamp = index == timestampIndex;
 
         if (timestamp && partitionBy != PartitionBy.NONE) {
             throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
         }
 
         commit();
+
+        final CharSequence timestampColumnName = timestampIndex != -1 ? metadata.getColumnName(timestampIndex) : null;
 
         this.metaSwapIndex = removeColumnFromMeta(index);
 
@@ -668,6 +671,11 @@ public class TableWriter implements Closeable {
         bumpStructureVersion();
 
         metadata.removeColumn(name);
+        if (timestamp) {
+            metadata.setTimestampIndex(-1);
+        } else if (timestampColumnName != null) {
+            metadata.setTimestampIndex(metadata.getColumnIndex(timestampColumnName));
+        }
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }

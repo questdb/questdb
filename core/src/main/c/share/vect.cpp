@@ -396,6 +396,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
+//    return avgDouble_Vanilla(d, count);
     Vec8d vec;
     const int step = 8;
     Vec8d vecsum = 0.;

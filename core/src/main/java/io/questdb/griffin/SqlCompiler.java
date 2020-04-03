@@ -1228,7 +1228,7 @@ public class SqlCompiler implements Closeable {
                     final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(index), function.getType())) {
                         throw SqlException.inconvertibleTypes(
-                                model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                                model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
                                 function.getType(),
                                 model.getColumnValues().getQuick(i).token,
                                 metadata.getColumnType(index),
@@ -1255,7 +1255,7 @@ public class SqlCompiler implements Closeable {
                     Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
                     if (!isAssignableFrom(metadata.getColumnType(i), function.getType())) {
                         throw SqlException.inconvertibleTypes(
-                                model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                                model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
                                 function.getType(),
                                 model.getColumnValues().getQuick(i).token,
                                 metadata.getColumnType(i),
@@ -1304,9 +1304,6 @@ public class SqlCompiler implements Closeable {
             }
 
             final RecordToRowCopier copier;
-
-            boolean noTimestampColumn = true;
-
             CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
             if (columnSetSize > 0) {
@@ -1322,10 +1319,6 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
                     }
 
-                    if (index == writerTimestampIndex) {
-                        noTimestampColumn = false;
-                    }
-
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
                     if (isAssignableFrom(toType, fromType)) {
@@ -1339,12 +1332,6 @@ public class SqlCompiler implements Closeable {
                                 writerMetadata.getColumnName(i)
                         );
                     }
-                }
-
-                // fail when target table requires chronological data and timestamp column
-                // is not in the list of columns to be updated
-                if (writerTimestampIndex > -1 && noTimestampColumn) {
-                    throw SqlException.$(model.getColumnPosition(0), "column list must include timestamp");
                 }
 
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
@@ -1365,9 +1352,9 @@ public class SqlCompiler implements Closeable {
                     // We are going on a limp here. There is nowhere to position this error in our model.
                     // We will try to position on column (i) inside cursor's query model. Assumption is that
                     // it will always have a column, e.g. has been processed by optimiser
-                    assert i < model.getQueryModel().getColumns().size();
+                    assert i < model.getQueryModel().getBottomUpColumns().size();
                     throw SqlException.inconvertibleTypes(
-                            model.getQueryModel().getColumns().getQuick(i).getAst().position,
+                            model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
                             fromType,
                             cursorMetadata.getColumnName(i),
                             toType,
@@ -1565,7 +1552,7 @@ public class SqlCompiler implements Closeable {
     ) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
         int targetColumnCount = model.getColumnSet().size();
-        if (targetColumnCount > 0 && queryModel.getColumns().size() != targetColumnCount) {
+        if (targetColumnCount > 0 && queryModel.getBottomUpColumns().size() != targetColumnCount) {
             throw SqlException.$(model.getTableName().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);

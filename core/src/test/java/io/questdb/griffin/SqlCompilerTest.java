@@ -2004,6 +2004,69 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRemoveColumnShiftTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("b");
+                    Assert.assertEquals(1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveTimestampAndReplace() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("t");
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                    writer.addColumn("t", ColumnType.TIMESTAMP);
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("t");
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
+
+    @Test
     public void testCreateAsSelectReplaceTimestamp() {
         try {
             assertCreateTableAsSelect(
@@ -3016,18 +3079,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             assertInsertAsSelectIOError(inError, ff);
         });
-    }
-
-    @Test
-    public void testInsertAsSelectTimestampNotInList() throws Exception {
-        testInsertAsSelectError("create table x (a INT, b INT, n TIMESTAMP) timestamp(n)",
-                "insert into x (b,a)" +
-                        " select * from (" +
-                        " select" +
-                        " rnd_int()," +
-                        " rnd_int() x" +
-                        " from long_sequence(30)" +
-                        ") timestamp(x)", 15, "column list must include timestamp");
     }
 
     @Test
