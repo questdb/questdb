@@ -343,6 +343,32 @@ public class TruncateTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testTableOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false
+            );
+
+
+            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only x", sqlExecutionContext).getType());
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false
+            );
+        });
+    }
+
     private void createX() throws SqlException {
         createX(10);
     }
