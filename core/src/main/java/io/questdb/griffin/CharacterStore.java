@@ -116,7 +116,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         next = null;
     }
 
-    private class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {
+    public class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {
         int lo;
         int hi;
 
