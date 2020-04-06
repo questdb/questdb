@@ -46,18 +46,6 @@ final class WhereClauseParser {
     private static final int INTRINCIC_OP_NOT_EQ = 7;
     private static final int INTRINCIC_OP_NOT = 8;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
-
-    static {
-        intrinsicOps.put("in", INTRINCIC_OP_IN);
-        intrinsicOps.put(">", INTRINCIC_OP_GREATER);
-        intrinsicOps.put(">=", INTRINCIC_OP_GREATER_EQ);
-        intrinsicOps.put("<", INTRINCIC_OP_LESS);
-        intrinsicOps.put("<=", INTRINCIC_OP_LESS_EQ);
-        intrinsicOps.put("=", INTRINCIC_OP_EQUAL);
-        intrinsicOps.put("!=", INTRINCIC_OP_NOT_EQ);
-        intrinsicOps.put("not", INTRINCIC_OP_NOT);
-    }
-
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
@@ -634,7 +622,13 @@ final class WhereClauseParser {
         return node;
     }
 
-    IntrinsicModel extract(AliasTranslator translator, ExpressionNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws SqlException {
+    IntrinsicModel extract(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex
+    ) throws SqlException {
         reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
@@ -732,5 +726,16 @@ final class WhereClauseParser {
             return csPool.next().of(value, 1, value.length() - 2);
         }
         return value;
+    }
+
+    static {
+        intrinsicOps.put("in", INTRINCIC_OP_IN);
+        intrinsicOps.put(">", INTRINCIC_OP_GREATER);
+        intrinsicOps.put(">=", INTRINCIC_OP_GREATER_EQ);
+        intrinsicOps.put("<", INTRINCIC_OP_LESS);
+        intrinsicOps.put("<=", INTRINCIC_OP_LESS_EQ);
+        intrinsicOps.put("=", INTRINCIC_OP_EQUAL);
+        intrinsicOps.put("!=", INTRINCIC_OP_NOT_EQ);
+        intrinsicOps.put("not", INTRINCIC_OP_NOT);
     }
 }

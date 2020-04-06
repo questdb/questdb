@@ -485,7 +485,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     compiler.compile(query, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals(expectedPosition, e.getPosition());
+                    Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                 }
                 Assert.assertEquals(0, engine.getBusyReaderCount());

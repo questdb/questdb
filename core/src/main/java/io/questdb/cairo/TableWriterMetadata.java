@@ -102,6 +102,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
+    void setTimestampIndex(int index) {
+        this.timestampIndex = index;
+    }
+
     public int getTableVersion() {
         return version;
     }

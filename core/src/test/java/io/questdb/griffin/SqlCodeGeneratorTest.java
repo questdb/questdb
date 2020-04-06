@@ -1381,6 +1381,41 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedMixedColumns() throws Exception {
+        final String expected = "k\ta\n" +
+                "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
+                "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
+        assertQuery(expected,
+                "select k,a from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "k\ta\n" +
+                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                        "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                        "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                        "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
+                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n");
+    }
+
+    @Test
     public void testLatestByAllIndexedConstantFilter() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -2052,7 +2087,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str('USD', 'GBP', 'EUR')," +
                         " rnd_double()," +
                         " rnd_byte(0,1)," +
-                        " 0 timestamp" +
+                        " cast(0 as timestamp) timestamp" +
                         " from long_sequence(150)" +
                         ") timestamp (timestamp)",
                 "cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n" +
@@ -3125,7 +3160,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select" +
                         " 852921272," +
                         " 'J'," +
-                        " 1000000 t," +
+                        " cast(1000000 as timestamp) t," +
                         " 'APPC'" +
                         " from long_sequence(1)" +
                         ") timestamp(t)",

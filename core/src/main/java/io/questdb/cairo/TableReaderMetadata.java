@@ -86,10 +86,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8;
 
-        // this also copies metadata entries exactly once
-        // the flag is there to monitor if we ever copy timestamp somewhere else
-        // after timestamp moves once - we no longer interested in tracking it
-        boolean timestampRequired = true;
 
         if (columnCount > this.columnCount) {
             columnMetadata.setPos(columnCount);
@@ -125,11 +121,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 columnNameIndexMap.put(tmp.getName(), i);
                 tmp = moveMetadata(i, tmp);
 
-                if (copyFrom - 1 == timestampIndex && timestampRequired) {
-                    timestampIndex = i;
-                    timestampRequired = false;
-                }
-
                 int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
 
                 // now we copied entry, what do we do with value that was already there?
@@ -146,20 +137,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
                     columnNameIndexMap.put(tmp.getName(), copyTo - 1);
                     tmp = moveMetadata(copyTo - 1, tmp);
-                    copyFrom = copyTo;
                     copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
-
-                    if ((copyFrom - 1) == timestampIndex && timestampRequired) {
-                        timestampIndex = copyTo - 1;
-                        timestampRequired = false;
-                    }
-                }
-
-                // we have something left over?
-                // this means we are losing entry, better clear timestamp index
-                if (tmp != null && i == timestampIndex && timestampRequired) {
-                    timestampIndex = -1;
-                    timestampRequired = false;
                 }
             } else {
                 // new instance
@@ -172,9 +150,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         // ended up with fewer columns than before?
         // good idea to resize array and may be drop timestamp index
         if (columnCount < this.columnCount) {
-            if (timestampIndex >= columnCount && timestampRequired) {
-                timestampIndex = -1;
-            }
             // there is assertion further in the code that
             // new metadata does not suddenly displace non-null object
             // to make sure all fine and dandy we need to remove
@@ -185,6 +160,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             // we are done
             this.columnCount = columnCount;
         }
+        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
     }
 
     @Override

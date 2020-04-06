@@ -576,15 +576,14 @@ public class TableReader implements Closeable {
                             .$(']').$();
                 }
             }
-
-            // adjust columns list when leading partitions have been removed
-            if (prevMinTimestamp != minTimestamp) {
-                assert prevMinTimestamp < minTimestamp;
-                int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
-                columns.remove(0, getColumnBase(delta) - 1);
-                prevMinTimestamp = minTimestamp;
-                partitionCount -= delta;
-            }
+        }
+        // adjust columns list when leading partitions have been removed
+        if (prevMinTimestamp != minTimestamp) {
+            assert prevMinTimestamp < minTimestamp;
+            int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
+            columns.remove(0, getColumnBase(delta) - 1);
+            prevMinTimestamp = minTimestamp;
+            partitionCount -= delta;
         }
     }
 
@@ -1117,7 +1116,10 @@ public class TableReader implements Closeable {
     }
 
     private boolean reloadInitialNonPartitioned() {
-        long dataVersion = this.dataVersion;
+        final long dataVersion = this.dataVersion;
+        final long structVersion = this.structVersion;
+        final long partitionTableVersion = this.partitionTableVersion;
+
         if (readTxn()) {
             reloadStruct();
             reloadSymbolMapCounts();
@@ -1128,7 +1130,9 @@ public class TableReader implements Closeable {
                 return true;
             }
         }
-        return dataVersion != this.dataVersion;
+        return dataVersion != this.dataVersion
+                || structVersion != this.structVersion
+                || partitionTableVersion != this.partitionTableVersion;
     }
 
     private boolean reloadInitialPartitioned() {

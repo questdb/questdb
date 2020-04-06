@@ -88,7 +88,7 @@ public class GroupByUtils {
             int keyColumnIndex,
             boolean timestampUnimportant,
             int timestampIndex
-    ) {
+    ) throws SqlException {
 
         // Process group-by functions first to get the idea of
         // how many map values we will have.
@@ -110,7 +110,9 @@ public class GroupByUtils {
             if (node.type == ExpressionNode.LITERAL) {
                 // this is key
                 int index = metadata.getColumnIndexQuiet(node.token);
-                assert index != -1;
+                if (index == -1) {
+                    throw SqlException.invalidColumn(node.position, node.token);
+                }
                 type = metadata.getColumnType(index);
                 if (index != timestampIndex || timestampUnimportant) {
                     if (lastIndex != index) {
