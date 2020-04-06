@@ -946,6 +946,32 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
+    private boolean functionIsTimestamp(
+            InsertModel model,
+            ObjList<Function> valueFunctions,
+            RecordMetadata metadata,
+            int writerTimestampIndex,
+            int bottomUpColumnIndex,
+            int metadataColumnIndex,
+            Function function
+    ) throws SqlException {
+        if (isAssignableFrom(metadata.getColumnType(metadataColumnIndex), function.getType())) {
+            if (metadataColumnIndex == writerTimestampIndex) {
+                return true;
+            }
+            valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex);
+            return false;
+        }
+        throw SqlException.inconvertibleTypes(
+                model.getQueryModel().getBottomUpColumns().getQuick(bottomUpColumnIndex).getAst().position,
+                function.getType(),
+                model.getColumnValues().getQuick(bottomUpColumnIndex).token,
+                metadata.getColumnType(metadataColumnIndex),
+                metadata.getColumnName(metadataColumnIndex)
+        );
+    }
+
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -1029,11 +1055,7 @@ public class SqlCompiler implements Closeable {
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len);
             try {
-                final CharSequence name = GenericLexer.unhack(GenericLexer.unquote(model.getFileName().token));
-                if (name == null) {
-                    // full of hacks?
-                    throw SqlException.$(model.getFileName().position, "we don't like hacks");
-                }
+                final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
                 path.of(configuration.getInputRoot()).concat(name).$();
                 long fd = ff.openRO(path);
                 if (fd == -1) {
@@ -1268,21 +1290,8 @@ public class SqlCompiler implements Closeable {
                     }
 
                     final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
-                    if (!isAssignableFrom(metadata.getColumnType(index), function.getType())) {
-                        throw SqlException.inconvertibleTypes(
-                                model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
-                                function.getType(),
-                                model.getColumnValues().getQuick(i).token,
-                                metadata.getColumnType(index),
-                                metadata.getColumnName(index)
-                        );
-                    }
-
-                    if (index == writerTimestampIndex) {
+                    if (functionIsTimestamp(model, valueFunctions, metadata, writerTimestampIndex, i, index, function)) {
                         timestampFunction = function;
-                    } else {
-                        valueFunctions.add(function);
-                        listColumnFilter.add(index);
                     }
                 }
             } else {
@@ -1295,20 +1304,16 @@ public class SqlCompiler implements Closeable {
                 valueFunctions = new ObjList<>(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                    if (!isAssignableFrom(metadata.getColumnType(i), function.getType())) {
-                        throw SqlException.inconvertibleTypes(
-                                model.getQueryModel().getBottomUpColumns().getQuick(i).getAst().position,
-                                function.getType(),
-                                model.getColumnValues().getQuick(i).token,
-                                metadata.getColumnType(i),
-                                metadata.getColumnName(i)
-                        );
-                    }
-                    if (i == writerTimestampIndex) {
+                    if (functionIsTimestamp(
+                            model,
+                            valueFunctions,
+                            metadata,
+                            writerTimestampIndex,
+                            i,
+                            i,
+                            function
+                    )) {
                         timestampFunction = function;
-                    } else {
-                        valueFunctions.add(function);
-                        listColumnFilter.add(i);
                     }
                 }
             }
@@ -1649,7 +1654,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(0).put("timestamp is not defined");
         }
     }
-    
+
     private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
         if (null == configuration.getBackupRoot()) {
             throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");

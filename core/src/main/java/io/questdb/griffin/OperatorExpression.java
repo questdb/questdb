@@ -33,6 +33,7 @@ public final class OperatorExpression {
     public static final int BINARY = 2;
     public static final int SET = 3;
     static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
+        add(new OperatorExpression(".", 1, false, BINARY));
         add(new OperatorExpression("^", 2, false, BINARY));
         add(new OperatorExpression("*", 3, true, BINARY));
         add(new OperatorExpression("/", 3, true, BINARY));

@@ -592,17 +592,17 @@ public class CopyTest extends AbstractCairoTest {
                 "copy x from '../../../../../'",
                 null,
                 12,
-                "we don't like hacks"
+                "'.' is not allowed"
         ));
     }
 
     @Test
     public void testCopyFullHack2() throws Exception {
         assertMemoryLeak(() -> assertFailure(
-                "copy x from '../../../../..\\..\\..\\'",
+                "copy x from '\\..\\..\\'",
                 null,
-                12,
-                "we don't like hacks"
+                13,
+                "'.' is not allowed"
         ));
     }
 
