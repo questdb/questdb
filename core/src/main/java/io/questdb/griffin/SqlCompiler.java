@@ -45,6 +45,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -1688,7 +1689,7 @@ public class SqlCompiler implements Closeable {
 
 		CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
 		try (TableReader reader = engine.getReader(securityContext, tableName)) {
-			cloneMetaData(tableName, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode(), (TableReaderMetadata) reader.getMetadata());
+            cloneMetaData(tableName, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode(), reader);
             try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName)) {
                 RecordCursor cursor = reader.getCursor();
 				copyTableData(cursor, reader.getMetadata(), backupWriter);
@@ -1698,7 +1699,7 @@ public class SqlCompiler implements Closeable {
 		LOG.info().$("Completed backup of ").$(tableName).$();
 	}
 
-	private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReaderMetadata sourceMetaData) {
+    private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReader reader) {
 		path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
 
 		if (ff.exists(path)) {
@@ -1709,6 +1710,7 @@ public class SqlCompiler implements Closeable {
 			throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
 		}
 
+        TableReaderMetadata sourceMetaData = (TableReaderMetadata) reader.getMetadata();
 		int rootLen = path.length();
 		try {
 			mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
@@ -1719,7 +1721,8 @@ public class SqlCompiler implements Closeable {
 			int symbolMapCount = 0;
 			for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
 				if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
-					SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), 128, true);
+                    SymbolMapReader mapReader = reader.getSymbolMapReader(i);
+                    SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
 					symbolMapCount++;
 				}
 			}
