@@ -41,6 +41,7 @@ public interface CompiledQuery {
     int INSERT_AS_SELECT = 9;
     int COPY_REMOTE = 10;
     int RENAME_TABLE = 11;
+    int BACKUP_TABLE = 12;
 
     RecordCursorFactory getRecordCursorFactory();
 

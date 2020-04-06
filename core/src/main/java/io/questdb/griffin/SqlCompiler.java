@@ -84,6 +84,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -1650,7 +1651,7 @@ public class SqlCompiler implements Closeable {
       }
     
 	private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
-		ObjList<CharSequence> tableNames = new ObjList<>();
+        ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
 		while (true) {
 			CharSequence tok = SqlUtil.fetchNext(lexer);
 			if (null == tok) {
@@ -1676,7 +1677,7 @@ public class SqlCompiler implements Closeable {
 			backupTable(tableNames.get(n), executionContext);
 		}
 
-		return compiledQuery.ofRenameTable();
+        return compiledQuery.ofBackupTable();
 	}
     
 	public void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
@@ -1688,7 +1689,8 @@ public class SqlCompiler implements Closeable {
 		CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
 		try (TableReader reader = engine.getReader(securityContext, tableName)) {
 			cloneMetaData(tableName, configuration.getRoot(), configuration.getBackupRoot(), configuration.getMkDirMode(), (TableReaderMetadata) reader.getMetadata());
-			try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName); RecordCursor cursor = reader.getCursor()) {
+            try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName)) {
+                RecordCursor cursor = reader.getCursor();
 				copyTableData(cursor, reader.getMetadata(), backupWriter);
 				backupWriter.commit();
 			}
@@ -1700,7 +1702,7 @@ public class SqlCompiler implements Closeable {
 		path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
 
 		if (ff.exists(path)) {
-			throw CairoException.instance(0).put("Backup dir for table \"" + tableName + "\" already exists [dir=").put(path).put(']');
+            throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(path).put(']');
 		}
 
 		if (ff.mkdirs(path, mkDirMode) != 0) {
