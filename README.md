@@ -36,15 +36,15 @@ PostgreSQL wire protocol or via Java API. The whole database and console fits in
 
 ## Getting Started
 
-See our [Get Started guide](https://www.questdb.io/docs/getstarted).
+See our [Get Started guide](https://www.questdb.io/getstarted).
 The easiest way to get started is to play with our
-web [console](https://www.questdb.io/docs/console). This will allow you to import
+web [console](https://www.questdb.io/docs/usingWebConsole). This will allow you to import
 and query data using an intuitive interface.
 
-You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In short,
+You may also take a look at our [storage model](https://www.questdb.io/docs/storageModel). In short,
 we are a column-oriented database, which partitions data by time intervals.
 
-You can find more documentation [here](https://www.questdb.io/docs/docstructure)
+You can find more in [our documentation](https://www.questdb.io/docs/documentationOverview)
 
 ## Support / Contact
 
