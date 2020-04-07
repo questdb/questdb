@@ -199,6 +199,35 @@ public class TableBackupTest {
         });
     }
 
+    @Test
+    public void backupDatabaseTest() throws Exception {
+        assertMemoryLeak(() -> {
+            // @formatter:off
+            mainCompiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,2) sym," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+            mainCompiler.compile("create table tb2 as (select" +
+                    " rnd_long256() ll," +
+                    " timestamp_sequence(10000000000, 500000000) ts" +
+                    " from long_sequence(100000)) timestamp(ts)", mainSqlExecutionContext);
+            // @formatter:on
+
+            mainCompiler.compile("backup database", mainSqlExecutionContext);
+
+            setFinalBackupPath();
+
+            String sourceSelectAll = selectAll("tb1", false);
+            String backupSelectAll = selectAll("tb1", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+
+            sourceSelectAll = selectAll("tb2", false);
+            backupSelectAll = selectAll("tb2", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+        });
+    }
+
     private void setFinalBackupPath() {
         setFinalBackupPath(0);
     }

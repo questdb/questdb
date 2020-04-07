@@ -94,6 +94,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 
@@ -1656,29 +1657,32 @@ public class SqlCompiler implements Closeable {
             if (Chars.equalsLowerCaseAscii(tok, "table")) {
                 return sqlTableBackup(executionContext);
             }
-        }
-        throw SqlException.position(lexer.getPosition()).put(" expected 'table'");
-    }
-    
-	private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
-        // TODO: Use a formatter that produces less garbage
-        DateTimeFormatter formatter = configuration.getBackupDirDateTimeFormatter();
-        String subDirNm = formatter.format(LocalDate.now());
-        int n = 0;
-        // TODO: There is a race here, to threads could try and create the same renamePath, only one will succeed the other will throw
-        // a CairoException. Maybe it should be serialised
-        do {
-            renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR).concat(subDirNm);
-            if (n > 0) {
-                renamePath.put('.').put(Integer.valueOf(n).toString());
+            if (Chars.equalsLowerCaseAscii(tok, "database")) {
+                return sqlDatabaseBackup(executionContext);
             }
-            renamePath.put(Files.SEPARATOR).$();
-            n++;
-        } while (ff.exists(renamePath));
-        if (ff.mkdirs(renamePath, configuration.getMkDirMode()) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(renamePath).put(']');
         }
 
+        throw SqlException.position(lexer.getPosition()).put(" expected 'table' or 'database'");
+    }
+
+    private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
+        setupBackupRenamePath();
+        // TODO: Cache the nativeLPSZ
+        NativeLPSZ nativeLPSZ = new NativeLPSZ();
+        ff.iterateDir(path.of(configuration.getRoot()).$(), (file, type) -> {
+            nativeLPSZ.of(file);
+            if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+                backupTable(nativeLPSZ, executionContext);
+            }
+        });
+
+        return compiledQuery.ofBackupTable();
+    }
+
+	private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
+        setupBackupRenamePath();
+
+        @SuppressWarnings("unchecked")
         ObjHashSet<CharSequence> tableNames = (ObjHashSet<CharSequence>) cachedObjSet;
         try {
             tableNames.clear();
@@ -1703,7 +1707,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
 
-            for (n = 0; n < tableNames.size(); n++) {
+            for (int n = 0; n < tableNames.size(); n++) {
                 backupTable(tableNames.get(n), executionContext);
             }
 
@@ -1712,6 +1716,26 @@ public class SqlCompiler implements Closeable {
             tableNames.clear();
         }
 	}
+
+    private void setupBackupRenamePath() {
+        // TODO: Use a formatter that produces less garbage
+        DateTimeFormatter formatter = configuration.getBackupDirDateTimeFormatter();
+        String subDirNm = formatter.format(LocalDate.now());
+        int n = 0;
+        // TODO: There is a race here, to threads could try and create the same renamePath, only one will succeed the other will throw
+        // a CairoException. Maybe it should be serialised
+        do {
+            renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR).concat(subDirNm);
+            if (n > 0) {
+                renamePath.put('.').put(Integer.valueOf(n).toString());
+            }
+            renamePath.put(Files.SEPARATOR).$();
+            n++;
+        } while (ff.exists(renamePath));
+        if (ff.mkdirs(renamePath, configuration.getMkDirMode()) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(renamePath).put(']');
+        }
+    }
     
     private transient String cachedTmpBackupRoot;
 
