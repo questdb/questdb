@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import java.time.format.DateTimeFormatter;
+
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Chars;
@@ -294,5 +296,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getBackupRoot() {
     	return null;
+    }
+
+    @Override
+    public DateTimeFormatter getBackupDirDateTimeFormatter() {
+        return null;
     }
 }

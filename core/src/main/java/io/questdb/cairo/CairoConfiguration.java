@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import java.time.format.DateTimeFormatter;
+
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.microtime.MicrosecondClock;
@@ -74,6 +76,9 @@ public interface CairoConfiguration {
 
     // null disables backups
     CharSequence getBackupRoot();
+
+    // TODO: Use a formatter that doesn't generate so much garbage
+    DateTimeFormatter getBackupDirDateTimeFormatter();
 
     long getSpinLockTimeoutUs();
 

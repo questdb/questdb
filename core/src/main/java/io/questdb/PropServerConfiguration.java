@@ -24,6 +24,12 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.Arrays;
+import java.util.Properties;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
@@ -34,15 +40,37 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.microtime.TimestampFormatFactory;
@@ -52,10 +80,6 @@ import io.questdb.std.time.DateFormatFactory;
 import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -180,6 +204,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
     private final String backupRoot;
+    private final DateTimeFormatter backupDirDateTimeFormatter;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -323,6 +348,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
         this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
+        this.backupDirDateTimeFormatter = getDateTimeFormat(properties, "cairo.sql.backup.dir.datetime.format", null);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -497,6 +523,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             return defaultValue;
         }
         return value;
+    }
+
+    private DateTimeFormatter getDateTimeFormat(Properties properties, String key, String defaultPattern) throws ServerConfigurationException {
+        String pattern = properties.getProperty(key);
+        if (null == pattern) {
+            pattern = defaultPattern;
+        }
+        if (null != pattern) {
+            if (pattern.contains(new StringBuilder().append(Files.SEPARATOR).toString())) {
+                throw new ServerConfigurationException(key, pattern);
+            }
+            return new DateTimeFormatterBuilder().appendPattern(pattern).toFormatter();
+        }
+        return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     }
 
     private void parseBindTo(
@@ -888,6 +928,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         	return backupRoot;
         }
         
+        @Override
+        public DateTimeFormatter getBackupDirDateTimeFormatter() {
+            return backupDirDateTimeFormatter;
+        }
+
         @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;

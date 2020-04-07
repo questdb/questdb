@@ -79,12 +79,12 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
      */
-    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus, boolean backupWriter) {
+    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
-        this.root = backupWriter ? configuration.getBackupRoot() : configuration.getRoot();
+        this.root = configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
