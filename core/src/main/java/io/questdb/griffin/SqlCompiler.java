@@ -1756,7 +1756,7 @@ public class SqlCompiler implements Closeable {
             if (null == configuration.getBackupRoot()) {
                 throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
-            path.of(configuration.getBackupRoot()).concat("tmp").put(Files.SEPARATOR).$();
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).$();
             cachedTmpBackupRoot = path.toString();
             if (!ff.exists(path)) {
                 LOG.info().$("Creating backup directory ").$(cachedTmpBackupRoot).$();
@@ -1776,7 +1776,7 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        path.of(configuration.getBackupRoot()).concat("tmp").put(Files.SEPARATOR).concat(tableName).$();
+        path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
         int renameRootLen = renamePath.length();
         try {
             renamePath.trimTo(renameRootLen).concat(tableName).$();

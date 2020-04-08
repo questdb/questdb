@@ -301,4 +301,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public TimestampFormat getBackupDirTimestampFormat() {
         return null;
     }
+
+    @Override
+    public CharSequence getBackupTempDirName() {
+        return "tmp";
+    }
 }
