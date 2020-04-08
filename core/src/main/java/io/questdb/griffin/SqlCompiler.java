@@ -81,6 +81,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -130,6 +131,8 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final ObjHashSet<?> cachedObjSet = new ObjHashSet<>();
+    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+    private transient SqlExecutionContext currentExecutionContext;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -222,6 +225,7 @@ public class SqlCompiler implements Closeable {
 
     @Override
     public void close() {
+        assert null == currentExecutionContext;
         assert cachedObjSet.isEmpty();
         Misc.free(path);
         Misc.free(renamePath);
@@ -1662,24 +1666,28 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        throw SqlException.position(lexer.getPosition()).put(" expected 'table' or 'database'");
+        throw SqlException.position(lexer.lastTokenPosition()).put(" expected 'table' or 'database'");
     }
+
+    private final FindVisitor sqlDatabaseBackupOnFind = (file, type) -> {
+        nativeLPSZ.of(file);
+        if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+            backupTable(nativeLPSZ, currentExecutionContext);
+        }
+    };
 
     private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
-        setupBackupRenamePath();
-        // TODO: Cache the nativeLPSZ
-        NativeLPSZ nativeLPSZ = new NativeLPSZ();
-        ff.iterateDir(path.of(configuration.getRoot()).$(), (file, type) -> {
-            nativeLPSZ.of(file);
-            if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-                backupTable(nativeLPSZ, executionContext);
-            }
-        });
-
-        return compiledQuery.ofBackupTable();
+        currentExecutionContext = executionContext;
+        try {
+            setupBackupRenamePath();
+            ff.iterateDir(path.of(configuration.getRoot()).$(), sqlDatabaseBackupOnFind);
+            return compiledQuery.ofBackupTable();
+        } finally {
+            currentExecutionContext = null;
+        }
     }
 
-	private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
         setupBackupRenamePath();
 
         @SuppressWarnings("unchecked")
@@ -1689,12 +1697,15 @@ public class SqlCompiler implements Closeable {
             while (true) {
                 CharSequence tok = SqlUtil.fetchNext(lexer);
                 if (null == tok) {
-                    throw SqlException.position(lexer.getPosition()).put(" expected a table name");
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected a table name");
                 }
-                CharSequence tableName = GenericLexer.unquote(tok);
+                CharSequence tableName = GenericLexer.unhack(GenericLexer.unquote(tok));
+                if (tableName == null) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected a valid table name");
+                }
                 int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
-                    throw SqlException.position(lexer.getPosition()).put(" '").put(tableName).put("' is not  a valid table");
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" '").put(tableName).put("' is not  a valid table");
                 }
                 tableNames.add(tableName);
 
@@ -1703,7 +1714,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 }
                 if (!Chars.equals(tok, ',')) {
-                    throw SqlException.position(lexer.getPosition()).put(" expected ','");
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected ','");
                 }
             }
 
@@ -1715,7 +1726,7 @@ public class SqlCompiler implements Closeable {
         } finally {
             tableNames.clear();
         }
-	}
+    }
 
     private void setupBackupRenamePath() {
         // TODO: Use a formatter that produces less garbage
@@ -1727,7 +1738,7 @@ public class SqlCompiler implements Closeable {
         do {
             renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR).concat(subDirNm);
             if (n > 0) {
-                renamePath.put('.').put(Integer.valueOf(n).toString());
+                renamePath.put('.').put(n);
             }
             renamePath.put(Files.SEPARATOR).$();
             n++;
@@ -1736,7 +1747,7 @@ public class SqlCompiler implements Closeable {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(renamePath).put(']');
         }
     }
-    
+
     private transient String cachedTmpBackupRoot;
 
     private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
@@ -1779,38 +1790,38 @@ public class SqlCompiler implements Closeable {
     }
 
     private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-		path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
+        path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
 
-		if (ff.exists(path)) {
+        if (ff.exists(path)) {
             throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(path).put(']');
-		}
+        }
 
-		if (ff.mkdirs(path, mkDirMode) != 0) {
-			throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-		}
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+        }
 
         TableReaderMetadata sourceMetaData = (TableReaderMetadata) reader.getMetadata();
-		int rootLen = path.length();
-		try {
-			mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
-			sourceMetaData.cloneTo(mem);
-	
-			// create symbol maps
-			path.trimTo(rootLen).$();
-			int symbolMapCount = 0;
-			for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
-				if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
+        int rootLen = path.length();
+        try {
+            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+            sourceMetaData.cloneTo(mem);
+
+            // create symbol maps
+            path.trimTo(rootLen).$();
+            int symbolMapCount = 0;
+            for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
+                if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
                     SymbolMapReader mapReader = reader.getSymbolMapReader(i);
                     SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
-					symbolMapCount++;
-				}
-			}
-			mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
-			TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
-		} finally {
-			mem.close();
-		}
-	}
+                    symbolMapCount++;
+                }
+            }
+            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+        } finally {
+            mem.close();
+        }
+    }
 
     @FunctionalInterface
     private interface KeywordBasedExecutor {

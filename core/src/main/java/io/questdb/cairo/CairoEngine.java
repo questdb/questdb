@@ -212,8 +212,7 @@ public class CairoEngine implements Closeable {
     }
 
     public boolean releaseAllWriters () {
-    	boolean released = writerPool.releaseAll();
-    	return released;
+        return writerPool.releaseAll();
     }
     
 	public boolean releaseInactive() {

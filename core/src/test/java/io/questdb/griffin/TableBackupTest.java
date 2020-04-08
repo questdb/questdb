@@ -167,35 +167,47 @@ public class TableBackupTest {
         });
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void missingTableTest() throws Exception {
         assertMemoryLeak(() -> {
-            // @formatter:off
-            mainCompiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,2) sym," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-            // @formatter:on
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
 
-            mainCompiler.compile("backup table tb1, tb2", mainSqlExecutionContext);
+                mainCompiler.compile("backup table tb1, tb2", mainSqlExecutionContext);
+                Assert.assertTrue(false);
+            } catch (SqlException ex) {
+                Assert.assertEquals("io.questdb.griffin.SqlException: [18]  'tb2' is not  a valid table", ex.toString());
+            }
         });
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void incorrectConfigTest() throws Exception {
         backupRoot = null;
         assertMemoryLeak(() -> {
-            String tableName = "testTable1";
-            // @formatter:off
-            mainCompiler.compile("create table " + tableName + " as (select" +
-                    " rnd_symbol(4,4,4,2) sym," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-            // @formatter:on
+            try {
+                String tableName = "testTable1";
+                // @formatter:off
+                mainCompiler.compile("create table " + tableName + " as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
 
-            mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+                mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+                Assert.assertTrue(false);
+            } catch (CairoException ex) {
+                Assert.assertEquals(
+                        "io.questdb.cairo.CairoException: [0] Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]",
+                        ex.toString());
+            }
         });
     }
 
@@ -225,6 +237,74 @@ public class TableBackupTest {
             sourceSelectAll = selectAll("tb2", false);
             backupSelectAll = selectAll("tb2", true);
             Assert.assertEquals(sourceSelectAll, backupSelectAll);
+        });
+    }
+
+    @Test
+    public void invalidSqlTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                mainCompiler.compile("backup something", mainSqlExecutionContext);
+            } catch (SqlException ex) {
+                Assert.assertEquals("io.questdb.griffin.SqlException: [7]  expected 'table' or 'database'", ex.toString());
+            }
+        });
+    }
+
+    @Test
+    public void invalidSqlTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                mainCompiler.compile("backup table", mainSqlExecutionContext);
+            } catch (SqlException ex) {
+                Assert.assertEquals("io.questdb.griffin.SqlException: [7]  expected a table name", ex.toString());
+            }
+        });
+    }
+
+    @Test
+    public void invalidSqlTest3() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                mainCompiler.compile("create table tb2 as (select" +
+                        " rnd_long256() ll," +
+                        " timestamp_sequence(10000000000, 500000000) ts" +
+                        " from long_sequence(100000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table tb1 tb2", mainSqlExecutionContext);
+            } catch (SqlException ex) {
+                Assert.assertEquals("io.questdb.griffin.SqlException: [17]  expected ','", ex.toString());
+            }
+        });
+    }
+
+    @Test
+    public void compromisedTableNameTest() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table ../tb1", mainSqlExecutionContext);
+                setFinalBackupPath();
+                String sourceSelectAll = selectAll("tb1", false);
+                String backupSelectAll = selectAll("tb1", true);
+                Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            } catch (SqlException ex) {
+                Assert.assertEquals("io.questdb.griffin.SqlException: [13]  expected a valid table name", ex.toString());
+            }
         });
     }
 
@@ -271,11 +351,6 @@ public class TableBackupTest {
         try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             sink.clear();
             printer.print(cursor, factory.getMetadata(), true);
-            cursor.toTop();
-            Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                printer.print(record, factory.getMetadata());
-            }
         }
         return sink.toString();
     }
