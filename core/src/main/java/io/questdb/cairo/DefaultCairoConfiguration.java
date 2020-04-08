@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import java.time.format.DateTimeFormatter;
-
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Chars;
@@ -34,6 +32,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
 
@@ -299,7 +298,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public DateTimeFormatter getBackupDirDateTimeFormatter() {
+    public TimestampFormat getBackupDirTimestampFormat() {
         return null;
     }
 }

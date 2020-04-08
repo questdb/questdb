@@ -71,8 +71,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatFactory;
 import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
@@ -204,7 +206,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sqlWithClauseModelPoolCapacity;
     private int sqlInsertModelPoolCapacity;
     private final String backupRoot;
-    private final DateTimeFormatter backupDirDateTimeFormatter;
+    private final TimestampFormat backupDirTimestampFormat;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -348,7 +350,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
         this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
-        this.backupDirDateTimeFormatter = getDateTimeFormat(properties, "cairo.sql.backup.dir.datetime.format", null);
+        this.backupDirTimestampFormat = getTimestampFormat(properties, "cairo.sql.backup.dir.datetime.format", null);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -525,18 +527,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private DateTimeFormatter getDateTimeFormat(Properties properties, String key, String defaultPattern) throws ServerConfigurationException {
+    private TimestampFormat getTimestampFormat(Properties properties, String key, String defaultPattern) throws ServerConfigurationException {
         String pattern = properties.getProperty(key);
         if (null == pattern) {
             pattern = defaultPattern;
         }
+        DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
-            if (pattern.contains(new StringBuilder().append(Files.SEPARATOR).toString())) {
+            if (pattern.contains(new StringBuilder().append(Files.SEPARATOR).toString()) || pattern.startsWith(".")) {
                 throw new ServerConfigurationException(key, pattern);
             }
-            return new DateTimeFormatterBuilder().appendPattern(pattern).toFormatter();
+            return compiler.compile(pattern);
         }
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+        return compiler.compile("yyyy-MM-dd");
     }
 
     private void parseBindTo(
@@ -929,8 +932,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         
         @Override
-        public DateTimeFormatter getBackupDirDateTimeFormatter() {
-            return backupDirDateTimeFormatter;
+        public TimestampFormat getBackupDirTimestampFormat() {
+            return backupDirTimestampFormat;
         }
 
         @Override

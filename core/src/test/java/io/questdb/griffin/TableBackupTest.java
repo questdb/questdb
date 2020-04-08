@@ -1,8 +1,6 @@
 package io.questdb.griffin;
 
 import java.io.IOException;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -19,11 +17,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Files;
+import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -313,12 +313,14 @@ public class TableBackupTest {
     }
 
     private void setFinalBackupPath(int n) {
-        DateTimeFormatter formatter = mainConfiguration.getBackupDirDateTimeFormatter();
-        String subDirNm = formatter.format(LocalDate.now());
+        TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
+        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
+        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), null, finalBackupPath);
         if (n > 0) {
-            subDirNm += "." + n;
+            finalBackupPath.put('.');
+            finalBackupPath.put(n);
         }
-        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR).concat(subDirNm).put(Files.SEPARATOR).$();
+        finalBackupPath.put(Files.SEPARATOR).$();
     }
 
     private String selectAll(String tableName, boolean backup) throws Exception {
@@ -368,8 +370,8 @@ public class TableBackupTest {
             }
 
             @Override
-            public DateTimeFormatter getBackupDirDateTimeFormatter() {
-                return DateTimeFormatter.ofPattern("ddMMMyyy'-backup'");
+            public TimestampFormat getBackupDirTimestampFormat() {
+                return new DateFormatCompiler().compile("ddMMMyyyy");
             }
         };
         MessageBus mainMessageBus = new MessageBusImpl();

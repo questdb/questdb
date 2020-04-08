@@ -25,8 +25,6 @@
 package io.questdb.griffin;
 
 import java.io.Closeable;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ServiceLoader;
 
 import org.jetbrains.annotations.NotNull;
@@ -95,6 +93,8 @@ import io.questdb.std.Os;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
@@ -1729,14 +1729,14 @@ public class SqlCompiler implements Closeable {
     }
 
     private void setupBackupRenamePath() {
-        // TODO: Use a formatter that produces less garbage
-        DateTimeFormatter formatter = configuration.getBackupDirDateTimeFormatter();
-        String subDirNm = formatter.format(LocalDate.now());
+        TimestampFormat format = configuration.getBackupDirTimestampFormat();
+        long epochMicros = configuration.getMicrosecondClock().getTicks();
         int n = 0;
-        // TODO: There is a race here, to threads could try and create the same renamePath, only one will succeed the other will throw
+        // TODO: There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
         // a CairoException. Maybe it should be serialised
         do {
-            renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR).concat(subDirNm);
+            renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR);
+            format.format(epochMicros, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
             }
