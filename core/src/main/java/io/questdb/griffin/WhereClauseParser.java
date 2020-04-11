@@ -64,13 +64,19 @@ final class WhereClauseParser {
         }
     }
 
+    private static boolean nodesEqual(ExpressionNode left, ExpressionNode right) {
+        return (left.type == ExpressionNode.LITERAL || left.type == ExpressionNode.CONSTANT) &&
+                (right.type == ExpressionNode.LITERAL || right.type == ExpressionNode.CONSTANT) &&
+                Chars.equals(left.token, right.token);
+    }
+
     private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
     private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
-        if (Chars.equals(a.token, b.token)) {
+        if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
@@ -143,7 +149,7 @@ final class WhereClauseParser {
     private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, int increment) throws SqlException {
         checkNodeValid(node);
 
-        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+        if (nodesEqual(node.lhs, node.rhs)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
@@ -291,7 +297,7 @@ final class WhereClauseParser {
 
         checkNodeValid(node);
 
-        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+        if (nodesEqual(node.lhs, node.rhs)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
