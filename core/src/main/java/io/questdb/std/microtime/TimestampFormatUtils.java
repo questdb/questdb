@@ -30,7 +30,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
 
-public class DateFormatUtils {
+public class TimestampFormatUtils {
     public static final int HOUR_24 = 2;
     public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
@@ -38,7 +38,7 @@ public class DateFormatUtils {
     public static final TimestampFormat USEC_UTC_FORMAT;
     public static final TimestampFormat PG_TIMESTAMP_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
-    public static final TimestampLocale defaultLocale = TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale();
+    public static final TimestampLocale enLocale = TimestampLocaleFactory.INSTANCE.getLocale("en");
     private static final TimestampFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
@@ -89,7 +89,7 @@ public class DateFormatUtils {
         if (micros == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
+        UTC_FORMAT.format(micros, null, "Z", sink);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmuuuZ
@@ -97,7 +97,7 @@ public class DateFormatUtils {
         if (micros == Long.MIN_VALUE) {
             return;
         }
-        USEC_UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
+        USEC_UTC_FORMAT.format(micros, null, "Z", sink);
     }
 
     // YYYY-MM-DD
@@ -111,7 +111,7 @@ public class DateFormatUtils {
     }
 
     public static void formatHTTP(CharSink sink, long millis) {
-        HTTP_FORMAT.format(millis, defaultLocale, "GMT", sink);
+        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
     }
 
     // YYYY-MM
@@ -143,7 +143,7 @@ public class DateFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmmnnn
     public static long parseTimestamp(CharSequence seq) throws NumericException {
-        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), defaultLocale);
+        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), null);
     }
 
     public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
@@ -341,7 +341,7 @@ public class DateFormatUtils {
     }
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        return UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
+        return UTC_FORMAT.parse(seq, lo, lim, enLocale);
     }
 
 }

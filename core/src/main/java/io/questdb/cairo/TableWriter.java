@@ -33,9 +33,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatUtils;
 import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
@@ -95,11 +94,11 @@ public class TableWriter implements Closeable {
     private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
+    private final ObjList<Runnable> nullers;
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
     private int columnCount;
-    private ObjList<Runnable> nullers;
     private long fixedRowCount = 0;
     private long txn;
     private long structureVersion;
@@ -583,7 +582,7 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("table is not partitioned");
         }
         try {
-            return partitionDirFmt.parse(partitionName, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
+            return partitionDirFmt.parse(partitionName, null);
         } catch (NumericException e) {
             final CairoException ee = CairoException.instance(0);
             switch (partitionBy) {
@@ -2005,7 +2004,7 @@ public class TableWriter implements Closeable {
                 nativeLPSZ.of(pName);
                 if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR) {
                     try {
-                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
+                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
                         if (dirTimestamp <= timestamp) {
                             return;
                         }
@@ -2306,11 +2305,11 @@ public class TableWriter implements Closeable {
                 leap = Timestamps.isLeapYear(y);
                 m = Timestamps.getMonthOfYear(timestamp, y, leap);
                 d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                DateFormatUtils.append000(path, y);
+                TimestampFormatUtils.append000(path, y);
                 path.put('-');
-                DateFormatUtils.append0(path, m);
+                TimestampFormatUtils.append0(path, m);
                 path.put('-');
-                DateFormatUtils.append0(path, d);
+                TimestampFormatUtils.append0(path, d);
 
                 if (updatePartitionInterval) {
                     partitionHi =
@@ -2323,9 +2322,9 @@ public class TableWriter implements Closeable {
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
                 m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                DateFormatUtils.append000(path, y);
+                TimestampFormatUtils.append000(path, y);
                 path.put('-');
-                DateFormatUtils.append0(path, m);
+                TimestampFormatUtils.append0(path, m);
 
                 if (updatePartitionInterval) {
                     partitionHi =
@@ -2337,7 +2336,7 @@ public class TableWriter implements Closeable {
             case PartitionBy.YEAR:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
-                DateFormatUtils.append000(path, y);
+                TimestampFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
                     partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
                 }

@@ -26,7 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 
 public class IntrinsicModel implements Mutable {
@@ -151,7 +151,7 @@ public class IntrinsicModel implements Mutable {
                 }
 
                 try {
-                    long millis = DateFormatUtils.tryParse(seq, lo, lim);
+                    long millis = TimestampFormatUtils.tryParse(seq, lo, lim);
                     append(out, millis, millis);
                     break;
                 } catch (NumericException e) {
@@ -347,7 +347,7 @@ public class IntrinsicModel implements Mutable {
             // try date instead
         }
         try {
-            long loMillis = DateFormatUtils.tryParse(seq, lo, p);
+            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
             append(out, loMillis, Timestamps.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);

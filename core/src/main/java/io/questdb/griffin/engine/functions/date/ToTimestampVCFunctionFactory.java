@@ -37,7 +37,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
@@ -54,7 +53,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
         }
-        return new Func(position, arg, tlCompiler.get().compile(pattern), TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale());
+        return new Func(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultTimestampLocale());
     }
 
     private static final class Func extends TimestampFunction implements UnaryFunction {

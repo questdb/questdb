@@ -30,7 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -124,7 +124,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             long timestamp;
             final Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = DateFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
+                timestamp = TimestampFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putInt(0, rnd.nextInt());

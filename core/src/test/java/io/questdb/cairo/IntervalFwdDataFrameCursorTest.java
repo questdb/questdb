@@ -28,7 +28,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -81,14 +81,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
@@ -103,14 +103,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
@@ -125,14 +125,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
@@ -147,14 +147,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T00:00:01.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-06T14:00:01.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
@@ -169,14 +169,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         intervals.clear();
         // exact date match
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T18:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T20:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T18:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T20:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
 
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
 
         final String expected = "1980-01-02T18:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
@@ -217,11 +217,11 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         intervals.clear();
         // exact date match
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
         // this one falls through cracks
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
 
         final String expected = "1980-01-02T22:00:00.000000Z\n";
 
@@ -238,16 +238,16 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         intervals.clear();
         // exact date match
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T18:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T20:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T18:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T20:00:00.000Z"));
 
         // interval falls below active partition
         // previous interval must not be on the edge of partition
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:30:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:35:00.000Z"));
 
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
 
         final String expected = "1980-01-02T18:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
@@ -277,14 +277,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         int N = 36;
 
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
 
         final String expected1 = "1980-01-02T02:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
@@ -311,14 +311,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
 
         final String expected = "1980-01-02T02:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
@@ -344,14 +344,14 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         int N = 36;
 
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T01:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T16:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T21:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-02T22:00:00.000Z"));
         //
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T11:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T11:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-05T14:00:00.000Z"));
 
         final String expected1 = "1980-01-02T02:00:00.000000Z\n" +
                 "1980-01-02T04:00:00.000000Z\n" +
@@ -382,7 +382,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             final Rnd rnd = new Rnd();
-            long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
+            long timestamp = TimestampFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 final int timestampIndex;
@@ -456,8 +456,8 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
         // single interval spanning all of the table
         intervals.clear();
-        intervals.add(DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z"));
-        intervals.add(DateFormatUtils.parseDateTime("1984-01-06T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1984-01-06T00:00:00.000Z"));
 
         final String expected = "1980-01-01T00:00:00.000000Z\n" +
                 "1980-01-01T02:00:00.000000Z\n" +
@@ -567,7 +567,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             final Rnd rnd = new Rnd();
-            long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
+            long timestamp = TimestampFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);

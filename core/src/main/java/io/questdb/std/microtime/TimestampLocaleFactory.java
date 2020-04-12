@@ -33,8 +33,7 @@ import java.util.Locale;
 public class TimestampLocaleFactory {
     public static final TimestampLocaleFactory INSTANCE = new TimestampLocaleFactory(TimeZoneRuleFactory.INSTANCE);
 
-    private final CharSequenceObjHashMap<TimestampLocale> dateLocales = new CharSequenceObjHashMap<>();
-    private final TimestampLocale defaultTimestampLocale;
+    private final CharSequenceObjHashMap<TimestampLocale> timestampLocales = new CharSequenceObjHashMap<>();
 
     public TimestampLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {
         CharSequenceHashSet cache = new CharSequenceHashSet();
@@ -43,21 +42,16 @@ public class TimestampLocaleFactory {
             if ("und".equals(tag)) {
                 tag = "";
             }
-            dateLocales.put(tag, new TimestampLocale(new DateFormatSymbols(l), timeZoneRuleFactory, cache));
+            timestampLocales.put(tag, new TimestampLocale(new DateFormatSymbols(l), timeZoneRuleFactory, cache));
             cache.clear();
         }
-        defaultTimestampLocale = dateLocales.get(Locale.getDefault().toLanguageTag());
     }
 
     public CharSequenceObjHashMap<TimestampLocale> getAll() {
-        return dateLocales;
+        return timestampLocales;
     }
 
-    public TimestampLocale getDateLocale(CharSequence id) {
-        return dateLocales.get(id);
-    }
-
-    public TimestampLocale getDefaultTimestampLocale() {
-        return defaultTimestampLocale;
+    public TimestampLocale getLocale(CharSequence id) {
+        return timestampLocales.get(id);
     }
 }

@@ -37,7 +37,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateFormatCompiler;
 import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
 
 public class ToDateFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
@@ -54,7 +53,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
         }
-        return new Func(position, arg, tlCompiler.get().compile(pattern), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+        return new Func(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
     }
 
     private static final class Func extends DateFunction implements UnaryFunction {

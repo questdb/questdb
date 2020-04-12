@@ -38,7 +38,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -71,11 +70,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
             StringSink sink = tlSink.get();
             sink.clear();
-            timestampFormat.format(value, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), "Z", sink);
+            timestampFormat.format(value, configuration.getDefaultTimestampLocale(), "Z", sink);
             return new StrConstant(position, sink);
         }
 
-        return new ToCharDateFFunc(position, args.getQuick(0), timestampFormat);
+        return new ToCharDateFFunc(position, args.getQuick(0), timestampFormat, configuration.getDefaultTimestampLocale());
     }
 
     private static class ToCharDateFFunc extends StrFunction implements UnaryFunction {
@@ -85,11 +84,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateFFunc(int position, Function arg, TimestampFormat format) {
+        public ToCharDateFFunc(int position, Function arg, TimestampFormat format, TimestampLocale timestampLocale) {
             super(position);
             this.arg = arg;
             this.format = format;
-            locale = TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale();
+            locale = timestampLocale;
             sink1 = new StringSink();
             sink2 = new StringSink();
         }
