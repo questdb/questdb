@@ -54,17 +54,17 @@ public class AbstractCairoTest {
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
 
-	@BeforeClass
-	public static void setUp() throws IOException {
-		// it is necessary to initialise logger before tests start
-		// logger doesn't relinquish memory until JVM stops
-		// which causes memory leak detector to fail should logger be
-		// created mid-test
-		LOG.info().$("begin").$();
-		root = temp.newFolder("dbRoot").getAbsolutePath();
-		configuration = new DefaultCairoConfiguration(root);
+    @BeforeClass
+    public static void setUp() throws IOException {
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("begin").$();
+        root = temp.newFolder("dbRoot").getAbsolutePath();
+        configuration = new DefaultCairoConfiguration(root);
         messageBus = new MessageBusImpl();
-	}
+    }
 
     @Before
     public void setUp0() {
@@ -81,10 +81,6 @@ public class AbstractCairoTest {
         try (Path path = new Path().of(root)) {
             Files.rmdir(path.$());
         }
-    }
-    
-    protected CharSequence getBackupRoot() {
-    	return null;
     }
 
     protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {

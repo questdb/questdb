@@ -154,6 +154,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpUnicast;
     private final boolean lineUdpOwnThread;
     private final int sqlCopyBufferSize;
+    private final int sqlAnalyticColumnPoolCapacity;
+    private final int sqlCreateTableModelPoolCapacity;
+    private final int sqlColumnCastModelPoolCapacity;
+    private final int sqlRenameTableModelPoolCapacity;
+    private final int sqlWithClauseModelPoolCapacity;
+    private final int sqlInsertModelPoolCapacity;
     private final DateLocale dateLocale;
     private final TimestampLocale timestampLocale;
     private boolean httpAllowDeflateBeforeSend;
@@ -200,12 +206,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryFloatScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
-    private int sqlAnalyticColumnPoolCapacity;
-    private int sqlCreateTableModelPoolCapacity;
-    private int sqlColumnCastModelPoolCapacity;
-    private int sqlRenameTableModelPoolCapacity;
-    private int sqlWithClauseModelPoolCapacity;
-    private int sqlInsertModelPoolCapacity;
     private final String backupRoot;
     private final TimestampFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
