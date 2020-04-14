@@ -141,7 +141,7 @@ public class TableWriter implements Closeable {
             boolean lock,
             LifecycleManager lifecycleManager
     ) {
-    	this(configuration, name, messageBus, lock, lifecycleManager, configuration.getRoot());
+        this(configuration, name, messageBus, lock, lifecycleManager, configuration.getRoot());
     }
 
     public TableWriter(

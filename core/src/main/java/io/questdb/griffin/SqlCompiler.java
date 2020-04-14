@@ -1672,7 +1672,11 @@ public class SqlCompiler implements Closeable {
     private final FindVisitor sqlDatabaseBackupOnFind = (file, type) -> {
         nativeLPSZ.of(file);
         if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-            backupTable(nativeLPSZ, currentExecutionContext);
+            try {
+                backupTable(nativeLPSZ, currentExecutionContext);
+            } catch (CairoException ex) {
+                LOG.error().$("Failed to backup ").$(nativeLPSZ).$(": ").$(ex.getFlyweightMessage()).$();
+            }
         }
     };
 
@@ -1732,10 +1736,12 @@ public class SqlCompiler implements Closeable {
         TimestampFormat format = configuration.getBackupDirTimestampFormat();
         long epochMicros = configuration.getMicrosecondClock().getTicks();
         int n = 0;
-        // TODO: There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
+        // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
         // a CairoException. Maybe it should be serialised
+        renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR);
+        int plen = renamePath.length();
         do {
-            renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR);
+            renamePath.trimTo(plen);
             format.format(epochMicros, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
@@ -1809,7 +1815,7 @@ public class SqlCompiler implements Closeable {
             // create symbol maps
             path.trimTo(rootLen).$();
             int symbolMapCount = 0;
-            for (int i = 0; i < sourceMetaData.getColumnCount(); i++) {
+            for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
                 if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
                     SymbolMapReader mapReader = reader.getSymbolMapReader(i);
                     SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());

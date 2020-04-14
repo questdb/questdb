@@ -74,7 +74,7 @@ public class CairoEngine implements Closeable {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-   }
+    }
 
     public void creatTable(
             CairoSecurityContext securityContext,

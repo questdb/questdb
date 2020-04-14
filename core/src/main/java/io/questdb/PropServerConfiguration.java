@@ -534,9 +534,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
-            if (pattern.contains(new StringBuilder().append(Files.SEPARATOR).toString()) || pattern.startsWith(".")) {
-                throw new ServerConfigurationException(key, pattern);
-            }
             return compiler.compile(pattern);
         }
         return compiler.compile("yyyy-MM-dd");
