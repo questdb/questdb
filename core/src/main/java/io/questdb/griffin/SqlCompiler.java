@@ -129,7 +129,7 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod createTableMethod = this::createTable;
     private final TextLoader textLoader;
     private final FilesFacade ff;
-    private final ObjHashSet<?> cachedObjSet = new ObjHashSet<>();
+    private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopieCache = new CharSequenceObjHashMap<>();
     private transient SqlExecutionContext currentExecutionContext;
@@ -226,7 +226,7 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         assert null == currentExecutionContext;
-        assert cachedObjSet.isEmpty();
+        assert tableNames.isEmpty();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -1693,8 +1693,6 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
         setupBackupRenamePath();
 
-        @SuppressWarnings("unchecked")
-        ObjHashSet<CharSequence> tableNames = (ObjHashSet<CharSequence>) cachedObjSet;
         try {
             tableNames.clear();
             while (true) {
@@ -1748,7 +1746,7 @@ public class SqlCompiler implements Closeable {
             renamePath.put(Files.SEPARATOR).$();
             n++;
         } while (ff.exists(renamePath));
-        if (ff.mkdirs(renamePath, configuration.getMkDirMode()) != 0) {
+        if (ff.mkdirs(renamePath, configuration.getBackupMkDirMode()) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(renamePath).put(']');
         }
     }
@@ -1767,7 +1765,7 @@ public class SqlCompiler implements Closeable {
 
         CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
         try (TableReader reader = engine.getReader(securityContext, tableName)) {
-            cloneMetaData(tableName, configuration.getRoot(), cachedTmpBackupRoot, configuration.getMkDirMode(), reader);
+            cloneMetaData(tableName, configuration.getRoot(), cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
 
             try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
                 RecordMetadata writerMetadata = backupWriter.getMetadata();

@@ -209,6 +209,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String backupRoot;
     private final TimestampFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
+    private final int backupMkdirMode;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -368,6 +369,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
         this.backupDirTimestampFormat = getTimestampFormat(properties, "cairo.sql.backup.dir.datetime.format", null);
         this.backupTempDirName = getString(properties, "cairo.sql.backup.dir.tmp.name", "tmp");
+        this.backupMkdirMode = getInt(properties, "cairo.sql.backup.mkdir.mode", 509);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -964,6 +966,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getBackupTempDirName() {
             return backupTempDirName;
+        }
+
+        @Override
+        public int getBackupMkDirMode() {
+            return backupMkdirMode;
         }
 
         @Override

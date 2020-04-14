@@ -47,7 +47,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
-     }
+    }
 
     @Override
     public int getCreateAsSelectRetryCount() {
@@ -309,6 +309,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getBackupTempDirName() {
         return "tmp";
+    }
+
+    @Override
+    public int getBackupMkDirMode() {
+        return 509;
     }
 
     @Override

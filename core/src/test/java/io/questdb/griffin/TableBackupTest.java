@@ -245,7 +245,7 @@ public class TableBackupTest {
             try {
                 mainCompiler.compile("backup something", mainSqlExecutionContext);
             } catch (SqlException ex) {
-                Assert.assertEquals("io.questdb.griffin.SqlException: [7]  expected 'table' or 'database'", ex.toString());
+                TestUtils.assertEquals("io.questdb.griffin.SqlException: [7]  expected 'table' or 'database'", ex.toString());
             }
         });
     }
@@ -256,7 +256,7 @@ public class TableBackupTest {
             try {
                 mainCompiler.compile("backup table", mainSqlExecutionContext);
             } catch (SqlException ex) {
-                Assert.assertEquals("io.questdb.griffin.SqlException: [7]  expected a table name", ex.toString());
+                TestUtils.assertEquals("io.questdb.griffin.SqlException: [7]  expected a table name", ex.toString());
             }
         });
     }
@@ -279,7 +279,7 @@ public class TableBackupTest {
 
                 mainCompiler.compile("backup table tb1 tb2", mainSqlExecutionContext);
             } catch (SqlException ex) {
-                Assert.assertEquals("io.questdb.griffin.SqlException: [17]  expected ','", ex.toString());
+                TestUtils.assertEquals("io.questdb.griffin.SqlException: [17]  expected ','", ex.toString());
             }
         });
     }
@@ -302,7 +302,7 @@ public class TableBackupTest {
                 String backupSelectAll = selectAll("tb1", true);
                 Assert.assertEquals(sourceSelectAll, backupSelectAll);
             } catch (SqlException ex) {
-                Assert.assertEquals("io.questdb.griffin.SqlException: [13]  expected a valid table name", ex.toString());
+                TestUtils.assertEquals("io.questdb.griffin.SqlException: [13]  expected a valid table name", ex.toString());
             }
         });
     }

@@ -82,6 +82,8 @@ public interface CairoConfiguration {
 
     CharSequence getBackupTempDirName();
 
+    int getBackupMkDirMode();
+
     long getSpinLockTimeoutUs();
 
     int getSqlCharacterStoreCapacity();
