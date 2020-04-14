@@ -131,6 +131,7 @@ public class SqlCompiler implements Closeable {
     private final FilesFacade ff;
     private final ObjHashSet<?> cachedObjSet = new ObjHashSet<>();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+    private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopieCache = new CharSequenceObjHashMap<>();
     private transient SqlExecutionContext currentExecutionContext;
 
     public SqlCompiler(CairoEngine engine) {
@@ -1073,7 +1074,10 @@ public class SqlCompiler implements Closeable {
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
         TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
         try {
-            copyTableData(cursor, cursorMetadata, writer);
+            RecordMetadata writerMetadata = writer.getMetadata();
+            entityColumnFilter.of(writerMetadata.getColumnCount());
+            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+            copyTableData(cursor, writer, writerMetadata, recordToRowCopier);
             return writer;
         } catch (CairoException e) {
             writer.close();
@@ -1081,18 +1085,14 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-	public void copyTableData(RecordCursor cursor, RecordMetadata cursorMetadata, TableWriter writer) {
-		RecordMetadata writerMetadata = writer.getMetadata();
-		entityColumnFilter.of(writerMetadata.getColumnCount());
-		RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-
-		int timestampIndex = writerMetadata.getTimestampIndex();
-		if (timestampIndex == -1) {
-		    copyUnordered(cursor, writer, recordToRowCopier);
-		} else {
-		    copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
-		}
-	}
+    private void copyTableData(RecordCursor cursor, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
+        int timestampIndex = writerMetadata.getTimestampIndex();
+        if (timestampIndex == -1) {
+            copyUnordered(cursor, writer, recordToRowCopier);
+        } else {
+            copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
+        }
+    }
 
     private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier ccopier) {
         final Record record = cursor.getRecord();
@@ -1763,20 +1763,24 @@ public class SqlCompiler implements Closeable {
             }
             path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).$();
             cachedTmpBackupRoot = path.toString();
-            if (!ff.exists(path)) {
-                LOG.info().$("Creating backup directory ").$(cachedTmpBackupRoot).$();
-                if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                    throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-                }
-            }
         }
 
         CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
         try (TableReader reader = engine.getReader(securityContext, tableName)) {
             cloneMetaData(tableName, configuration.getRoot(), cachedTmpBackupRoot, configuration.getMkDirMode(), reader);
+
             try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
+                RecordMetadata writerMetadata = backupWriter.getMetadata();
+                path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();
+                RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(path);
+                if (null == recordToRowCopier) {
+                    entityColumnFilter.of(writerMetadata.getColumnCount());
+                    recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
+                    tableBackupRowCopieCache.put(path.toString(), recordToRowCopier);
+                }
+
                 RecordCursor cursor = reader.getCursor();
-                copyTableData(cursor, reader.getMetadata(), backupWriter);
+                copyTableData(cursor, backupWriter, writerMetadata, recordToRowCopier);
                 backupWriter.commit();
             }
         }
