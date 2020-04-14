@@ -29,6 +29,10 @@
 
 double sumDouble_Vanilla(double *d, int64_t count);
 
+double sumDoubleKahan_Vanilla(double *d, int64_t count);
+
+double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
+
 double avgDouble_Vanilla(double *d, int64_t count);
 
 double minDouble_Vanilla(double *d, int64_t count);

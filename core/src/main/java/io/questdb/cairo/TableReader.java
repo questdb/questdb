@@ -440,7 +440,7 @@ public class TableReader implements Closeable {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
                     long count = column.getPageSize(pageIndex) / Double.BYTES;
-                    result += Vect.sumDouble(a, count);
+                    result += Vect.sumDoubleNeumaier(a, count);
                 }
             }
         }

@@ -100,6 +100,36 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
+//TODO - implement kahan
+double sumDoubleKahan_Vanilla(double *d, int64_t count) {
+    const double *lim = d + count;
+    double sum = 0;
+    bool hasData = false;
+    for (; d < lim; d++) {
+        const double v = *d;
+        if (v == v) {
+            sum += v;
+            hasData = true;
+        }
+    }
+    return hasData ? sum : NAN;
+}
+
+//TODO - implement Neumaier
+double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
+    const double *lim = d + count;
+    double sum = 0;
+    bool hasData = false;
+    for (; d < lim; d++) {
+        const double v = *d;
+        if (v == v) {
+            sum += v;
+            hasData = true;
+        }
+    }
+    return hasData ? sum : NAN;
+}
+
 double avgDouble_Vanilla(double *d, int64_t count) {
     double *pd = d;
     const double *lim = pd + count;
