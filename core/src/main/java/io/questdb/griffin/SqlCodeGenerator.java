@@ -420,6 +420,12 @@ public class SqlCodeGenerator {
                 } else if (type == ColumnType.LONG) {
                     vafList.add(new SumLongVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
+                } else if (type == ColumnType.DATE) {
+                    vafList.add(new SumDateVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.TIMESTAMP) {
+                    vafList.add(new SumTimestampVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
                 }
             } else if (isSingleColumnFunction(ast, "avg")) {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
@@ -430,7 +436,7 @@ public class SqlCodeGenerator {
                 } else if (type == ColumnType.INT) {
                     vafList.add(new AvgIntVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
-                } else if (type == ColumnType.LONG) {
+                } else if (type == ColumnType.LONG || type == ColumnType.TIMESTAMP || type == ColumnType.DATE) {
                     vafList.add(new AvgLongVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 }
@@ -446,6 +452,12 @@ public class SqlCodeGenerator {
                 } else if (type == ColumnType.LONG) {
                     vafList.add(new MinLongVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
+                } else if (type == ColumnType.DATE) {
+                    vafList.add(new MinDateVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.TIMESTAMP) {
+                    vafList.add(new MinTimestampVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
                 }
             } else if (isSingleColumnFunction(ast, "max")) {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
@@ -458,6 +470,12 @@ public class SqlCodeGenerator {
                     continue;
                 } else if (type == ColumnType.LONG) {
                     vafList.add(new MaxLongVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.DATE) {
+                    vafList.add(new MaxDateVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                } else if (type == ColumnType.TIMESTAMP) {
+                    vafList.add(new MaxTimestampVectorAggregateFunction(ast.rhs.position, columnIndex));
                     continue;
                 }
             }

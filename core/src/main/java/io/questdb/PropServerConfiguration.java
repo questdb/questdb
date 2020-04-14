@@ -62,7 +62,6 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -74,9 +73,11 @@ import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocale;
 import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
@@ -148,6 +149,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final String inputRoot;
+    private final boolean lineUdpEnabled;
+    private final int lineUdpOwnThreadAffinity;
+    private final boolean lineUdpUnicast;
+    private final boolean lineUdpOwnThread;
+    private final int sqlCopyBufferSize;
+    private final DateLocale dateLocale;
+    private final TimestampLocale timestampLocale;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -189,12 +197,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private boolean lineUdpEnabled;
-    private int lineUdpOwnThreadAffinity;
-    private boolean lineUdpUnicast;
-    private boolean lineUdpOwnThread;
     private int jsonQueryFloatScale;
-    private int sqlCopyBufferSize;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
     private int sqlAnalyticColumnPoolCapacity;
@@ -336,11 +339,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
+        final String dateLocale = getString(properties, "cairo.date.locale", "en");
+        this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+        if (this.dateLocale == null) {
+            throw new ServerConfigurationException("cairo.date.locale", dateLocale);
+        }
+
+        final String timestampLocale = getString(properties, "cairo.timestamp.locale", "en");
+        this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
+        if (timestampLocale == null) {
+            throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
+        }
+
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE
+                TimestampLocaleFactory.INSTANCE,
+                this.dateLocale,
+                this.timestampLocale
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -757,6 +774,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public InputFormatConfiguration getInputFormatConfiguration() {
             return inputFormatConfiguration;
         }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return dateLocale;
+        }
+
+        @Override
+        public TimestampLocale getDefaultTimestampLocale() {
+            return timestampLocale;
+        }
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
@@ -863,6 +890,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
@@ -1121,6 +1149,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCommitMode() {
             return commitMode;
+        }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return dateLocale;
+        }
+
+        @Override
+        public TimestampLocale getDefaultTimestampLocale() {
+            return timestampLocale;
         }
     }
 

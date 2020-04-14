@@ -1072,7 +1072,7 @@ public class DateFormatCompiler {
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
-                        // DateFormatUtils.assertChar(' ', in, pos++, hi);
+                        // TimestampFormatUtils.assertChar(' ', in, pos++, hi);
                         asm.iconst(delimiter.charAt(0));
                         asm.aload(P_INPUT_STR);
                         asm.iload(LOCAL_POS);
@@ -1080,7 +1080,7 @@ public class DateFormatCompiler {
                         asm.iload(P_HI);
                         asm.invokeStatic(assertCharIndex);
                     } else {
-                        // pos = DateFormatUtils.assertString(", ", 2, in, pos, hi);
+                        // pos = TimestampFormatUtils.assertString(", ", 2, in, pos, hi);
                         asm.ldc(delimIndices.getQuick(-op - 1));
                         asm.iconst(len);
                         asm.aload(P_INPUT_STR);

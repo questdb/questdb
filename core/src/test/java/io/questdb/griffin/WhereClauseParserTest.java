@@ -296,12 +296,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDubiousEquals() throws Exception {
-        IntrinsicModel m = modelOf("sum(ts) = sum(ts)");
-        Assert.assertNull(m.filter);
-    }
-
-    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -351,6 +345,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(14, e.getPosition());
         }
+    }
+
+    @Test
+    public void testEqualsLambda() throws Exception {
+        IntrinsicModel m = modelOf("x = (select * from x)");
+        assertFilter(m, "(select-choose * column from (x))x=");
+    }
+
+    @Test
+    public void testEqualsLambdaR() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) = x");
+        assertFilter(m, "x(select-choose * column from (x))=");
     }
 
     @Test
@@ -440,6 +446,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("bid > 100 or timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
         Assert.assertNull(m.intervals);
         assertFilter(m, "\"2014-01-02T12:30:00.000Z\"\"2014-01-01T12:30:00.000Z\"timestampin100bid>or");
+    }
+
+    @Test
+    public void testGreaterThanLambda() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) > x");
+        assertFilter(m, "x(select-choose * column from (x))>");
+    }
+
+    @Test
+    public void testGreaterThanLambdaR() throws Exception {
+        IntrinsicModel m = modelOf("y > (select * from x)");
+        assertFilter(m, "(select-choose * column from (x))y>");
+    }
+
+    @Test
+    public void testLessThanLambda() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) < x");
+        assertFilter(m, "x(select-choose * column from (x))<");
+    }
+
+    @Test
+    public void testLessThanLambdaR() throws Exception {
+        IntrinsicModel m = modelOf("z < (select * from x)");
+        assertFilter(m, "(select-choose * column from (x))z<");
     }
 
     @Test

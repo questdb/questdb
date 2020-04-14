@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -62,48 +62,48 @@ public class JoinTest extends AbstractGriffinTest {
                 TableWriter.Row rQuotes;
 
                 // quote googl @ 10:00:02
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000000Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000000Z"));
                 rQuotes.putSym(0, "googl");
                 rQuotes.putDouble(1, 100.2);
                 rQuotes.putDouble(2, 100.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000001
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000001Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000001Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 185.9);
                 rQuotes.putDouble(2, 187.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000002
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 186.1);
                 rQuotes.putDouble(2, 187.8);
                 rQuotes.append();
 
                 // order googl @ 10.00.03
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:03.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:03.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 2000);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // quote msft @ 10.00.03.000001
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 183.4);
                 rQuotes.putDouble(2, 185.9);
                 rQuotes.append();
 
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:04.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:04.000000Z"));
                 rOrders.putSym(0, "msft");
                 rOrders.putDouble(1, 150);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // order googl @ 10.00.05
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:05.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:05.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 3000);
                 rOrders.putByte(2, (byte) '2');
@@ -2870,49 +2870,49 @@ public class JoinTest extends AbstractGriffinTest {
                 TableWriter.Row rQuotes;
 
                 // quote googl @ 10:00:02
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000000Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000000Z"));
                 rQuotes.putSym(0, "googl");
                 rQuotes.putDouble(1, 100.2);
                 rQuotes.putDouble(2, 100.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000001
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000001Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000001Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 185.9);
                 rQuotes.putDouble(2, 187.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000002
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 186.1);
                 rQuotes.putDouble(2, 187.8);
                 rQuotes.append();
 
                 // order googl @ 10.00.03
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:03.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:03.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 2000);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // quote msft @ 10.00.03.000001
-                rQuotes = quotes.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 183.4);
                 rQuotes.putDouble(2, 185.9);
                 rQuotes.append();
 
                 // order msft @ 10:00:04
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:04.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:04.000000Z"));
                 rOrders.putSym(0, "msft");
                 rOrders.putDouble(1, 150);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // order googl @ 10.00.05
-                rOrders = orders.newRow(DateFormatUtils.parseTimestamp("2018-11-02T10:00:05.000000Z"));
+                rOrders = orders.newRow(TimestampFormatUtils.parseTimestamp("2018-11-02T10:00:05.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 3000);
                 rOrders.putByte(2, (byte) '2');

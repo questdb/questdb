@@ -33,6 +33,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.time.DateLocale;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
 
@@ -305,5 +309,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getBackupTempDirName() {
         return "tmp";
+    }
+
+    @Override
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
+    }
+
+    @Override
+    public TimestampLocale getDefaultTimestampLocale() {
+        return TimestampFormatUtils.enLocale;
     }
 }

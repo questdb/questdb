@@ -94,7 +94,6 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
@@ -1742,7 +1741,7 @@ public class SqlCompiler implements Closeable {
         int plen = renamePath.length();
         do {
             renamePath.trimTo(plen);
-            format.format(epochMicros, TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), null, renamePath);
+            format.format(epochMicros, configuration.getDefaultTimestampLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
             }

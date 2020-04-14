@@ -111,16 +111,17 @@
 
 #ifdef HAS_NULL
 
-bool HAS_NULL(int32_t *pi,  int64_t count) {
+bool HAS_NULL(int32_t *pi, int64_t count) {
     const int32_t step = 16;
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *vec_lim = pi + count - remainder;
 
     Vec16i vec;
     for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
         if (horizontal_find_first(vec == INT_MIN) > -1) {
-           return true;
+            return true;
         }
     }
 
@@ -144,6 +145,7 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     Vec8q nancount = 0;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         bVec = vec == LLONG_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
@@ -175,6 +177,7 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8qb bVec;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         bVec = vec == LLONG_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
@@ -201,6 +204,7 @@ int64_t MAX_LONG(int64_t *pl, int64_t count) {
     Vec8q vecMax = LLONG_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         vecMax = max(vecMax, vec);
     }
@@ -223,6 +227,7 @@ double AVG_LONG(int64_t *pl, int64_t count) {
     Vec8q nancount = 0;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         bVec = vec == LLONG_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
@@ -263,6 +268,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     int64_t result = 0;
     bool hasData = false;
     for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
         bVec = vec != INT_MIN;
         hasData = hasData || horizontal_count(bVec) > 0;
@@ -289,6 +295,7 @@ int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16ib bVec;
     int i;
     for (i = 0; i < count - 15; i += step) {
+        _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
         bVec = vec == INT_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
@@ -315,6 +322,7 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
     Vec16i vecMax = INT_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
         vecMax = max(vecMax, vec);
     }
@@ -340,6 +348,7 @@ double AVG_INT(int32_t *pi, int64_t count) {
     int64_t sum = 0;
     int64_t sumCount = 0;
     for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
         bVec = vec != INT_MIN;
         sumCount += horizontal_count(bVec);
@@ -365,13 +374,13 @@ double AVG_INT(int32_t *pi, int64_t count) {
 double SUM_DOUBLE(double *d, int64_t count) {
     Vec8d vec;
     const int step = 8;
-    const double *lim = d + count;
-    const double *lim_vec = lim - step + 1;
     Vec8d vecsum = 0.;
     Vec8db bVec;
     Vec8q nancount = 0;
-    for (; d < lim_vec; d += step) {
-        vec.load(d);
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
+        vec.load(d + i);
         bVec = is_nan(vec);
         vecsum += select(bVec, 0, vec);
         nancount = if_add(bVec, nancount, 1);
@@ -379,8 +388,8 @@ double SUM_DOUBLE(double *d, int64_t count) {
 
     double sum = 0;
     int n = 0;
-    for (; d < lim; d++) {
-        double x = *d;
+    for (; i < count; i++) {
+        double x = *(d + i);
         if (x == x) {
             sum += x;
         } else {
@@ -388,15 +397,14 @@ double SUM_DOUBLE(double *d, int64_t count) {
         }
     }
 
-    if (horizontal_add(nancount) + n < count) {
-        return horizontal_add(vecsum) + sum;
+    const int64_t nans = horizontal_add(nancount) + n;
+    if (nans < count) {
+        return (horizontal_add(vecsum) + sum);
     }
-
     return NAN;
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
-//    return avgDouble_Vanilla(d, count);
     Vec8d vec;
     const int step = 8;
     Vec8d vecsum = 0.;
@@ -404,6 +412,7 @@ double AVG_DOUBLE(double *d, int64_t count) {
     Vec8q nancount = 0;
     int i;
     for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
         vec.load(d + i);
         bVec = is_nan(vec);
         vecsum += select(bVec, 0, vec);
@@ -437,6 +446,7 @@ double MIN_DOUBLE(double *d, int64_t count) {
     Vec8d vecMin = INFINITY;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
         bVec = is_nan(vec);
         vecMin = select(bVec, vecMin, min(vecMin, vec));
@@ -465,6 +475,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
     Vec8d vecMax = -INFINITY;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
         bVec = is_nan(vec);
         vecMax = select(bVec, vecMax, max(vecMax, vec));

@@ -23,7 +23,6 @@ import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Files;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -315,7 +314,7 @@ public class TableBackupTest {
     private void setFinalBackupPath(int n) {
         TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
         finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
-        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(), null, finalBackupPath);
+        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultTimestampLocale(), null, finalBackupPath);
         if (n > 0) {
             finalBackupPath.put('.');
             finalBackupPath.put(n);

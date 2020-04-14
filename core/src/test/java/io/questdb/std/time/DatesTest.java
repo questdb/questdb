@@ -204,12 +204,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testFormatMMMDYYYY() throws NumericException {
-        DateFormatUtils.formatMMMDYYYY(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("May 10 2008", sink);
-    }
-
-    @Test
     public void testMonthsBetween() throws Exception {
         // a < b, same year
         Assert.assertEquals(2,

@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.LongList;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 
 public class GriffinParserTestUtils {
@@ -41,10 +41,10 @@ public class GriffinParserTestUtils {
             }
             sink.put('{');
             sink.put("lo=");
-            DateFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i));
+            TimestampFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i));
             sink.put(", ");
             sink.put("hi=");
-            DateFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i + 1));
+            TimestampFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i + 1));
             sink.put('}');
         }
         sink.put(']');

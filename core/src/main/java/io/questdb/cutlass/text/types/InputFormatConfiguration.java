@@ -76,17 +76,23 @@ public class InputFormatConfiguration {
     private TimestampFormat jsonTimestampFormat;
     private TimestampLocale jsonTimestampLocale;
     private boolean jsonTimestampUtf8;
+    private final DateLocale dateLocale;
+    private final TimestampLocale timestampLocale;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
             DateLocaleFactory dateLocaleFactory,
             TimestampFormatFactory timestampFormatFactory,
-            TimestampLocaleFactory timestampLocaleFactory
+            TimestampLocaleFactory timestampLocaleFactory,
+            DateLocale dateLocale,
+            TimestampLocale timestampLocale
     ) {
         this.dateFormatFactory = dateFormatFactory;
         this.dateLocaleFactory = dateLocaleFactory;
         this.timestampFormatFactory = timestampFormatFactory;
         this.timestampLocaleFactory = timestampLocaleFactory;
+        this.dateLocale = dateLocale;
+        this.timestampLocale = timestampLocale;
     }
 
     public void clear() {
@@ -214,7 +220,7 @@ public class InputFormatConfiguration {
                             throw JsonException.$(position, "date format is missing");
                         }
                         dateFormats.add(jsonDateFormat);
-                        dateLocales.add(jsonDateLocale == null ? DateLocaleFactory.INSTANCE.getDefaultDateLocale() : jsonDateLocale);
+                        dateLocales.add(jsonDateLocale == null ? dateLocale : jsonDateLocale);
                         dateUtf8Flags.add(jsonDateUtf8 ? 1 : 0);
                         break;
                     case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
@@ -223,7 +229,7 @@ public class InputFormatConfiguration {
                         }
 
                         timestampFormats.add(jsonTimestampFormat);
-                        timestampLocales.add(jsonTimestampLocale == null ? TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale() : jsonTimestampLocale);
+                        timestampLocales.add(jsonTimestampLocale == null ? timestampLocale : jsonTimestampLocale);
                         timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);
                         break;
                     default:
@@ -270,7 +276,7 @@ public class InputFormatConfiguration {
                         break;
                     case STATE_EXPECT_DATE_LOCALE_VALUE: // date locale
                         assert jsonDateLocale == null;
-                        jsonDateLocale = dateLocaleFactory.getDateLocale(tag);
+                        jsonDateLocale = dateLocaleFactory.getLocale(tag);
                         if (jsonDateLocale == null) {
                             throw JsonException.$(position, "invalid [locale=").put(tag).put(']');
                         }
@@ -286,7 +292,7 @@ public class InputFormatConfiguration {
                         break;
                     case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
                         assert jsonTimestampLocale == null;
-                        jsonTimestampLocale = timestampLocaleFactory.getDateLocale(tag);
+                        jsonTimestampLocale = timestampLocaleFactory.getLocale(tag);
                         if (jsonTimestampLocale == null) {
                             throw JsonException.$(position, "invalid [locale=").put(tag).put(']');
                         }

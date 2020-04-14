@@ -30,7 +30,7 @@ import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
@@ -64,13 +64,19 @@ final class WhereClauseParser {
         }
     }
 
+    private static boolean nodesEqual(ExpressionNode left, ExpressionNode right) {
+        return (left.type == ExpressionNode.LITERAL || left.type == ExpressionNode.CONSTANT) &&
+                (right.type == ExpressionNode.LITERAL || right.type == ExpressionNode.CONSTANT) &&
+                Chars.equals(left.token, right.token);
+    }
+
     private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
     private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
-        if (Chars.equals(a.token, b.token)) {
+        if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
@@ -143,7 +149,7 @@ final class WhereClauseParser {
     private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, int increment) throws SqlException {
         checkNodeValid(node);
 
-        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+        if (nodesEqual(node.lhs, node.rhs)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
@@ -159,7 +165,7 @@ final class WhereClauseParser {
             }
 
             try {
-                model.intersectIntervals(DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1), Long.MAX_VALUE);
+                model.intersectIntervals(TimestampFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1), Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -174,7 +180,7 @@ final class WhereClauseParser {
             }
 
             try {
-                model.intersectIntervals(Long.MIN_VALUE, DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) - increment);
+                model.intersectIntervals(Long.MIN_VALUE, TimestampFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) - increment);
                 return true;
             } catch (NumericException e) {
                 throw SqlException.invalidDate(node.lhs.position);
@@ -226,13 +232,13 @@ final class WhereClauseParser {
             long hiMillis;
 
             try {
-                loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
+                loMillis = TimestampFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
                 throw SqlException.invalidDate(lo.position);
             }
 
             try {
-                hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
+                hiMillis = TimestampFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
                 throw SqlException.invalidDate(hi.position);
             }
@@ -291,7 +297,7 @@ final class WhereClauseParser {
 
         checkNodeValid(node);
 
-        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+        if (nodesEqual(node.lhs, node.rhs)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
@@ -307,7 +313,7 @@ final class WhereClauseParser {
                     return false;
                 }
 
-                long hi = DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) - inc;
+                long hi = TimestampFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) - inc;
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -322,7 +328,7 @@ final class WhereClauseParser {
                     return false;
                 }
 
-                long lo = DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1);
+                long lo = TimestampFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1);
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -511,13 +517,13 @@ final class WhereClauseParser {
             long hiMillis;
 
             try {
-                loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
+                loMillis = TimestampFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
                 throw SqlException.invalidDate(lo.position);
             }
 
             try {
-                hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
+                hiMillis = TimestampFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
                 throw SqlException.invalidDate(hi.position);
             }
