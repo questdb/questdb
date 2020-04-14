@@ -592,7 +592,7 @@ final public class Timestamps {
 
     public static String toString(long micros) {
         CharSink sink = Misc.getThreadLocalBuilder();
-        DateFormatUtils.appendDateTime(sink, micros);
+        TimestampFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }
 

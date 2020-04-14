@@ -55,15 +55,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_LOCALE = 4;
     private static final int P_UTF8 = 5;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
-
-    static {
-        propertyNameMap.put("name", P_NAME);
-        propertyNameMap.put("type", P_TYPE);
-        propertyNameMap.put("pattern", P_PATTERN);
-        propertyNameMap.put("locale", P_LOCALE);
-        propertyNameMap.put("utf8", P_UTF8);
-    }
-
     private final DateLocaleFactory dateLocaleFactory;
     private final TimestampLocaleFactory timestampLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
@@ -72,6 +63,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private final ObjList<CharSequence> columnNames;
     private final ObjList<TypeAdapter> columnTypes;
     private final TypeManager typeManager;
+    private final DateLocale dateLocale;
+    private final TimestampLocale timestampLocale;
     private int state = S_NEED_ARRAY;
     private CharSequence name;
     private int type = -1;
@@ -94,22 +87,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.timestampLocaleFactory = typeManager.getInputFormatConfiguration().getTimestampLocaleFactory();
         this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
         this.typeManager = typeManager;
-    }
-
-    private static void strcpyw(final CharSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
-        }
-    }
-
-    private static void checkInputs(int position, CharSequence name, int type) throws JsonException {
-        if (name == null) {
-            throw JsonException.$(position, "Missing 'name' property");
-        }
-
-        if (type == -1) {
-            throw JsonException.$(position, "Missing 'type' property");
-        }
+        this.dateLocale = textConfiguration.getDefaultDateLocale();
+        this.timestampLocale = textConfiguration.getDefaultTimestampLocale();
     }
 
     @Override
@@ -197,6 +176,22 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         }
     }
 
+    private static void strcpyw(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
+        }
+    }
+
+    private static void checkInputs(int position, CharSequence name, int type) throws JsonException {
+        if (name == null) {
+            throw JsonException.$(position, "Missing 'name' property");
+        }
+
+        if (type == -1) {
+            throw JsonException.$(position, "Missing 'type' property");
+        }
+    }
+
     private void clearStage() {
         name = null;
         type = -1;
@@ -232,9 +227,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         switch (type) {
             case ColumnType.DATE:
-                DateLocale dateLocale = locale == null ?
-                        dateLocaleFactory.getDefaultDateLocale()
-                        : dateLocaleFactory.getDateLocale(locale);
+                DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 
                 if (dateLocale == null) {
                     throw JsonException.$(localePosition, "Invalid date locale");
@@ -249,8 +242,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             case ColumnType.TIMESTAMP:
                 TimestampLocale timestampLocale =
                         locale == null ?
-                                timestampLocaleFactory.getDefaultTimestampLocale()
-                                : timestampLocaleFactory.getDateLocale(locale);
+                                this.timestampLocale
+                                : timestampLocaleFactory.getLocale(locale);
                 if (timestampLocale == null) {
                     throw JsonException.$(localePosition, "Invalid timestamp locale");
                 }
@@ -297,5 +290,13 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             this.len = len;
             return this;
         }
+    }
+
+    static {
+        propertyNameMap.put("name", P_NAME);
+        propertyNameMap.put("type", P_TYPE);
+        propertyNameMap.put("pattern", P_PATTERN);
+        propertyNameMap.put("locale", P_LOCALE);
+        propertyNameMap.put("utf8", P_UTF8);
     }
 }

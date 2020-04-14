@@ -7,7 +7,7 @@
   <a href="https://www.codacy.com/app/bluestreak/nfsdb"><img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754"></a>
   <a href="https://circleci.com/gh/questdb/questdb"><img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099"></a>
   <a href="https://serieux-saucisson-79115.herokuapp.com/"><img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg"></a>
-  <a href="https://github.com/questdb/questdb/releases/download/4.1.5/questdb-4.1.5-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
+  <a href="https://github.com/questdb/questdb/releases/download/4.2.0/questdb-4.2.0-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
   <a href="https://search.maven.org/search?q=g:org.questdb"><img src="https://img.shields.io/maven-central/v/org.questdb/core"></a>
 </p
   
@@ -36,15 +36,15 @@ PostgreSQL wire protocol or via Java API. The whole database and console fits in
 
 ## Getting Started
 
-See our [Get Started guide](https://www.questdb.io/docs/getstarted).
+See our [My First Database](https://www.questdb.io/docs/myFirstDatabase) tutorial.
 The easiest way to get started is to play with our
-web [console](https://www.questdb.io/docs/console). This will allow you to import
+web [console](https://www.questdb.io/docs/usingWebConsole). This will allow you to import
 and query data using an intuitive interface.
 
-You may also take a look at our [storage model](https://www.questdb.io/docs/storagemodel). In short,
+You may also take a look at our [storage model](https://www.questdb.io/docs/storageModel). In short,
 we are a column-oriented database, which partitions data by time intervals.
 
-You can find more documentation [here](https://www.questdb.io/docs/docstructure)
+You can find more documentation [here](https://www.questdb.io/docs/documentationOverview)
 
 ## Support / Contact
 

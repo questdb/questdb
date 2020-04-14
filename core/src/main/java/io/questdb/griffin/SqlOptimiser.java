@@ -57,6 +57,7 @@ class SqlOptimiser {
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -150,6 +151,10 @@ class SqlOptimiser {
         }
 
         return true;
+    }
+
+    private static boolean modelIsFlex(QueryModel model) {
+        return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
     /*
@@ -621,7 +626,7 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int n = orderBy.size();
-        final ObjList<QueryColumn> columns = model.getColumns();
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final int m = columns.size();
         final QueryModel nestedModel = model.getNestedModel();
 
@@ -916,9 +921,9 @@ class SqlOptimiser {
     }
 
     private void doRewriteOrderByPositionForUnionModels(QueryModel model, QueryModel parent, QueryModel next) throws SqlException {
-        final int columnCount = model.getColumns().size();
+        final int columnCount = model.getBottomUpColumns().size();
         while (next != null) {
-            if (next.getColumns().size() != columnCount) {
+            if (next.getBottomUpColumns().size() != columnCount) {
                 throw SqlException.$(next.getModelPosition(), "queries have different number of columns");
             }
             parent.setUnionModel(rewriteOrderByPosition(next));
@@ -1032,7 +1037,9 @@ class SqlOptimiser {
                         this.sqlNodeStack.push(node.rhs);
                     }
 
-                    addTopDownColumn(node.lhs, model);
+                    if (node.lhs != null) {
+                        addTopDownColumn(node.lhs, model);
+                    }
                     node = node.lhs;
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
@@ -1578,7 +1585,7 @@ class SqlOptimiser {
         moveWhereInsideSubQueries(rewrittenModel);
         eraseColumnPrefixInWhereClauses(rewrittenModel);
         moveTimestampToChooseModel(rewrittenModel);
-        propagateTopDownColumns(rewrittenModel, true, true, null);
+        propagateTopDownColumns(rewrittenModel, true, null);
         return rewrittenModel;
     }
 
@@ -1758,7 +1765,7 @@ class SqlOptimiser {
 
     // removes redundant order by clauses from sub-queries
     private void optimiseOrderBy(QueryModel model, final int topLevelOrderByMnemonic) {
-        ObjList<QueryColumn> columns = model.getColumns();
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
         // determine if ordering is required
@@ -1918,15 +1925,25 @@ class SqlOptimiser {
         parent.addParsedWhereNode(node);
     }
 
-    private void propagateTopDownColumns(QueryModel model, boolean propagateJoinContext, boolean topLevel, @Nullable QueryModel papaModel) {
+    private void propagateTopDownColumns(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel) {
 
         // skip over NONE model that does not have table name
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
+        final boolean nestedIsFlex = modelIsFlex(nested);
 
-        if (nested != null) {
-            final ObjList<QueryColumn> columns = model.getTopDownColumns().size() > 0 ? model.getTopDownColumns() : model.getColumns();
+        if (nestedIsFlex) {
+            final ObjList<QueryColumn> columns = model.getColumns();
             for (int i = 0, n = columns.size(); i < n; i++) {
                 emitLiteralsTopDown(columns.getQuick(i).getAst(), nested);
+            }
+        }
+
+        final QueryModel union = skipNoneTypeModels(model.getUnionModel());
+
+        if (modelIsFlex(union)) {
+            final ObjList<QueryColumn> columns = model.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                emitLiteralsTopDown(columns.getQuick(i).getAst(), union);
             }
         }
 
@@ -1947,7 +1964,7 @@ class SqlOptimiser {
                     }
                 }
             }
-            propagateTopDownColumns(jm, false, false, model);
+            propagateTopDownColumns(jm, false, model);
 
             // process post-join-where
             final ExpressionNode postJoinWhere = jm.getPostJoinWhereClause();
@@ -1968,7 +1985,7 @@ class SqlOptimiser {
         }
 
         // propagate explicit timestamp declaration
-        if (model.getSampleBy() != null && model.getTimestamp() != null) {
+        if (model.getTimestamp() != null && nestedIsFlex) {
             emitLiteralsTopDown(model.getTimestamp(), nested);
         }
 
@@ -1990,12 +2007,12 @@ class SqlOptimiser {
 
         // go down the nested path
         if (nested != null) {
-            propagateTopDownColumns(nested, true, false, null);
+            propagateTopDownColumns(nested, false, null);
         }
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            propagateTopDownColumns(unionModel, true, true, null);
+            propagateTopDownColumns(unionModel, true, null);
         }
     }
 
@@ -2139,10 +2156,10 @@ class SqlOptimiser {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel wrapper = null;
-        final int modelColumnCount = model.getColumns().size();
+        final int modelColumnCount = model.getBottomUpColumns().size();
         boolean groupBy = false;
 
-        while (base.getColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
+        while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
             base = base.getNestedModel();
             groupBy = groupBy || baseParent.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY;
@@ -2194,8 +2211,8 @@ class SqlOptimiser {
                                 if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                                    for (int j = 0, z = baseParent.getColumns().size(); j < z; j++) {
-                                        QueryColumn qc = baseParent.getColumns().getQuick(j);
+                                    for (int j = 0, z = baseParent.getBottomUpColumns().size(); j < z; j++) {
+                                        QueryColumn qc = baseParent.getBottomUpColumns().getQuick(j);
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
                                             emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel());
                                         } else {
@@ -2237,7 +2254,7 @@ class SqlOptimiser {
                                     wrapper = queryModelPool.next();
                                     wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0; j < modelColumnCount; j++) {
-                                        wrapper.addBottomUpColumn(nextColumn(model.getColumns().getQuick(j).getAlias()));
+                                        wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
                                     }
                                     result = wrapper;
                                     wrapper.setNestedModel(model);
@@ -2289,7 +2306,7 @@ class SqlOptimiser {
         QueryModel base = model;
         QueryModel baseParent = model;
 
-        while (base.getColumns().size() > 0) {
+        while (base.getBottomUpColumns().size() > 0) {
             baseParent = base;
             base = base.getNestedModel();
         }
@@ -2297,7 +2314,7 @@ class SqlOptimiser {
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
         int sz = orderByNodes.size();
         if (sz > 0) {
-            final ObjList<QueryColumn> columns = baseParent.getColumns();
+            final ObjList<QueryColumn> columns = baseParent.getBottomUpColumns();
             final int columnCount = columns.size();
             // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
@@ -2373,7 +2390,7 @@ class SqlOptimiser {
         ObjList<QueryModel> models = model.getJoinModels();
         for (int i = 0, n = models.size(); i < n; i++) {
             final QueryModel m = models.getQuick(i);
-            final boolean flatModel = m.getColumns().size() == 0;
+            final boolean flatModel = m.getBottomUpColumns().size() == 0;
             final QueryModel nestedModel = m.getNestedModel();
             if (nestedModel != null) {
                 QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel);
@@ -2419,7 +2436,7 @@ class SqlOptimiser {
         boolean useOuterModel = false;
         boolean useDistinctModel = model.isDistinct();
 
-        final ObjList<QueryColumn> columns = model.getColumns();
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final QueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
@@ -2515,15 +2532,15 @@ class SqlOptimiser {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the
                 // rest in outer model
-                int beforeSplit = groupByModel.getColumns().size();
+                int beforeSplit = groupByModel.getBottomUpColumns().size();
                 emitAggregates(qc.getAst(), groupByModel);
-                if (beforeSplit < groupByModel.getColumns().size()) {
+                if (beforeSplit < groupByModel.getBottomUpColumns().size()) {
                     outerModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
 
                     // pull literals from newly created group-by columns into both of underlying models
-                    for (int j = beforeSplit, n = groupByModel.getColumns().size(); j < n; j++) {
-                        emitLiterals(groupByModel.getColumns().getQuick(i).getAst(), translatingModel, innerModel, baseModel);
+                    for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
+                        emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerModel, baseModel);
                     }
 
                     useGroupByModel = true;
@@ -2553,8 +2570,8 @@ class SqlOptimiser {
         // that it neither chooses between tables nor renames columns
         boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
         if (translationIsRedundant) {
-            for (int i = 0, n = translatingModel.getColumns().size(); i < n; i++) {
-                QueryColumn column = translatingModel.getColumns().getQuick(i);
+            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
                 if (!column.getAst().token.equals(column.getAlias())) {
                     translationIsRedundant = false;
                 }
@@ -2599,7 +2616,7 @@ class SqlOptimiser {
             }
         }
 
-        if (root != outerModel && root.getColumns().size() < outerModel.getColumns().size()) {
+        if (root != outerModel && root.getBottomUpColumns().size() < outerModel.getBottomUpColumns().size()) {
             outerModel.setNestedModel(root);
             outerModel.moveLimitFrom(limitSource);
             // in this case outer model should be of "choose" type
@@ -2879,7 +2896,9 @@ class SqlOptimiser {
         joinOps.put("and", JOIN_OP_AND);
         joinOps.put("or", JOIN_OP_OR);
         joinOps.put("~", JOIN_OP_REGEX);
+
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
     }
-
-
 }

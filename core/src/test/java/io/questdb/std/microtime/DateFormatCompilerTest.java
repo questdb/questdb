@@ -37,13 +37,13 @@ import org.junit.Test;
 public class DateFormatCompilerTest {
 
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
-    private static final TimestampLocale defaultLocale = TimestampLocaleFactory.INSTANCE.getDateLocale("en-GB");
+    private static final TimestampLocale defaultLocale = TimestampLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
     private final static TimestampFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
 
     @BeforeClass
     public static void setUp() {
-        DateFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
+        TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
     }
 
     @Test
@@ -128,15 +128,15 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testGreedyYear2() throws Exception {
-        long referenceYear = DateFormatUtils.getReferenceYear();
+        long referenceYear = TimestampFormatUtils.getReferenceYear();
         try {
-            DateFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
+            TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
-            DateFormatUtils.updateReferenceYear(referenceYear);
+            TimestampFormatUtils.updateReferenceYear(referenceYear);
         }
     }
 
@@ -626,7 +626,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testParseUtc() throws Exception {
-        assertThat(DateFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
+        assertThat(TimestampFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
     }
 
     @Test
@@ -738,7 +738,7 @@ public class DateFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
         sink.clear();
-        long micros = DateFormatUtils.parseDateTime(date) + mic;
+        long micros = TimestampFormatUtils.parseDateTime(date) + mic;
         get(pattern).format(micros, defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
         sink.clear();
@@ -756,7 +756,7 @@ public class DateFormatCompilerTest {
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
-        assertThat(pattern, expected, input, TimestampLocaleFactory.INSTANCE.getDateLocale(localeId));
+        assertThat(pattern, expected, input, TimestampLocaleFactory.INSTANCE.getLocale(localeId));
     }
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {

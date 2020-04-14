@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
@@ -576,15 +575,14 @@ public class TableReader implements Closeable {
                             .$(']').$();
                 }
             }
-
-            // adjust columns list when leading partitions have been removed
-            if (prevMinTimestamp != minTimestamp) {
-                assert prevMinTimestamp < minTimestamp;
-                int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
-                columns.remove(0, getColumnBase(delta) - 1);
-                prevMinTimestamp = minTimestamp;
-                partitionCount -= delta;
-            }
+        }
+        // adjust columns list when leading partitions have been removed
+        if (prevMinTimestamp != minTimestamp) {
+            assert prevMinTimestamp < minTimestamp;
+            int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
+            columns.remove(0, getColumnBase(delta) - 1);
+            prevMinTimestamp = minTimestamp;
+            partitionCount -= delta;
         }
     }
 
@@ -887,7 +885,7 @@ public class TableReader implements Closeable {
     private Path pathGenDay(int partitionIndex) {
         TableUtils.fmtDay.format(
                 Timestamps.addDays(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null, // this format does not need locale access
                 null,
                 path.put(Files.SEPARATOR)
         );
@@ -901,7 +899,7 @@ public class TableReader implements Closeable {
     private Path pathGenMonth(int partitionIndex) {
         TableUtils.fmtMonth.format(
                 Timestamps.addMonths(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null, // this format does not need locale access
                 null,
                 path.put(Files.SEPARATOR)
         );
@@ -911,7 +909,7 @@ public class TableReader implements Closeable {
     private Path pathGenYear(int partitionIndex) {
         TableUtils.fmtYear.format(
                 Timestamps.addYear(minTimestamp, partitionIndex),
-                TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                null, // this format does not need locale access
                 null,
                 path.put(Files.SEPARATOR)
         );
@@ -1117,7 +1115,10 @@ public class TableReader implements Closeable {
     }
 
     private boolean reloadInitialNonPartitioned() {
-        long dataVersion = this.dataVersion;
+        final long dataVersion = this.dataVersion;
+        final long structVersion = this.structVersion;
+        final long partitionTableVersion = this.partitionTableVersion;
+
         if (readTxn()) {
             reloadStruct();
             reloadSymbolMapCounts();
@@ -1128,7 +1129,9 @@ public class TableReader implements Closeable {
                 return true;
             }
         }
-        return dataVersion != this.dataVersion;
+        return dataVersion != this.dataVersion
+                || structVersion != this.structVersion
+                || partitionTableVersion != this.partitionTableVersion;
     }
 
     private boolean reloadInitialPartitioned() {

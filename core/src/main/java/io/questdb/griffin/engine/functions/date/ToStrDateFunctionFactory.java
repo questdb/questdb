@@ -40,7 +40,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateFormatCompiler;
 import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
@@ -71,11 +70,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
 
             StringSink sink = tlSink.get();
             sink.clear();
-            dateFormat.format(value, DateLocaleFactory.INSTANCE.getDefaultDateLocale(), "Z", sink);
+            dateFormat.format(value, configuration.getDefaultDateLocale(), "Z", sink);
             return new StrConstant(position, sink);
         }
 
-        return new ToCharDateVCFFunc(position, args.getQuick(0), tlCompiler.get().compile(format));
+        return new ToCharDateVCFFunc(position, args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale());
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
@@ -85,11 +84,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(int position, Function arg, DateFormat format) {
+        public ToCharDateVCFFunc(int position, Function arg, DateFormat format, DateLocale dateLocale) {
             super(position);
             this.arg = arg;
             this.format = format;
-            locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+            locale = dateLocale;
             sink1 = new StringSink();
             sink2 = new StringSink();
         }

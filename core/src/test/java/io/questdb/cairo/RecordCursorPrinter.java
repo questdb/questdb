@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.time.DateFormatUtils;
 
@@ -78,7 +79,7 @@ public class RecordCursorPrinter {
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.TIMESTAMP:
-                io.questdb.std.microtime.DateFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
+                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
                 break;
             case ColumnType.DOUBLE:
                 sink.put(r.getDouble(i));

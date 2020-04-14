@@ -417,7 +417,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         public void toSink(CharSink sink) {
             format.format(
                     fileTimestamp,
-                    TimestampLocaleFactory.INSTANCE.getDefaultTimestampLocale(),
+                    TimestampFormatUtils.enLocale,
                     null,
                     sink
             );

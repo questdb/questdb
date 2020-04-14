@@ -35,14 +35,16 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.*;
-import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGJobContext.*;
-import static io.questdb.std.time.DateFormatUtils.*;
+import static io.questdb.std.time.DateFormatUtils.PG_DATE_TIME_Z_FORMAT;
+import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
@@ -132,6 +134,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
+    private final DateLocale dateLocale;
+    private final TimestampLocale timestampLocale;
 
     public PGConnectionContext(PGWireConfiguration configuration, @Nullable MessageBus messageBus) {
         this.nf = configuration.getNetworkFacade();
@@ -153,6 +157,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.messageBus = messageBus;
+        this.dateLocale = configuration.getDefaultDateLocale();
+        this.timestampLocale = configuration.getDefaultTimestampLocale();
         populateAppender();
     }
 
@@ -392,10 +398,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
         try {
-            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
+            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, dateLocale));
         } catch (NumericException ex) {
             try {
-                bindVariableService.setDate(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
+                bindVariableService.setDate(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, dateLocale));
             } catch (NumericException exc) {
                 throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
             }
@@ -575,7 +581,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            PG_DATE_TIME_Z_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
+            PG_DATE_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }
@@ -587,7 +593,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             a = responseAsciiSink.skip();
-            DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
+            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }

@@ -53,12 +53,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAliasWithSpaceX() {
+    public void testAliasWithSpaceX() throws Exception {
         assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
     }
 
     @Test
-    public void testAmbiguousColumn() {
+    public void testAmbiguousColumn() throws Exception {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
@@ -101,7 +101,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " asof join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -181,6 +181,11 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("lastName", ColumnType.STRING)
                         .col("timestamp", ColumnType.TIMESTAMP)
         );
+    }
+
+    @Test
+    public void testBadTableExpression() throws Exception {
+        assertSyntaxError(")", 0, "table name expected");
     }
 
     @Test
@@ -374,7 +379,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelectInvalidIndex() {
+    public void testCreateAsSelectInvalidIndex() throws Exception {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
                 53,
@@ -387,7 +392,24 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateNameWithDot() {
+    public void testCreateAsSelectMissingTimestamp() throws Exception {
+        assertSyntaxError(
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000))) partition by DAY",
+                0,
+                "timestamp is not defined"
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectTimestampNotRequired() throws SqlException {
+        assertCreateTable(
+                "create table tst as (select-choose a, b, t from ((select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))) _xQdbA1))",
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
+        );
+    }
+
+    @Test
+    public void testCreateNameWithDot() throws Exception {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
                 13,
@@ -484,7 +506,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableBadColumnDef() {
+    public void testCreateTableBadColumnDef() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -564,7 +586,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastDefSymbolCapacityHigh() {
+    public void testCreateTableCastDefSymbolCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 1100000000)",
                 70,
@@ -578,7 +600,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastDefSymbolCapacityLow() {
+    public void testCreateTableCastDefSymbolCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity -10)",
                 70,
@@ -592,7 +614,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastIndexCapacityHigh() {
+    public void testCreateTableCastIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 100000000)",
                 96,
@@ -606,7 +628,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastIndexCapacityLow() {
+    public void testCreateTableCastIndexCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 1)",
                 96,
@@ -633,7 +655,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastIndexInvalidCapacity() {
+    public void testCreateTableCastIndexInvalidCapacity() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -)",
                 97,
@@ -647,7 +669,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastIndexNegativeCapacity() {
+    public void testCreateTableCastIndexNegativeCapacity() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -3)",
                 96,
@@ -675,7 +697,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastUnsupportedType() {
+    public void testCreateTableCastUnsupportedType() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(b as integer)",
                 35,
@@ -688,7 +710,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableDuplicateCast() {
+    public void testCreateTableDuplicateCast() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(b as double), cast(b as long)",
                 49,
@@ -701,7 +723,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableDuplicateColumn() {
+    public void testCreateTableDuplicateColumn() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -791,7 +813,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexCapacityHigh() {
+    public void testCreateTableInPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -814,7 +836,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexCapacityInvalid() {
+    public void testCreateTableInPlaceIndexCapacityInvalid() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -837,7 +859,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexCapacityLow() {
+    public void testCreateTableInPlaceIndexCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -860,7 +882,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexCapacityLow2() {
+    public void testCreateTableInPlaceIndexCapacityLow2() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -916,7 +938,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInvalidCapacity() {
+    public void testCreateTableInvalidCapacity() throws Exception {
         assertSyntaxError(
                 "create table x (a symbol capacity z)",
                 34,
@@ -925,7 +947,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInvalidColumnInIndex() {
+    public void testCreateTableInvalidColumnInIndex() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -945,7 +967,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInvalidColumnType() {
+    public void testCreateTableInvalidColumnType() throws Exception {
         assertSyntaxError(
                 "create table tab (a int, b integer)",
                 27,
@@ -954,7 +976,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInvalidPartitionBy() {
+    public void testCreateTableInvalidPartitionBy() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -973,7 +995,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableInvalidTimestampColumn() {
+    public void testCreateTableInvalidTimestampColumn() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -992,7 +1014,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableMisplacedCastCapacity() {
+    public void testCreateTableMisplacedCastCapacity() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double capacity 16)",
                 42,
@@ -1005,7 +1027,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableMisplacedCastDef() {
+    public void testCreateTableMisplacedCastDef() throws Exception {
         assertSyntaxError(
                 "create table tab (a int, b long), cast (a as double)",
                 34,
@@ -1014,7 +1036,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableMissingColumnDef() {
+    public void testCreateTableMissingColumnDef() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1033,12 +1055,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableMissingDef() {
+    public void testCreateTableMissingDef() throws Exception {
         assertSyntaxError("create table xyx", 16, "'(' or 'as' expected");
     }
 
     @Test
-    public void testCreateTableMissingName() {
+    public void testCreateTableMissingName() throws Exception {
         assertSyntaxError("create table ", 13, "table name expected");
     }
 
@@ -1185,7 +1207,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndexCapacityHigh() {
+    public void testCreateTableOutOfPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1209,7 +1231,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndexCapacityInvalid() {
+    public void testCreateTableOutOfPlaceIndexCapacityInvalid() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1233,7 +1255,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndexCapacityLow() {
+    public void testCreateTableOutOfPlaceIndexCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1257,7 +1279,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndexCapacityLow2() {
+    public void testCreateTableOutOfPlaceIndexCapacityLow2() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1316,7 +1338,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableSymbolCapacityHigh() {
+    public void testCreateTableSymbolCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1335,7 +1357,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableSymbolCapacityLow() {
+    public void testCreateTableSymbolCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1354,7 +1376,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableUnexpectedToken() {
+    public void testCreateTableUnexpectedToken() throws Exception {
         assertSyntaxError(
                 "create table x blah",
                 15,
@@ -1363,7 +1385,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableUnexpectedToken2() {
+    public void testCreateTableUnexpectedToken2() throws Exception {
         assertSyntaxError(
                 "create table x (a int, b double), xyz",
                 34,
@@ -1372,7 +1394,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableUnexpectedTrailingToken() {
+    public void testCreateTableUnexpectedTrailingToken() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1391,7 +1413,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableUnexpectedTrailingToken2() {
+    public void testCreateTableUnexpectedTrailingToken2() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT, " +
@@ -1410,12 +1432,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateUnsupported() {
+    public void testCreateUnsupported() throws Exception {
         assertSyntaxError("create object x", 7, "table");
     }
 
     @Test
-    public void testCrossJoin() {
+    public void testCrossJoin() throws Exception {
         assertSyntaxError("select x from a a cross join b on b.x = a.x", 31, "cannot");
     }
 
@@ -1468,7 +1490,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDisallowDotInColumnAlias() {
+    public void testDisallowDotInColumnAlias() throws Exception {
         assertSyntaxError("select x x.y, y from tab order by x", 9, "not allowed");
     }
 
@@ -1484,7 +1506,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDodgyCaseExpression() {
+    public void testDodgyCaseExpression() throws Exception {
         assertSyntaxError(
                 "select case end + 1, b from tab",
                 12,
@@ -1494,7 +1516,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateAlias() {
+    public void testDuplicateAlias() throws Exception {
         assertSyntaxError("customers a" +
                         " cross join orders a", 30, "duplicate",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
@@ -1549,12 +1571,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testEmptyOrderBy() {
+    public void testEmptyOrderBy() throws Exception {
         assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }
 
     @Test
-    public void testEmptySampleBy() {
+    public void testEmptySampleBy() throws Exception {
         assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
     }
 
@@ -1606,7 +1628,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExpressionSyntaxError() {
+    public void testExpressionSyntaxError() throws Exception {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
         // when AST cache is not cleared below query will pickup "garbage" and will misrepresent error
@@ -1617,23 +1639,23 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExtraComma2OrderByInAnalyticFunction() {
+    public void testExtraComma2OrderByInAnalyticFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (partition by b order by ts,) from xyz", 53, "literal expected");
     }
 
     @Test
-    public void testExtraCommaOrderByInAnalyticFunction() {
+    public void testExtraCommaOrderByInAnalyticFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (partition by b order by ,ts) from xyz", 50, "literal");
     }
 
     @Test
-    public void testExtraCommaPartitionByInAnalyticFunction() {
+    public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, "')' expected");
     }
 
     @Test
     public void testFilter2() throws Exception {
-        assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
+        assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -1643,7 +1665,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnGroupBy() throws SqlException {
         assertQuery(
-                "select-choose hash, count from ((select-group-by [hash, count() count] hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
+                "select-choose hash, count from ((select-group-by hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
                 "select * from (select hash, count() from 'transactions.csv') where count > 1;",
                 modelOf("transactions.csv").col("hash", ColumnType.LONG256)
         );
@@ -1652,7 +1674,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [customerId, customerName, count() count] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200)) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN where count > 1) order by customerId",
+                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200)) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN where count > 1) order by customerId",
                 "(select customerId, customerName, count() count from customers) c" +
                         " outer join orders o on c.customerId = o.customerId " +
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
@@ -1727,7 +1749,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testInnerJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -1810,7 +1832,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectColumnCountMismatch() {
+    public void testInsertAsSelectColumnCountMismatch() throws Exception {
         assertSyntaxError("insert into x (b) select * from y",
                 12, "column count mismatch",
                 modelOf("x")
@@ -1837,7 +1859,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectDuplicateColumns() {
+    public void testInsertAsSelectDuplicateColumns() throws Exception {
         assertSyntaxError("insert into x (b,b) select * from y",
                 17, "duplicate column name",
                 modelOf("x")
@@ -1849,7 +1871,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertColumnValueMismatch() {
+    public void testInsertColumnValueMismatch() throws Exception {
         assertSyntaxError("insert into x (a,b) values (?)",
                 15,
                 "value count does not match column count",
@@ -1871,7 +1893,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertMissingClosingBracket() {
+    public void testInsertMissingClosingBracket() throws Exception {
         assertSyntaxError("insert into x values (?,?",
                 25,
                 "',' expected",
@@ -1882,7 +1904,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertMissingValue() {
+    public void testInsertMissingValue() throws Exception {
         assertSyntaxError("insert into x values ()",
                 22,
                 "Expression expected",
@@ -1893,7 +1915,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertMissingValueAfterComma() {
+    public void testInsertMissingValueAfterComma() throws Exception {
         assertSyntaxError("insert into x values (?,",
                 24,
                 "Expression expected",
@@ -1904,7 +1926,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertMissingValues() {
+    public void testInsertMissingValues() throws Exception {
         assertSyntaxError("insert into x values",
                 20,
                 "'(' expected",
@@ -1926,7 +1948,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidAlias() {
+    public void testInvalidAlias() throws Exception {
         assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
@@ -1934,7 +1956,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidColumn() {
+    public void testInvalidColumn() throws Exception {
         assertSyntaxError("orders join customers on customerIdx = customerId", 25, "Invalid column",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
@@ -1942,7 +1964,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidColumnInExpression() {
+    public void testInvalidColumnInExpression() throws Exception {
         assertSyntaxError(
                 "select a + b x from tab",
                 11,
@@ -1951,52 +1973,52 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidGroupBy1() {
+    public void testInvalidGroupBy1() throws Exception {
         assertSyntaxError("select x, y from tab sample by x,", 32, "unexpected");
     }
 
     @Test
-    public void testInvalidGroupBy2() {
+    public void testInvalidGroupBy2() throws Exception {
         assertSyntaxError("select x, y from (tab sample by x,)", 33, "')' expected");
     }
 
     @Test
-    public void testInvalidGroupBy3() {
+    public void testInvalidGroupBy3() throws Exception {
         assertSyntaxError("select x, y from tab sample by x, order by y", 32, "unexpected token: ,");
     }
 
     @Test
-    public void testInvalidInnerJoin1() {
+    public void testInvalidInnerJoin1() throws Exception {
         assertSyntaxError("select x from a a inner join b z", 31, "'on'");
     }
 
     @Test
-    public void testInvalidInnerJoin2() {
+    public void testInvalidInnerJoin2() throws Exception {
         assertSyntaxError("select x from a a inner join b z on", 33, "Expression");
     }
 
     @Test
-    public void testInvalidOrderBy1() {
+    public void testInvalidOrderBy1() throws Exception {
         assertSyntaxError("select x, y from tab order by x,", 32, "literal expected");
     }
 
     @Test
-    public void testInvalidOrderBy2() {
+    public void testInvalidOrderBy2() throws Exception {
         assertSyntaxError("select x, y from (tab order by x,)", 33, "literal expected");
     }
 
     @Test
-    public void testInvalidOuterJoin1() {
+    public void testInvalidOuterJoin1() throws Exception {
         assertSyntaxError("select x from a a outer join b z", 31, "'on'");
     }
 
     @Test
-    public void testInvalidOuterJoin2() {
+    public void testInvalidOuterJoin2() throws Exception {
         assertSyntaxError("select x from a a outer join b z on", 33, "Expression");
     }
 
     @Test
-    public void testInvalidSelectColumn() {
+    public void testInvalidSelectColumn() throws Exception {
         assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
@@ -2026,12 +2048,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidSubQuery() {
+    public void testInvalidSubQuery() throws Exception {
         assertSyntaxError("select x,y from (tab where x = 100) latest by x", 36, "latest");
     }
 
     @Test
-    public void testInvalidTableName() {
+    public void testInvalidTableName() throws Exception {
         assertSyntaxError("orders join customer on customerId = customerId", 12, "does not exist",
                 modelOf("orders").col("customerId", ColumnType.INT));
     }
@@ -2144,7 +2166,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinDuplicateTables() {
+    public void testJoinDuplicateTables() throws Exception {
         assertSyntaxError(
                 "select * from tab cross join tab",
                 29,
@@ -2180,7 +2202,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
-                "select-choose country, sum from ((select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~= '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
+                "select-choose country, sum from ((select-group-by country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~= '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
                 "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -2253,7 +2275,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinOnCaseDanglingThen() {
+    public void testJoinOnCaseDanglingThen() throws Exception {
         assertSyntaxError(
                 "select a.x from a a join b on (CASE WHEN a.x THEN 10 10+4 ELSE 15 END)",
                 53,
@@ -2279,7 +2301,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinOnExpression() {
+    public void testJoinOnExpression() throws Exception {
         assertSyntaxError(
                 "a join b on (x,x+1)",
                 18,
@@ -2484,7 +2506,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinSyntaxError() {
+    public void testJoinSyntaxError() throws Exception {
         assertSyntaxError(
                 "select a.x from a a join b on (a + case when a.x = 1 then 10 else end)",
                 66,
@@ -2494,7 +2516,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinTableMissing() {
+    public void testJoinTableMissing() throws Exception {
         assertSyntaxError(
                 "select a from tab join",
                 22,
@@ -2630,7 +2652,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax() {
+    public void testLatestBySyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest",
                 24,
@@ -2639,7 +2661,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax2() {
+    public void testLatestBySyntax2() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by x, ",
                 30,
@@ -2648,7 +2670,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax3() {
+    public void testLatestBySyntax3() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by",
                 27,
@@ -2657,7 +2679,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax4() {
+    public void testLatestBySyntax4() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
@@ -2714,7 +2736,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMissingArgument() {
+    public void testMissingArgument() throws Exception {
         assertSyntaxError(
                 "select x from tab where not (x != 1 and)",
                 36,
@@ -2724,7 +2746,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMissingTable() {
+    public void testMissingTable() throws Exception {
         assertSyntaxError(
                 "select a from",
                 13,
@@ -2733,7 +2755,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMissingTableInSubQuery() {
+    public void testMissingTableInSubQuery() throws Exception {
         // todo: 24 is the correct position
         assertSyntaxError(
                 "with x as (select a from) x",
@@ -2764,7 +2786,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -2779,7 +2801,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMultipleExpressions() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -2982,7 +3004,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByAmbiguousColumn() {
+    public void testOrderByAmbiguousColumn() throws Exception {
         assertSyntaxError(
                 "select tab1.x from tab1 join tab2 on (x) order by y",
                 50,
@@ -2993,7 +3015,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByExpression() {
+    public void testOrderByExpression() throws Exception {
         assertSyntaxError("select x, y from tab order by x+y", 31, "unexpected");
     }
 
@@ -3176,7 +3198,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnOuterResult() throws SqlException {
         assertQuery(
-                "select-virtual x, sum1 + sum z from (select-group-by [x, sum(3 / x) sum, sum(2 * y + x) sum1] x, sum(3 / x) sum, sum(2 * y + x) sum1 from (select [x, y] from tab)) order by z",
+                "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (select [x, y] from tab)) order by z",
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
@@ -3208,7 +3230,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPositionCorrupt() {
+    public void testOrderByPositionCorrupt() throws Exception {
         assertSyntaxError(
                 "tab order by 3a, 1",
                 13,
@@ -3234,7 +3256,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPositionOutOfRange1() {
+    public void testOrderByPositionOutOfRange1() throws Exception {
         assertSyntaxError(
                 "tab order by 0, 1",
                 13,
@@ -3248,7 +3270,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPositionOutOfRange2() {
+    public void testOrderByPositionOutOfRange2() throws Exception {
         assertSyntaxError(
                 "tab order by 2, 4",
                 16,
@@ -3276,7 +3298,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by [a, sum(b) b] a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b, t] from tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b, t] from tab) order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3288,7 +3310,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy3() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by [a, sum(b) b] a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b] from tab timestamp (t)) order by t) _xQdbA3) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((select-choose [a, b, t] a, b, t from (select [a, b] from tab timestamp (t)) order by t) _xQdbA3) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3309,7 +3331,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOuterJoinColumnAlias() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))) _xQdbA1) limit 10",
+        assertQuery("select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
@@ -3321,7 +3343,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOuterJoinColumnAliasConst() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 10) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 10) o on o.customerId = c.customerId))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = 10 limit 10",
@@ -3332,7 +3354,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOuterJoinColumnAliasNull() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+        assertQuery("select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -3385,7 +3407,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRedundantSelect() {
+    public void testRedundantSelect() throws Exception {
         assertSyntaxError(
                 "select x from select (select x from a) timestamp(x)",
                 22,
@@ -3473,7 +3495,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleByFillMinAsSubQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b from ((select-group-by [a, sum(b) b] a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)) _xQdbA1)",
+                "select-choose a, b from ((select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)) _xQdbA1)",
                 "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3483,12 +3505,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBadTableExpression() {
-        assertSyntaxError(")", 0, "table name expected");
-    }
-
-    @Test
-    public void testSampleByFillMissingCloseBrace() {
+    public void testSampleByFillMissingCloseBrace() throws Exception {
         assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill (21231.2344",
                 70,
@@ -3501,7 +3518,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByFillMissingOpenBrace() {
+    public void testSampleByFillMissingOpenBrace() throws Exception {
         assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill 21231.2344",
                 59,
@@ -3514,7 +3531,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByFillMissingValue() {
+    public void testSampleByFillMissingValue() throws Exception {
         assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill ()",
                 60,
@@ -3539,7 +3556,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByIncorrectPlacement() {
+    public void testSampleByIncorrectPlacement() throws Exception {
         assertSyntaxError(
                 "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 63,
@@ -3552,7 +3569,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByInvalidColumn() {
+    public void testSampleByInvalidColumn() throws Exception {
         assertSyntaxError("select x,sum(y) from tab timestamp(z) sample by 2m",
                 35,
                 "Invalid column",
@@ -3564,7 +3581,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByInvalidType() {
+    public void testSampleByInvalidType() throws Exception {
         assertSyntaxError("select x,sum(y) from tab timestamp(x) sample by 2m",
                 35,
                 "not a TIMESTAMP",
@@ -3576,7 +3593,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByNoAggregate() {
+    public void testSampleByNoAggregate() throws Exception {
         assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -3586,13 +3603,38 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByUndefinedTimestamp() {
+    public void testSampleByUndefinedTimestamp() throws Exception {
         assertSyntaxError("select x,sum(y) from tab sample by 2m",
-                35,
+                7,
                 "base query does not provide dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
+        assertSyntaxError("select x,sum(y) from (select distinct x, y from tab) sample by 2m",
+                7,
+                "base query does not provide dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSampleByUndefinedTimestampWithJoin() throws Exception {
+        assertSyntaxError("select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
+                0,
+                "TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
         );
     }
 
@@ -3625,7 +3667,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAliasAsFunction() {
+    public void testSelectAliasAsFunction() throws Exception {
         assertSyntaxError(
                 "select sum(x) x() from tab",
                 15,
@@ -3635,7 +3677,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAnalyticOperator() {
+    public void testSelectAnalyticOperator() throws Exception {
         assertSyntaxError(
                 "select sum(x), 2*x over() from tab",
                 16,
@@ -3663,7 +3705,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectColumnsFromJoinSubQueries() throws SqlException {
         assertQuery(
-                "select-virtual addr, sum_out - sum_in total from ((select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [addr, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
+                "select-virtual addr, sum_out - sum_in total from ((select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [sum_in, toAddress] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
                 "select addr, sum_out - sum_in total from (\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -3677,7 +3719,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
-        assertQuery("select-choose addr, count, sum_out, toAddress, count1, sum_in from ((select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
+        assertQuery("select-choose addr, count, sum_out, toAddress, count1, sum_in from ((select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)) _xQdbA1)",
                 "(\n" +
                         "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
@@ -3691,7 +3733,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
-        assertQuery("select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [addr, count() count, sum(value) sum_out] addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)",
+        assertQuery("select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by addr, count() count, sum(value) sum_out from (select-choose [fromAddress addr, value] fromAddress addr, value from (select [fromAddress, value] from transactions.csv))) a join select [toAddress, count, sum_in] from (select-group-by toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr)",
                 "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
                         "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
                 modelOf("transactions.csv")
@@ -3726,7 +3768,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectDistinctGroupByFunction() throws SqlException {
         assertQuery(
-                "select-distinct a, bb from (select-group-by [a, sum(b) bb] a, sum(b) bb from (select [a, b] from tab))",
+                "select-distinct a, bb from (select-group-by a, sum(b) bb from (select [a, b] from tab))",
                 "select distinct a, sum(b) bb from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -3737,7 +3779,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectDistinctGroupByFunctionArithmetic() throws SqlException {
         assertQuery(
-                "select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
+                "select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
                 "select distinct a, sum(b)+sum(c) bb from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -3748,12 +3790,26 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctUnion() throws SqlException {
+        assertQuery("select-choose c from ((select-distinct c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) union select-distinct c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips))) _xQdbA1)",
+                "select c from (select distinct a c, b from trips union all select distinct c, d b from trips)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
         );
     }
 
@@ -3765,7 +3821,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectFromNonCursorFunction() {
+    public void testSelectFromNonCursorFunction() throws Exception {
         assertSyntaxError("select * from length('hello')", 14, "function must return CURSOR");
     }
 
@@ -3790,7 +3846,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectGroupByAndAnalytic() {
+    public void testSelectGroupByAndAnalytic() throws Exception {
         assertSyntaxError(
                 "select sum(x), count() over() from tab",
                 0,
@@ -3801,7 +3857,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectGroupByArithmetic() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
+        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by sum(x) sum, sum(y) sum1 from (select [x, y] from tab))",
                 "select sum(x)+10, sum(y) from tab",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -3811,7 +3867,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectGroupByArithmeticAndLimit() throws SqlException {
-        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by [sum(x) sum, sum(y) sum1] sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
+        assertQuery("select-virtual sum + 10 column, sum1 from (select-group-by sum(x) sum, sum(y) sum1 from (select [x, y] from tab)) limit 200",
                 "select sum(x)+10, sum(y) from tab limit 200",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -3820,7 +3876,35 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectMissingExpression() {
+    public void testSelectGroupByUnion() throws SqlException {
+        assertQuery("select-choose b from ((select-group-by a, sum(b) b from (select [a, b] from trips) union all select-group-by c, avg(d) b from (select [c, d] from trips)) _xQdbA1)",
+                "select b from (select a, sum(b) b from trips union all select c, avg(d) b from trips)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectLatestByUnion() throws SqlException {
+        assertQuery("select-choose b from ((select-choose [b] a, b from (select [b, c] from trips latest by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest by a)) _xQdbA1)",
+                "select b from (select a, b b from trips latest by c union all select c, d b from trips latest by a)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectMissingExpression() throws Exception {
         assertSyntaxError(
                 "select ,a from tab",
                 7,
@@ -3829,7 +3913,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectMissingExpression2() {
+    public void testSelectMissingExpression2() throws Exception {
         assertSyntaxError(
                 "select a, from tab",
                 15,
@@ -3838,7 +3922,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectOnItsOwn() {
+    public void testSelectOnItsOwn() throws Exception {
         assertSyntaxError("select ", 7, "column expected");
     }
 
@@ -3852,7 +3936,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectSelectColumn() {
+    public void testSelectSelectColumn() throws Exception {
         assertSyntaxError(
                 "select a, select from tab",
                 17,
@@ -3866,6 +3950,20 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-virtual a + b * c x from (select [a, c, b] from t)",
                 "select a+b*c x from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
+    }
+
+    @Test
+    public void testSelectSumFromSubQueryLimit() throws SqlException {
+        assertQuery("select-group-by sum(tip_amount) sum from ((select-choose [tip_amount] a, b, c, d, tip_amount, e from (select [tip_amount] from trips) limit 100000000) _xQdbA1)",
+                "select sum(tip_amount) from (trips limit 100000000)",
+                modelOf("trips")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3889,7 +3987,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWildcardAndNotTimestamp() {
+    public void testSelectWildcardAndNotTimestamp() throws Exception {
         assertSyntaxError(
                 "select * from (select x from tab1) timestamp(y)",
                 45,
@@ -3908,7 +4006,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWildcardDetachedStar() {
+    public void testSelectWildcardDetachedStar() throws Exception {
         assertSyntaxError(
                 "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
                 19,
@@ -3919,7 +4017,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWildcardInvalidTableAlias() {
+    public void testSelectWildcardInvalidTableAlias() throws Exception {
         assertSyntaxError(
                 "select tab2.*, b.* from tab1 a join tab2 on (x)",
                 17,
@@ -3930,7 +4028,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWildcardMissingStar() {
+    public void testSelectWildcardMissingStar() throws Exception {
         assertSyntaxError(
                 "select tab2.*, bxx. from tab1 a join tab2 on (x)",
                 19,
@@ -4008,7 +4106,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleTableLimitLoHiExtraToken() {
+    public void testSingleTableLimitLoHiExtraToken() throws Exception {
         assertSyntaxError("select x x, y y from tab where x > z limit 100,200 b", 51, "unexpected");
     }
 
@@ -4032,7 +4130,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSpliceJoinColumnAliasNull() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
+                "select-choose customerId, kk, count from ((select-group-by customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
                         " splice join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
@@ -4200,12 +4298,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSubQuerySyntaxError() {
+    public void testSubQuerySyntaxError() throws Exception {
         assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' expected");
     }
 
     @Test
-    public void testTableNameAsArithmetic() {
+    public void testTableNameAsArithmetic() throws Exception {
         assertSyntaxError(
                 "select x from 'tab' + 1",
                 20,
@@ -4215,7 +4313,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableNameCannotOpen() {
+    public void testTableNameCannotOpen() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -4239,7 +4337,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         ) {
             assertSyntaxError(
                     compiler,
-                    engine,
                     "select * from tab",
                     14,
                     "Cannot open file",
@@ -4249,7 +4346,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableNameJustNoRowidMarker() {
+    public void testTableNameJustNoRowidMarker() throws Exception {
         assertSyntaxError(
                 "select * from '*!*'",
                 14,
@@ -4258,22 +4355,38 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableNameLocked() {
-        engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab");
-        try {
-            assertSyntaxError(
-                    "select * from tab",
-                    14,
-                    "table is locked",
-                    modelOf("tab").col("x", ColumnType.INT)
-            );
-        } finally {
-            engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null);
-        }
+    public void testTableNameLocked() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab");
+            try {
+                TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+                try {
+                    try {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            CairoTestUtils.create(tableModels[i]);
+                        }
+                        compiler.compile("select * from tab", sqlExecutionContext);
+                        Assert.fail("Exception expected");
+                    } catch (SqlException e) {
+                        Assert.assertEquals(14, e.getPosition());
+                        TestUtils.assertContains(e.getMessage(), "table is locked");
+                    }
+                } finally {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TableModel tableModel = tableModels[i];
+                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        tableModel.close();
+                    }
+                }
+            } finally {
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null);
+            }
+        });
     }
 
     @Test
-    public void testTableNameReserved() {
+    public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
             configuration.getFilesFacade().touch(path.of(root).concat("tab").$());
         }
@@ -4359,22 +4472,22 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUnbalancedBracketInSubQuery() {
+    public void testUnbalancedBracketInSubQuery() throws Exception {
         assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
     }
 
     @Test
-    public void testUnderTerminatedOver() {
+    public void testUnderTerminatedOver() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (partition by b order by ts from xyz", 53, "expected");
     }
 
     @Test
-    public void testUnderTerminatedOver2() {
+    public void testUnderTerminatedOver2() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 52, "'asc' or 'desc' expected");
     }
 
     @Test
-    public void testUnexpectedTokenInAnalyticFunction() {
+    public void testUnexpectedTokenInAnalyticFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) my over (by b order by ts) from xyz", 26, "expected");
     }
 
@@ -4400,7 +4513,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUnionDifferentColumnCount() {
+    public void testUnionDifferentColumnCount() throws Exception {
         assertSyntaxError(
                 "select x from (select * from a union select * from b union all select sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 63,
@@ -4458,7 +4571,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from ((select-choose [z] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from ((select-choose [z, t] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -4496,7 +4609,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from ((select-choose [z] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
+                "select-choose x from ((select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from ((select-choose [z, t] z, t from (select [z, t] from c order by t)) _xQdbA5) timestamp (t)) sample by 6h) _xQdbA1) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -4515,7 +4628,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z] from zyzy where a in (0,10) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) AND b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -4542,7 +4655,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWithDuplicateName() {
+    public void testWithDuplicateName() throws Exception {
         assertSyntaxError(
                 "with x as (tab), x as (tab2) x",
                 17,
@@ -4575,7 +4688,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWithSyntaxError() {
+    public void testWithSyntaxError() throws Exception {
         assertSyntaxError(
                 "with x as (" +
                         " select ,a from tab" +
@@ -4589,22 +4702,25 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     private static void assertSyntaxError(
             SqlCompiler compiler,
-            CairoEngine engine,
             String query,
             int position,
             String contains,
-            TableModel... tableModels) {
+            TableModel... tableModels
+    ) throws Exception {
         try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            compiler.compile(query, sqlExecutionContext);
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
+            assertMemoryLeak(() -> {
+                try {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        CairoTestUtils.create(tableModels[i]);
+                    }
+                    compiler.compile(query, sqlExecutionContext);
+                    Assert.fail("Exception expected");
+                } catch (SqlException e) {
+                    Assert.assertEquals(position, e.getPosition());
+                    TestUtils.assertContains(e.getMessage(), contains);
+                }
+            });
         } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
                 Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
@@ -4614,8 +4730,8 @@ public class SqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
+        assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

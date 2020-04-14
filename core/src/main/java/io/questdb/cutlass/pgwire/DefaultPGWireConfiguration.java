@@ -28,6 +28,10 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.time.DateLocale;
 
 public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
@@ -139,5 +143,15 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public String getDefaultUsername() {
         return "admin";
+    }
+
+    @Override
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
+    }
+
+    @Override
+    public TimestampLocale getDefaultTimestampLocale() {
+        return TimestampFormatUtils.enLocale;
     }
 }

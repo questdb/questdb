@@ -43,15 +43,9 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocaleFactory;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.time.*;
 
 import java.io.File;
 import java.util.Arrays;
@@ -124,6 +118,19 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final String inputRoot;
+    private final boolean lineUdpEnabled;
+    private final int lineUdpOwnThreadAffinity;
+    private final boolean lineUdpUnicast;
+    private final boolean lineUdpOwnThread;
+    private final int sqlCopyBufferSize;
+    private final int sqlAnalyticColumnPoolCapacity;
+    private final int sqlCreateTableModelPoolCapacity;
+    private final int sqlColumnCastModelPoolCapacity;
+    private final int sqlRenameTableModelPoolCapacity;
+    private final int sqlWithClauseModelPoolCapacity;
+    private final int sqlInsertModelPoolCapacity;
+    private final DateLocale dateLocale;
+    private final TimestampLocale timestampLocale;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -165,20 +172,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private boolean lineUdpEnabled;
-    private int lineUdpOwnThreadAffinity;
-    private boolean lineUdpUnicast;
-    private boolean lineUdpOwnThread;
     private int jsonQueryFloatScale;
-    private int sqlCopyBufferSize;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
-    private int sqlAnalyticColumnPoolCapacity;
-    private int sqlCreateTableModelPoolCapacity;
-    private int sqlColumnCastModelPoolCapacity;
-    private int sqlRenameTableModelPoolCapacity;
-    private int sqlWithClauseModelPoolCapacity;
-    private int sqlInsertModelPoolCapacity;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -309,11 +305,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
+        final String dateLocale = getString(properties, "cairo.date.locale", "en");
+        this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+        if (this.dateLocale == null) {
+            throw new ServerConfigurationException("cairo.date.locale", dateLocale);
+        }
+
+        final String timestampLocale = getString(properties, "cairo.timestamp.locale", "en");
+        this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
+        if (timestampLocale == null) {
+            throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
+        }
+
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE
+                TimestampLocaleFactory.INSTANCE,
+                this.dateLocale,
+                this.timestampLocale
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -715,6 +725,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public InputFormatConfiguration getInputFormatConfiguration() {
             return inputFormatConfiguration;
         }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return dateLocale;
+        }
+
+        @Override
+        public TimestampLocale getDefaultTimestampLocale() {
+            return timestampLocale;
+        }
     }
 
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
@@ -821,6 +841,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
@@ -1064,6 +1085,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCommitMode() {
             return commitMode;
+        }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return dateLocale;
+        }
+
+        @Override
+        public TimestampLocale getDefaultTimestampLocale() {
+            return timestampLocale;
         }
     }
 

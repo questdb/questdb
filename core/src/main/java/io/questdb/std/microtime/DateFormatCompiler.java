@@ -663,7 +663,7 @@ public class DateFormatCompiler {
         asm.ldc2_w(minLongIndex);
         asm.lstore(LOCAL_OFFSET);
 
-        asm.iconst(DateFormatUtils.HOUR_24);
+        asm.iconst(TimestampFormatUtils.HOUR_24);
         asm.istore(LOCAL_HOUR_TYPE);
 
         if ((stackState & (1 << LOCAL_ERA)) == 0) {
@@ -1165,7 +1165,7 @@ public class DateFormatCompiler {
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
-                        // DateFormatUtils.assertChar(' ', in, pos++, hi);
+                        // TimestampFormatUtils.assertChar(' ', in, pos++, hi);
                         asm.iconst(delimiter.charAt(0));
                         asm.aload(P_INPUT_STR);
                         asm.iload(LOCAL_POS);
@@ -1173,7 +1173,7 @@ public class DateFormatCompiler {
                         asm.iload(P_HI);
                         asm.invokeStatic(assertCharIndex);
                     } else {
-                        // pos = DateFormatUtils.assertString(", ", 2, in, pos, hi);
+                        // pos = TimestampFormatUtils.assertString(", ", 2, in, pos, hi);
                         asm.ldc(delimIndices.getQuick(-op - 1));
                         asm.iconst(len);
                         asm.aload(P_INPUT_STR);
@@ -1360,22 +1360,22 @@ public class DateFormatCompiler {
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
 
-        int assertRemainingIndex = asm.poolMethod(DateFormatUtils.class, "assertRemaining", "(II)V");
-        int assertNoTailIndex = asm.poolMethod(DateFormatUtils.class, "assertNoTail", "(II)V");
-        int assertStringIndex = asm.poolMethod(DateFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
-        int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lio/questdb/std/microtime/TimestampLocale;IIIIIIIIIIJI)J");
-        int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
-        int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
-        int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSink;I)V");
-        int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
-        int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int append000Index = asm.poolMethod(DateFormatUtils.class, "append000", "(Lio/questdb/std/str/CharSink;I)V");
-        int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
-        int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
+        int assertRemainingIndex = asm.poolMethod(TimestampFormatUtils.class, "assertRemaining", "(II)V");
+        int assertNoTailIndex = asm.poolMethod(TimestampFormatUtils.class, "assertNoTail", "(II)V");
+        int assertStringIndex = asm.poolMethod(TimestampFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
+        int assertCharIndex = asm.poolMethod(TimestampFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
+        int computeMillisIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/microtime/TimestampLocale;IIIIIIIIIIJI)J");
+        int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, "adjustYear", "(I)I");
+        int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
+        int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(TimestampFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/microtime/TimestampLocale;)V");
+        int appendHour12Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour12", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int append000Index = asm.poolMethod(TimestampFormatUtils.class, "append000", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
@@ -1803,9 +1803,9 @@ public class DateFormatCompiler {
 
     private void setHourType(int stackState) {
         asm.iload(LOCAL_HOUR_TYPE);
-        asm.iconst(DateFormatUtils.HOUR_24);
+        asm.iconst(TimestampFormatUtils.HOUR_24);
         int branch = asm.if_icmpne();
-        asm.iconst(DateFormatUtils.HOUR_AM);
+        asm.iconst(TimestampFormatUtils.HOUR_AM);
         asm.istore(LOCAL_HOUR_TYPE);
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));

@@ -37,7 +37,7 @@ import org.junit.Test;
 public class DateFormatCompilerTest {
 
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
-    private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDateLocale("en-GB");
+    private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
 
     @BeforeClass
@@ -714,7 +714,7 @@ public class DateFormatCompilerTest {
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
-        assertThat(pattern, expected, input, DateLocaleFactory.INSTANCE.getDateLocale(localeId));
+        assertThat(pattern, expected, input, DateLocaleFactory.INSTANCE.getLocale(localeId));
     }
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {

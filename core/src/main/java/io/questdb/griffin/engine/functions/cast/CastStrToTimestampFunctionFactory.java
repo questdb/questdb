@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormatUtils;
+import io.questdb.std.microtime.TimestampFormatUtils;
 
 public class CastStrToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -54,7 +54,7 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getStr(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseTimestamp(value);
+                return value == null ? Numbers.LONG_NaN : TimestampFormatUtils.parseTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

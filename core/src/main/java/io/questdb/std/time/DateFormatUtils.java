@@ -35,28 +35,16 @@ public class DateFormatUtils {
     public static final int HOUR_AM = 0;
     public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
-    public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+    public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat PG_DATE_TIME_Z_FORMAT;
-    private static final DateFormat FMT4;
     private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
     static int prevCenturyLow;
     private static long newYear;
-
-    static {
-        updateReferenceYear(System.currentTimeMillis());
-        DateFormatCompiler compiler = new DateFormatCompiler();
-        UTC_FORMAT = compiler.compile(UTC_PATTERN);
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        FMT4 = compiler.compile("MMM d yyyy");
-        PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
-        PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
-        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
-    }
 
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
@@ -92,7 +80,7 @@ public class DateFormatUtils {
         if (millis == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(millis, defaultLocale, "Z", sink);
+        UTC_FORMAT.format(millis, enLocale, "Z", sink);
     }
 
     // YYYY-MM-DD
@@ -106,13 +94,8 @@ public class DateFormatUtils {
     }
 
     public static void formatHTTP(CharSink sink, long millis) {
-        HTTP_FORMAT.format(millis, defaultLocale, "GMT", sink);
+        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
     }
-
-    public static void formatMMMDYYYY(CharSink sink, long millis) {
-        FMT4.format(millis, defaultLocale, "Z", sink);
-    }
-
 
     // YYYY-MM
     public static void formatYYYYMM(CharSink sink, long millis) {
@@ -128,7 +111,7 @@ public class DateFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseDateTime(CharSequence seq) throws NumericException {
-        return UTC_FORMAT.parse(seq, 0, seq.length(), defaultLocale);
+        return UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
     }
 
     public static void updateReferenceYear(long millis) {
@@ -317,6 +300,16 @@ public class DateFormatUtils {
         } else {
             sink.put(locale.getEra(1));
         }
+    }
+
+    static {
+        updateReferenceYear(System.currentTimeMillis());
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
+        PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
+        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
     }
 
 }

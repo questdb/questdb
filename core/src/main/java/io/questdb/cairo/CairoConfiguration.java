@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.time.DateLocale;
 import io.questdb.std.time.MillisecondClock;
 
 public interface CairoConfiguration {
@@ -134,4 +136,8 @@ public interface CairoConfiguration {
     int getInsertPoolCapacity();
 
     int getCommitMode();
+
+    DateLocale getDefaultDateLocale();
+
+    TimestampLocale getDefaultTimestampLocale();
 }
