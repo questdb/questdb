@@ -24,22 +24,78 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.model.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import java.io.Closeable;
+import java.util.ServiceLoader;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-import java.util.ServiceLoader;
+import io.questdb.MessageBus;
+import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.Path;
 
 
 public class SqlCompiler implements Closeable {
@@ -73,6 +129,11 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod createTableMethod = this::createTable;
     private final TextLoader textLoader;
     private final FilesFacade ff;
+    private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
+    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+    private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopieCache = new CharSequenceObjHashMap<>();
+    private transient SqlExecutionContext currentExecutionContext;
+
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
     }
@@ -106,6 +167,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SET", this::compileSet);
         keywordBasedExecutors.put("drop", this::dropTable);
         keywordBasedExecutors.put("DROP", this::dropTable);
+        keywordBasedExecutors.put("backup", this::sqlBackup);
+        keywordBasedExecutors.put("BACKUP", this::sqlBackup);
 
         configureLexer(lexer);
 
@@ -162,6 +225,8 @@ public class SqlCompiler implements Closeable {
 
     @Override
     public void close() {
+        assert null == currentExecutionContext;
+        assert tableNames.isEmpty();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -1012,17 +1077,20 @@ public class SqlCompiler implements Closeable {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-
-            int timestampIndex = writerMetadata.getTimestampIndex();
-            if (timestampIndex == -1) {
-                copyUnordered(cursor, writer, recordToRowCopier);
-            } else {
-                copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
-            }
+            copyTableData(cursor, writer, writerMetadata, recordToRowCopier);
             return writer;
         } catch (CairoException e) {
             writer.close();
             throw e;
+        }
+    }
+
+    private void copyTableData(RecordCursor cursor, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
+        int timestampIndex = writerMetadata.getTimestampIndex();
+        if (timestampIndex == -1) {
+            copyUnordered(cursor, writer, recordToRowCopier);
+        } else {
+            copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
         }
     }
 
@@ -1579,6 +1647,186 @@ public class SqlCompiler implements Closeable {
 
         if (model.getPartitionBy() != PartitionBy.NONE && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
+        }
+    }
+    
+    private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
+        if (null == configuration.getBackupRoot()) {
+            throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+        }
+
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (null != tok) {
+            if (Chars.equalsLowerCaseAscii(tok, "table")) {
+                return sqlTableBackup(executionContext);
+            }
+            if (Chars.equalsLowerCaseAscii(tok, "database")) {
+                return sqlDatabaseBackup(executionContext);
+            }
+        }
+
+        throw SqlException.position(lexer.lastTokenPosition()).put(" expected 'table' or 'database'");
+    }
+
+    private final FindVisitor sqlDatabaseBackupOnFind = (file, type) -> {
+        nativeLPSZ.of(file);
+        if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+            try {
+                backupTable(nativeLPSZ, currentExecutionContext);
+            } catch (CairoException ex) {
+                LOG.error().$("Failed to backup ").$(nativeLPSZ).$(": ").$(ex.getFlyweightMessage()).$();
+            }
+        }
+    };
+
+    private CompiledQuery sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
+        currentExecutionContext = executionContext;
+        try {
+            setupBackupRenamePath();
+            ff.iterateDir(path.of(configuration.getRoot()).$(), sqlDatabaseBackupOnFind);
+            return compiledQuery.ofBackupTable();
+        } finally {
+            currentExecutionContext = null;
+        }
+    }
+
+    private CompiledQuery sqlTableBackup(SqlExecutionContext executionContext) throws SqlException {
+        setupBackupRenamePath();
+
+        try {
+            tableNames.clear();
+            while (true) {
+                CharSequence tok = SqlUtil.fetchNext(lexer);
+                if (null == tok) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected a table name");
+                }
+                CharSequence tableName = GenericLexer.unhack(GenericLexer.unquote(tok));
+                if (tableName == null) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected a valid table name");
+                }
+                int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
+                if (status != TableUtils.TABLE_EXISTS) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" '").put(tableName).put("' is not  a valid table");
+                }
+                tableNames.add(tableName);
+
+                tok = SqlUtil.fetchNext(lexer);
+                if (null == tok || Chars.equals(tok, ';')) {
+                    break;
+                }
+                if (!Chars.equals(tok, ',')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put(" expected ','");
+                }
+            }
+
+            for (int n = 0; n < tableNames.size(); n++) {
+                backupTable(tableNames.get(n), executionContext);
+            }
+
+            return compiledQuery.ofBackupTable();
+        } finally {
+            tableNames.clear();
+        }
+    }
+
+    private void setupBackupRenamePath() {
+        TimestampFormat format = configuration.getBackupDirTimestampFormat();
+        long epochMicros = configuration.getMicrosecondClock().getTicks();
+        int n = 0;
+        // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
+        // a CairoException. Maybe it should be serialised
+        renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR);
+        int plen = renamePath.length();
+        do {
+            renamePath.trimTo(plen);
+            format.format(epochMicros, configuration.getDefaultTimestampLocale(), null, renamePath);
+            if (n > 0) {
+                renamePath.put('.').put(n);
+            }
+            renamePath.put(Files.SEPARATOR).$();
+            n++;
+        } while (ff.exists(renamePath));
+        if (ff.mkdirs(renamePath, configuration.getBackupMkDirMode()) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(renamePath).put(']');
+        }
+    }
+
+    private transient String cachedTmpBackupRoot;
+
+    private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
+        LOG.info().$("Starting backup of ").$(tableName).$();
+        if (null == cachedTmpBackupRoot) {
+            if (null == configuration.getBackupRoot()) {
+                throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+            }
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).$();
+            cachedTmpBackupRoot = path.toString();
+        }
+
+        CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+        try (TableReader reader = engine.getReader(securityContext, tableName)) {
+            cloneMetaData(tableName, configuration.getRoot(), cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
+
+            try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
+                RecordMetadata writerMetadata = backupWriter.getMetadata();
+                path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();
+                RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(path);
+                if (null == recordToRowCopier) {
+                    entityColumnFilter.of(writerMetadata.getColumnCount());
+                    recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
+                    tableBackupRowCopieCache.put(path.toString(), recordToRowCopier);
+                }
+
+                RecordCursor cursor = reader.getCursor();
+                copyTableData(cursor, backupWriter, writerMetadata, recordToRowCopier);
+                backupWriter.commit();
+            }
+        }
+
+        path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
+        int renameRootLen = renamePath.length();
+        try {
+            renamePath.trimTo(renameRootLen).concat(tableName).$();
+            if (!ff.rename(path, renamePath)) {
+                throw CairoException.instance(ff.errno()).put("Could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
+            }
+            LOG.info().$("Completed backup of ").$(tableName).$(" to ").$(renamePath).$();
+        } finally {
+            renamePath.trimTo(renameRootLen).$();
+        }
+    }
+
+    private void cloneMetaData(CharSequence tableName, CharSequence root, CharSequence backupRoot, int mkDirMode, TableReader reader) {
+        path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
+
+        if (ff.exists(path)) {
+            throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(path).put(']');
+        }
+
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+        }
+
+        TableReaderMetadata sourceMetaData = (TableReaderMetadata) reader.getMetadata();
+        int rootLen = path.length();
+        try {
+            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+            sourceMetaData.cloneTo(mem);
+
+            // create symbol maps
+            path.trimTo(rootLen).$();
+            int symbolMapCount = 0;
+            for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
+                if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapReader mapReader = reader.getSymbolMapReader(i);
+                    SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
+                    symbolMapCount++;
+                }
+            }
+            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+        } finally {
+            mem.close();
         }
     }
 

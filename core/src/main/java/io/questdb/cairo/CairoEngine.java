@@ -24,6 +24,12 @@
 
 package io.questdb.cairo;
 
+import static io.questdb.cairo.ColumnType.SYMBOL;
+
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -38,11 +44,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
-
-import static io.questdb.cairo.ColumnType.SYMBOL;
 
 public class CairoEngine implements Closeable {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -51,6 +52,7 @@ public class CairoEngine implements Closeable {
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
     private final WriterMaintenanceJob writerMaintenanceJob;
+    private final MessageBus messageBus;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
@@ -61,6 +63,11 @@ public class CairoEngine implements Closeable {
         this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+        this.messageBus = messageBus;
+    }
+
+    public WriterMaintenanceJob getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
     }
 
     @Override
@@ -151,8 +158,13 @@ public class CairoEngine implements Closeable {
         return writerPool.get(tableName);
     }
 
-    public WriterMaintenanceJob getWriterMaintenanceJob() {
-        return writerMaintenanceJob;
+    public TableWriter getBackupWriter(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence backupDirName
+    ) {
+        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental 
+        return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
 
     public boolean lock(
@@ -199,14 +211,15 @@ public class CairoEngine implements Closeable {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters() {
+    public boolean releaseAllWriters () {
         return writerPool.releaseAll();
     }
-
-    public void releaseInactive() {
-        writerPool.releaseInactive();
-        readerPool.releaseInactive();
-    }
+    
+	public boolean releaseInactive() {
+		boolean useful = writerPool.releaseInactive();
+		useful |= readerPool.releaseInactive();
+		return useful;
+	}
 
     public void remove(
             CairoSecurityContext securityContext,
@@ -303,9 +316,7 @@ public class CairoEngine implements Closeable {
         }
 
         protected boolean doRun() {
-            boolean w = writerPool.releaseInactive();
-            boolean r = readerPool.releaseInactive();
-            return w || r;
+        	return releaseInactive();
         }
 
         @Override

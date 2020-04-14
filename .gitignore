@@ -15,3 +15,7 @@ core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeFiles
 core/CMakeCache.txt
+**/.project
+**/.settings
+**/.classpath
+**/bin
