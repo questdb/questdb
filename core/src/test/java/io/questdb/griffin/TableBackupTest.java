@@ -59,7 +59,7 @@ public class TableBackupTest {
     private SqlExecutionContext mainSqlExecutionContext;
 
     @Test
-    public void allTypesPartitionedTableTest1() throws Exception {
+    public void testAllTypesPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "testTable2";
             // @formatter:off
@@ -96,7 +96,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void backupDatabaseTest() throws Exception {
+    public void testBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
             // @formatter:off
             mainCompiler.compile("create table tb1 as (select" +
@@ -125,7 +125,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void compromisedTableNameTest() throws Exception {
+    public void testCompromisedTableName() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 // @formatter:off
@@ -145,7 +145,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void incorrectConfigTest() throws Exception {
+    public void testIncorrectConfig() throws Exception {
         backupRoot = null;
         assertMemoryLeak(() -> {
             try {
@@ -167,7 +167,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void invalidSqlTest1() throws Exception {
+    public void testInvalidSql1() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 mainCompiler.compile("backup something", mainSqlExecutionContext);
@@ -180,7 +180,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void invalidSqlTest2() throws Exception {
+    public void testInvalidSql2() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 mainCompiler.compile("backup table", mainSqlExecutionContext);
@@ -193,7 +193,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void invalidSqlTest3() throws Exception {
+    public void testInvalidSql3() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 // @formatter:off
@@ -214,7 +214,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void missingTableTest() throws Exception {
+    public void testMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 // @formatter:off
@@ -235,7 +235,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void multipleTableTest() throws Exception {
+    public void testMultipleTable() throws Exception {
         assertMemoryLeak(() -> {
             // @formatter:off
             mainCompiler.compile("create table tb1 as (select" +
@@ -287,7 +287,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void simpleTableTest1() throws Exception {
+    public void testSimpleTable1() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "testTable1";
             // @formatter:off
@@ -307,7 +307,7 @@ public class TableBackupTest {
     }
 
     @Test
-    public void successiveBackupsTest() throws Exception {
+    public void testSuccessiveBackups() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "testTable1";
             // @formatter:off
