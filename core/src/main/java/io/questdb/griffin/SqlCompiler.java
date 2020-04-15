@@ -913,36 +913,45 @@ public class SqlCompiler implements Closeable {
             cachedTmpBackupRoot = path.toString();
         }
 
-        CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
-        try (TableReader reader = engine.getReader(securityContext, tableName)) {
-            cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
-
-            try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
-                RecordMetadata writerMetadata = backupWriter.getMetadata();
-                path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();
-                RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(path);
-                if (null == recordToRowCopier) {
-                    entityColumnFilter.of(writerMetadata.getColumnCount());
-                    recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
-                    tableBackupRowCopieCache.put(path.toString(), recordToRowCopier);
-                }
-
-                RecordCursor cursor = reader.getCursor();
-                copyTableData(cursor, backupWriter, writerMetadata, recordToRowCopier);
-                backupWriter.commit();
-            }
-        }
-
-        path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
         int renameRootLen = renamePath.length();
         try {
-            renamePath.trimTo(renameRootLen).concat(tableName).$();
-            if (!ff.rename(path, renamePath)) {
-                throw CairoException.instance(ff.errno()).put("Could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
+            CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
+            try (TableReader reader = engine.getReader(securityContext, tableName)) {
+                cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
+
+                try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
+                    RecordMetadata writerMetadata = backupWriter.getMetadata();
+                    path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();
+                    RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(path);
+                    if (null == recordToRowCopier) {
+                        entityColumnFilter.of(writerMetadata.getColumnCount());
+                        recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
+                        tableBackupRowCopieCache.put(path.toString(), recordToRowCopier);
+                    }
+
+                    RecordCursor cursor = reader.getCursor();
+                    copyTableData(cursor, backupWriter, writerMetadata, recordToRowCopier);
+                    backupWriter.commit();
+                }
             }
-            LOG.info().$("Completed backup of ").$(tableName).$(" to ").$(renamePath).$();
-        } finally {
-            renamePath.trimTo(renameRootLen).$();
+
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
+            try {
+                renamePath.trimTo(renameRootLen).concat(tableName).$();
+                if (!ff.rename(path, renamePath)) {
+                    throw CairoException.instance(ff.errno()).put("Could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
+                }
+                LOG.info().$("Completed backup of ").$(tableName).$(" to ").$(renamePath).$();
+            } finally {
+                renamePath.trimTo(renameRootLen).$();
+            }
+        } catch (CairoException ex) {
+            LOG.info().$("Failed to backup ").$(tableName).$(" with ").$(ex.getFlyweightMessage()).$();
+            path.of(cachedTmpBackupRoot).concat(tableName).put(Files.SEPARATOR).$();
+            if (!ff.rmdir(path)) {
+                LOG.error().$("Failed to delete directory ").$(path).$(" with errno ").$(ff.errno()).$();
+            }
+            throw ex;
         }
     }
 
