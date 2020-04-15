@@ -291,6 +291,7 @@ public class TableBackupTest {
             public boolean rename(LPSZ from, LPSZ to) {
                 if (renameErrno != -1) {
                     nextErrno = renameErrno;
+                    renameErrno = -1;
                     return false;
                 }
                 return super.rename(from, to);
@@ -406,6 +407,12 @@ public class TableBackupTest {
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[5] Could not rename "));
             }
+
+            mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
+            setFinalBackupPath(1);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
