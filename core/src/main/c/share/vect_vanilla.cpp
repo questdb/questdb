@@ -100,34 +100,43 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
-//TODO - implement kahan
 double sumDoubleKahan_Vanilla(double *d, int64_t count) {
     const double *lim = d + count;
     double sum = 0;
+    double c = 0;
     bool hasData = false;
     for (; d < lim; d++) {
-        const double v = *d;
-        if (v == v) {
-            sum += v;
+        const double input = *d;
+        if (input == input) {
+            double y = input - c;
+            double t = sum + y;
+            c = (t - sum) - y;
+            sum = t;
             hasData = true;
         }
     }
     return hasData ? sum : NAN;
 }
 
-//TODO - implement Neumaier
 double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
     const double *lim = d + count;
     double sum = 0;
+    double c = 0;
     bool hasData = false;
     for (; d < lim; d++) {
-        const double v = *d;
-        if (v == v) {
-            sum += v;
+        const double input = *d;
+        if (input == input) {
+            double t = sum + input;
+            if (std::abs(sum) >= std::abs(input)) {
+                c += (sum - t) + input;
+            } else {
+                c += (input - t) + sum;
+            }
+            sum = t;
             hasData = true;
         }
     }
-    return hasData ? sum : NAN;
+    return hasData ? sum + c : NAN;
 }
 
 double avgDouble_Vanilla(double *d, int64_t count) {
