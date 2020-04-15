@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -32,14 +33,7 @@ import java.util.Comparator;
 public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
-
-    static {
-        WHITESPACE.add(" ");
-        WHITESPACE.add("\t");
-        WHITESPACE.add("\n");
-        WHITESPACE.add("\r");
-    }
-
+    public static final IntHashSet WHITESPACE_CH = new IntHashSet();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool;
@@ -69,8 +63,35 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             assert that.lo < that.hi;
             return that;
         }
+        return value;
+    }
 
-        assert (value instanceof FloatingSequence || value instanceof String);
+    public static CharSequence assertNoDots(CharSequence value, int position) throws SqlException {
+        int len = value.length();
+        if (len == 1 && value.charAt(0) == '.') {
+            throw SqlException.position(position).put("'.' is an invalid table name");
+        }
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i);
+            if ((c == '.' && i < len - 1 && value.charAt(i + 1) == '.')) {
+                throw SqlException.position(position + i).put('\'').put(c).put("' is not allowed");
+            }
+        }
+
+        return value;
+    }
+
+    public static CharSequence assertNoDotsAndSlashes(CharSequence value, int position) throws SqlException {
+        int len = value.length();
+        if (len == 1 && value.charAt(0) == '.') {
+            throw SqlException.position(position).put("'.' is an invalid table name");
+        }
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i);
+            if (c == '/' || c == '\\' || (c == '.' && i < len - 1 && value.charAt(i + 1) == '.')) {
+                throw SqlException.position(position + i).put('\'').put(c).put("' is not allowed");
+            }
+        }
 
         return value;
     }
@@ -80,49 +101,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
-    }
-
-    public static CharSequence unhack(CharSequence value) {
-        int len = value.length();
-        int p = 0;
-        char c;
-        while (p < len && ((c = value.charAt(p)) == '.' || c == '/' || c == '\\')) {
-            p++;
-        }
-
-        if (p < len) {
-            return value.subSequence(p, len);
-        }
-
-        return null;
-    }
-
-    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
-        final int index = symbols.keyIndex(c);
-        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
-    }
-
-    @Nullable
-    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
-        final ObjList<CharSequence> l = symbols.valueAt(index);
-        for (int i = 0, sz = l.size(); i < sz; i++) {
-            CharSequence txt = l.getQuick(i);
-            int n = txt.length();
-            boolean match = (n - 2) < (_len - _pos);
-            if (match) {
-                for (int k = 1; k < n; k++) {
-                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
-                        match = false;
-                        break;
-                    }
-                }
-            }
-
-            if (match) {
-                return txt;
-            }
-        }
-        return null;
     }
 
     public final void defineSymbol(String token) {
@@ -139,8 +117,16 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         l.sort(COMPARATOR);
     }
 
+    public CharSequence getContent() {
+        return content;
+    }
+
     public int getPosition() {
         return _pos;
+    }
+
+    public int getTokenHi() {
+        return _hi;
     }
 
     public CharSequence getUnparsed() {
@@ -239,6 +225,14 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return last = flyweightSequence;
     }
 
+    public CharSequence immutableBetween(int lo, int hi) {
+        FloatingSequence that = csPool.next();
+        that.lo = lo;
+        that.hi = hi;
+        assert that.lo < that.hi;
+        return that;
+    }
+
     public int lastTokenPosition() {
         return _lo;
     }
@@ -269,6 +263,34 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void unparse() {
         unparsed = last;
+    }
+
+    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
+        final int index = symbols.keyIndex(c);
+        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
+    }
+
+    @Nullable
+    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
+        final ObjList<CharSequence> l = symbols.valueAt(index);
+        for (int i = 0, sz = l.size(); i < sz; i++) {
+            CharSequence txt = l.getQuick(i);
+            int n = txt.length();
+            boolean match = (n - 2) < (_len - _pos);
+            if (match) {
+                for (int k = 1; k < n; k++) {
+                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
+                        match = false;
+                        break;
+                    }
+                }
+            }
+
+            if (match) {
+                return txt;
+            }
+        }
+        return null;
     }
 
     private CharSequence token(char c) {
@@ -326,6 +348,18 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         public void clear() {
         }
 
+        public int getHi() {
+            return hi;
+        }
+
+        public void setHi(int hi) {
+            this.hi = hi;
+        }
+
+        public void setLo(int lo) {
+            this.lo = lo;
+        }
+
         @Override
         public int length() {
             return hi - lo;
@@ -344,5 +378,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             assert that.lo < that.hi;
             return that;
         }
+    }
+
+    static {
+        WHITESPACE.add(" ");
+        WHITESPACE.add("\t");
+        WHITESPACE.add("\n");
+        WHITESPACE.add("\r");
+
+        WHITESPACE_CH.add(' ');
+        WHITESPACE_CH.add('\t');
+        WHITESPACE_CH.add('\n');
+        WHITESPACE_CH.add('\r');
     }
 }

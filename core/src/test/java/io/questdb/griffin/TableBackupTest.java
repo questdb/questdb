@@ -1,33 +1,50 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.griffin;
-
-import java.io.IOException;
-
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.IOException;
 
 public class TableBackupTest {
+    // todo: rename test methods to fall inline with other test method names, e.g. testSomething
     private static final StringSink sink = new StringSink();
     private static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
     @Rule
@@ -40,26 +57,6 @@ public class TableBackupTest {
     private CairoEngine mainEngine;
     private SqlCompiler mainCompiler;
     private SqlExecutionContext mainSqlExecutionContext;
-
-    @Test
-    public void simpleTableTest1() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "testTable1";
-            // @formatter:off
-            mainCompiler.compile("create table " + tableName + " as (select" +
-                    " rnd_symbol(4,4,4,2) sym," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-            // @formatter:on
-
-            mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
-            setFinalBackupPath();
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-        });
-    }
 
     @Test
     public void allTypesPartitionedTableTest1() throws Exception {
@@ -99,6 +96,145 @@ public class TableBackupTest {
     }
 
     @Test
+    public void backupDatabaseTest() throws Exception {
+        assertMemoryLeak(() -> {
+            // @formatter:off
+            mainCompiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,2) sym," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+            mainCompiler.compile("create table tb2 as (select" +
+                    " rnd_long256() ll," +
+                    " timestamp_sequence(10000000000, 500000000) ts" +
+                    " from long_sequence(100000)) timestamp(ts)", mainSqlExecutionContext);
+            // @formatter:on
+
+            mainCompiler.compile("backup database", mainSqlExecutionContext);
+
+            setFinalBackupPath();
+
+            String sourceSelectAll = selectAll("tb1", false);
+            String backupSelectAll = selectAll("tb1", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+
+            sourceSelectAll = selectAll("tb2", false);
+            backupSelectAll = selectAll("tb2", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+        });
+    }
+
+    @Test
+    public void compromisedTableNameTest() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table ../tb1", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertEquals("'.' is an invalid table name", ex.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void incorrectConfigTest() throws Exception {
+        backupRoot = null;
+        assertMemoryLeak(() -> {
+            try {
+                String tableName = "testTable1";
+                // @formatter:off
+                mainCompiler.compile("create table " + tableName + " as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertEquals("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]", ex.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void invalidSqlTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                mainCompiler.compile("backup something", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertEquals(7, ex.getPosition());
+                TestUtils.assertEquals("expected 'table' or 'database'", ex.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void invalidSqlTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                mainCompiler.compile("backup table", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertEquals("expected a table name", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void invalidSqlTest3() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table tb1 tb2", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertEquals(17, ex.getPosition());
+                TestUtils.assertEquals("expected ','", ex.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void missingTableTest() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // @formatter:off
+                mainCompiler.compile("create table tb1 as (select" +
+                        " rnd_symbol(4,4,4,2) sym," +
+                        " rnd_double(2) d," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+                // @formatter:on
+
+                mainCompiler.compile("backup table tb1, tb2", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(18, e.getPosition());
+                TestUtils.assertEquals("'tb2' is not  a valid table", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void multipleTableTest() throws Exception {
         assertMemoryLeak(() -> {
             // @formatter:off
@@ -123,6 +259,49 @@ public class TableBackupTest {
 
             sourceSelectAll = selectAll("tb2", false);
             backupSelectAll = selectAll("tb2", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+        });
+    }
+
+    @Before
+    public void setup() throws IOException {
+        finalBackupPath = new Path();
+        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
+        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+
+        mainConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public CharSequence getBackupRoot() {
+                return backupRoot;
+            }
+
+            @Override
+            public TimestampFormat getBackupDirTimestampFormat() {
+                return new DateFormatCompiler().compile("ddMMMyyyy");
+            }
+        };
+        MessageBus mainMessageBus = new MessageBusImpl();
+        mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
+        mainCompiler = new SqlCompiler(mainEngine);
+        mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
+    }
+
+    @Test
+    public void simpleTableTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testTable1";
+            // @formatter:off
+            mainCompiler.compile("create table " + tableName + " as (select" +
+                    " rnd_symbol(4,4,4,2) sym," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+            // @formatter:on
+
+            mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+            setFinalBackupPath();
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
             Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
@@ -166,160 +345,32 @@ public class TableBackupTest {
         });
     }
 
-    @Test
-    public void missingTableTest() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                // @formatter:off
-                mainCompiler.compile("create table tb1 as (select" +
-                        " rnd_symbol(4,4,4,2) sym," +
-                        " rnd_double(2) d," +
-                        " timestamp_sequence(0, 1000000000) ts" +
-                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-                // @formatter:on
+    @After
+    public void tearDown() {
+        finalBackupPath.close();
+    }
 
-                mainCompiler.compile("backup table tb1, tb2", mainSqlExecutionContext);
-                Assert.assertTrue(false);
-            } catch (SqlException ex) {
-                Assert.assertEquals("io.questdb.griffin.SqlException: [18]  'tb2' is not  a valid table", ex.toString());
+    private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                mainEngine.releaseInactive();
+                Assert.assertEquals(0, mainEngine.getBusyWriterCount());
+                Assert.assertEquals(0, mainEngine.getBusyReaderCount());
+            } finally {
+                mainEngine.releaseAllReaders();
+                mainEngine.releaseAllWriters();
             }
         });
     }
 
-    @Test
-    public void incorrectConfigTest() throws Exception {
-        backupRoot = null;
-        assertMemoryLeak(() -> {
-            try {
-                String tableName = "testTable1";
-                // @formatter:off
-                mainCompiler.compile("create table " + tableName + " as (select" +
-                        " rnd_symbol(4,4,4,2) sym," +
-                        " rnd_double(2) d," +
-                        " timestamp_sequence(0, 1000000000) ts" +
-                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-                // @formatter:on
-
-                mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
-                Assert.assertTrue(false);
-            } catch (CairoException ex) {
-                Assert.assertEquals(
-                        "io.questdb.cairo.CairoException: [0] Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]",
-                        ex.toString());
-            }
-        });
-    }
-
-    @Test
-    public void backupDatabaseTest() throws Exception {
-        assertMemoryLeak(() -> {
-            // @formatter:off
-            mainCompiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,2) sym," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-            mainCompiler.compile("create table tb2 as (select" +
-                    " rnd_long256() ll," +
-                    " timestamp_sequence(10000000000, 500000000) ts" +
-                    " from long_sequence(100000)) timestamp(ts)", mainSqlExecutionContext);
-            // @formatter:on
-
-            mainCompiler.compile("backup database", mainSqlExecutionContext);
-
-            setFinalBackupPath();
-
-            String sourceSelectAll = selectAll("tb1", false);
-            String backupSelectAll = selectAll("tb1", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-
-            sourceSelectAll = selectAll("tb2", false);
-            backupSelectAll = selectAll("tb2", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-        });
-    }
-
-    @Test
-    public void invalidSqlTest1() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                mainCompiler.compile("backup something", mainSqlExecutionContext);
-            } catch (SqlException ex) {
-                TestUtils.assertEquals("io.questdb.griffin.SqlException: [7]  expected 'table' or 'database'", ex.toString());
-            }
-        });
-    }
-
-    @Test
-    public void invalidSqlTest2() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                mainCompiler.compile("backup table", mainSqlExecutionContext);
-            } catch (SqlException ex) {
-                TestUtils.assertEquals("io.questdb.griffin.SqlException: [7]  expected a table name", ex.toString());
-            }
-        });
-    }
-
-    @Test
-    public void invalidSqlTest3() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                // @formatter:off
-                mainCompiler.compile("create table tb1 as (select" +
-                        " rnd_symbol(4,4,4,2) sym," +
-                        " rnd_double(2) d," +
-                        " timestamp_sequence(0, 1000000000) ts" +
-                        " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-                mainCompiler.compile("create table tb2 as (select" +
-                        " rnd_long256() ll," +
-                        " timestamp_sequence(10000000000, 500000000) ts" +
-                        " from long_sequence(100000)) timestamp(ts)", mainSqlExecutionContext);
-                // @formatter:on
-
-                mainCompiler.compile("backup table tb1 tb2", mainSqlExecutionContext);
-            } catch (SqlException ex) {
-                TestUtils.assertEquals("io.questdb.griffin.SqlException: [17]  expected ','", ex.toString());
-            }
-        });
-    }
-
-    @Test
-    public void compromisedTableNameTest() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                // @formatter:off
-                mainCompiler.compile("create table tb1 as (select" +
-                        " rnd_symbol(4,4,4,2) sym," +
-                        " rnd_double(2) d," +
-                        " timestamp_sequence(0, 1000000000) ts" +
-                        " from long_sequence(10)) timestamp(ts)", mainSqlExecutionContext);
-                // @formatter:on
-
-                mainCompiler.compile("backup table ../tb1", mainSqlExecutionContext);
-                setFinalBackupPath();
-                String sourceSelectAll = selectAll("tb1", false);
-                String backupSelectAll = selectAll("tb1", true);
-                Assert.assertEquals(sourceSelectAll, backupSelectAll);
-            } catch (SqlException ex) {
-                TestUtils.assertEquals("io.questdb.griffin.SqlException: [13]  expected a valid table name", ex.toString());
-            }
-        });
-    }
-
-    private void setFinalBackupPath() {
-        setFinalBackupPath(0);
-    }
-
-    private void setFinalBackupPath(int n) {
-        TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
-        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
-        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultTimestampLocale(), null, finalBackupPath);
-        if (n > 0) {
-            finalBackupPath.put('.');
-            finalBackupPath.put(n);
+    private String selectAll(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
+        try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            printer.print(cursor, factory.getMetadata(), true);
         }
-        finalBackupPath.put(Files.SEPARATOR).$();
+        return sink.toString();
     }
 
     private String selectAll(String tableName, boolean backup) throws Exception {
@@ -338,63 +389,27 @@ public class TableBackupTest {
                 compiler = mainCompiler;
                 sqlExecutionContext = mainSqlExecutionContext;
             }
-            return selectAll(engine, compiler, sqlExecutionContext, tableName);
+            return selectAll(compiler, sqlExecutionContext, tableName);
         } finally {
             if (backup) {
-                engine.close();
-                compiler.close();
+                Misc.free(engine);
+                Misc.free(compiler);
             }
         }
     }
 
-    private String selectAll(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
-        CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
-        try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
+    private void setFinalBackupPath(int n) {
+        TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
+        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
+        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultTimestampLocale(), null, finalBackupPath);
+        if (n > 0) {
+            finalBackupPath.put('.');
+            finalBackupPath.put(n);
         }
-        return sink.toString();
+        finalBackupPath.put(Files.SEPARATOR).$();
     }
 
-    @Before
-    public void setup() throws IOException {
-        finalBackupPath = new Path();
-        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
-        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
-
-        mainConfiguration = new DefaultCairoConfiguration(root) {
-            @Override
-            public CharSequence getBackupRoot() {
-                return backupRoot;
-            }
-
-            @Override
-            public TimestampFormat getBackupDirTimestampFormat() {
-                return new DateFormatCompiler().compile("ddMMMyyyy");
-            }
-        };
-        MessageBus mainMessageBus = new MessageBusImpl();
-        mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
-        mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
-    }
-
-    @After
-    public void tearDown() {
-        finalBackupPath.close();
-    }
-
-    private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                mainEngine.releaseInactive();
-                Assert.assertEquals(0, mainEngine.getBusyWriterCount());
-                Assert.assertEquals(0, mainEngine.getBusyReaderCount());
-            } finally {
-                mainEngine.releaseAllReaders();
-                mainEngine.releaseAllWriters();
-            }
-        });
+    private void setFinalBackupPath() {
+        setFinalBackupPath(0);
     }
 }

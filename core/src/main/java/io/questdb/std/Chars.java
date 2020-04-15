@@ -40,6 +40,54 @@ public final class Chars {
     private Chars() {
     }
 
+    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
+        }
+    }
+
+    public static int compare(CharSequence l, CharSequence r) {
+        if (l == r) {
+            return 0;
+        }
+
+        if (l == null) {
+            return -1;
+        }
+
+        if (r == null) {
+            return 1;
+        }
+
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k;
+            }
+        }
+        return Integer.compare(ll, rl);
+    }
+
+    public static int compareDescending(CharSequence l, CharSequence r) {
+        return compare(r, l);
+    }
+
     public static boolean contains(CharSequence sequence, CharSequence term) {
         int m = term.length();
         if (m == 0) {
@@ -103,15 +151,6 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
-    private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
-        for (int i = 0; i < len; i++) {
-            if (l.charAt(i) != r.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static boolean equals(CharSequence l, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -150,10 +189,6 @@ public final class Chars {
 
     public static boolean equals(CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
-    }
-
-    public static boolean equalsNc(CharSequence l, char r) {
-        return l != null && equals(l, r);
     }
 
     /**
@@ -201,24 +236,6 @@ public final class Chars {
         return true;
     }
 
-    public static String toLowerCaseAscii(@Nullable CharSequence value) {
-        if (value == null) {
-            return null;
-        }
-        final int len = value.length();
-        if (len == 0) {
-            return "";
-        }
-
-        final CharSink b = Misc.getThreadLocalBuilder();
-        for (int i = 0; i < len; i++) {
-            b.put(toLowerCaseAscii(value.charAt(i)));
-        }
-        return b.toString();
-
-
-    }
-
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, CharSequence r) {
         int ll;
         if ((ll = l.length()) != r.length()) {
@@ -236,6 +253,10 @@ public final class Chars {
 
     public static boolean equalsLowerCaseAsciiNc(@Nullable CharSequence l, @NotNull CharSequence r) {
         return l != null && equalsLowerCaseAscii(l, r);
+    }
+
+    public static boolean equalsNc(CharSequence l, char r) {
+        return l != null && equals(l, r);
     }
 
     public static boolean equalsNc(CharSequence l, CharSequence r) {
@@ -298,12 +319,8 @@ public final class Chars {
         return (b & 192) != 128;
     }
 
-    public static boolean isQuoted(CharSequence s) {
-        if (s == null || s.length() == 0) {
-            return false;
-        }
-
-        switch (s.charAt(0)) {
+    public static boolean isQuote(char c) {
+        switch (c) {
             case '\'':
             case '"':
             case '`':
@@ -311,6 +328,14 @@ public final class Chars {
             default:
                 return false;
         }
+    }
+
+    public static boolean isQuoted(CharSequence s) {
+        if (s == null || s.length() == 0) {
+            return false;
+        }
+
+        return isQuote(s.charAt(0));
     }
 
     public static int lastIndexOf(CharSequence s, char c) {
@@ -433,16 +458,32 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
-    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+    public static String stringFromUtf8Bytes(long lo, long hi) {
+        if (hi == lo) {
+            return "";
         }
+
+        CharSink b = Misc.getThreadLocalBuilder();
+        utf8Decode(lo, hi, b);
+        return b.toString();
     }
 
-    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
+    public static String toLowerCaseAscii(@Nullable CharSequence value) {
+        if (value == null) {
+            return null;
         }
+        final int len = value.length();
+        if (len == 0) {
+            return "";
+        }
+
+        final CharSink b = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            b.put(toLowerCaseAscii(value.charAt(i)));
+        }
+        return b.toString();
+
+
     }
 
     public static char toLowerCaseAscii(char character) {
@@ -492,16 +533,6 @@ public final class Chars {
     public static String toString(CharSequence cs, int start, int end) {
         final CharSink b = Misc.getThreadLocalBuilder();
         b.put(cs, start, end);
-        return b.toString();
-    }
-
-    public static String stringFromUtf8Bytes(long lo, long hi) {
-        if (hi == lo) {
-            return "";
-        }
-
-        CharSink b = Misc.getThreadLocalBuilder();
-        utf8Decode(lo, hi, b);
         return b.toString();
     }
 
@@ -568,6 +599,15 @@ public final class Chars {
             } else {
                 sink.put((char) b);
                 ++p;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (l.charAt(i) != r.charAt(i)) {
+                return false;
             }
         }
         return true;
@@ -696,41 +736,5 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
-    }
-
-    public static int compareDescending(CharSequence l, CharSequence r) {
-        return compare(r, l);
-    }
-
-    public static int compare(CharSequence l, CharSequence r) {
-        if (l == r) {
-            return 0;
-        }
-
-        if (l == null) {
-            return -1;
-        }
-
-        if (r == null) {
-            return 1;
-        }
-
-        final int ll = l.length();
-        final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k;
-            }
-        }
-        return Integer.compare(ll, rl);
-    }
-
-    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
-        }
     }
 }
