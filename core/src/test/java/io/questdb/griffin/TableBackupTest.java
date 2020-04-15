@@ -298,7 +298,7 @@ public class TableBackupTest {
                     " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
             // @formatter:on
 
-            mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
+            mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath();
             String sourceSelectAll = selectAll(tableName, false);
             String backupSelectAll = selectAll(tableName, true);
