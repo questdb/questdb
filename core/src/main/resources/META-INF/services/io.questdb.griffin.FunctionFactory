@@ -211,6 +211,25 @@ io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfWeekSundayFirstFunctionFactory
+io.questdb.griffin.engine.functions.date.MinuteOfHourFunctionFactory
+io.questdb.griffin.engine.functions.date.SecondOfMinuteFunctionFactory
+io.questdb.griffin.engine.functions.date.YearFunctionFactory
+io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory
+io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory
+io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.DaysBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.MonthsBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.YearsBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.AddHoursToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddDaysToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddMonthsToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddYearsToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
+
 
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
