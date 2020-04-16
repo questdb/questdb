@@ -24,22 +24,9 @@
 
 package io.questdb.griffin;
 
-import java.io.IOException;
-
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -54,6 +41,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.IOException;
 
 public class TableBackupTest {
     // todo: rename test methods to fall inline with other test method names, e.g. testSomething
@@ -71,6 +62,76 @@ public class TableBackupTest {
     private SqlCompiler mainCompiler;
     private SqlExecutionContext mainSqlExecutionContext;
     private int renameErrno;
+    private int mkdirsErrno;
+    private int mkdirsErrnoCountDown = 0;
+
+    @Before
+    public void setup() throws IOException {
+        finalBackupPath = new Path();
+        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
+        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+        mkdirsErrno = -1;
+        renameErrno = -1;
+        FilesFacade ff = new FilesFacadeImpl() {
+            private int nextErrno = -1;
+
+            @Override
+            public int errno() {
+                if (nextErrno != -1) {
+                    int errno = nextErrno;
+                    nextErrno = -1;
+                    return errno;
+                }
+                return super.errno();
+            }
+
+            @Override
+            public int mkdirs(LPSZ path, int mode) {
+                if (mkdirsErrno != -1 && --mkdirsErrnoCountDown < 1) {
+                    nextErrno = mkdirsErrno;
+                    mkdirsErrno = -1;
+                    mkdirsErrnoCountDown = 0;
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (renameErrno != -1) {
+                    nextErrno = renameErrno;
+                    renameErrno = -1;
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+        };
+        mainConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public CharSequence getBackupRoot() {
+                return backupRoot;
+            }
+
+            @Override
+            public TimestampFormat getBackupDirTimestampFormat() {
+                return new DateFormatCompiler().compile("ddMMMyyyy");
+            }
+        };
+        MessageBus mainMessageBus = new MessageBusImpl();
+        mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
+        mainCompiler = new SqlCompiler(mainEngine);
+        mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
+    }
+
+    @After
+    public void tearDown() {
+        finalBackupPath.close();
+    }
 
     @Test
     public void testAllTypesPartitionedTable() throws Exception {
@@ -277,56 +338,32 @@ public class TableBackupTest {
         });
     }
 
-    @Before
-    public void setup() throws IOException {
-        finalBackupPath = new Path();
-        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
-        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
+    @Test
+    public void testRenameFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testTable1";
+            // @formatter:off
+            mainCompiler.compile("create table " + tableName + " as (select" +
+                    " rnd_symbol(4,4,4,2) sym," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
+            // @formatter:on
 
-        renameErrno = -1;
-        FilesFacade ff = new FilesFacadeImpl() {
-            private int nextErrno = -1;
-
-            @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                if (renameErrno != -1) {
-                    nextErrno = renameErrno;
-                    renameErrno = -1;
-                    return false;
-                }
-                return super.rename(from, to);
+            renameErrno = ERRNO_EIO;
+            try {
+                mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[5] Could not rename "));
             }
 
-            @Override
-            public int errno() {
-                if (nextErrno != -1) {
-                    int errno = nextErrno;
-                    nextErrno = -1;
-                    return errno;
-                }
-                return super.errno();
-            }
-        };
-        mainConfiguration = new DefaultCairoConfiguration(root) {
-            @Override
-            public CharSequence getBackupRoot() {
-                return backupRoot;
-            }
-
-            @Override
-            public TimestampFormat getBackupDirTimestampFormat() {
-                return new DateFormatCompiler().compile("ddMMMyyyy");
-            }
-
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-        MessageBus mainMessageBus = new MessageBusImpl();
-        mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
-        mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
+            mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
+            setFinalBackupPath(1);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+        });
     }
 
     @Test
@@ -389,34 +426,6 @@ public class TableBackupTest {
     }
 
     @Test
-    public void testRenameFailure() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "testTable1";
-            // @formatter:off
-            mainCompiler.compile("create table " + tableName + " as (select" +
-                    " rnd_symbol(4,4,4,2) sym," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
-            // @formatter:on
-
-            renameErrno = ERRNO_EIO;
-            try {
-                mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[5] Could not rename "));
-            }
-
-            mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
-            setFinalBackupPath(1);
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-        });
-    }
-
-    @Test
     public void testTableBackupDirExists() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "testTable1";
@@ -454,23 +463,15 @@ public class TableBackupTest {
                     " from long_sequence(10000)) timestamp(ts)", mainSqlExecutionContext);
             // @formatter:on
 
-            try (Path path = new Path()) {
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").put(Files.SEPARATOR).$();
-                int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, 5);
-                Assert.assertEquals(0, rc);
-            }
             try {
+                mkdirsErrno = 13;
+                mkdirsErrnoCountDown = 2;
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[13] Could not create "));
             }
         });
-    }
-
-    @After
-    public void tearDown() {
-        finalBackupPath.close();
     }
 
     private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
