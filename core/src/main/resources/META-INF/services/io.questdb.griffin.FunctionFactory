@@ -467,3 +467,6 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
+
+# ^
+io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory

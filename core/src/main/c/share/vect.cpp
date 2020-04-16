@@ -419,7 +419,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
-    Vec8d yVec = 0.;
+    Vec8d yVec;
     Vec8d cVec = 0.;
     Vec8db bVec;
     Vec8q nancount = 0;
@@ -464,7 +464,6 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     const auto remainder = (int32_t) (count - (count / step) * step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
-
     Vec8d cVec = 0.;
     Vec8db bVec;
     Vec8q nancount = 0;
