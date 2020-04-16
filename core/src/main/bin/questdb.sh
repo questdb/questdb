@@ -33,7 +33,7 @@ function read_link {
 }
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-d path]"
+    echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
     echo
     exit 55
 }
