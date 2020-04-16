@@ -454,6 +454,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBug1() throws SqlException {
+        x("2022.yyyy", "'2022'.'yyyy'");
+    }
+
+    @Test
     public void testFunctionStar() {
         assertFail("fun(*)", 4, "too few arguments");
     }
