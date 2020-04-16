@@ -1296,8 +1296,9 @@ public class SqlCompiler implements Closeable {
             listColumnFilter.add(metadataColumnIndex);
             return false;
         }
+
         throw SqlException.inconvertibleTypes(
-                model.getQueryModel().getBottomUpColumns().getQuick(bottomUpColumnIndex).getAst().position,
+                function.getPosition(),
                 function.getType(),
                 model.getColumnValues().getQuick(bottomUpColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),

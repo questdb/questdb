@@ -117,7 +117,7 @@ class ExpressionParser {
                             if (Chars.isQuote(c)) {
                                 ExpressionNode en = opStack.pop();
                                 CharacterStoreEntry cse = characterStore.newEntry();
-                                cse.put(en.token).put('.');
+                                cse.put(GenericLexer.unquote(en.token)).put('.');
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 // attach dot to existing literal or constant
@@ -319,8 +319,15 @@ class ExpressionParser {
                             final ExpressionNode en = opStack.peek();
                             if (en != null && en.type != ExpressionNode.CONTROL) {
                                 // check if this is '1.2' or '1. 2'
-                                if (lexer.lastTokenPosition() == ((GenericLexer.FloatingSequence) en.token).getHi()) {
-                                    ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
+                                if (lexer.lastTokenPosition() > 0 && lexer.getContent().charAt(lexer.lastTokenPosition() - 1) == '.') {
+                                    if (en.token instanceof GenericLexer.FloatingSequence) {
+                                        ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
+                                    } else {
+                                        opStack.pop();
+                                        CharacterStoreEntry cse = characterStore.newEntry();
+                                        cse.put(en.token).put(GenericLexer.unquote(tok));
+                                        opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                                    }
                                     break;
                                 }
                             } else {
