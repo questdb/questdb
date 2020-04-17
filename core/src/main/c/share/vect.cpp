@@ -425,7 +425,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     Vec8q nancount = 0;
     Vec8d tVec;
     for (; d < lim_vec; d += step) {
-        //loading to vector
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         inputVec.load(d);
         bVec = is_nan(inputVec);
         nancount = if_add(bVec, nancount, 1);
@@ -469,6 +469,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     Vec8q nancount = 0;
     Vec8d tVec;
     for (; d < lim_vec; d += step) {
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         inputVec.load(d);
         bVec = is_nan(inputVec);
         nancount = if_add(bVec, nancount, 1);
