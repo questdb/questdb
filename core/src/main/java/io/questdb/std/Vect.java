@@ -67,6 +67,10 @@ public final class Vect {
 
     public static native double sumDouble(long pDouble, long count);
 
+    public static native double sumDoubleKahan(long pDouble, long count);
+
+    public static native double sumDoubleNeumaier(long pDouble, long count);
+
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
