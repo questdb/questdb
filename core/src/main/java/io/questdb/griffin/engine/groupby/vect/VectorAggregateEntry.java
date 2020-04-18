@@ -58,9 +58,9 @@ public class VectorAggregateEntry implements Mutable {
         return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);
     }
 
-    public boolean run() {
+    public boolean run(int workerId) {
         if (tryLock()) {
-            func.aggregate(address, count);
+            func.aggregate(address, count, workerId);
             doneLatch.countDown();
             return true;
         }

@@ -30,7 +30,6 @@ import java.io.Closeable;
 
 public class DirectLongList implements Mutable, Closeable {
 
-    public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;
     long pos;
@@ -41,8 +40,8 @@ public class DirectLongList implements Mutable, Closeable {
 
     public DirectLongList(long capacity) {
         this.pow2 = 3;
-        this.address = Unsafe.malloc(this.capacity = ((capacity << 3) + CACHE_LINE_SIZE));
-        this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
+        this.address = Unsafe.malloc(this.capacity = ((capacity << 3) + Misc.CACHE_LINE_SIZE));
+        this.start = this.pos = address + (address & (Misc.CACHE_LINE_SIZE - 1));
         this.limit = pos + ((capacity - 1) << 3);
         this.onePow2 = (1 << 3);
     }
@@ -171,8 +170,8 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     private void extend(long capacity) {
-        long address = Unsafe.malloc(this.capacity = ((capacity << pow2) + CACHE_LINE_SIZE));
-        long start = address + (address & (CACHE_LINE_SIZE - 1));
+        long address = Unsafe.malloc(this.capacity = ((capacity << pow2) + Misc.CACHE_LINE_SIZE));
+        long start = address + (address & (Misc.CACHE_LINE_SIZE - 1));
         Unsafe.getUnsafe().copyMemory(this.start, start, limit + onePow2 - this.start);
         if (this.address != 0) {
             Unsafe.free(this.address, this.capacity);

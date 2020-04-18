@@ -40,7 +40,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -4015,7 +4014,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 //        }
 //    }
 
-    @NotNull
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
         executeInsert(ddl);
@@ -4087,7 +4085,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         final GroupByNotKeyedJob job = new GroupByNotKeyedJob(messageBus);
         new Thread(() -> {
             while (running.get()) {
-                job.run();
+                job.run(0);
             }
             haltLatch.countDown();
         }).start();
@@ -4112,70 +4110,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "41676799\t416969.81549\n",
                 "select sum(a),round(sum(b),5) sum1 from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(1000035L))",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorSumDoubleAndIntWithNullsDanglingEdge() throws Exception {
-        assertQuery("sum\tsum1\n" +
-                        "1824\t20.7839974146286\n",
-                "select sum(a),sum(b) from x",
-                "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorSumOneDouble() throws Exception {
-        assertQuery("sum\n" +
-                        "9278.190426\n",
-                "select round(sum(d),6) sum from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(2)*100 d" +
-                        " from" +
-                        " long_sequence(200)" +
-                        ")",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorSumOneDoubleInPos2() throws Exception {
-        assertQuery("sum\n" +
-                        "83462.04211\n",
-                "select round(sum(d),6) sum from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() i," +
-                        " rnd_double(2) d" +
-                        " from" +
-                        " long_sequence(200921)" +
-                        ")",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorSumOneDoubleMultiplePartitions() throws Exception {
-        assertQuery("sum\n" +
-                        "9278.19042608885\n",
-                "select sum(d) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(2)*100 d," +
-                        " timestamp_sequence(0, 10000000000) k" +
-                        " from" +
-                        " long_sequence(200)" +
-                        ") timestamp(k) partition by DAY",
                 null,
                 false
         );

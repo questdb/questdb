@@ -42,4 +42,6 @@ public interface SqlExecutionContext {
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    int getWorkerCount();
 }

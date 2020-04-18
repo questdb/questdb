@@ -129,7 +129,7 @@ public class IODispatcherTest {
 
                 new Thread(() -> {
                     while (serverRunning.get()) {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> {
                                     if (operation == IOOperation.WRITE) {
@@ -243,7 +243,7 @@ public class IODispatcherTest {
                 new Thread(() -> {
 
                     while (serverRunning.get()) {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> context.handleClientOperation(operation, selector)
                         );
@@ -1452,7 +1452,8 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null
+                                null,
+                                workerPool.getWorkerCount()
                         );
                     }
                 });
@@ -2686,7 +2687,8 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null
+                                null,
+                                workerPool.getWorkerCount()
                         );
                     }
                 });
@@ -2983,7 +2985,7 @@ public class IODispatcherTest {
 
                 new Thread(() -> {
                     do {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> context.handleClientOperation(operation, selector)
                         );
@@ -3475,7 +3477,7 @@ public class IODispatcherTest {
 
                 new Thread(() -> {
                     while (serverRunning.get()) {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> context.handleClientOperation(operation, selector)
                         );
@@ -3645,7 +3647,7 @@ public class IODispatcherTest {
 
                 new Thread(() -> {
                     while (serverRunning.get()) {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> context.handleClientOperation(operation, selector)
                         );
@@ -3803,7 +3805,7 @@ public class IODispatcherTest {
 
                 new Thread(() -> {
                     while (serverRunning.get()) {
-                        dispatcher.run();
+                        dispatcher.run(0);
                         dispatcher.processIOQueue(
                                 (operation, context) -> context.handleClientOperation(operation, selector)
                         );
@@ -3988,7 +3990,7 @@ public class IODispatcherTest {
                         };
 
                         while (serverRunning.get()) {
-                            dispatcher.run();
+                            dispatcher.run(0);
                             dispatcher.processIOQueue(
                                     (operation, context) -> context.handleClientOperation(operation, selector)
                             );
@@ -4112,7 +4114,8 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null
+                                null,
+                                workerPool.getWorkerCount()
                         );
                     }
                 });
@@ -4369,7 +4372,8 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null
+                                null,
+                                workerPool.getWorkerCount()
                         );
                     }
                 });

@@ -84,7 +84,7 @@ public class HttpServer implements Closeable {
                         (operation, context) -> context.handleClientOperation(operation, selector);
 
                 @Override
-                public boolean run() {
+                public boolean run(int workerId) {
                     return dispatcher.processIOQueue(processor);
                 }
             });
@@ -154,7 +154,8 @@ public class HttpServer implements Closeable {
                 return new JsonQueryProcessor(
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        messageBus
+                        messageBus,
+                        workerPool.getWorkerCount()
 
                 );
             }
@@ -183,7 +184,8 @@ public class HttpServer implements Closeable {
                 return new TextQueryProcessor(
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        messageBus
+                        messageBus,
+                        workerPool.getWorkerCount()
                 );
             }
 

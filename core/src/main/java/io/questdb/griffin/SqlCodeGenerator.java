@@ -403,7 +403,11 @@ public class SqlCodeGenerator {
         );
     }
 
-    private ObjList<VectorAggregateFunction> createVectorAggregateFunctions(ObjList<QueryColumn> columns, RecordMetadata metadata) {
+    private ObjList<VectorAggregateFunction> createVectorAggregateFunctions(
+            ObjList<QueryColumn> columns,
+            RecordMetadata metadata,
+            int workerCount
+    ) {
         ObjList<VectorAggregateFunction> vafList = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -412,7 +416,7 @@ public class SqlCodeGenerator {
                 final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
                 final int type = metadata.getColumnType(columnIndex);
                 if (type == ColumnType.DOUBLE) {
-                    vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    vafList.add(new SumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount));
                     continue;
                 } else if (type == ColumnType.INT) {
                     vafList.add(new SumIntVectorAggregateFunction(ast.rhs.position, columnIndex));
@@ -425,6 +429,20 @@ public class SqlCodeGenerator {
                     continue;
                 } else if (type == ColumnType.TIMESTAMP) {
                     vafList.add(new SumTimestampVectorAggregateFunction(ast.rhs.position, columnIndex));
+                    continue;
+                }
+            } else if (isSingleColumnFunction(ast, "ksum")) {
+                final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
+                final int type = metadata.getColumnType(columnIndex);
+                if (type == ColumnType.DOUBLE) {
+                    vafList.add(new KSumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount));
+                    continue;
+                }
+            } else if (isSingleColumnFunction(ast, "nsum")) {
+                final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
+                final int type = metadata.getColumnType(columnIndex);
+                if (type == ColumnType.DOUBLE) {
+                    vafList.add(new NSumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount));
                     continue;
                 }
             } else if (isSingleColumnFunction(ast, "avg")) {
@@ -1081,7 +1099,8 @@ public class SqlCodeGenerator {
                                 groupByFunctions,
                                 recordFunctions,
                                 symbolTableSkewIndex,
-                                timestampIndex
+                                timestampIndex,
+                                valueTypes.getColumnCount()
                         );
                     }
 
@@ -1394,7 +1413,7 @@ public class SqlCodeGenerator {
 
             // inspect model for possibility of vector aggregate intrinsics
             if (factory.supportPageFrameCursor()) {
-                final ObjList<VectorAggregateFunction> vafList = createVectorAggregateFunctions(columns, metadata);
+                final ObjList<VectorAggregateFunction> vafList = createVectorAggregateFunctions(columns, metadata, executionContext.getWorkerCount());
                 if (vafList != null) {
                     final GenericRecordMetadata m = new GenericRecordMetadata();
                     for (int i = 0, n = vafList.size(); i < n; i++) {
