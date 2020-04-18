@@ -445,6 +445,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctSymbolColumnWithFilter() throws Exception {
+        final String expected = "pair\n" +
+                "A\n" +
+                "B\n";
+
+        assertQuery(expected,
+                "select distinct pair from prices where pair in ('A','B')",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " x ID, --increasing integer\n" +
+                        " rnd_symbol('A', 'B', 'C') pair, \n" +
+                        " rnd_double(0) length,\n" +
+                        " rnd_double(0) height" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testDynamicTimestamp() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
