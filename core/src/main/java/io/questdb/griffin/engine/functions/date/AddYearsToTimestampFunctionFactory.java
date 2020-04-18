@@ -37,7 +37,7 @@ import io.questdb.std.microtime.Timestamps;
 public class AddYearsToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "add_years(NL)";
+        return "add_years(NI)";
     }
 
     @Override

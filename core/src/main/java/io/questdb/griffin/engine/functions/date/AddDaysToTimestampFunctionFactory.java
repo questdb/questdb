@@ -37,7 +37,7 @@ import io.questdb.std.microtime.Timestamps;
 public class AddDaysToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "add_days(NL)";
+        return "add_days(NI)";
     }
 
     @Override
