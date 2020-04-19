@@ -81,7 +81,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putLong(valueIndex, 0);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
