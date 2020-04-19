@@ -146,7 +146,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addSeconds(l,r);
+            return Timestamps.addSeconds(l, r);
         }
     }
 
@@ -177,7 +177,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addMinutes(l,r);
+            return Timestamps.addMinutes(l, r);
         }
     }
 
@@ -208,7 +208,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addHours(l,r);
+            return Timestamps.addHours(l, r);
         }
     }
 
@@ -239,11 +239,11 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addDays(l,r);
+            return Timestamps.addDays(l, r);
         }
     }
-    
-    
+
+
     private static class AddLongFuncWeekConstant extends TimestampFunction implements BinaryFunction {
         final Function left;
         final Function right;
@@ -271,7 +271,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addWeeks(l,r);
+            return Timestamps.addWeeks(l, r);
         }
     }
 
@@ -302,7 +302,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addMonths(l,r);
+            return Timestamps.addMonths(l, r);
         }
     }
 
@@ -333,7 +333,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addYear(l,r);
+            return Timestamps.addYear(l, r);
         }
     }
 
@@ -530,7 +530,9 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getCenter() {return center;}
+        public Function getCenter() {
+            return center;
+        }
 
         @Override
         public Function getRight() {
@@ -545,7 +547,7 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
                 return Numbers.LONG_NaN;
             }
-            return Timestamps.addPeriod(l,c,r);
+            return Timestamps.addPeriod(l, c, r);
         }
     }
 }
