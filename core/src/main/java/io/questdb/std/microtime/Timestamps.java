@@ -96,6 +96,10 @@ final public class Timestamps {
         return micros + hours * HOUR_MICROS;
     }
 
+    public static long addSeconds(long micros, int seconds) { return micros + seconds * SECOND_MICROS;}
+
+    public static long addMinutes(long micros, int minutes) {return micros + minutes * MINUTE_MICROS;}
+
     public static long addMonths(final long micros, int months) {
         if (months == 0) {
             return micros;
@@ -127,12 +131,12 @@ final public class Timestamps {
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
     }
 
-    public static long addPeriod(long lo, char type, int period) throws NumericException {
+    public static long addPeriod(long lo, char type, int period) {
         switch (type) {
             case 's':
-                return lo + period * Timestamps.SECOND_MICROS;
+                return Timestamps.addSeconds(lo, period);
             case 'm':
-                return lo + period * Timestamps.MINUTE_MICROS;
+                return Timestamps.addMinutes(lo, period);
             case 'h':
                 return Timestamps.addHours(lo, period);
             case 'd':
@@ -144,7 +148,7 @@ final public class Timestamps {
             case 'y':
                 return Timestamps.addYear(lo, period);
             default:
-                throw NumericException.INSTANCE;
+                return Numbers.LONG_NaN;
         }
     }
 

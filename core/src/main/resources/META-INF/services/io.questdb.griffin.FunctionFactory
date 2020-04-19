@@ -155,6 +155,7 @@ io.questdb.griffin.engine.functions.date.DaysBetweenFunctionFactory
 io.questdb.griffin.engine.functions.date.MonthsBetweenFunctionFactory
 io.questdb.griffin.engine.functions.date.YearsBetweenFunctionFactory
 io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
+io.questdb.griffin.engine.functions.date.AddPeriodToTimestampFunctionFactory
 
 
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
