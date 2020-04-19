@@ -31,6 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
@@ -45,27 +47,70 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
         Function period = args.getQuick(1);
+        Function interval = args.getQuick(2);
         if (period.isConstant()) {
             char periodValue = period.getChar(null);
             if (periodValue == 's') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncSecondConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncSecondConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'm') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncMinuteConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncMinuteConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'h') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncHourConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncHourConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'd') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncDayConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncDayConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'w') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncWeekConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncWeekConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'M') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncMonthConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncMonthConstant(position, args.getQuick(0), args.getQuick(2));
             }
             if (periodValue == 'y') {
+                if (interval.isConstant()) {
+                    if (interval.getInt(null) != Numbers.INT_NaN) {
+                        return new AddLongFuncYearConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                    }
+                    return new TimestampConstant(position, Numbers.LONG_NaN);
+                }
                 return new AddLongFuncYearConstant(position, args.getQuick(0), args.getQuick(2));
             }
             return new AddLongFunc(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
@@ -291,7 +336,182 @@ public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
             return Timestamps.addYear(l,r);
         }
     }
-    
+
+    private static class AddLongFuncSecondConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncSecondConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addSeconds(l, interval);
+        }
+    }
+
+    private static class AddLongFuncMinuteConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncMinuteConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addMinutes(l, interval);
+        }
+    }
+
+    private static class AddLongFuncHourConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncHourConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addHours(l, interval);
+        }
+    }
+
+    private static class AddLongFuncDayConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncDayConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addDays(l, interval);
+        }
+    }
+
+    private static class AddLongFuncWeekConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncWeekConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addWeeks(l, interval);
+        }
+    }
+
+    private static class AddLongFuncMonthConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncMonthConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addMonths(l, interval);
+        }
+    }
+
+    private static class AddLongFuncYearConstantPeriodConstant extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final int interval;
+
+        public AddLongFuncYearConstantPeriodConstant(int position, Function left, int right) {
+            super(position);
+            this.arg = left;
+            this.interval = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.addYear(l, interval);
+        }
+    }
+
     private static class AddLongFunc extends TimestampFunction implements TernaryFunction {
         final Function left;
         final Function center;
