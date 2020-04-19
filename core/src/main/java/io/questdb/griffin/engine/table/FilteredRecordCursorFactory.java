@@ -36,6 +36,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final Function filter;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
+        assert !(base instanceof FilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
