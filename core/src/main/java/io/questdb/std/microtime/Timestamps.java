@@ -271,6 +271,62 @@ final public class Timestamps {
         }
     }
 
+    public static long getWeeksBetween(long a, long b) {
+        if (b < a) {
+            return getWeeksBetween(b, a);
+        } else {
+            return (b - a) / WEEK_MICROS;
+        }
+    }
+
+    public static long getMicrosBetween(long a, long b) {
+        if (b < a) {
+            return getMicrosBetween(b, a);
+        } else {
+            return (b - a);
+        }
+    }
+
+    public static long getMillisBetween(long a, long b) {
+        if (b < a) {
+            return getMillisBetween(b, a);
+        } else {
+            return (b - a) / MILLI_MICROS;
+        }
+    }
+
+    public static long getSecondsBetween(long a, long b) {
+        if (b < a) {
+            return getSecondsBetween(b, a);
+        } else {
+            return (b - a) / SECOND_MICROS;
+        }
+    }
+
+    public static long getMinutesBetween(long a, long b) {
+        if (b < a) {
+            return getMinutesBetween(b, a);
+        } else {
+            return (b - a) / MINUTE_SECONDS;
+        }
+    }
+
+    public static long getHoursBetween(long a, long b) {
+        if (b < a) {
+            return getHoursBetween(b, a);
+        } else {
+            return (b - a) / HOUR_MICROS;
+        }
+    }
+
+    public static long getQuartersBetween(long a, long b) {
+        if (b < a) {
+            return getQuartersBetween(b, a);
+        } else {
+            return getMonthsBetween(a, b) / 3;
+        }
+    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
