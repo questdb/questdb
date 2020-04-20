@@ -43,7 +43,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public void aggregate(long address, long count) {
+    public void aggregate(long address, long count, int workerId) {
         if (address != 0) {
             final long value = Vect.sumInt(address, count);
             if (value != Numbers.LONG_NaN) {

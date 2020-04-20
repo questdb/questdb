@@ -45,7 +45,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public void aggregate(long address, long count) {
+    public void aggregate(long address, long count, int workerId) {
         if (address != 0) {
             max.accumulate(Vect.maxLong(address, count));
         }

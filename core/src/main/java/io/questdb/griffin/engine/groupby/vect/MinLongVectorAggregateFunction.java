@@ -46,7 +46,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long address, long count) {
+    public void aggregate(long address, long count, int workerId) {
         if (address != 0) {
             final long value = Vect.minLong(address, count);
             if (value != Numbers.LONG_NaN) {

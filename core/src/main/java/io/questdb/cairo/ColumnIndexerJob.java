@@ -41,7 +41,7 @@ public class ColumnIndexerJob implements Job {
     }
 
     @Override
-    public boolean run() {
+    public boolean run(int workerId) {
         long cursor = subSeq.next();
         if (cursor < 0) {
             return false;

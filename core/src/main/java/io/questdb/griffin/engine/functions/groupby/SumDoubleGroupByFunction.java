@@ -48,8 +48,10 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
         final double value = arg.getDouble(record);
         if (value == value) {
             mapValue.putDouble(valueIndex, value);
+            mapValue.putLong(valueIndex + 1, 1);
         } else {
             mapValue.putDouble(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
     }
 
@@ -58,6 +60,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
         final double value = arg.getDouble(record);
         if (value == value) {
             mapValue.addDouble(valueIndex, value);
+            mapValue.addLong(valueIndex + 1, 1);
         }
     }
 
@@ -65,26 +68,33 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        long valueCount = rec.getLong(valueIndex + 1);
+        if (valueCount > 0) {
+            return rec.getDouble(valueIndex);
+        }
+        return Double.NaN;
     }
 
     @Override

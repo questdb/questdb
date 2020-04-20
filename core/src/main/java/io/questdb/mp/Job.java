@@ -25,5 +25,5 @@
 package io.questdb.mp;
 
 public interface Job {
-    boolean run();
+    boolean run(int workerId);
 }

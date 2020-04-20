@@ -30,7 +30,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
-    void aggregate(long address, long count);
+    void aggregate(long address, long count, int workerId);
 
     int getColumnIndex();
 
