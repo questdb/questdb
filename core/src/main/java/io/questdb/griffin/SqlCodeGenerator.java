@@ -46,6 +46,8 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.griffin.SqlKeywords.isCountKeyword;
+import static io.questdb.griffin.SqlKeywords.isNullKeyword;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
@@ -1133,7 +1135,7 @@ public class SqlCodeGenerator {
                     );
                 }
 
-                if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "null")) {
+                if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
                     if (keyTypes.getColumnCount() == 0) {
                         return new SampleByFillNullNotKeyedRecordCursorFactory(
                                 factory,
@@ -1370,8 +1372,8 @@ public class SqlCodeGenerator {
             ObjList<QueryColumn> columns = model.getBottomUpColumns();
             if (columns.size() == 1) {
                 QueryColumn column = columns.getQuick(0);
-                if (column.getAst().type == FUNCTION && Chars.equalsLowerCaseAscii(column.getAst().token, "count")) {
-                    if (Chars.equalsLowerCaseAscii(column.getName(), "count")) {
+                if (column.getAst().type == FUNCTION && isCountKeyword(column.getAst().token)) {
+                    if (isCountKeyword(column.getName())) {
                         return new CountRecordCursorFactory(CountRecordCursorFactory.DEFAULT_COUNT_METADATA, factory);
                     }
 
