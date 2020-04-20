@@ -32,6 +32,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.time.DateFormatUtils;
@@ -293,6 +294,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getInputRoot() {
         return null;
+    }
+    
+    @Override
+    public CharSequence getBackupRoot() {
+    	return null;
+    }
+
+    @Override
+    public TimestampFormat getBackupDirTimestampFormat() {
+        return null;
+    }
+
+    @Override
+    public CharSequence getBackupTempDirName() {
+        return "tmp";
+    }
+
+    @Override
+    public int getBackupMkDirMode() {
+        return 509;
     }
 
     @Override

@@ -116,4 +116,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.type = RENAME_TABLE;
         return this;
     }
+
+    CompiledQuery ofBackupTable() {
+        this.type = BACKUP_TABLE;
+        return this;
+    }
 }

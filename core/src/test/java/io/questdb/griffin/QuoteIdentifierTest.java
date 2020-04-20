@@ -22,39 +22,20 @@
  *
  ******************************************************************************/
 
-#ifndef VECT_VANILLA_H
-#define VECT_VANILLA_H
+package io.questdb.griffin;
 
-#include <climits>
+import org.junit.Test;
 
-double sumDouble_Vanilla(double *d, int64_t count);
+public class QuoteIdentifierTest extends AbstractGriffinTest {
 
-double sumDoubleKahan_Vanilla(double *d, int64_t count);
-
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
-
-double avgDouble_Vanilla(double *d, int64_t count);
-
-double minDouble_Vanilla(double *d, int64_t count);
-
-double maxDouble_Vanilla(double *d, int64_t count);
-
-int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
-
-double avgInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t minInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t minLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-double avgLong_Vanilla(int64_t *pl, int64_t count);
-
-bool hasNull_Vanilla(int32_t *pi, int64_t count);
-
-#endif //VECT_VANILLA_H
+    @Test
+    public void testCreteTableWithQuotedNameAndColumns() throws Exception {
+        assertQuery(
+                "id\tname\n",
+                "quoted_table",
+                "create table \"quoted_table\"(\"id\" long,\"name\" string)",
+                null,
+                true
+        );
+    }
+}

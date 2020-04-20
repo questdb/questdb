@@ -32,6 +32,8 @@
 #if INSTRSET >= 10
 
 #define SUM_DOUBLE F_AVX512(sumDouble)
+#define SUM_DOUBLE_KAHAN F_AVX512(sumDoubleKahan)
+#define SUM_DOUBLE_NEUMAIER F_AVX512(sumDoubleNeumaier)
 #define AVG_DOUBLE F_AVX512(avgDouble)
 #define MIN_DOUBLE F_AVX512(minDouble)
 #define MAX_DOUBLE F_AVX512(maxDouble)
@@ -51,6 +53,8 @@
 #elif INSTRSET >= 8
 
 #define SUM_DOUBLE F_AVX2(sumDouble)
+#define SUM_DOUBLE_KAHAN F_AVX2(sumDoubleKahan)
+#define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
 #define AVG_DOUBLE F_AVX2(avgDouble)
 #define MIN_DOUBLE F_AVX2(minDouble)
 #define MAX_DOUBLE F_AVX2(maxDouble)
@@ -70,6 +74,8 @@
 #elif INSTRSET >= 5
 
 #define SUM_DOUBLE F_SSE41(sumDouble)
+#define SUM_DOUBLE_KAHAN F_SSE41(sumDoubleKahan)
+#define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
 #define AVG_DOUBLE F_SSE41(avgDouble)
 #define MIN_DOUBLE F_SSE41(minDouble)
 #define MAX_DOUBLE F_SSE41(maxDouble)
@@ -89,6 +95,8 @@
 #elif INSTRSET >= 2
 
 #define SUM_DOUBLE F_SSE2(sumDouble)
+#define SUM_DOUBLE_KAHAN F_SSE2(sumDoubleKahan)
+#define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
 #define AVG_DOUBLE F_SSE2(avgDouble)
 #define MIN_DOUBLE F_SSE2(minDouble)
 #define MAX_DOUBLE F_SSE2(maxDouble)
@@ -404,6 +412,99 @@ double SUM_DOUBLE(double *d, int64_t count) {
     return NAN;
 }
 
+double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
+    Vec8d inputVec;
+    const int step = 8;
+    const auto *lim = d + count;
+    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto *lim_vec = lim - remainder;
+    Vec8d sumVec = 0.;
+    Vec8d yVec;
+    Vec8d cVec = 0.;
+    Vec8db bVec;
+    Vec8q nancount = 0;
+    Vec8d tVec;
+    for (; d < lim_vec; d += step) {
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
+        inputVec.load(d);
+        bVec = is_nan(inputVec);
+        nancount = if_add(bVec, nancount, 1);
+        yVec = select(bVec, 0, inputVec - cVec);
+        tVec = sumVec + yVec;
+        cVec = (tVec - sumVec) - yVec;
+        sumVec = tVec;
+    }
+
+    double sum = horizontal_add(sumVec);
+    double c = horizontal_add(cVec);
+    int nans = horizontal_add(nancount);
+    for (; d < lim; d++) {
+        double x = *d;
+        if (x == x) {
+            auto y = x - c;
+            auto t = sum + y;
+            c = (t - sum) -y;
+            sum = t;
+        } else {
+            nans++;
+        }
+    }
+
+    if (nans < count) {
+        return sum;
+    }
+
+    return NAN;
+}
+
+double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
+    Vec8d inputVec;
+    const int step = 8;
+    const auto *lim = d + count;
+    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto *lim_vec = lim - remainder;
+    Vec8d sumVec = 0.;
+    Vec8d cVec = 0.;
+    Vec8db bVec;
+    Vec8q nancount = 0;
+    Vec8d tVec;
+    for (; d < lim_vec; d += step) {
+        _mm_prefetch(d + 63 * step, _MM_HINT_T1);
+        inputVec.load(d);
+        bVec = is_nan(inputVec);
+        nancount = if_add(bVec, nancount, 1);
+        inputVec = select(bVec, 0, inputVec);
+        tVec = sumVec + inputVec;
+        bVec = abs(sumVec) >= abs(inputVec);
+        cVec += (select(bVec, sumVec, inputVec) - tVec) + select(bVec, inputVec, sumVec);
+        sumVec = tVec;
+    }
+
+    double sum = horizontal_add(sumVec);
+    double c = horizontal_add(cVec);
+    int nans = horizontal_add(nancount);
+    for (; d < lim; d++) {
+        double input = *d;
+        if (input == input) {
+            auto t = sum + input;
+            if (abs(sum) >= abs(input)) {
+                c += (sum - t) + input;
+            } else {
+                c += (input - t) + sum;
+            }
+            sum = t;
+        } else {
+            nans++;
+        }
+    }
+
+    if (nans < count) {
+        return sum + c;
+    }
+
+    return NAN;
+}
+
 double AVG_DOUBLE(double *d, int64_t count) {
     Vec8d vec;
     const int step = 8;
@@ -502,6 +603,8 @@ double MAX_DOUBLE(double *d, int64_t count) {
 
 // Dispatchers
 DOUBLE_DISPATCHER(sumDouble)
+DOUBLE_DISPATCHER(sumDoubleKahan)
+DOUBLE_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(avgDouble)
 DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)

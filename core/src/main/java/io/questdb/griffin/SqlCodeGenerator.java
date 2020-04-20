@@ -1309,9 +1309,18 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getBottomUpColumns().size() == 1 && model.getNestedModel() != null && model.getNestedModel().getNestedModel() != null && model.getNestedModel().getNestedModel().getTableName() != null) {
-            ExpressionNode tableNameExpressionNode = model.getNestedModel().getNestedModel().getTableName();
-            CharSequence tableName = tableNameExpressionNode.token;
+
+        QueryModel twoDeepNested;
+        ExpressionNode tableNameEn;
+        if (
+                model.getBottomUpColumns().size() == 1
+                        && model.getNestedModel() != null
+                        && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
+                        && twoDeepNested.getWhereClause() == null
+                        && twoDeepNested.getLatestBy().size() == 0
+                        && (tableNameEn = twoDeepNested.getTableName()) != null
+        ) {
+            CharSequence tableName = tableNameEn.token;
             try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                 CharSequence columnName = model.getBottomUpColumnNames().get(0);
                 TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();

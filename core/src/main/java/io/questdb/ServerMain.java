@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.time.Dates;
 import sun.misc.Signal;
 
 import java.io.File;
@@ -55,7 +56,7 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class ServerMain {
     public ServerMain(String[] args) throws Exception {
-        System.err.printf("QuestDB server %s%nCopyright (C) 2014-2019, all rights reserved.%n%n", getVersion());
+        System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;

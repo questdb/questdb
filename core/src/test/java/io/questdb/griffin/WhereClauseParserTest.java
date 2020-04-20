@@ -106,7 +106,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and bid > 100");
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         assertFilter(m, "100bid>");
     }
@@ -164,7 +164,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBadEndDate() {
         try {
-            modelOf("timestamp in (\"2014-01-02T12:30:00.000Z\", \"2014-01Z\")");
+            modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "Invalid date");
@@ -215,7 +215,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBadStartDate() {
         try {
-            modelOf("timestamp in (\"2014-01Z\", \"2014-01-02T12:30:00.000Z\")");
+            modelOf("timestamp in ('2014-01Z', '2014-01-02T12:30:00.000Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "Invalid date");
@@ -417,14 +417,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterAndInterval() throws Exception {
-        IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("bid > 100 and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         assertFilter(m, "100bid>");
     }
 
     @Test
     public void testFilterMultipleKeysAndInterval() throws Exception {
-        IntrinsicModel m = modelOf("sym in (\"a\", \"b\", \"c\") and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("sym in ('a', 'b', 'c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b,c]", m.keyValues.toString());
@@ -434,7 +434,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnIndexedFieldAndInterval() throws Exception {
-        IntrinsicModel m = modelOf("sym in ('a') and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("sym in ('a') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a]", m.keyValues.toString());
@@ -443,9 +443,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOrInterval() throws Exception {
-        IntrinsicModel m = modelOf("bid > 100 or timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("bid > 100 or timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         Assert.assertNull(m.intervals);
-        assertFilter(m, "\"2014-01-02T12:30:00.000Z\"\"2014-01-01T12:30:00.000Z\"timestampin100bid>or");
+        assertFilter(m, "'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampin100bid>or");
     }
 
     @Test
@@ -770,7 +770,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testListOfValuesPositiveOverlapQuoteIndifference() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', \"z\") and sym in ('z')");
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('z')");
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertEquals("[z]", m.keyValues.toString());
@@ -778,17 +778,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLiteralInInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", c)");
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', c)");
         Assert.assertNull(m.intervals);
-        assertFilter(m, "c\"2014-01-01T12:30:00.000Z\"timestampin");
+        assertFilter(m, "c'2014-01-01T12:30:00.000Z'timestampin");
     }
 
     @Test
     public void testLiteralInListOfValues() throws Exception {
-        IntrinsicModel m = modelOf("sym in (\"a\", z) and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("sym in ('a', z) and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         Assert.assertNull(m.keyColumn);
-        assertFilter(m, "z\"a\"symin");
+        assertFilter(m, "z'a'symin");
     }
 
     @Test
@@ -1025,7 +1025,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         Assert.assertNull(m.filter);
     }
@@ -1096,7 +1096,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoIntervals() throws Exception {
-        IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and timestamp in (\"2014-01-01T16:30:00.000Z\", \"2014-01-05T12:30:00.000Z\")");
+        IntrinsicModel m = modelOf("bid > 100 and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp in ('2014-01-01T16:30:00.000Z', '2014-01-05T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T16:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
     }
 

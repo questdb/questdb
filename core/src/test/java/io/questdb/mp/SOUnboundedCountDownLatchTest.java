@@ -51,7 +51,7 @@ public class SOUnboundedCountDownLatchTest {
 
         int count = 1_000_000;
 
-        doTest(pubSeq, subSeq, latch, dc, count);
+        doTest(pubSeq, subSeq, latch, dc, count, 0);
 
         latch.await(count);
 
@@ -62,7 +62,7 @@ public class SOUnboundedCountDownLatchTest {
         dc.set(0);
         latch.reset();
 
-        doTest(pubSeq, subSeq, latch, dc, count);
+        doTest(pubSeq, subSeq, latch, dc, count, count);
 
         latch.await(count);
 
@@ -71,12 +71,13 @@ public class SOUnboundedCountDownLatchTest {
         Assert.assertEquals(count, dc.get());
     }
 
-    private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count) {
+    private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) {
         new Thread() {
             int doneCount = 0;
 
             @Override
             public void run() {
+                long last = s - 1;
                 while (doneCount < count) {
                     long c = subSeq.next();
                     if (c > -1) {
@@ -84,6 +85,8 @@ public class SOUnboundedCountDownLatchTest {
                         doneCount++;
                         dc.incrementAndGet();
                         latch.countDown();
+                        Assert.assertEquals(last + 1, c);
+                        last = c;
                     }
                 }
             }

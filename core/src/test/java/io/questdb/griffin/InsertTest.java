@@ -91,7 +91,6 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertContextSwitch() throws Exception {
-
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
@@ -125,7 +124,19 @@ public class InsertTest extends AbstractGriffinTest {
                     sink
             );
         });
+    }
 
+    @Test
+    public void testInsertWrongTypeConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test (a timestamp)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into test values ('2013')", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(25, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
+            }
+        });
     }
 
     @Test

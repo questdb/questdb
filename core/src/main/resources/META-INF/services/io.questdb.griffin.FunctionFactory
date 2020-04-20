@@ -22,77 +22,6 @@
 #
 ################################################################################
 
-################################################################################
-#     ___                  _   ____  ____
-#    / _ \ _   _  ___  ___| |_|  _ \| __ )
-#   | | | | | | |/ _ \/ __| __| | | |  _ \
-#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#    \__\_\\__,_|\___||___/\__|____/|____/
-#
-#  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2020 QuestDB
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-################################################################################
-
-################################################################################
-#     ___                  _   ____  ____
-#    / _ \ _   _  ___  ___| |_|  _ \| __ )
-#   | | | | | | |/ _ \/ __| __| | | |  _ \
-#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#    \__\_\\__,_|\___||___/\__|____/|____/
-#
-#  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2020 QuestDB
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-################################################################################
-
-################################################################################
-#     ___                  _   ____  ____
-#    / _ \ _   _  ___  ___| |_|  _ \| __ )
-#   | | | | | | |/ _ \/ __| __| | | |  _ \
-#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#    \__\_\\__,_|\___||___/\__|____/|____/
-#
-#  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2020 QuestDB
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-################################################################################
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
@@ -163,6 +92,7 @@ io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory
 
 # '!~'
 io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
+io.questdb.griffin.engine.functions.eq.NotEqIntStrCFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
@@ -211,6 +141,25 @@ io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory
+io.questdb.griffin.engine.functions.date.DayOfWeekSundayFirstFunctionFactory
+io.questdb.griffin.engine.functions.date.MinuteOfHourFunctionFactory
+io.questdb.griffin.engine.functions.date.SecondOfMinuteFunctionFactory
+io.questdb.griffin.engine.functions.date.YearFunctionFactory
+io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory
+io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory
+io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.DaysBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.MonthsBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.YearsBetweenFunctionFactory
+io.questdb.griffin.engine.functions.date.AddHoursToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddDaysToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddMonthsToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.AddYearsToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
+
 
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
@@ -467,3 +416,6 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
+
+# ^
+io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory

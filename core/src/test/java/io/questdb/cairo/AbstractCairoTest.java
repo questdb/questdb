@@ -34,6 +34,9 @@ import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+
+import java.io.IOException;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -52,13 +55,13 @@ public class AbstractCairoTest {
     protected static MessageBus messageBus;
 
     @BeforeClass
-    public static void setUp() {
+    public static void setUp() throws IOException {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("begin").$();
-        root = temp.getRoot().getAbsolutePath();
+        root = temp.newFolder("dbRoot").getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
         messageBus = new MessageBusImpl();
     }

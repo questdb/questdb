@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
@@ -38,6 +40,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -426,6 +429,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         assertQuery(expected,
                 "select distinct pair from prices",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " x ID, --increasing integer\n" +
+                        " rnd_symbol('A', 'B', 'C') pair, \n" +
+                        " rnd_double(0) length,\n" +
+                        " rnd_double(0) height" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testDistinctSymbolColumnWithFilter() throws Exception {
+        final String expected = "pair\n" +
+                "A\n" +
+                "B\n";
+
+        assertQuery(expected,
+                "select distinct pair from prices where pair in ('A','B')",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -3908,6 +3934,99 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
+        String ddl = "create table x (ds double) partition by NONE";
+        compiler.compile(ddl, sqlExecutionContext);
+
+        executeInsertStatement(1.0);
+        executeInsertStatement(2.0);
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(3, r.sumDouble(0), 0.00001);
+        }
+    }
+
+    @Test
+    public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
+        String ddl = "create table x (ds double) partition by NONE";
+        compiler.compile(ddl, sqlExecutionContext);
+
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(0.0);
+        executeInsertStatement(0.0);
+
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(8, r.sumDouble(0), 0.0000001);
+        }
+    }
+
+    @Test
+    public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
+        String ddl = "create table x (ds double) partition by NONE";
+        compiler.compile(ddl, sqlExecutionContext);
+
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(1.0);
+        executeInsertStatement(0.0);
+
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(12, r.sumDouble(0), 0.0000001);
+        }
+    }
+
+    //NOTE Kahan should fail this  - Neumaier should pass
+    //    @Test
+//    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
+//        String ddl = "create table x (ds double) partition by NONE";
+//        compiler.compile(ddl, sqlExecutionContext);
+//
+//        double tenTo100 = Math.pow(10, 100);
+//        executeInsertStatement(tenTo100);
+//        executeInsertStatement(1.0);
+//        executeInsertStatement(1.0);
+//        executeInsertStatement(-tenTo100);
+//
+//        try (TableReader r = new TableReader(configuration, "x")) {
+//            Assert.assertEquals(2, r.sumDouble(0), 0.0000001);
+//        }
+//    }
+
+    @NotNull
+    private void executeInsertStatement(double d) throws SqlException {
+        String ddl = "insert into x (ds) values (" + d + ")";
+        executeInsert(ddl);
+    }
+
+    private void executeInsert(String ddl) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
         }
     }
 

@@ -24,6 +24,10 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.Properties;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
@@ -34,22 +38,49 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.*;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Properties;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocale;
+import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -175,6 +206,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryFloatScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
+    private final String backupRoot;
+    private final TimestampFormat backupDirTimestampFormat;
+    private final CharSequence backupTempDirName;
+    private final int backupMkdirMode;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -331,6 +366,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
+        this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
+        this.backupDirTimestampFormat = getTimestampFormat(properties, "cairo.sql.backup.dir.datetime.format", null);
+        this.backupTempDirName = getString(properties, "cairo.sql.backup.dir.tmp.name", "tmp");
+        this.backupMkdirMode = getInt(properties, "cairo.sql.backup.mkdir.mode", 509);
 
         parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -505,6 +544,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             return defaultValue;
         }
         return value;
+    }
+
+    private TimestampFormat getTimestampFormat(Properties properties, String key, String defaultPattern) throws ServerConfigurationException {
+        String pattern = properties.getProperty(key);
+        if (null == pattern) {
+            pattern = defaultPattern;
+        }
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        if (null != pattern) {
+            return compiler.compile(pattern);
+        }
+        return compiler.compile("yyyy-MM-dd");
     }
 
     private void parseBindTo(
@@ -900,6 +951,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIndexValueBlockSize() {
             return indexValueBlockSize;
+        }
+
+        @Override
+        public CharSequence getBackupRoot() {
+        	return backupRoot;
+        }
+        
+        @Override
+        public TimestampFormat getBackupDirTimestampFormat() {
+            return backupDirTimestampFormat;
+        }
+
+        @Override
+        public CharSequence getBackupTempDirName() {
+            return backupTempDirName;
+        }
+
+        @Override
+        public int getBackupMkDirMode() {
+            return backupMkdirMode;
         }
 
         @Override

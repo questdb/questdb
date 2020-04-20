@@ -24,13 +24,14 @@
 
 package io.questdb.std.str;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
-
-import java.io.Closeable;
 
 /**
  * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
@@ -168,6 +169,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
         Chars.asciiCopyTo(chars, start, len, wptr);
         wptr += len;
+        return this;
+    }
+
+    @Override
+    public Path put(long value) {
+        super.put(value);
         return this;
     }
 

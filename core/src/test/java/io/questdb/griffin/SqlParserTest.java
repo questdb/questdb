@@ -409,11 +409,37 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateNameDot() throws Exception {
+        assertSyntaxError(
+                "create table . as ( select a, b, c from tab )",
+                13,
+                "'.' is an invalid table name",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCreateNameFullOfHacks() throws Exception {
+        assertSyntaxError(
+                "create table '../../../' as ( select a, b, c from tab )",
+                13,
+                "'.' is not allowed",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testCreateNameWithDot() throws Exception {
         assertSyntaxError(
                 "create table X.y as ( select a, b, c from tab )",
-                13,
-                "'.' is not allowed here",
+                14,
+                "unexpected token: .",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1491,7 +1517,12 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testDisallowDotInColumnAlias() throws Exception {
-        assertSyntaxError("select x x.y, y from tab order by x", 9, "not allowed");
+        assertSyntaxError("select x x.y, y from tab order by x", 10, "',' or 'from' expected");
+    }
+
+    @Test
+    public void testDisallowDotInColumnAlias2() throws Exception {
+        assertSyntaxError("select x ., y from tab order by x", 9, "not allowed");
     }
 
     @Test
@@ -1796,8 +1827,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testInnerJoinSubQuery() throws Exception {
         assertQuery("select-choose customerName, productName, orderId from (select [customerName, productName, orderId, productId] from (select-choose [customerName, productName, orderId] customerName, orderId, productId, productName from (select [customerName, customerId] from customers join (select [productName, orderId, customerId] from orders where productName ~= 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)) x join select [productId] from products p on p.productId = x.productId)",
                 "select customerName, productName, orderId from (" +
-                        "select customerName, orderId, productId, productName " +
-                        "from customers join orders on customers.customerId = orders.customerId where productName ~= 'WTBHZVPVZZ'" +
+                        "select \"customerName\", orderId, productId, productName " +
+                        "from \"customers\" join orders on \"customers\".\"customerId\" = orders.customerId where productName ~= 'WTBHZVPVZZ'" +
                         ") x" +
                         " join products p on p.productId = x.productId",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
@@ -1885,6 +1916,17 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testInsertColumnsAndValues() throws SqlException {
         assertModel("insert into x (a, b) values (3, ?)",
                 "insert into x (a,b) values (3, ?)",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING)
+                        .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertColumnsAndValuesQuoted() throws SqlException {
+        assertModel("insert into x (a, b) values (3, ?)",
+                "insert into \"x\" (\"a\",\"b\") values (3, ?)",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -3016,7 +3058,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByExpression() throws Exception {
-        assertSyntaxError("select x, y from tab order by x+y", 31, "unexpected");
+        assertSyntaxError("select x, y from tab order by x+y", 31, "literal expected");
     }
 
     @Test
@@ -4009,8 +4051,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testSelectWildcardDetachedStar() throws Exception {
         assertSyntaxError(
                 "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
-                19,
-                "whitespace is not allowed",
+                33,
+                "',' or 'from' expected",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -4020,7 +4062,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testSelectWildcardInvalidTableAlias() throws Exception {
         assertSyntaxError(
                 "select tab2.*, b.* from tab1 a join tab2 on (x)",
-                17,
+                15,
                 "invalid table alias",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
@@ -4030,9 +4072,9 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectWildcardMissingStar() throws Exception {
         assertSyntaxError(
-                "select tab2.*, bxx. from tab1 a join tab2 on (x)",
-                19,
-                "'*' expected",
+                "select tab2.*, a. from tab1 a join tab2 on (x)",
+                17,
+                "'*' or column name expected",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -4299,7 +4341,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSubQuerySyntaxError() throws Exception {
-        assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' expected");
+        assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' or column name expected");
     }
 
     @Test
