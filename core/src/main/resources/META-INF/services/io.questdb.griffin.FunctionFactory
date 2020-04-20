@@ -153,6 +153,7 @@ io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory
 io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory
 io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
 io.questdb.griffin.engine.functions.date.AddPeriodToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.DatediffTimestampFunctionFactory
 
 
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
