@@ -32,6 +32,8 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.griffin.SqlKeywords.*;
+
 public final class SqlParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -257,23 +259,23 @@ public final class SqlParser {
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
-        if (Chars.equalsLowerCaseAscii(tok, "select")) {
+        if (isSelectKeyword(tok)) {
             return parseSelect(lexer);
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "create")) {
+        if (isCreateKeyword(tok)) {
             return parseCreateStatement(lexer, executionContext);
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "rename")) {
+        if (isRenameKeyword(tok)) {
             return parseRenameStatement(lexer);
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "insert")) {
+        if (isInsertKeyword(tok)) {
             return parseInsert(lexer);
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "copy")) {
+        if (isCopyKeyword(tok)) {
             return parseCopy(lexer);
         }
 
@@ -304,7 +306,7 @@ public final class SqlParser {
         ExpressionNode tableName = expectExpr(lexer);
         CharSequence tok = tok(lexer, "'from' or 'to'");
 
-        if (Chars.equalsLowerCaseAscii(tok, "from")) {
+        if (isFromKeyword(tok)) {
             final ExpressionNode fileName = expectExpr(lexer);
             if (fileName.token.length() < 3 && Chars.startsWith(fileName.token, '\'')) {
                 throw SqlException.$(fileName.position, "file name expected");
@@ -332,7 +334,7 @@ public final class SqlParser {
         if (Chars.equals(tok, '(')) {
             lexer.unparse();
             parseCreateTableColumns(lexer, model);
-        } else if (Chars.equalsLowerCaseAscii(tok, "as")) {
+        } else if (isAsKeyword(tok)) {
             parseCreateTableAsSelect(lexer, model, executionContext);
         } else {
             throw errUnexpected(lexer, tok);
@@ -340,9 +342,9 @@ public final class SqlParser {
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
             tok = tok(lexer, "'index' or 'cast'");
-            if (Chars.equalsLowerCaseAscii(tok, "index")) {
+            if (isIndexKeyword(tok)) {
                 parseCreateTableIndexDef(lexer, model);
-            } else if (Chars.equalsLowerCaseAscii(tok, "cast")) {
+            } else if (isCastKeyword(tok)) {
                 parseCreateTableCastDef(lexer, model);
             } else {
                 throw errUnexpected(lexer, tok);
@@ -408,7 +410,7 @@ public final class SqlParser {
 
             int symbolCapacity;
             int capacityPosition;
-            if (Chars.equalsLowerCaseAscii(tok, "capacity")) {
+            if (isCapacityKeyword(tok)) {
                 capacityPosition = lexer.getPosition();
                 columnCastModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
                 tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
@@ -419,9 +421,9 @@ public final class SqlParser {
             }
 
             final boolean cached;
-            if (Chars.equalsLowerCaseAscii(tok, "nocache")) {
+            if (isNoCacheKeyword(tok)) {
                 cached = false;
-            } else if (Chars.equalsLowerCaseAscii(tok, "cache")) {
+            } else if (isCacheKeyword(tok)) {
                 cached = true;
             } else {
                 cached = configuration.getDefaultSymbolCacheFlag();
@@ -439,11 +441,11 @@ public final class SqlParser {
 
             tok = tok(lexer, "')', or 'index'");
 
-            if (Chars.equalsLowerCaseAscii(tok, "index")) {
+            if (isIndexKeyword(tok)) {
                 columnCastModel.setIndexed(true);
                 tok = tok(lexer, "')', or 'capacity'");
 
-                if (Chars.equalsLowerCaseAscii(tok, "capacity")) {
+                if (isCapacityKeyword(tok)) {
                     int errorPosition = lexer.getPosition();
                     int indexValueBlockSize = expectInt(lexer);
                     TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
@@ -481,7 +483,7 @@ public final class SqlParser {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                 int symbolCapacity;
-                if (Chars.equalsLowerCaseAscii(tok, "capacity")) {
+                if (isCapacityKeyword(tok)) {
                     // when capacity is not set explicitly it will default via configuration
                     model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
                     tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
@@ -490,9 +492,9 @@ public final class SqlParser {
                 }
 
                 final boolean cached;
-                if (Chars.equalsLowerCaseAscii(tok, "nocache")) {
+                if (isNoCacheKeyword(tok)) {
                     cached = false;
-                } else if (Chars.equalsLowerCaseAscii(tok, "cache")) {
+                } else if (isCacheKeyword(tok)) {
                     cached = true;
                 } else {
                     cached = configuration.getDefaultSymbolCacheFlag();
@@ -525,7 +527,7 @@ public final class SqlParser {
         expectTok(lexer, '(');
         final int columnIndex = getCreateTableColumnIndex(model, expectLiteral(lexer).token, lexer.lastTokenPosition());
 
-        if (Chars.equalsLowerCaseAscii(tok(lexer, "'capacity'"), "capacity")) {
+        if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
             int errorPosition = lexer.getPosition();
             int indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
@@ -562,7 +564,7 @@ public final class SqlParser {
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.equalsLowerCaseAsciiNc(tok, "partition")) {
+        if (tok != null && isPartitionKeyword(tok)) {
             expectTok(lexer, "by");
             return expectLiteral(lexer);
         }
@@ -584,13 +586,13 @@ public final class SqlParser {
             }
 
             CharSequence tok = optTok(lexer);
-            if (tok == null || !Chars.equalsLowerCaseAscii(tok, "union")) {
+            if (tok == null || !isUnionKeyword(tok)) {
                 lexer.unparse();
                 return model;
             }
 
             tok = tok(lexer, "all or select");
-            if (Chars.equalsLowerCaseAscii(tok, "all")) {
+            if (isAllKeyword(tok)) {
                 if (!model.isDistinct()) {
                     prevModel.setUnionModelType(QueryModel.UNION_MODEL_ALL);
                 } else {
@@ -613,13 +615,13 @@ public final class SqlParser {
 
         tok = tok(lexer, "'select', 'with' or table name expected");
 
-        if (Chars.equalsLowerCaseAscii(tok, "with")) {
+        if (isWithKeyword(tok)) {
             parseWithClauses(lexer, model);
             tok = tok(lexer, "'select' or table name expected");
         }
 
         // [select]
-        if (Chars.equalsLowerCaseAscii(tok, "select")) {
+        if (isSelectKeyword(tok)) {
             parseSelectClause(lexer, model);
         } else {
             lexer.unparse();
@@ -685,7 +687,7 @@ public final class SqlParser {
 
             // expect [latest by]
 
-            if (Chars.equalsLowerCaseAsciiNc(tok, "latest")) {
+            if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
             }
@@ -701,19 +703,19 @@ public final class SqlParser {
 
         // expect [where]
 
-        if (tok != null && Chars.equalsLowerCaseAscii(tok, "where")) {
+        if (tok != null && isWhereKeyword(tok)) {
             model.setWhereClause(expr(lexer, model));
             tok = optTok(lexer);
         }
 
         // expect [group by]
 
-        if (tok != null && Chars.equalsLowerCaseAscii(tok, "sample")) {
+        if (tok != null && isSampleKeyword(tok)) {
             expectTok(lexer, "by");
             model.setSampleBy(expectLiteral(lexer));
             tok = optTok(lexer);
 
-            if (tok != null && Chars.equalsLowerCaseAscii(tok, "fill")) {
+            if (tok != null && isFillKeyword(tok)) {
                 expectTok(lexer, '(');
                 do {
                     final ExpressionNode fillNode = expr(lexer, model);
@@ -733,7 +735,7 @@ public final class SqlParser {
 
         // expect [order by]
 
-        if (tok != null && Chars.equalsLowerCaseAscii(tok, "order")) {
+        if (tok != null && isOrderKeyword(tok)) {
             expectTok(lexer, "by");
             do {
                 tokIncludingLocalBrace(lexer, "literal expected");
@@ -746,7 +748,7 @@ public final class SqlParser {
 
                 tok = optTok(lexer);
 
-                if (tok != null && Chars.equalsLowerCaseAscii(tok, "desc")) {
+                if (tok != null && isDescKeyword(tok)) {
 
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
                     tok = optTok(lexer);
@@ -755,7 +757,7 @@ public final class SqlParser {
 
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
 
-                    if (tok != null && Chars.equalsLowerCaseAscii(tok, "asc")) {
+                    if (tok != null && isAscKeyword(tok)) {
                         tok = optTok(lexer);
                     }
                 }
@@ -768,7 +770,7 @@ public final class SqlParser {
         }
 
         // expect [limit]
-        if (tok != null && Chars.equalsLowerCaseAscii(tok, "limit")) {
+        if (tok != null && isLimitKeyword(tok)) {
             ExpressionNode lo = expr(lexer, model);
             ExpressionNode hi = null;
 
@@ -813,7 +815,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "select")) {
+        if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparse();
             final QueryModel queryModel = parseDml(lexer);
@@ -821,7 +823,7 @@ public final class SqlParser {
             return model;
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "values")) {
+        if (isValuesKeyword(tok)) {
             expectTok(lexer, '(');
 
             do {
@@ -846,7 +848,7 @@ public final class SqlParser {
         joinModel.setJoinType(joinType);
         joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
-        if (!Chars.equalsLowerCaseAscii(tok, "join")) {
+        if (!isJoinKeyword(tok)) {
             expectTok(lexer, "join");
         }
 
@@ -870,14 +872,14 @@ public final class SqlParser {
 
         tok = optTok(lexer);
 
-        if (joinType == QueryModel.JOIN_CROSS && tok != null && Chars.equalsLowerCaseAscii(tok, "on")) {
+        if (joinType == QueryModel.JOIN_CROSS && tok != null && isOnKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
         }
 
         switch (joinType) {
             case QueryModel.JOIN_ASOF:
             case QueryModel.JOIN_SPLICE:
-                if (tok == null || !Chars.equalsLowerCaseAscii(tok, "on")) {
+                if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparse();
                     break;
                 }
@@ -969,7 +971,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "[distinct] column");
 
         ExpressionNode expr;
-        if (Chars.equalsLowerCaseAscii(tok, "distinct")) {
+        if (isDistinctKeyword(tok)) {
             model.setDistinct(true);
         } else {
             lexer.unparse();
@@ -981,11 +983,11 @@ public final class SqlParser {
                 expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());
             } else {
                 // cut off some obvious errors
-                if (Chars.equalsLowerCaseAscii(tok, "from")) {
+                if (isFromKeyword(tok)) {
                     throw SqlException.$(lexer.getPosition(), "column name expected");
                 }
 
-                if (Chars.equalsLowerCaseAscii(tok, "select")) {
+                if (isSelectKeyword(tok)) {
                     throw SqlException.$(lexer.getPosition(), "reserved name");
                 }
 
@@ -1009,7 +1011,7 @@ public final class SqlParser {
 
                 assertNotDot(lexer, tok);
 
-                if (Chars.equalsLowerCaseAscii(tok, "as")) {
+                if (isAsKeyword(tok)) {
                     alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
                 } else {
                     alias = GenericLexer.immutableOf(tok);
@@ -1019,14 +1021,14 @@ public final class SqlParser {
                 alias = createColumnAlias(expr, model);
             }
 
-            if (Chars.equalsLowerCaseAscii(tok, "over")) {
+            if (isOverKeyword(tok)) {
                 // analytic
                 expectTok(lexer, '(');
 
                 AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
                 tok = tok(lexer, "'");
 
-                if (Chars.equalsLowerCaseAscii(tok, "partition")) {
+                if (isPartitionKeyword(tok)) {
                     expectTok(lexer, "by");
 
                     ObjList<ExpressionNode> partitionBy = col.getPartitionBy();
@@ -1037,19 +1039,19 @@ public final class SqlParser {
                     } while (Chars.equals(tok, ','));
                 }
 
-                if (Chars.equalsLowerCaseAscii(tok, "order")) {
+                if (isOrderKeyword(tok)) {
                     expectTok(lexer, "by");
 
                     do {
                         ExpressionNode e = expectLiteral(lexer);
                         tok = tok(lexer, "'asc' or 'desc'");
 
-                        if (Chars.equalsLowerCaseAscii(tok, "desc")) {
+                        if (isDescKeyword(tok)) {
                             col.addOrderBy(e, QueryModel.ORDER_DIRECTION_DESCENDING);
                             tok = tok(lexer, "',' or ')'");
                         } else {
                             col.addOrderBy(e, QueryModel.ORDER_DIRECTION_ASCENDING);
-                            if (Chars.equalsLowerCaseAscii(tok, "asc")) {
+                            if (isAscKeyword(tok)) {
                                 tok = tok(lexer, "',' or ')'");
                             }
                         }
@@ -1065,7 +1067,7 @@ public final class SqlParser {
                 model.addBottomUpColumn(queryColumnPool.next().of(alias, expr));
             }
 
-            if (Chars.equalsLowerCaseAscii(tok, "from")) {
+            if (isFromKeyword(tok)) {
                 break;
             }
 
@@ -1110,7 +1112,7 @@ public final class SqlParser {
     }
 
     private ExpressionNode parseTimestamp(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.equalsLowerCaseAsciiNc(tok, "timestamp")) {
+        if (tok != null && isTimestampKeyword(tok)) {
             expectTok(lexer, '(');
             final ExpressionNode result = expectLiteral(lexer);
             tokIncludingLocalBrace(lexer, "')'");
@@ -1164,7 +1166,7 @@ public final class SqlParser {
     }
 
     private void rewriteCase0(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node.token, "case")) {
+        if (node.type == ExpressionNode.FUNCTION && isCaseKeyword(node.token)) {
             tempExprNodes.clear();
             ExpressionNode literal = null;
             ExpressionNode elseExpr;
@@ -1275,7 +1277,7 @@ public final class SqlParser {
      * @param node expression node, provided by tree walking algo
      */
     private void rewriteCount0(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node.token, "count")) {
+        if (node.type == ExpressionNode.FUNCTION && isCountKeyword(node.token)) {
             if (node.paramCount == 1) {
                 // special case, typically something like
                 // case value else expression end

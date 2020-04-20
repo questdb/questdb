@@ -29,6 +29,8 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 
+import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+
 public class IntrinsicModel implements Mutable {
     public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
     public static final int TRUE = 1;
@@ -432,7 +434,7 @@ public class IntrinsicModel implements Mutable {
     public void excludeValue(ExpressionNode val) {
 
         final int index;
-        if (Chars.equalsLowerCaseAscii(val.token, "null")) {
+        if (isNullKeyword(val.token)) {
             index = keyValues.removeNull();
             if (index > -1) {
                 keyValuePositions.removeIndex(index);

@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
+import static io.questdb.griffin.SqlKeywords.*;
+
 
 public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
@@ -732,7 +734,7 @@ public class SqlCompiler implements Closeable {
 
             if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
 
-                if (Chars.equalsLowerCaseAscii(tok, "capacity")) {
+                if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
 
                     final boolean negative;
@@ -1502,7 +1504,7 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery repairTables(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !Chars.equalsLowerCaseAscii(tok, "table")) {
+        if (tok == null || !isTableKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
         }
 
@@ -1573,10 +1575,10 @@ public class SqlCompiler implements Closeable {
 
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
-            if (Chars.equalsLowerCaseAscii(tok, "table")) {
+            if (isTableKeyword(tok)) {
                 return sqlTableBackup(executionContext);
             }
-            if (Chars.equalsLowerCaseAscii(tok, "database")) {
+            if (isDatabaseKeyword(tok)) {
                 return sqlDatabaseBackup(executionContext);
             }
         }
@@ -1665,12 +1667,12 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.getPosition(), "'table' expected");
         }
 
-        if (!Chars.equalsLowerCaseAscii(tok, "table")) {
+        if (!isTableKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && Chars.equalsLowerCaseAscii(tok, "only")) {
+        if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
 

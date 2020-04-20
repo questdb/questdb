@@ -30,6 +30,8 @@ import io.questdb.std.str.CharSink;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlKeywords.isAndKeyword;
+
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
@@ -591,7 +593,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                if (Chars.equalsLowerCaseAscii(n.token, "and")) {
+                if (isAndKeyword(n.token)) {
                     if (n.rhs != null) {
                         sqlNodeStack.push(n.rhs);
                     }

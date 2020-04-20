@@ -35,6 +35,8 @@ import io.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlKeywords.*;
+
 final class WhereClauseParser {
 
     private static final int INTRINCIC_OP_IN = 1;
@@ -101,7 +103,7 @@ final class WhereClauseParser {
                         final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
                         final boolean indexed = m.isColumnIndexed(index);
                         if (preferred || (indexed && preferredKeyColumn == null)) {
-                            CharSequence value = Chars.equalsLowerCaseAscii(b.token, "null") ? null : unquote(b.token);
+                            CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                 // compute overlap of values
                                 // if values do overlap, keep only our value
@@ -376,7 +378,7 @@ final class WhereClauseParser {
                         return false;
                     }
 
-                    if (Chars.equalsLowerCaseAscii(c.token, "null")) {
+                    if (isNullKeyword(c.token)) {
                         if (tempKeys.add(null)) {
                             tempPos.add(c.position);
                         }
@@ -559,7 +561,7 @@ final class WhereClauseParser {
                 ExpressionNode parent = keyExclNodes.getQuick(i);
 
 
-                ExpressionNode node = Chars.equalsLowerCaseAscii(parent.token, "not") ? parent.rhs : parent;
+                ExpressionNode node = isNotKeyword(parent.token) ? parent.rhs : parent;
                 // this could either be '=' or 'in'
 
                 if (node.paramCount == 2) {
@@ -617,7 +619,7 @@ final class WhereClauseParser {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
-        if (node.queryModel == null && Chars.equalsLowerCaseAscii(node.token, "and")) {
+        if (node.queryModel == null && isAndKeyword(node.token)) {
             if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicModel.TRUE) {
                 return node.rhs;
             }
@@ -651,7 +653,7 @@ final class WhereClauseParser {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (Chars.equalsLowerCaseAscii(node.token, "and")) {
+                if (isAndKeyword(node.token)) {
                     if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
                         stack.push(node.rhs);
                     }
@@ -689,7 +691,7 @@ final class WhereClauseParser {
             case INTRINCIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
             case INTRINCIC_OP_NOT:
-                return Chars.equalsLowerCaseAscii(node.rhs.token, "in") && analyzeNotIn(translator, model, node, m);
+                return isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m);
             default:
                 return false;
         }

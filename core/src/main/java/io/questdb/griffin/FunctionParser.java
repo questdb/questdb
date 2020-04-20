@@ -43,6 +43,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
 
@@ -398,7 +400,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createConstant(ExpressionNode node) throws SqlException {
 
-        if (Chars.equalsLowerCaseAscii(node.token, "null")) {
+        if (isNullKeyword(node.token)) {
             return new NullStrConstant(node.position);
         }
 
