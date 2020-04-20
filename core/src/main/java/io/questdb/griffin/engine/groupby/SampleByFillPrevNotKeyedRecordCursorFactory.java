@@ -50,13 +50,14 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             IntList symbolTableSkewIndex,
-            int timestampIndex
+            int timestampIndex,
+            int groupByValueCount
     ) {
         try {
             this.base = base;
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
-            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByMetadata.getColumnCount());
+            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByValueCount);
             this.cursor = new SampleByFillPrevNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,

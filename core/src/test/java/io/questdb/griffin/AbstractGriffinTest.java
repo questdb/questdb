@@ -42,7 +42,7 @@ import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, messageBus);
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
     private static final LongList rows = new LongList();
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;

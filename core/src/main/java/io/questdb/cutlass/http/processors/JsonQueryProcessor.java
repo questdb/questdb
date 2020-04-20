@@ -53,15 +53,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
-    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
-    private final MessageBus messageBus;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus
+            @Nullable MessageBus messageBus,
+            int workerCount
     ) {
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
@@ -79,7 +79,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
-        this.messageBus = messageBus;
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount);
     }
 
     private static void doResumeSend(
@@ -220,7 +220,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, messageBus);
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null);
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {

@@ -100,8 +100,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Job job = engine.getWriterMaintenanceJob();
                 Assert.assertNotNull(job);
 
-                Assert.assertTrue(job.run());
-                Assert.assertFalse(job.run());
+                Assert.assertTrue(job.run(0));
+                Assert.assertFalse(job.run(0));
 
                 Assert.assertEquals(2, listener.count);
             }

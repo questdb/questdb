@@ -64,20 +64,20 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
-    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
-    private final MessageBus messageBus;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            MessageBus messageBus
+            MessageBus messageBus,
+            int workerCount
     ) {
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.messageBus = messageBus;
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount);
     }
 
     @Override
@@ -91,7 +91,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, messageBus);
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null);
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {

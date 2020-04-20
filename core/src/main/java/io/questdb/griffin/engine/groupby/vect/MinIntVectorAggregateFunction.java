@@ -46,7 +46,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long address, long count) {
+    public void aggregate(long address, long count, int workerId) {
         if (address != 0) {
             final int value = Vect.minInt(address, count);
             if (value != Numbers.INT_NaN) {

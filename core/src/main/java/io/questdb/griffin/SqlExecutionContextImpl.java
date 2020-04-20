@@ -32,10 +32,17 @@ import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
+    private final int workerCount;
+    @Nullable
+    private final MessageBus messageBus;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
-    @Nullable
-    private MessageBus messageBus;
+
+    public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount) {
+        this.messageBus = messageBus;
+        this.workerCount = workerCount;
+        assert workerCount > 0;
+    }
 
     @Override
     public BindVariableService getBindVariableService() {
@@ -68,14 +75,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         timestampRequiredStack.push(flag ? 1 : 0);
     }
 
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
     public SqlExecutionContextImpl with(
             CairoSecurityContext cairoSecurityContext,
-            BindVariableService bindVariableService,
-            @Nullable MessageBus messageBus
+            BindVariableService bindVariableService
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
-        this.messageBus = messageBus;
         return this;
     }
 }

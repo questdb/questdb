@@ -49,30 +49,39 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
         final long value = arg.getLong(record);
         if (value != Numbers.LONG_NaN) {
             mapValue.putLong(valueIndex, value);
+            mapValue.putLong(valueIndex + 1, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addLong(valueIndex, arg.getLong(record));
+        final long value = arg.getLong(record);
+        if (value != Numbers.LONG_NaN) {
+            mapValue.addLong(valueIndex, value);
+            mapValue.addLong(valueIndex + 1, 1);
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
@@ -82,7 +91,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
     }
 
     @Override

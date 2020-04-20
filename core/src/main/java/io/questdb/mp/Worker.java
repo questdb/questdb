@@ -43,14 +43,16 @@ public class Worker extends Thread {
     private final Log log;
     private final WorkerCleaner cleaner;
     private final boolean haltOnError;
+    private final int workerId;
     private volatile int running = 0;
     private volatile int fence;
 
     public Worker(
             ObjHashSet<? extends Job> jobs,
-            SOCountDownLatch haltLatch
+            SOCountDownLatch haltLatch,
+            int workerId
     ) {
-        this(jobs, haltLatch, -1, null, null, true);
+        this(jobs, haltLatch, -1, null, null, true, workerId);
     }
 
     public Worker(
@@ -59,7 +61,8 @@ public class Worker extends Thread {
             final int affinity,
             final Log log,
             final WorkerCleaner cleaner,
-            final boolean haltOnError
+            final boolean haltOnError,
+            final int workerId
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -68,6 +71,11 @@ public class Worker extends Thread {
         this.affinity = affinity;
         this.cleaner = cleaner;
         this.haltOnError = haltOnError;
+        this.workerId = workerId;
+    }
+
+    public int getWorkerId() {
+        return workerId;
     }
 
     public void halt() {
@@ -104,7 +112,7 @@ public class Worker extends Thread {
                         loadFence();
                         try {
                             try {
-                                useful |= jobs.get(i).run();
+                                useful |= jobs.get(i).run(workerId);
                             } catch (Throwable e) {
                                 if (haltOnError) {
                                     throw e;

@@ -123,7 +123,8 @@ public class WorkerPool {
                                 log.info().$("cleaned [worker=").$(index).$(']').$();
                             }
                         },
-                        haltOnError
+                        haltOnError,
+                        i
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);
