@@ -2103,7 +2103,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoin1() throws Exception {
         assertQuery(
-                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 latest by x where x > 100)) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b)",
+                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 latest by x where x > 100)) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 latest by z where a > b) where y > 0) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b)",
                 "select t1.x, y from (select x from tab t2 LATEST BY x where x > 100) t1 " +
                         "join tab2 xx2 on xx2.x = t1.x " +
                         "join tab3 on xx2.x > tab3.b " +
@@ -2687,7 +2687,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testLatestByNonSelectedColumn() throws Exception {
         assertQuery(
-                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y, z] from tab t2 latest by z where x > 100 and y > 0)) t1)",
+                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y, z] from tab t2 latest by z where x > 100) where y > 0) t1)",
                 "select x, y from (select x, y from tab t2 latest by z where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
         );
@@ -4293,7 +4293,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y] from tab t2 latest by x where x > 100 and y > 0)) t1)",
+                "select-choose x, y from ((select-choose [x, y] x, y from (select [x, y] from tab t2 latest by x where x > 100) where y > 0) t1)",
                 "select x, y from (select x, y from tab t2 latest by x where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );

@@ -508,32 +508,21 @@ public class SqlCodeGenerator {
         return generateQuery(model, executionContext, true);
     }
 
-    private RecordCursorFactory generateFunctionQuery(
-            QueryModel model,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+    private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode filter = model.getWhereClause();
+        if (filter != null) {
+            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
+        }
+        return factory;
+    }
+
+    private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
-
-        RecordCursorFactory factory = function.getRecordCursorFactory();
-
-        // check if there are post-filters
-        ExpressionNode filter = model.getWhereClause();
-        if (filter != null) {
-            factory = new FilteredRecordCursorFactory(
-                    factory,
-                    functionParser.parseFunction(
-                            filter,
-                            factory.getMetadata(),
-                            executionContext
-                    )
-            );
-        }
-
-        return factory;
+        return function.getRecordCursorFactory();
     }
 
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -708,6 +697,9 @@ public class SqlCodeGenerator {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
 
+        // 'latest by' clause takes over the filter
+        model.setWhereClause(null);
+
         if (listColumnFilterA.size() == 1) {
             final int latestByIndex = listColumnFilterA.getColumnIndex(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
@@ -879,18 +871,12 @@ public class SqlCodeGenerator {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == FUNCTION) {
-                return generateFunctionQuery(model, executionContext);
+                return generateFunctionQuery(model);
             } else {
                 return generateTableQuery(model, executionContext);
             }
         }
-
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        final ExpressionNode filter = model.getWhereClause();
-        if (filter != null) {
-            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
-        }
-        return factory;
+        return generateSubQuery(model, executionContext);
     }
 
     private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
@@ -1010,10 +996,14 @@ public class SqlCodeGenerator {
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         return generateLimit(
                 generateOrderBy(
-                        generateSelect(
+                        generateFilter(
+                                generateSelect(
+                                        model,
+                                        executionContext,
+                                        processJoins
+                                ),
                                 model,
-                                executionContext,
-                                processJoins
+                                executionContext
                         ),
                         model
                 ),
@@ -1706,6 +1696,14 @@ public class SqlCodeGenerator {
                         timestampIndex
                 );
 
+                // intrinsic parser can collapse where clause when removing parts it can replace
+                // need to make sure that filter is updated on the model in case it is processed up the call stack
+                //
+                // At this juncture filter can use used up by one of the implementations below.
+                // We will clear it preventively. If nothing picks filter up we will set model "where"
+                // to the downsized filter
+                model.setWhereClause(null);
+
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                     return new EmptyTableRecordCursorFactory(metadata);
                 }
@@ -1859,12 +1857,11 @@ public class SqlCodeGenerator {
                     );
                 }
 
-                if (filter != null) {
-                    // filter lifecycle is managed by top level
-                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(metadata, dfcFactory, new DataFrameRowCursorFactory(), false, null), filter);
-                }
+                // nothing used our filter
+                // time to set "where" clause to the downsized filter (after intrinsic parser pass)
+                model.setWhereClause(intrinsicModel.filter);
 
-                if (intervalHitsOnlyOnePartition) {
+                if (intervalHitsOnlyOnePartition && filter == null) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
                     if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.intervals != null) {
