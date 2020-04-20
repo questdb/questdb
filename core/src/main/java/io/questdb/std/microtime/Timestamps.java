@@ -325,11 +325,24 @@ final public class Timestamps {
         }
     }
 
-    public static long getQuartersBetween(long a, long b) {
-        if (b < a) {
-            return getQuartersBetween(b, a);
-        } else {
-            return getMonthsBetween(a, b) / 3;
+    public static long getPeriodBetween(char type, long start, long end) {
+        switch (type) {
+            case 's':
+                return Timestamps.getSecondsBetween(start, end);
+            case 'm':
+                return Timestamps.getMinutesBetween(start, end);
+            case 'h':
+                return Timestamps.getHoursBetween(start, end);
+            case 'd':
+                return Timestamps.getDaysBetween(start, end);
+            case 'w':
+                return Timestamps.getWeeksBetween(start, end);
+            case 'M':
+                return Timestamps.getMonthsBetween(start, end);
+            case 'y':
+                return Timestamps.getYearsBetween(start, end);
+            default:
+                return Numbers.LONG_NaN;
         }
     }
 
