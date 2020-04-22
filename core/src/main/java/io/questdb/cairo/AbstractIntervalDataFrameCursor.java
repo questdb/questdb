@@ -151,7 +151,13 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     private void cullPartitions() {
-        long intervalLo = reader.floorToPartitionTimestamp(intervals.getQuick(initialIntervalsLo * 2));
+        final long lo = intervals.getQuick(initialIntervalsLo * 2);
+        long intervalLo;
+        if (lo == Long.MIN_VALUE) {
+            intervalLo = reader.floorToPartitionTimestamp(reader.getMinTimestamp());
+        } else {
+            intervalLo = reader.floorToPartitionTimestamp(lo);
+        }
         this.initialPartitionLo = reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo);
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
