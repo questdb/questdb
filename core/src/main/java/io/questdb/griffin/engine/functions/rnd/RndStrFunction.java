@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.rnd;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,13 +35,12 @@ class RndStrFunction extends StrFunction implements StatelessFunction {
     private final int lo;
     private final int range;
     private final int nullRate;
-    private final Rnd rnd;
+    private Rnd rnd;
 
-    public RndStrFunction(int position, int lo, int hi, int nullRate, CairoConfiguration configuration) {
+    public RndStrFunction(int position, int lo, int hi, int nullRate) {
         super(position);
         this.lo = lo;
         this.range = hi - lo + 1;
-        this.rnd = SharedRandom.getRandom(configuration);
         this.nullRate = nullRate;
     }
 
@@ -61,5 +59,6 @@ class RndStrFunction extends StrFunction implements StatelessFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        this.rnd = executionContext.getRandom();
     }
 }

@@ -62,7 +62,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "\n" +
                         "\n" +
                         "00000000 3b 08 a1 1e 38 8d\n",
-                "random_cursor(10, 'x', to_char(rnd_bin(6,6,2)))");
+                "select to_char(rnd_bin(6,6,2)) x from long_sequence(10)");
     }
 
     @Test
@@ -78,7 +78,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "00000000 b4 59 7e 3b 08\n" +
                         "00000000 1e 38 8d 1b 9e\n" +
                         "00000000 c8 39 09 fe d8\n",
-                "random_cursor(10, 'x', to_char(rnd_bin(5,5,0)))");
+                "select to_char(rnd_bin(5,5,0)) x from long_sequence(10)");
     }
 
     @Test
@@ -104,7 +104,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "00000000 26 af 19 c4 95 94 36 53\n" +
                         "\n" +
                         "\n",
-                "random_cursor(10, 'x', to_char(rnd_bin(3,8,2)))");
+                "select to_char(rnd_bin(3,8,2)) x from long_sequence(10)");
     }
 
     @Test
@@ -120,7 +120,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "00000000 8d 1b 9e f4 c8 39 09\n" +
                         "00000000 9d 30 78\n" +
                         "00000000 32 de e4\n",
-                "random_cursor(10, 'x', to_char(rnd_bin(3,8,0)))");
+                "select to_char(rnd_bin(3,8,0)) x from long_sequence(10)");
     }
 
     @Override

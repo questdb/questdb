@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -54,9 +56,9 @@ public class RndStrFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi && lo > 0) {
-            return new RndStrFunction(position, lo, hi, nullRate + 1, configuration);
+            return new RndStrFunction(position, lo, hi, nullRate + 1);
         } else if (lo == hi) {
-            return new FixedFunction(position, lo, nullRate + 1, configuration);
+            return new FixedFunction(position, lo, nullRate + 1);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -65,12 +67,11 @@ public class RndStrFunctionFactory implements FunctionFactory {
     private static class FixedFunction extends StrFunction implements StatelessFunction, NoArgFunction {
         private final int len;
         private final int nullRate;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public FixedFunction(int position, int len, int nullRate, CairoConfiguration configuration) {
+        public FixedFunction(int position, int len, int nullRate) {
             super(position);
             this.len = len;
-            this.rnd = SharedRandom.getRandom(configuration);
             this.nullRate = nullRate;
         }
 
@@ -85,6 +86,11 @@ public class RndStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return getStr(rec);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

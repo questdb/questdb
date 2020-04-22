@@ -64,7 +64,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             throw SqlException.position(args.getQuick(3).getPosition()).put("rate must be positive");
         }
 
-        return new Func(position, count, lo, hi, nullRate, configuration);
+        return new Func(position, count, lo, hi, nullRate);
     }
 
     private static final class Func extends SymbolFunction implements StatelessFunction {
@@ -73,22 +73,41 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         private final int hi;
         private final int nullRate;
         private final ObjList<String> symbols;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public Func(int position, int count, int lo, int hi, int nullRate, CairoConfiguration configuration) {
+        public Func(int position, int count, int lo, int hi, int nullRate) {
             super(position);
             this.count = count;
             this.lo = lo;
             this.hi = hi;
             this.nullRate = nullRate + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
             this.symbols = new ObjList<>(count);
-            seedSymbols();
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return next();
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
             return symbols.getQuick(TableUtils.toIndexKey(next()));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+            seedSymbols();
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         private int next() {
@@ -119,25 +138,6 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             for (int i = 0; i < count; i++) {
                 symbols.add(rnd.nextChars(lo + rnd.nextPositiveInt() % range).toString());
             }
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return next();
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

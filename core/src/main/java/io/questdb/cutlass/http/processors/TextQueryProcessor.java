@@ -77,7 +77,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
     }
 
     @Override
@@ -91,7 +91,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null);
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -143,20 +143,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(
                             context,
-                    configuration.getConnectionCheckFrequency()
+                            configuration.getConnectionCheckFrequency()
                     )
             );
         }
+        // new request clears random
+        state.rnd = null;
+
         HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (parseUrl(socket, context.getRequestHeader(), state)) {
             execute(context, state);
         } else {
             readyForNextRequest(context);
         }
-    }
-
-    @Override
-    public void resumeRecv(HttpConnectionContext context) {
     }
 
     @Override
@@ -167,6 +166,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state == null || state.cursor == null) {
             return;
         }
+
+        // copy random during query resume
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd);
 
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
@@ -265,6 +267,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context);
+    }
+
+    @Override
+    public void parkRequest(HttpConnectionContext context) {
+        TextQueryProcessorState state = LV.get(context);
+        if (state != null) {
+            state.rnd = sqlExecutionContext.getRandom();
+        }
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {

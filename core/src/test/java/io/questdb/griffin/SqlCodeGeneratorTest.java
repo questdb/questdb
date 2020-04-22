@@ -1282,11 +1282,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "create table x as " +
                         "(" +
                         "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_boolean()," +
-                        " 'k', timestamp_sequence(0, 100000000000)" +
+                        "(" +
+                        " select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_boolean() b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20) " +
                         ")" +
                         ") timestamp(k) partition by DAY",
                 "k",
@@ -1742,7 +1743,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        " random_cursor" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k");
     }

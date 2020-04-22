@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -61,35 +63,38 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new VarLenFunction(position, lo, hi, nullRate, configuration);
+            return new VarLenFunction(position, lo, hi, nullRate);
         }
 
         // lo == hi
-        return new FixLenFunction(position, lo, nullRate, configuration);
+        return new FixLenFunction(position, lo, nullRate);
     }
 
     private static final class VarLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
-        private final Rnd rnd;
         private final long lo;
         private final long range;
         private final int nullRate;
 
-        public VarLenFunction(int position, long lo, long hi, int nullRate, CairoConfiguration configuration) {
+        public VarLenFunction(int position, long lo, long hi, int nullRate) {
             super(position);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nullRate = nullRate + 1;
-            this.sequence.rnd = rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public BinarySequence getBin(Record rec) {
-            if ((rnd.nextPositiveInt() % nullRate) == 1) {
+            if ((this.sequence.rnd.nextPositiveInt() % nullRate) == 1) {
                 return null;
             }
             sequence.len = lo + sequence.rnd.nextPositiveLong() % range;
             return sequence;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
 
         @Override
@@ -100,19 +105,17 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
 
     private static final class FixLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
-        private final Rnd rnd;
         private final int nullRate;
 
-        public FixLenFunction(int position, long len, int nullRate, CairoConfiguration configuration) {
+        public FixLenFunction(int position, long len, int nullRate) {
             super(position);
             this.nullRate = nullRate + 1;
-            this.sequence.rnd = rnd = SharedRandom.getRandom(configuration);
             this.sequence.len = len;
         }
 
         @Override
         public BinarySequence getBin(Record rec) {
-            if ((rnd.nextPositiveInt() % nullRate) == 1) {
+            if ((sequence.rnd.nextPositiveInt() % nullRate) == 1) {
                 return null;
             }
             return sequence;
@@ -121,6 +124,11 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         @Override
         public long getBinLen(Record rec) {
             return sequence.len;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
     }
 

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.std.Rnd;
 import org.jetbrains.annotations.Nullable;
 
 public interface SqlExecutionContext {
@@ -44,4 +45,8 @@ public interface SqlExecutionContext {
     void pushTimestampRequiredFlag(boolean flag);
 
     int getWorkerCount();
+
+    Rnd getRandom();
+
+    void setRandom(Rnd rnd);
 }

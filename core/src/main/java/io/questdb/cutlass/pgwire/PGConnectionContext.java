@@ -117,8 +117,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
+    private Rnd rnd;
 
     public PGConnectionContext(
+            CairoConfiguration cairoConfiguration,
             PGWireConfiguration configuration,
             @Nullable MessageBus messageBus,
             int workerCount
@@ -143,7 +145,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.dateLocale = configuration.getDefaultDateLocale();
         this.timestampLocale = configuration.getDefaultTimestampLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(cairoConfiguration, messageBus, workerCount);
         populateAppender();
     }
 
@@ -831,7 +833,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();
@@ -1014,6 +1016,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         if (currentFactory != null) {
             LOG.info().$("executing query").$();
             currentCursor = currentFactory.getCursor(sqlExecutionContext);
+            // cache random if it was replaced
+            this.rnd = sqlExecutionContext.getRandom();
             sendCursor();
         } else if (currentInsertStatement != null) {
             executeInsert();

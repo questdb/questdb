@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -42,24 +44,28 @@ public class RndDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, configuration);
+        return new Func(position);
     }
 
     private static class Func extends DateFunction implements StatelessFunction, NoArgFunction {
         private final long lo;
         private final long range;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public Func(int position, CairoConfiguration configuration) {
+        public Func(int position) {
             super(position);
             this.lo = 0;
             this.range = 10_000_000;
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public long getDate(Record rec) {
             return lo + rnd.nextPositiveLong() % range;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

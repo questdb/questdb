@@ -49,18 +49,17 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         if (nanRate < 0) {
             throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
         }
-        return new RndFunction(position, nanRate, configuration);
+        return new RndFunction(position, nanRate);
     }
 
     private static class RndFunction extends FloatFunction implements StatelessFunction {
 
         private final int nanRate;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
+        public RndFunction(int position, int nanRate) {
             super(position);
             this.nanRate = nanRate + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -73,6 +72,7 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

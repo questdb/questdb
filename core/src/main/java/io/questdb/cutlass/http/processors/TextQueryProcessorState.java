@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -47,6 +48,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     Record record;
+    Rnd rnd;
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     int columnIndex;
 
