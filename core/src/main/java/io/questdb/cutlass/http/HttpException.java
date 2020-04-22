@@ -40,6 +40,10 @@ public class HttpException extends RuntimeException implements Sinkable {
         return ex;
     }
 
+    public CharSequence getFlyweightMessage() {
+        return tlException.get().getFlyweightMessage();
+    }
+
     @Override
     public String getMessage() {
         return message.toString();

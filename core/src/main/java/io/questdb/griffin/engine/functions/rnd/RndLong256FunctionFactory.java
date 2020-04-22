@@ -45,32 +45,22 @@ public class RndLong256FunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new RndFunction(position, configuration);
+        return new RndFunction(position);
     }
 
     private static class RndFunction extends Long256Function implements StatelessFunction {
 
-        private final Rnd rnd;
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
+        private Rnd rnd;
 
-        public RndFunction(int position, CairoConfiguration configuration) {
+        public RndFunction(int position) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public Long256 getLong256A(Record rec) {
             return rndLong(long256A);
-        }
-
-        @NotNull
-        private Long256 rndLong(Long256Impl long256) {
-            long256.setLong0(rnd.nextLong());
-            long256.setLong1(rnd.nextLong());
-            long256.setLong2(rnd.nextLong());
-            long256.setLong3(rnd.nextLong());
-            return long256;
         }
 
         @Override
@@ -85,6 +75,16 @@ public class RndLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @NotNull
+        private Long256 rndLong(Long256Impl long256) {
+            long256.setLong0(rnd.nextLong());
+            long256.setLong1(rnd.nextLong());
+            long256.setLong2(rnd.nextLong());
+            long256.setLong3(rnd.nextLong());
+            return long256;
         }
     }
 }

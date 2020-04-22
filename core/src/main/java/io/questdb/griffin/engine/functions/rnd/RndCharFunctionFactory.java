@@ -44,16 +44,15 @@ public class RndCharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new RndFunction(position, configuration);
+        return new RndFunction(position);
     }
 
     private static class RndFunction extends CharFunction implements StatelessFunction {
 
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public RndFunction(int position, CairoConfiguration configuration) {
+        public RndFunction(int position) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -63,6 +62,7 @@ public class RndCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

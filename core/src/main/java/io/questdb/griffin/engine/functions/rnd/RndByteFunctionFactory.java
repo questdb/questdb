@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -44,20 +46,19 @@ public class RndByteFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
-        return new RndFunction(position, configuration);
+        return new RndFunction(position);
 
     }
 
     private static class RndFunction extends ByteFunction implements StatelessFunction, NoArgFunction {
         private final byte lo;
         private final byte range;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public RndFunction(int position, CairoConfiguration configuration) {
+        public RndFunction(int position) {
             super(position);
             this.lo = 20;
             this.range = (byte) (127 - lo + 1);
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -67,6 +68,11 @@ public class RndByteFunctionFactory implements FunctionFactory {
                 return (byte) (lo - s % range);
             }
             return (byte) (lo + s % range);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

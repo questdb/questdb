@@ -42,9 +42,10 @@ public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
     private static final MessageBus messageBus = new MessageBusImpl();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1).with(
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1).with(
             AllowAllCairoSecurityContext.INSTANCE,
-            bindVariableService
+            bindVariableService,
+            null
     );
 
     private static final LongList rows = new LongList();

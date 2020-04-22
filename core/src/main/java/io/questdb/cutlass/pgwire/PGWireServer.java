@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -51,7 +52,7 @@ public class PGWireServer implements Closeable {
             WorkerPool workerPool,
             MessageBus messageBus
     ) {
-        this.contextFactory = new PGConnectionContextFactory(configuration, messageBus, workerPool.getWorkerCount());
+        this.contextFactory = new PGConnectionContextFactory(engine.getConfiguration(), configuration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -118,9 +119,9 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
+        public PGConnectionContextFactory(CairoConfiguration cairoConfiguration, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(cairoConfiguration, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

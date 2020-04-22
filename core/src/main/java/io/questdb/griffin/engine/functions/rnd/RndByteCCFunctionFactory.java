@@ -50,7 +50,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         byte hi = (byte) args.getQuick(1).getInt(null);
 
         if (lo < hi) {
-            return new RndFunction(position, lo, hi, configuration);
+            return new RndFunction(position, lo, hi);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -59,13 +59,12 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
     private static class RndFunction extends ByteFunction implements StatelessFunction {
         private final byte lo;
         private final byte range;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public RndFunction(int position, byte lo, byte hi, CairoConfiguration configuration) {
+        public RndFunction(int position, byte lo, byte hi) {
             super(position);
             this.lo = lo;
             this.range = (byte) (hi - lo + 1);
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -79,6 +78,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

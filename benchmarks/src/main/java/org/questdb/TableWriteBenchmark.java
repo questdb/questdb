@@ -50,7 +50,7 @@ public class TableWriteBenchmark {
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
-        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(null, 1);
+        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, null, 1);
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test1(f long)", sqlExecutionContext);

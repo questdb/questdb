@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -43,16 +45,20 @@ public class RndBinFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new FixLenFunction(position, configuration);
+        return new FixLenFunction(position);
     }
 
     private static final class FixLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
         private final Sequence sequence = new Sequence();
 
-        public FixLenFunction(int position, CairoConfiguration configuration) {
+        public FixLenFunction(int position) {
             super(position);
-            this.sequence.rnd = SharedRandom.getRandom(configuration);
             this.sequence.len = 32;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
 
         @Override

@@ -100,7 +100,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             BindVariableService bindVariableService = new BindVariableService();
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null);
 
             bindVariableService.setDouble("bal", 56.4);
 
