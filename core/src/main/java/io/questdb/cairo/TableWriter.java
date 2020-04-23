@@ -1821,7 +1821,7 @@ public class TableWriter implements Closeable {
 
     private void openTempPartition() {
         try {
-            path.put(Files.SEPARATOR).$().put(TEMP_PARTITION_NAME);
+            path.put(Files.SEPARATOR).put(TEMP_PARTITION_NAME);
             int plen = path.length();
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
@@ -2671,12 +2671,13 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
-            if (timestamp < maxTimestamp) {
+            if (!inOutOfOrderMode && timestamp < maxTimestamp) {
                 inOutOfOrderMode = true;
                 openTempPartition();
-                //TODO
-                // return tempOutOfOrderRow;
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            }
+
+            if (inOutOfOrderMode) {
+                return tempOutOfOrderRow;
             }
             updateMaxTimestamp(timestamp);
             return row;
@@ -2696,13 +2697,14 @@ public class TableWriter implements Closeable {
 
         @NotNull
         private Row newRow0(long timestamp) {
-            if (timestamp < maxTimestamp) {
+            if (!inOutOfOrderMode && timestamp < maxTimestamp) {
                 inOutOfOrderMode = true;
                 openTempPartition();
-                //TODO return tempOutOfOrderRow;
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
 
+            if (inOutOfOrderMode) {
+                return tempOutOfOrderRow;
+            }
 
             if (timestamp > partitionHi && partitionBy != PartitionBy.NONE) {
                 switchPartition(timestamp);
@@ -2835,12 +2837,12 @@ public class TableWriter implements Closeable {
 
     public class TempRow extends Row {
 
-        int rowCount = 0;
+        int outOfOrderRowCount = 0;
 
         public void append() {
-            if ((masterRef & 1) == 0) {
-                return;
-            }
+//            if ((masterRef & 1) == 0) {
+//                return;
+//            }
 
             for (int i = 0; i < columnCount; i++) {
                 if (tempRefs.getQuick(i) < masterRef) {
@@ -2848,9 +2850,8 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            transientRowCount++;
-            masterRef++;
-            rowCount++;
+//            masterRef++;
+            outOfOrderRowCount++;
         }
 
         public void cancel() {
@@ -2954,7 +2955,7 @@ public class TableWriter implements Closeable {
         }
 
         public void reset() {
-            rowCount = 0;
+            outOfOrderRowCount = 0;
         }
 
         public void notNull(int index) {
