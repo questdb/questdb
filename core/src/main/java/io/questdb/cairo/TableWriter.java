@@ -1,4 +1,4 @@
-/*******************************************************************************
+/* ******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -57,6 +57,7 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<AppendMemory> columns;
+    final ObjList<AppendMemory> tempColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
@@ -64,7 +65,9 @@ public class TableWriter implements Closeable {
     private final Path path;
     private final Path other;
     private final LongList refs = new LongList();
+    private final LongList tempRefs = new LongList();
     private final Row row = new Row();
+    private final Row tempOutOfOrderRow = new Row();
     private final int rootLen;
     private final ReadWriteMemory txMem;
     private final ReadOnlyMemory metaMem;
@@ -95,6 +98,7 @@ public class TableWriter implements Closeable {
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullers;
+    private final ObjList<Runnable> tempNullers;
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -124,6 +128,7 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
+    private boolean inOutOfOrderMode;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -199,10 +204,12 @@ public class TableWriter implements Closeable {
             this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
+            this.tempColumns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullers = new ObjList<>(columnCount);
+            this.tempNullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
             switch (partitionBy) {
                 case PartitionBy.DAY:
@@ -229,6 +236,7 @@ public class TableWriter implements Closeable {
             }
 
             configureColumnMemory();
+            configureTempColumnMemory();
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
             purgeUnusedPartitions();
@@ -1240,7 +1248,7 @@ public class TableWriter implements Closeable {
         }
         columns.add(primary);
         columns.add(secondary);
-        configureNuller(type, primary, secondary);
+        configureNuller(nullers, type, primary, secondary);
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
             populateDenseIndexerList();
@@ -1272,7 +1280,7 @@ public class TableWriter implements Closeable {
         populateDenseIndexerList();
     }
 
-    private void configureNuller(int type, AppendMemory mem1, AppendMemory mem2) {
+    private void configureNuller(ObjList<Runnable> nullers, int type, AppendMemory mem1, AppendMemory mem2) {
         switch (type) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -1312,6 +1320,31 @@ public class TableWriter implements Closeable {
                 break;
             default:
                 break;
+        }
+    }
+
+    private void configureTempColumn(int type) {
+        final AppendMemory primary = new AppendMemory();
+        final AppendMemory secondary;
+        switch (type) {
+            case ColumnType.BINARY:
+            case ColumnType.STRING:
+                secondary = new AppendMemory();
+                break;
+            default:
+                secondary = null;
+                break;
+        }
+        tempColumns.add(primary);
+        tempColumns.add(secondary);
+        configureNuller(tempNullers, type, primary, secondary);
+        tempRefs.add(0);
+    }
+
+    private void configureTempColumnMemory() {
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            configureTempColumn(type);
         }
     }
 
@@ -1561,6 +1594,16 @@ public class TableWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
+    private AppendMemory getPrimaryColumnForTempRow(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return tempColumns.getQuick(getPrimaryColumnIndex(column));
+    }
+
+    private AppendMemory getSecondaryColumnForTempRow(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return tempColumns.getQuick(getSecondaryColumnIndex(column));
+    }
+
     SymbolMapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
     }
@@ -1674,10 +1717,7 @@ public class TableWriter implements Closeable {
         return fd;
     }
 
-    private void openColumnFiles(CharSequence name, int i, int plen) {
-        AppendMemory mem1 = getPrimaryColumn(i);
-        AppendMemory mem2 = getSecondaryColumn(i);
-
+    private void openColumnFiles(AppendMemory mem1, AppendMemory mem2, CharSequence name, int i, int plen) {
         mem1.of(ff, dFile(path.trimTo(plen), name), ff.getMapPageSize());
 
         if (mem2 != null) {
@@ -1718,7 +1758,10 @@ public class TableWriter implements Closeable {
                 createIndexFiles(name, indexValueBlockCapacity, plen, true);
             }
 
-            openColumnFiles(name, columnIndex, plen);
+            AppendMemory mem1 = getPrimaryColumn(columnIndex);
+            AppendMemory mem2 = getSecondaryColumn(columnIndex);
+
+            openColumnFiles(mem1, mem2, name, columnIndex, plen);
             if (transientRowCount > 0) {
                 // write .top file
                 writeColumnTop(name);
@@ -1757,7 +1800,10 @@ public class TableWriter implements Closeable {
                     createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, transientRowCount < 1);
                 }
 
-                openColumnFiles(name, i, plen);
+                AppendMemory mem1 = getPrimaryColumn(i);
+                AppendMemory mem2 = getSecondaryColumn(i);
+
+                openColumnFiles(mem1, mem2, name, i, plen);
                 columnTop = readColumnTop(ff, path, name, plen, tempMem8b);
                 columnTops.extendAndSet(i, columnTop);
 
@@ -1766,6 +1812,28 @@ public class TableWriter implements Closeable {
                     assert indexer != null;
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
+            }
+            LOG.info().$("switched partition to '").$(path).$('\'').$();
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void openTempPartition() {
+        try {
+            path.put(Files.SEPARATOR).$().put(TEMP_PARTITION_NAME);
+            int plen = path.length();
+            if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
+            }
+
+            assert columnCount > 0;
+
+            for (int i = 0; i < columnCount; i++) {
+                final CharSequence name = metadata.getColumnName(i);
+                AppendMemory mem1 = getPrimaryColumnForTempRow(i);
+                AppendMemory mem2 = getSecondaryColumnForTempRow(i);
+                openColumnFiles(mem1, mem2, name, i, plen);
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
@@ -2604,6 +2672,10 @@ public class TableWriter implements Closeable {
         public Row newRow(long timestamp) {
             bumpMasterRef();
             if (timestamp < maxTimestamp) {
+                inOutOfOrderMode = true;
+                openTempPartition();
+                //TODO
+                // return tempOutOfOrderRow;
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
             updateMaxTimestamp(timestamp);
@@ -2625,8 +2697,12 @@ public class TableWriter implements Closeable {
         @NotNull
         private Row newRow0(long timestamp) {
             if (timestamp < maxTimestamp) {
+                inOutOfOrderMode = true;
+                openTempPartition();
+                //TODO return tempOutOfOrderRow;
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
+
 
             if (timestamp > partitionHi && partitionBy != PartitionBy.NONE) {
                 switchPartition(timestamp);
@@ -2754,6 +2830,135 @@ public class TableWriter implements Closeable {
 
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
+        }
+    }
+
+    public class TempRow extends Row {
+
+        int rowCount = 0;
+
+        public void append() {
+            if ((masterRef & 1) == 0) {
+                return;
+            }
+
+            for (int i = 0; i < columnCount; i++) {
+                if (tempRefs.getQuick(i) < masterRef) {
+                    tempNullers.getQuick(i).run();
+                }
+            }
+
+            transientRowCount++;
+            masterRef++;
+            rowCount++;
+        }
+
+        public void cancel() {
+
+        }
+
+        public void putBin(int index, long address, long len) {
+            long offset = getPrimaryColumnForTempRow(index).putBin(address, len);
+            getSecondaryColumnForTempRow(index).putLong(offset);
+        }
+
+        public void putBin(int index, BinarySequence sequence) {
+            long offset = getPrimaryColumnForTempRow(index).putBin(sequence);
+            getSecondaryColumnForTempRow(index).putLong(offset);
+        }
+
+        public void putBool(int index, boolean value) {
+            getPrimaryColumnForTempRow(index).putBool(value);
+            notNull(index);
+        }
+
+        public void putByte(int index, byte value) {
+            getPrimaryColumnForTempRow(index).putByte(value);
+            notNull(index);
+        }
+
+        public void putChar(int index, char value) {
+            getPrimaryColumnForTempRow(index).putChar(value);
+            notNull(index);
+        }
+
+        public void putDate(int index, long value) {
+            putLong(index, value);
+        }
+
+        public void putDouble(int index, double value) {
+            getPrimaryColumnForTempRow(index).putDouble(value);
+            notNull(index);
+        }
+
+        public void putFloat(int index, float value) {
+            getPrimaryColumnForTempRow(index).putFloat(value);
+            notNull(index);
+        }
+
+        public void putInt(int index, int value) {
+            getPrimaryColumnForTempRow(index).putInt(value);
+            notNull(index);
+        }
+
+        public void putLong(int index, long value) {
+            getPrimaryColumnForTempRow(index).putLong(value);
+            notNull(index);
+        }
+
+        public void putLong256(int index, long l0, long l1, long l2, long l3) {
+            getPrimaryColumnForTempRow(index).putLong256(l0, l1, l2, l3);
+            notNull(index);
+        }
+
+        public void putLong256(int index, Long256 value) {
+            getPrimaryColumnForTempRow(index).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+            notNull(index);
+        }
+
+        public void putLong256(int index, CharSequence hexString) {
+            getPrimaryColumnForTempRow(index).putLong256(hexString);
+            notNull(index);
+        }
+
+        public void putShort(int index, short value) {
+            getPrimaryColumnForTempRow(index).putShort(value);
+            notNull(index);
+        }
+
+        public void putStr(int index, CharSequence value) {
+            long offset = getPrimaryColumnForTempRow(index).putStr(value);
+            getSecondaryColumnForTempRow(index).putLong(offset);
+            notNull(index);
+        }
+
+        public void putStr(int index, char value) {
+            long offset = getPrimaryColumnForTempRow(index).putStr(value);
+            getSecondaryColumnForTempRow(index).putLong(offset);
+            notNull(index);
+        }
+
+        public void putStr(int index, CharSequence value, int pos, int len) {
+            long offset = getPrimaryColumnForTempRow(index).putStr(value, pos, len);
+            getSecondaryColumnForTempRow(index).putLong(offset);
+            notNull(index);
+        }
+
+        public void putSym(int index, CharSequence value) {
+            getPrimaryColumnForTempRow(index).putStr(value);
+            notNull(index);
+        }
+
+        public void putTimestamp(int index, long value) {
+            putLong(index, value);
+        }
+
+        public void reset() {
+            rowCount = 0;
+        }
+
+        public void notNull(int index) {
+            tempRefs.setQuick(index, masterRef);
         }
     }
 
