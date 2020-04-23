@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
@@ -180,6 +177,95 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSymbolNonPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table symbols (sym symbol, isNewSymbol BOOLEAN)  partition by NONE", sqlExecutionContext);
+            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
+            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
+
+            String expected = "sym\tisNewSymbol\n" +
+                    "USDJPY\tfalse\n" +
+                    "USDFJD\ttrue\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "symbols")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSymbolPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
+            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            executeInsert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
+
+            String expected = "ts\tsym\tbid\task\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
+                    "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSymbolPartitionedAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
+            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+
+            String expected1 = "ts\tsym\tbid\task\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected1, sink);
+            }
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
+                w.truncate();
+            }
+
+            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+
+            String expected2 = "ts\tsym\tbid\task\n" +
+                    "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected2, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSymbolPartitionedFarApart() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
+            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+
+            String expected = "ts\tsym\tbid\task\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
+                    "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
                 printer.print(reader.getCursor(), reader.getMetadata(), true);
                 TestUtils.assertEquals(expected, sink);
             }

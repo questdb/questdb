@@ -94,6 +94,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    public static void executeInsert(String ddl) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+    }
+
     @BeforeClass
     public static void setUp2() {
         engine = new CairoEngine(configuration, messageBus);

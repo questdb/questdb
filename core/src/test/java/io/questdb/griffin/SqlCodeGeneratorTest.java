@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
@@ -4017,15 +4015,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
         executeInsert(ddl);
-    }
-
-    private void executeInsert(String ddl) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
     }
 
     @Test

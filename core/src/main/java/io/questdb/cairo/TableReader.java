@@ -42,8 +42,8 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
     private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
-    private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
+    private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final Timestamps.TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
@@ -1160,6 +1160,7 @@ public class TableReader implements Closeable {
             reloadStruct();
             if (getPartitionRowCount(0) == -1) {
                 openPartition0(0);
+                reloadSymbolMapCounts();
             } else {
                 reloadPartition(0, rowCount);
             }
@@ -1208,6 +1209,7 @@ public class TableReader implements Closeable {
 
             if (partitionCount == 0) {
                 // old partition count was 0
+                reloadSymbolMapCounts();
                 incrementPartitionCountBy(calculatePartitionCount());
                 return true;
             }
@@ -1230,10 +1232,15 @@ public class TableReader implements Closeable {
                 } else {
                     reloadPartition(partitionIndex, transientRowCount);
                 }
-            } else if (delta > 0) {
+                return true;
+            }
+
+            if (delta > 0) {
                 // although we have nothing to reload we still have to bump partition count
                 incrementPartitionCountBy(delta);
             }
+
+            reloadSymbolMapCounts();
             return true;
         }
         return false;
