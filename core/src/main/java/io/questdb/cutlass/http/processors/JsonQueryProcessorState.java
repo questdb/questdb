@@ -69,6 +69,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
     private final ObjList<ValueWriter> skewedValueWriters = new ObjList<>();
+    private final NanosecondClock nanosecondClock;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -81,9 +82,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long skip;
     private long stop;
     private int columnCount;
+    private long executeStartNanos;
+    private long recordCountNanos;
+    private long compilerNanos;
+    private boolean timigs;
+
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            int connectionCheckFrequency
+            int connectionCheckFrequency,
+            NanosecondClock nanosecondClock
     ) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -109,6 +116,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skewedValueWriters.extendAndSet(ColumnType.SYMBOL, this::putSkewedSymValue);
         skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
         skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
+        this.nanosecondClock = nanosecondClock;
     }
 
     @Override
@@ -146,6 +154,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.stop = stop;
         this.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
         this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
+        this.timigs = Chars.equalsNc("true", request.getUrlParam("timings"));
     }
 
     public LogRecord error() {
@@ -189,6 +198,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void logSyntaxError(SqlException e) {
         info().$("syntax-error [q=`").utf8(query).$("`, at=").$(e.getPosition()).$(", message=`").utf8(e.getFlyweightMessage()).$('`').$(']').$();
+    }
+
+    public void setCompilerNanos(long compilerNanos) {
+        this.compilerNanos = compilerNanos;
+    }
+
+    public void startExecutionTimer() {
+        this.executeStartNanos = nanosecondClock.getTicks();
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -424,6 +441,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.bookmark();
             socket.put(']');
             socket.put(',').putQuoted("count").put(':').put(count);
+            if (timigs) {
+                socket.put(',').putQuoted("timings").put(':').put('{');
+                socket.putQuoted("compiler").put(':').put(compilerNanos).put(',');
+                socket.putQuoted("execute").put(':').put(nanosecondClock.getTicks() - executeStartNanos).put(',');
+                socket.putQuoted("count").put(':').put(recordCountNanos);
+                socket.put('}');
+            }
             socket.put('}');
             count = -1;
             socket.sendChunk();
@@ -508,6 +532,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onNoMoreData() {
+        long nanos = nanosecondClock.getTicks();
         if (countRows) {
             // this is the tail end of the cursor
             // we don't need to read records, just round up record count
@@ -524,6 +549,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 this.count = size;
             }
         }
+        recordCountNanos = nanosecondClock.getTicks() - nanos;
     }
 
     private void onQueryMetadata(
