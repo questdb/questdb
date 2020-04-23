@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -53,7 +55,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new Func(position, lo, hi, nanRate, configuration);
+            return new Func(position, lo, hi, nanRate);
         }
 
         throw SqlException.$(position, "invalid range");
@@ -63,16 +65,14 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         private final long lo;
         private final long range;
         private final int nanRate;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public Func(int position, long lo, long hi, int nanRate, CairoConfiguration configuration) {
+        public Func(int position, long lo, long hi, int nanRate) {
             super(position);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
         }
-
 
         @Override
         public long getLong(Record rec) {
@@ -80,6 +80,11 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return lo + rnd.nextPositiveLong() % range;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

@@ -47,7 +47,6 @@ import org.junit.rules.TemporaryFolder;
 import java.io.IOException;
 
 public class TableBackupTest {
-    // todo: rename test methods to fall inline with other test method names, e.g. testSomething
     private static final StringSink sink = new StringSink();
     private static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
     private static final int ERRNO_EIO = 5;
@@ -125,7 +124,7 @@ public class TableBackupTest {
         MessageBus mainMessageBus = new MessageBusImpl();
         mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), mainMessageBus);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainConfiguration, mainMessageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null);
     }
 
     @After
@@ -505,7 +504,7 @@ public class TableBackupTest {
             if (backup) {
                 CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
                 MessageBus backupMessageBus = new MessageBusImpl();
-                sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), backupMessageBus);
+                sqlExecutionContext = new SqlExecutionContextImpl(backupConfiguration, backupMessageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null);
                 engine = new CairoEngine(backupConfiguration, backupMessageBus);
                 compiler = new SqlCompiler(engine);
             } else {

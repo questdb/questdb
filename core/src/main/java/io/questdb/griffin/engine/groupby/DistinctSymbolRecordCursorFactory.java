@@ -77,7 +77,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class DistinctSymbolRecordCursor implements RecordCursor {
-        private DistinctSymbolRecord recordA = new DistinctSymbolRecord();
+        private final DistinctSymbolRecord recordA = new DistinctSymbolRecord();
         private DistinctSymbolRecord recordB = null;
         private TableReader reader;
         private int numberOfSymbols;
@@ -153,6 +153,21 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             @Override
             public int getInt(int col) {
                 return recordIndex;
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+                return getSym(col);
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getSym(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getSym(col).length();
             }
 
             @Override

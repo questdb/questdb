@@ -26,29 +26,34 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.DoubleAdder;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.Arrays;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
-    private final DoubleAdder sum = new DoubleAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final double[] sum;
+    private final long[] count;
+    private final int workerCount;
 
-    public SumDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public SumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
+        this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
+        this.workerCount = workerCount;
     }
 
     @Override
-    public void aggregate(long address, long count) {
+    public void aggregate(long address, long count, int workerId) {
         if (address != 0) {
             final double value = Vect.sumDouble(address, count);
             if (value == value) {
-                sum.add(value);
-                this.count.increment();
+                final int offset = workerId * Misc.CACHE_LINE_SIZE;
+                this.sum[offset] += value;
+                this.count[offset]++;
             }
         }
     }
@@ -60,12 +65,19 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void clear() {
-        sum.reset();
-        count.reset();
+        Arrays.fill(sum, 0);
+        Arrays.fill(count, 0);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return this.count.sum() > 0 ? sum.sum() : Double.NaN;
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            final int offset = i * Misc.CACHE_LINE_SIZE;
+            sum += this.sum[offset];
+            count += this.count[offset];
+        }
+        return count > 0 ? sum : Double.NaN;
     }
 }

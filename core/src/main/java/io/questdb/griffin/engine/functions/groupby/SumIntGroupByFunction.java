@@ -30,12 +30,12 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class SumIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
+public class SumIntGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
@@ -48,9 +48,11 @@ public class SumIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeFirst(MapValue mapValue, Record record) {
         final int value = arg.getInt(record);
         if (value != Numbers.INT_NaN) {
-            mapValue.putInt(valueIndex, value);
+            mapValue.putLong(valueIndex, value);
+            mapValue.putLong(valueIndex + 1, 1);
         } else {
-            mapValue.putInt(valueIndex, 0);
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
     }
 
@@ -58,34 +60,38 @@ public class SumIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeNext(MapValue mapValue, Record record) {
         final int value = arg.getInt(record);
         if (value != Numbers.INT_NaN) {
-            mapValue.addInt(valueIndex, arg.getInt(record));
+            mapValue.addLong(valueIndex, arg.getInt(record));
+            mapValue.addLong(valueIndex + 1, 1);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override

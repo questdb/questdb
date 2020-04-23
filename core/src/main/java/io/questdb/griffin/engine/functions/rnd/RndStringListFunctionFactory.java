@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -38,6 +40,22 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "rnd_str(V)";
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        if (args == null) {
+            return new RndStrFunction(position, 3, 10, 1);
+        }
+
+        final ObjList<String> symbols = new ObjList<>(args.size());
+        copyConstants(args, symbols);
+        return new Func(position, symbols);
+    }
+
     static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function f = args.getQuick(i);
@@ -55,30 +73,13 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         }
     }
 
-    @Override
-    public String getSignature() {
-        return "rnd_str(V)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        if (args == null) {
-            return new RndStrFunction(position, 3, 10, 1, configuration);
-        }
-
-        final ObjList<String> symbols = new ObjList<>(args.size());
-        copyConstants(args, symbols);
-        return new Func(position, symbols, configuration);
-    }
-
     private static final class Func extends StrFunction implements StatelessFunction, NoArgFunction {
         private final ObjList<String> symbols;
-        private final Rnd rnd;
         private final int count;
+        private Rnd rnd;
 
-        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
+        public Func(int position, ObjList<String> symbols) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
             this.symbols = symbols;
             this.count = symbols.size();
         }
@@ -91,6 +92,11 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return getStr(rec);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

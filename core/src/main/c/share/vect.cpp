@@ -413,6 +413,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
+//    return sumDoubleKahan_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;

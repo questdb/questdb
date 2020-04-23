@@ -81,10 +81,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_str(5,10,2)" +
-                ")), cast(a as SYMBOL)";
+                "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
+                "), cast(a as SYMBOL)";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -1912,12 +1910,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
-        assertFailure(88, "TIMESTAMP column expected",
+        assertFailure(97, "TIMESTAMP column expected",
                 "create table y as (" +
-                        "select * from random_cursor(" +
-                        " 20," + // record count
-                        " 'a', rnd_int(0, 30, 2)" +
-                        "))  timestamp(a) partition by DAY");
+                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                        ")  timestamp(a) partition by DAY");
     }
 
     @Test
@@ -2002,69 +1998,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 });
     }
-
-    @Test
-    public void testRemoveColumnShiftTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
-
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
-
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
-                    writer.removeColumn("b");
-                    Assert.assertEquals(1, writer.getMetadata().getTimestampIndex());
-                }
-
-                Assert.assertTrue(reader.reload());
-                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
-            }
-        });
-    }
-
-    @Test
-    public void testRemoveTimestampAndReplace() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
-
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
-
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
-                    writer.removeColumn("t");
-                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                    writer.addColumn("t", ColumnType.TIMESTAMP);
-                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                }
-
-                Assert.assertTrue(reader.reload());
-                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
-            }
-        });
-    }
-
-    @Test
-    public void testRemoveTimestampColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
-
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
-
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
-                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
-                    writer.removeColumn("t");
-                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                }
-
-                Assert.assertTrue(reader.reload());
-                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
-            }
-        });
-    }
-
 
     @Test
     public void testCreateAsSelectReplaceTimestamp() {
@@ -2408,9 +2341,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testExecuteQuery() throws Exception {
         assertFailure(
-                58,
+                68,
                 "not a TIMESTAMP",
-                "select * from random_cursor(20, 'x', rnd_int()) timestamp(x)"
+                "select * from (select rnd_int() x from long_sequence(20)) timestamp(x)"
 
         );
     }
@@ -3151,6 +3084,68 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testRemoveColumnShiftTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("b");
+                    Assert.assertEquals(1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveTimestampAndReplace() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("t");
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                    writer.addColumn("t", ColumnType.TIMESTAMP);
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                    writer.removeColumn("t");
+                    Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(-1, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
@@ -3168,10 +3163,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_byte(33, 119)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_byte(33, 119) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3180,15 +3173,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_byte(2,50)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(85, e.getPosition());
+            Assert.assertEquals(94, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3197,10 +3188,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3209,10 +3198,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', 100 * rnd_double(2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select 100 * rnd_double(2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3221,15 +3208,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_double(2)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_double(2) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(84, e.getPosition());
+            Assert.assertEquals(93, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3238,10 +3223,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', 100 * rnd_float(2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select 100 * rnd_float(2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3250,15 +3233,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_float(2)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_float(2) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(83, e.getPosition());
+            Assert.assertEquals(92, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3267,10 +3248,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_int(0, 30, 2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3279,15 +3258,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_int(0, 30, 2)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(88, e.getPosition());
+            Assert.assertEquals(97, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3296,10 +3273,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_long(0, 30, 2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3308,15 +3283,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_long(0, 30, 2)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(89, e.getPosition());
+            Assert.assertEquals(98, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3325,10 +3298,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_short(1024, 2048)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_short(1024, 2048) a from long_sequence(20))), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }
@@ -3337,15 +3307,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_short(2,10)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_short(2,10) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(86, e.getPosition());
+            Assert.assertEquals(95, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3354,15 +3322,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             compiler.compile(
                     "create table y as (" +
-                            "select * from random_cursor(" +
-                            " 20," + // record count
-                            " 'a', rnd_str(5,10,2)" +
-                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                            "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
+                            "), cast(a as " + ColumnType.nameOf(castTo) + ")",
                     sqlExecutionContext
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(86, e.getPosition());
+            Assert.assertEquals(95, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
     }
@@ -3386,10 +3352,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from random_cursor(" +
-                " 20," + // record count
-                " 'a', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)" +
-                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }

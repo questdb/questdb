@@ -1445,7 +1445,7 @@ class SqlOptimiser {
                 }
 
                 final QueryModel nested = parent.getNestedModel();
-                if (nested == null) {
+                if (nested == null || nested.getLatestBy().size() > 0) {
                     // there is no nested model for this table, keep where clause element with this model
                     addWhereNode(parent, node);
                 } else {

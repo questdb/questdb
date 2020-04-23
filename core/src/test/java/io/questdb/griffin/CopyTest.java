@@ -41,11 +41,11 @@ import java.io.File;
 public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    private static final MessageBus workScheduler = new MessageBusImpl();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(
+    private static final MessageBus messageBus = new MessageBusImpl();
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1).with(
             AllowAllCairoSecurityContext.INSTANCE,
             bindVariableService,
-            workScheduler
+            null
     );
 
     private static final LongList rows = new LongList();
@@ -98,7 +98,7 @@ public class CopyTest extends AbstractCairoTest {
                 return new File(".").getAbsolutePath();
             }
         };
-        engine = new CairoEngine(configuration, workScheduler);
+        engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
         bindVariableService.clear();
     }

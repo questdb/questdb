@@ -284,10 +284,10 @@ function nopropagation(e) {
                         <div id="${e.id}" class="ud-row" style="top: ${top}px;">
                             <div class="ud-cell ud-c0">
                                 <i class="fa fa-square-o ud-checkbox js-row-toggle"></i>
-                                <span class="label js-row-append">A</span>
-                                <span class="label js-row-overwrite">O</span>
-                                <span class="label js-row-lev">LEV</span>
-                                <span class="label js-row-toggle-header">H</span>
+                                <span class="label js-row-append" title="Append">A</span>
+                                <span class="label js-row-overwrite" title="Overwrite">O</span>
+                                <span class="label js-row-lev" title="Skip lines with extra values">LEV</span>
+                                <span class="label js-row-toggle-header" title="Header">H</span>
                                 <i class="fa fa-upload js-row-upload"></i>
                             </div>
                             <div class="ud-cell ud-c1">${e.name}</div>

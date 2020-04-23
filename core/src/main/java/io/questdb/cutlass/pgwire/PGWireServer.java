@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,20 +49,20 @@ public class PGWireServer implements Closeable {
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
-            WorkerPool pool,
+            WorkerPool workerPool,
             MessageBus messageBus
     ) {
-        this.contextFactory = new PGConnectionContextFactory(configuration, messageBus);
+        this.contextFactory = new PGConnectionContextFactory(engine.getConfiguration(), configuration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
         );
 
-        pool.assign(dispatcher);
+        workerPool.assign(dispatcher);
 
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             final PGJobContext jobContext = new PGJobContext(configuration, engine);
-            pool.assign(i, new Job() {
+            workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
                         jobContext.handleClientOperation(context);
@@ -76,14 +77,14 @@ public class PGWireServer implements Closeable {
                 };
 
                 @Override
-                public boolean run() {
+                public boolean run(int workerId) {
                     return dispatcher.processIOQueue(processor);
                 }
             });
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            pool.assign(i, () -> {
+            workerPool.assign(i, () -> {
                 Misc.free(jobContext);
                 contextFactory.closeContextPool();
             });
@@ -118,9 +119,9 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(PGWireConfiguration configuration, MessageBus messageBus) {
+        public PGConnectionContextFactory(CairoConfiguration cairoConfiguration, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(configuration, messageBus), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(cairoConfiguration, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

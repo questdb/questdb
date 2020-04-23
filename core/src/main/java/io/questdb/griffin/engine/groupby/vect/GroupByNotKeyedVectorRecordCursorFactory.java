@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -84,6 +85,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
 
         doneLatch.reset();
 
+        // check if this executed via worker pool
+        final Thread thread = Thread.currentThread();
+        final int workerId;
+        if (thread instanceof Worker) {
+            workerId = ((Worker) thread).getWorkerId();
+        } else {
+            workerId = 0;
+        }
+
         PageFrame frame;
         while ((frame = cursor.next()) != null) {
             for (int i = 0; i < vafCount; i++) {
@@ -96,7 +106,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                     // diy the func
                     // vaf need to know which column it is hitting int he frame and will need to
                     // aggregate between frames until done
-                    vaf.aggregate(pageAddress, pageValueCount);
+                    vaf.aggregate(pageAddress, pageValueCount, workerId);
                     ownCount++;
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
@@ -116,7 +126,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
 
         // start at the back to reduce chance of clashing
         for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
-            if (activeEntries.getQuick(i).run()) {
+            if (activeEntries.getQuick(i).run(workerId)) {
                 reclaimed++;
             }
         }

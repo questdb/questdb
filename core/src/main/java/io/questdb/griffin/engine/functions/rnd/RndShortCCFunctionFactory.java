@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.StatelessFunction;
@@ -49,7 +51,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         short hi = (short) args.getQuick(1).getInt(null);
 
         if (lo < hi) {
-            return new RndFunction(position, lo, hi, configuration);
+            return new RndFunction(position, lo, hi);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -58,13 +60,12 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
     private static class RndFunction extends ShortFunction implements StatelessFunction, NoArgFunction {
         private final short lo;
         private final short range;
-        private final Rnd rnd;
+        private Rnd rnd;
 
-        public RndFunction(int position, short lo, short hi, CairoConfiguration configuration) {
+        public RndFunction(int position, short lo, short hi) {
             super(position);
             this.lo = lo;
             this.range = (short) (hi - lo + 1);
-            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -74,6 +75,11 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
                 return (short) (lo - s % range);
             }
             return (short) (lo + s % range);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

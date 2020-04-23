@@ -53,15 +53,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
-    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
-    private final MessageBus messageBus;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus
+            @Nullable MessageBus messageBus,
+            int workerCount
     ) {
         this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
@@ -79,14 +79,100 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
-        this.messageBus = messageBus;
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
     }
 
-    private static void doResumeSend(
+    @Override
+    public void close() {
+        Misc.free(compiler);
+        Misc.free(path);
+    }
+
+    public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        // do not set random for new request to avoid copying random from previous request into next one
+        // the only time we need to copy random from state is when we resume request execution
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
+        state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
+        final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
+        try {
+            if (factory != null) {
+                try {
+                    executeCachedSelect(
+                            state,
+                            factory,
+                            factory.getCursor(sqlExecutionContext),
+                            configuration.getKeepAliveHeader()
+                    );
+                } catch (ReaderOutOfDateException e) {
+                    Misc.free(factory);
+                    compileQuery(state);
+                }
+            } else {
+                // new query
+                compileQuery(state);
+            }
+        } catch (SqlException e) {
+            syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
+            readyForNextRequest(context);
+        } catch (CairoException | CairoError e) {
+            internalError(context.getChunkedResponseSocket(), e, state);
+            readyForNextRequest(context);
+        }
+    }
+
+    @Override
+    public void onHeadersReady(HttpConnectionContext context) {
+    }
+
+    @Override
+    public void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        JsonQueryProcessorState state = LV.get(context);
+        if (state == null) {
+            LV.set(context, state = new JsonQueryProcessorState(
+                    context,
+                    configuration.getConnectionCheckFrequency()
+            ));
+        }
+
+        // clear random for new request to avoid reusing random between requests
+        state.setRnd(null);
+
+        if (parseUrl(state, configuration.getKeepAliveHeader())) {
+            execute0(state);
+        } else {
+            readyForNextRequest(context);
+        }
+    }
+
+    @Override
+    public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final JsonQueryProcessorState state = LV.get(context);
-        if (state == null || state.noCursor()) {
+        if (state != null) {
+            // we are resuming request execution, we need to copy random to execution context
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd());
+            doResumeSend(state, context);
+        }
+    }
+
+    @Override
+    public void parkRequest(HttpConnectionContext context) {
+        final JsonQueryProcessorState state = LV.get(context);
+        if (state != null) {
+            // preserve random when we park the context
+            state.setRnd(sqlExecutionContext.getRandom());
+        }
+    }
+
+    private static void doResumeSend(
+            JsonQueryProcessorState state,
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.noCursor()) {
             return;
         }
 
@@ -141,7 +227,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         if (state.of(factory, cursor)) {
             header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
-            doResumeSend(context);
+            doResumeSend(state, context);
         } else {
             readyForNextRequest(context);
         }
@@ -212,43 +298,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         );
     }
 
-    @Override
-    public void close() {
-        Misc.free(compiler);
-        Misc.free(path);
-    }
-
-    public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final HttpConnectionContext context = state.getHttpConnectionContext();
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, messageBus);
-        state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
-        final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
-        try {
-            if (factory != null) {
-                try {
-                    executeCachedSelect(
-                            state,
-                            factory,
-                            factory.getCursor(sqlExecutionContext),
-                            configuration.getKeepAliveHeader()
-                    );
-                } catch (ReaderOutOfDateException e) {
-                    Misc.free(factory);
-                    compileQuery(state);
-                }
-            } else {
-                // new query
-                compileQuery(state);
-            }
-        } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
-            readyForNextRequest(context);
-        } catch (CairoException | CairoError e) {
-            internalError(context.getChunkedResponseSocket(), e, state);
-            readyForNextRequest(context);
-        }
-    }
-
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
         queryExecutors.getQuick(cc.getType()).execute(
@@ -256,35 +305,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 cc,
                 configuration.getKeepAliveHeader()
         );
-    }
-
-    @Override
-    public void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    @Override
-    public void onRequestComplete(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        if (state == null) {
-            LV.set(context, state = new JsonQueryProcessorState(
-                    context,
-                    configuration.getConnectionCheckFrequency()
-            ));
-        }
-        if (parseUrl(state, configuration.getKeepAliveHeader())) {
-            execute0(state);
-        } else {
-            readyForNextRequest(context);
-        }
-    }
-
-    @Override
-    public void resumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doResumeSend(context);
     }
 
     private void executeInsert(

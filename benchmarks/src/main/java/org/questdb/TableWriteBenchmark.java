@@ -45,12 +45,12 @@ import java.util.concurrent.TimeUnit;
 public class TableWriteBenchmark {
 
     private static TableWriter writer;
-    private static CairoConfiguration configuration = new DefaultCairoConfiguration(".");
+    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
 
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
-        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl();
+        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, null, 1);
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test1(f long)", sqlExecutionContext);

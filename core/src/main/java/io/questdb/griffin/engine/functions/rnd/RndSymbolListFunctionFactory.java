@@ -48,33 +48,18 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         final ObjList<String> symbols = new ObjList<>(args.size());
         RndStringListFunctionFactory.copyConstants(args, symbols);
 
-        return new Func(position, symbols, configuration);
+        return new Func(position, symbols);
     }
 
     private static final class Func extends SymbolFunction implements StatelessFunction {
         private final ObjList<String> symbols;
-        private final Rnd rnd;
         private final int count;
+        private Rnd rnd;
 
-        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
+        public Func(int position, ObjList<String> symbols) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
             this.symbols = symbols;
             this.count = symbols.size();
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(next());
-        }
-
-        private int next() {
-            return Math.abs(rnd.nextPositiveInt() % count);
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         @Override
@@ -83,12 +68,27 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getSymbol(Record rec) {
+            return symbols.getQuick(next());
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        private int next() {
+            return Math.abs(rnd.nextPositiveInt() % count);
         }
     }
 }

@@ -25,17 +25,31 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.IntStack;
+import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
+    private final int workerCount;
+    private final CairoConfiguration cairoConfiguration;
+    @Nullable
+    private final MessageBus messageBus;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
-    @Nullable
-    private MessageBus messageBus;
+    private Rnd random;
+
+    public SqlExecutionContextImpl(CairoConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
+        this.cairoConfiguration = configuration;
+        this.messageBus = messageBus;
+        this.workerCount = workerCount;
+        assert workerCount > 0;
+    }
 
     @Override
     public BindVariableService getBindVariableService() {
@@ -68,14 +82,29 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         timestampRequiredStack.push(flag ? 1 : 0);
     }
 
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public void setRandom(Rnd rnd) {
+        this.random = rnd;
+    }
+
     public SqlExecutionContextImpl with(
-            CairoSecurityContext cairoSecurityContext,
-            BindVariableService bindVariableService,
-            @Nullable MessageBus messageBus
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
-        this.messageBus = messageBus;
+        this.random = rnd;
         return this;
     }
 }

@@ -22,50 +22,49 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.rnd;
+package org.questdb;
 
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTable;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-class RandomRecordCursor implements NoRandomAccessRecordCursor {
-    private final long recordCount;
-    private final Record record;
+import java.util.concurrent.TimeUnit;
 
-    private long recordIndex;
+@State(Scope.Thread)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+public class AbsBenchmark {
 
-    public RandomRecordCursor(long recordCount, Record record) {
-        this.recordCount = recordCount;
-        this.record = record;
-        recordIndex = 0;
+
+    int x = -5;
+
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(AbsBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
     }
 
-    @Override
-    public long size() {
-        return recordCount;
+    @Benchmark
+    public int testManual() {
+        return x > 0 ? x : -x;
     }
 
-    @Override
-    public void close() {
+    @Benchmark
+    public int testMathAbs() {
+        return Math.abs(x);
     }
 
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return recordIndex++ < recordCount;
-    }
-
-    @Override
-    public void toTop() {
-        recordIndex = 0;
+    @Benchmark
+    public int testXor() {
+        int y = x >>> 31;
+        return (x ^ y) - y;
     }
 }
