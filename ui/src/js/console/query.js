@@ -31,8 +31,13 @@ $.fn.query = function () {
 
   function handleServerResponse(r) {
     bus.trigger(qdb.MSG_QUERY_OK, {
-      delta: new Date().getTime() - time,
       count: r.count,
+      timings: r.timings
+        ? {
+            ...r.timings,
+            fetch: (Date.now() - time) * 1e6 - r.timings.execute,
+          }
+        : {},
     })
 
     if (r.dataset) {
@@ -58,7 +63,8 @@ $.fn.query = function () {
     requestParams.limit = "0," + batchSize
     requestParams.count = true
     requestParams.src = "con"
-    time = new Date().getTime()
+    requestParams.timings = true
+    time = Date.now()
     hActiveRequest = $.get("/exec", requestParams)
     bus.trigger(qdb.MSG_QUERY_RUNNING)
     hActiveRequest.done(handleServerResponse).fail(handleServerError)
@@ -83,8 +89,6 @@ $.fn.query = function () {
 $.fn.domController = function () {
   const div = $(".js-query-spinner")
   const divMsg = $(".js-query-message-panel")
-  const divTime = $(".js-query-message-panel .js-query-time")
-  const divMsgText = $(".js-query-message-panel .js-query-message-text")
   let timer
   let runBtn
   let running = false
@@ -92,9 +96,8 @@ $.fn.domController = function () {
 
   function delayedStart() {
     div.addClass("query-progress-animated", 100)
-    divMsg.addClass("query-message-ok")
-    divTime.html("-")
-    divMsgText.html("Running...")
+    divMsg.removeClass("query-message-ok")
+    divMsg.html("&nbsp;Running...")
   }
 
   function start() {
@@ -135,33 +138,84 @@ $.fn.domController = function () {
   function error(x, m) {
     stop()
     divMsg.removeClass("query-message-ok").addClass("query-message-error")
-    divTime.html("failed after <strong>" + m.delta / 1000 + "s</strong>")
     if (m.statusText === "abort") {
-      divMsgText.html("Cancelled by user")
+      divMsg.html("Cancelled by user")
     } else if (m.r) {
       const pos = toTextPosition(m.query, m.r.position)
-      divMsgText.html(
-        "<strong>" + pos.r + ":" + pos.c + "</strong>&nbsp;&nbsp;" + m.r.error,
-      )
+      divMsg.html(`
+        <div>
+          Failed, it looks like there is an error with the query:
+          <br />
+          <span class="query-error-at"><strong>${pos.r}:${pos.c}</strong>&nbsp;&nbsp;${m.r.error}</span>
+        </div>
+      `)
       bus.trigger("editor.show.error", pos)
     } else if (m.status === 0) {
-      divMsgText.html("Server down?")
+      divMsg.html("Server down?")
     } else {
-      divMsgText.html("Server error: " + m.status)
+      divMsg.html("Server error: " + m.status)
     }
+  }
+
+  function formatTiming(nanos) {
+    return Math.round(nanos / 1e7 + Number.EPSILON) / 100
   }
 
   //noinspection JSUnusedLocalSymbols
   function ok(x, m) {
     stop()
     divMsg.removeClass("query-message-error").addClass("query-message-ok")
-    divTime.html("read in <strong>" + m.delta / 1000 + "s</strong>")
+
+    const rows = m.count
+      ? m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+      : ""
+    console.log(x, m)
+
     if (m.count) {
-      divMsgText.html(
-        m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " rows",
-      )
+      divMsg.html(`
+    <div class="query-result-value">
+      <div>
+        Execution time
+      </div>
+      <div>
+        ${formatTiming(m.timings.execute)}s
+      </div>
+    </div>
+    <div class="query-result-value">
+      <div>
+        Fetching time
+      </div>
+      <div>
+        ${formatTiming(m.timings.fetch)}s
+      </div>
+    </div>
+    <div class="query-result-value">
+      <div>
+        Compiling time
+      </div>
+      <div>
+        ${formatTiming(m.timings.compiler)}s
+      </div>
+    </div>
+    <div class="query-result-value">
+      <div>
+        Counting time
+      </div>
+      <div>
+        ${formatTiming(m.timings.count)}s
+      </div>
+    </div>
+    <div class="query-result-value">
+      <div>
+        Row count
+      </div>
+      <div>
+        ${rows}
+      </div>
+    </div>
+    `)
     } else {
-      divMsgText.html("done")
+      divMsg.html("&nbsp;Success!")
     }
   }
 

@@ -171,4 +171,7 @@ $(document).ready(function () {
   switchToConsole()
 
   messageBus.trigger("preferences.load")
+
+  const win = $(window)
+  win.trigger("resize")
 })
