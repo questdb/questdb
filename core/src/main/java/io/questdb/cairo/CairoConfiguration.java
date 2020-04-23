@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
@@ -63,6 +64,8 @@ public interface CairoConfiguration {
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
+
+    NanosecondClock getNanosecondClock();
 
     int getMkDirMode();
 

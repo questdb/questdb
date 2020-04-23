@@ -26,15 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Numbers;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.*;
+import io.questdb.std.microtime.*;
 import io.questdb.std.time.DateFormatUtils;
 import io.questdb.std.time.DateLocale;
 import io.questdb.std.time.MillisecondClock;
@@ -47,6 +40,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
+    }
+
+    @Override
+    public int getSqlCopyBufferSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
+    public int getCopyPoolCapacity() {
+        return 16;
     }
 
     @Override
@@ -115,6 +118,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public NanosecondClock getNanosecondClock() {
+        return NanosecondClockImpl.INSTANCE;
+    }
+
+    @Override
     public int getMkDirMode() {
         return 509;
     }
@@ -135,6 +143,31 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getInputRoot() {
+        return null;
+    }
+
+    @Override
+    public CharSequence getBackupRoot() {
+        return null;
+    }
+
+    @Override
+    public TimestampFormat getBackupDirTimestampFormat() {
+        return null;
+    }
+
+    @Override
+    public CharSequence getBackupTempDirName() {
+        return "tmp";
+    }
+
+    @Override
+    public int getBackupMkDirMode() {
+        return 509;
+    }
+
+    @Override
     public long getSpinLockTimeoutUs() {
         return 1000000;
     }
@@ -144,11 +177,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
         return 64;
-    }
-
-    @Override
-    public int getCommitMode() {
-        return CommitMode.NOSYNC;
     }
 
     @Override
@@ -232,6 +260,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public TextConfiguration getTextConfiguration() {
+        return textConfiguration;
+    }
+
+    @Override
     public long getWorkStealTimeoutNanos() {
         return 10000;
     }
@@ -277,43 +310,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getCopyPoolCapacity() {
-        return 16;
-    }
-
-    @Override
-    public int getSqlCopyBufferSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
-    public TextConfiguration getTextConfiguration() {
-        return textConfiguration;
-    }
-
-    @Override
-    public CharSequence getInputRoot() {
-        return null;
-    }
-    
-    @Override
-    public CharSequence getBackupRoot() {
-    	return null;
-    }
-
-    @Override
-    public TimestampFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public CharSequence getBackupTempDirName() {
-        return "tmp";
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
+    public int getCommitMode() {
+        return CommitMode.NOSYNC;
     }
 
     @Override

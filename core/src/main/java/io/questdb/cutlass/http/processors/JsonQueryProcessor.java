@@ -56,6 +56,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
+    private final NanosecondClock nanosecondClock;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -80,6 +81,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
+        this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
     }
 
     @Override
@@ -89,6 +91,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        state.startExecutionTimer();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // do not set random for new request to avoid copying random from previous request into next one
         // the only time we need to copy random from state is when we resume request execution
@@ -133,7 +136,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state == null) {
             LV.set(context, state = new JsonQueryProcessorState(
                     context,
-                    configuration.getConnectionCheckFrequency()
+                    configuration.getConnectionCheckFrequency(),
+                    nanosecondClock
             ));
         }
 
@@ -214,6 +218,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             RecordCursor cursor,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, cursor, keepAliveHeader);
     }
@@ -299,7 +304,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final long nanos = nanosecondClock.getTicks();
         final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+        state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
         queryExecutors.getQuick(cc.getType()).execute(
                 state,
                 cc,

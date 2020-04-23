@@ -283,14 +283,7 @@ final class WhereClauseParser {
             model.keySubQuery = node.rhs.queryModel;
 
             // revert previously processed nodes
-            for (int n = 0, k = keyNodes.size(); n < k; n++) {
-                keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-            }
-            keyNodes.clear();
-            model.keyColumn = columnName;
-            keyNodes.add(node);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+            return revertProcessedNodes(model, columnName, node);
         }
         return false;
     }
@@ -397,16 +390,10 @@ final class WhereClauseParser {
                 model.keyValuePositions.clear();
                 model.keyValues.addAll(tempKeys);
                 model.keyValuePositions.addAll(tempPos);
-                for (int n = 0, k = keyNodes.size(); n < k; n++) {
-                    keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-                }
-                keyNodes.clear();
-                model.keyColumn = columnName;
-                keyNodes.add(node);
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+                return revertProcessedNodes(model, columnName, node);
+            }
 
-            } else if (model.keySubQuery == null) {
+            if (model.keySubQuery == null) {
                 // calculate overlap of values
                 replaceAllWithOverlap(model);
 
@@ -416,6 +403,17 @@ final class WhereClauseParser {
             }
         }
         return false;
+    }
+
+    private boolean revertProcessedNodes(IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
+        for (int n = 0, k = keyNodes.size(); n < k; n++) {
+            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        }
+        keyNodes.clear();
+        model.keyColumn = columnName;
+        keyNodes.add(node);
+        node.intrinsicValue = IntrinsicModel.TRUE;
+        return true;
     }
 
     private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
