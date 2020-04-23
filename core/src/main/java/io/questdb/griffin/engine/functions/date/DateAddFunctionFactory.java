@@ -37,86 +37,85 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 
-public class AddPeriodToTimestampFunctionFactory implements FunctionFactory {
+public class DateAddFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "add_period(NAI)";
+        return "dateadd(AIN)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
-        Function period = args.getQuick(1);
-        Function interval = args.getQuick(2);
+        Function period = args.getQuick(0);
+        Function interval = args.getQuick(1);
         if (period.isConstant()) {
             char periodValue = period.getChar(null);
             if (periodValue == 's') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncSecondConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncSecondConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncSecondConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncSecondConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'm') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncMinuteConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncMinuteConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncMinuteConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncMinuteConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'h') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncHourConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncHourConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncHourConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncHourConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'd') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncDayConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncDayConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncDayConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncDayConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'w') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncWeekConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncWeekConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncWeekConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncWeekConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'M') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncMonthConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncMonthConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncMonthConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncMonthConstant(position, args.getQuick(2), args.getQuick(1));
             }
             if (periodValue == 'y') {
                 if (interval.isConstant()) {
                     if (interval.getInt(null) != Numbers.INT_NaN) {
-                        return new AddLongFuncYearConstantPeriodConstant(position, args.getQuick(0), interval.getInt(null));
+                        return new AddLongFuncYearConstantPeriodConstant(position, args.getQuick(2), interval.getInt(null));
                     }
                     return new TimestampConstant(position, Numbers.LONG_NaN);
                 }
-                return new AddLongFuncYearConstant(position, args.getQuick(0), args.getQuick(2));
+                return new AddLongFuncYearConstant(position, args.getQuick(2), args.getQuick(1));
             }
-            return new AddLongFunc(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
+            return new AddLongFunc(position, args.getQuick(2), args.getQuick(0), args.getQuick(1));
         }
-
-        return new AddLongFunc(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        return new AddLongFunc(position, args.getQuick(2), args.getQuick(0), args.getQuick(1));
     }
 
     private static class AddLongFuncSecondConstant extends TimestampFunction implements BinaryFunction {
