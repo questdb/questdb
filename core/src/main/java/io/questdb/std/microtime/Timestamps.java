@@ -264,59 +264,31 @@ final public class Timestamps {
     }
 
     public static long getDaysBetween(long a, long b) {
-        if (b < a) {
-            return getDaysBetween(b, a);
-        } else {
-            return (b - a) / DAY_MICROS;
-        }
+            return Math.abs(a-b) / DAY_MICROS;
     }
 
     public static long getWeeksBetween(long a, long b) {
-        if (b < a) {
-            return getWeeksBetween(b, a);
-        } else {
-            return (b - a) / WEEK_MICROS;
-        }
+        return Math.abs(a-b) / WEEK_MICROS;
     }
 
     public static long getMicrosBetween(long a, long b) {
-        if (b < a) {
-            return getMicrosBetween(b, a);
-        } else {
-            return (b - a);
-        }
+        return Math.abs(a-b);
     }
 
     public static long getMillisBetween(long a, long b) {
-        if (b < a) {
-            return getMillisBetween(b, a);
-        } else {
-            return (b - a) / MILLI_MICROS;
-        }
+        return Math.abs(a-b) / MILLI_MICROS;
     }
 
     public static long getSecondsBetween(long a, long b) {
-        if (b < a) {
-            return getSecondsBetween(b, a);
-        } else {
-            return (b - a) / SECOND_MICROS;
-        }
+        return Math.abs(a-b) / SECOND_MICROS;
     }
 
     public static long getMinutesBetween(long a, long b) {
-        if (b < a) {
-            return getMinutesBetween(b, a);
-        } else {
-            return (b - a) / MINUTE_SECONDS;
-        }
+        return Math.abs(a-b) / MINUTE_MICROS;
     }
 
     public static long getHoursBetween(long a, long b) {
-        if (b < a) {
-            return getHoursBetween(b, a);
-        } else {
-            return (b - a) / HOUR_MICROS;
-        }
+        return Math.abs(a-b) / HOUR_MICROS;
     }
 
     public static long getPeriodBetween(char type, long start, long end) {
