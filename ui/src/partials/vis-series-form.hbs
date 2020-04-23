@@ -1,0 +1,46 @@
+<div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-danger qdb-list-delete-btn"><i class="fa fa-trash-alt"
+                                                                            aria-hidden="true"></i> Delete
+        </button>
+        <span id="js-vis-series-name">Series 1</span>
+    </div>
+    <div class="portlet-body">
+        <form role="form">
+            <div class="form-group">
+                <label>Series name</label>
+                <input id="_vis_frm_ser_name" type="text" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="_vis_frm_ser_chart_type">Chart type</label>
+                <select id="_vis_frm_ser_chart_type" class="form-control">
+                    <option>Line</option>
+                    <option>Area</option>
+                    <option>Bar</option>
+                    <option>Scatter</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Data columns</label>
+                <input id="_vis_frm_ser_columns" type="text" class="form-control"
+                       placeholder="[query1.]column1,[query2.]column2,...">
+            </div>
+
+            <div class="form-group">
+                <label>Stack</label>
+                <input id="_vis_frm_ser_stack" type="text" class="form-control" placeholder="Name of stack">
+            </div>
+
+            <div class="form-group">
+                <label>Color</label>
+                <input id="_vis_frm_ser_color" type="text" class="form-control" placeholder="Auto">
+            </div>
+
+            <div class="form-group">
+                <label>Bound axis</label>
+                <input id="_vis_frm_ser_axis" type="text" class="form-control" placeholder="Auto">
+            </div>
+        </form>
+    </div>
+</div>

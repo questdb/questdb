@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-145747842-2"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+
+        function gtag() {
+            dataLayer.push(arguments);
+        }
+
+        gtag('js', new Date());
+        gtag('config', 'UA-145747842-2');
+    </script>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuestDB - Console</title>
+</head>
+
+<body class="mini-navbar pace-done">
+    <div id="wrapper">
+
+        {{> partials/nav}}
+
+        <div id="page-wrapper" class="gray-bg">
+
+            {{> partials/console}}
+            {{> partials/vis-container}}
+            {{> partials/import}}
+
+            <div class="footer">
+                <strong>Copyright</strong> QuestDB Ltd. &copy; 2014-2020
+            </div>
+
+        </div>
+    </div>
+</body>
+</html>

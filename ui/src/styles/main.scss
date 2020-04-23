@@ -1,0 +1,43 @@
+$fa-font-path: "~@fortawesome/fontawesome-free/webfonts";
+
+@import "@fortawesome/fontawesome-free/scss/fontawesome.scss";
+@import "@fortawesome/fontawesome-free/scss/solid.scss";
+@import "@fortawesome/fontawesome-free/scss/regular.scss";
+
+$icon-font-path: "~bootstrap-sass/assets/fonts/bootstrap/";
+
+@import "bootstrap-sass/assets/stylesheets/_bootstrap.scss";
+@import "~animate.css/source/_base.css";
+
+@import "variables";
+@import "typography";
+@import "navigation";
+@import "buttons";
+@import "badgets_labels";
+@import "sidebar";
+@import "base";
+@import "metismenu";
+@import "media";
+
+// Clear layout on print mode
+@media print {
+  nav.navbar-static-side {
+    display: none;
+  }
+
+  #page-wrapper {
+    margin: 0;
+  }
+}
+
+@import "editor";
+@import "import";
+@import "import-detail";
+@import "grid";
+@import "splitter";
+@import "visualisation";
+@import "quick-vis";
+
+.btn:disabled {
+  cursor: default;
+}
