@@ -29,7 +29,6 @@ export function toExportUrl(query) {
 
 export function setHeight(element, height) {
   element.css("height", height + "px")
-  element.css("min-height", height + "px")
 }
 
 export function createEditor(div) {
