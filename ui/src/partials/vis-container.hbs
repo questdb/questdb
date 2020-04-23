@@ -1,0 +1,95 @@
+<div class="row js-vis-panel">
+    <div class="col-lg-12">
+        <div id="vis-menu" class="row wrapper border-bottom white-bg page-heading">
+            <div class="col-lg-12">
+                <div class="section-title"><i class="fa fa-chart-pie"></i> Visualisation</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-sync"></i>Refresh
+                    </button>
+                    <button id="btnVisFetch" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-play-circle"></i>Fetch
+                    </button>
+                    <button id="btnVisReload" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-play-circle"></i>Reload
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-12">
+                <div id="vis-canvas"></div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-12">
+                <div id="vis-splitter" class="splitter"></div>
+            </div>
+        </div>
+
+        <div id="vis-forms" class="row ibox-content">
+            <div class="col-lg-12 v-fit">
+                <div class="config-tabs">
+                    <ul class="nav nav-tabs ">
+                        <li class="active">
+                            <a href="#vis-tab-queries" data-toggle="tab" aria-expanded="false"> Queries </a>
+                        </li>
+                        <li>
+                            <a href="#vis-tab-axis" data-toggle="tab" aria-expanded="false"> Axis </a>
+                        </li>
+                        <li class="">
+                            <a href="#vis-tab-series" data-toggle="tab" aria-expanded="false"> Series </a>
+                        </li>
+                        <li class="">
+                            <a href="#vis-general" data-toggle="tab" aria-expanded="true"> General </a>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane v-fit active" id="vis-tab-queries">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    {{> vis-list title="Query"}}
+                                </div>
+                                <div class="col-lg-9 v-fit">
+                                    {{> vis-query-form}}
+                                    {{> vis-form-placeholder}}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane v-fit" id="vis-tab-axis">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    {{> vis-list title="Axis"}}
+                                </div>
+                                <div class="col-lg-9 v-fit">
+                                    {{> vis-axis-form}}
+                                    {{> vis-form-placeholder}}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane v-fit" id="vis-tab-series">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    {{> vis-list title="Series"}}
+                                </div>
+                                <div class="col-lg-9 v-fit">
+                                    {{> vis-series-form}}
+                                    {{> vis-form-placeholder}}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane" id="vis-general">
+                            <div class="row">
+                                <div class="col-lg-12">
+                                    {{> vis-general}}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

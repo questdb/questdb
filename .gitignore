@@ -1,6 +1,7 @@
 *.iml
 *.log
 .idea
+.ignore
 out
 benchmarks/target
 core/target

@@ -1,5 +1,5 @@
 <h4 align="center">
-  <img src="https://raw.githubusercontent.com/questdb/questdb/master/core/src/main/resources/site/public/images/logo-readme.jpg"/>
+  <img src="https://raw.githubusercontent.com/questdb/questdb/master/ui/assets/images/logo-readme.jpg"/>
 </h4>
 
 <p align="center">
@@ -10,14 +10,14 @@
   <a href="https://github.com/questdb/questdb/releases/download/4.2.0/questdb-4.2.0-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
   <a href="https://search.maven.org/search?q=g:org.questdb"><img src="https://img.shields.io/maven-central/v/org.questdb/core"></a>
 </p
-  
+
 <p/>
 
 ## What is QuestDB
 
 QuestDB is an open-source NewSQL relational database designed to process time-series data, faster. Our approach comes from low-latency trading; QuestDB’s stack is engineered from scratch, zero-GC Java and dependency-free.
 
-QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP, 
+QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP,
 PostgreSQL wire protocol or via Java API. The whole database and console fits in a 3.5Mb package.
 
 ## Project goals
