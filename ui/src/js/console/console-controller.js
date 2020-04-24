@@ -44,7 +44,6 @@ function resize() {
     }
 
     qdb.setHeight(consoleTop, topHeight)
-    qdb.setHeight(editor, topHeight)
     qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60)
   }
 }
