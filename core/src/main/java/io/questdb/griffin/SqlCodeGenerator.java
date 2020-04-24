@@ -51,9 +51,9 @@ import static io.questdb.griffin.SqlKeywords.isNullKeyword;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
-public class SqlCodeGenerator {
+public class SqlCodeGenerator implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
-    private final WhereClauseParser filterAnalyser = new WhereClauseParser();
+    private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -78,6 +78,11 @@ public class SqlCodeGenerator {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+    }
+
+    @Override
+    public void clear() {
+        whereClauseParser.clear();
     }
 
     private GenericRecordMetadata copyMetadata(RecordMetadata that) {
@@ -711,7 +716,7 @@ public class SqlCodeGenerator {
                 if (intrinsicModel.keySubQuery != null) {
 
                     final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                    validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+                    final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
 
                     return new LatestBySubQueryRecordCursorFactory(
                             configuration,
@@ -720,7 +725,8 @@ public class SqlCodeGenerator {
                             latestByIndex,
                             rcf,
                             filter,
-                            indexed
+                            indexed,
+                            func
                     );
                 }
 
@@ -1601,11 +1607,6 @@ public class SqlCodeGenerator {
                 Misc.free(reader);
                 throw e;
             }
-//            if (model.getTimestamp() == null) {
-//                readerTimestampIndex = readerMeta.getTimestampIndex();
-//            } else {
-//                readerTimestampIndex = readerMeta.getColumnIndex(model.getTimestamp().token);
-//            }
 
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
@@ -1688,7 +1689,7 @@ public class SqlCodeGenerator {
 
             if (whereClause != null) {
 
-                final IntrinsicModel intrinsicModel = filterAnalyser.extract(
+                final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
                         whereClause,
                         readerMeta,
@@ -1776,14 +1777,15 @@ public class SqlCodeGenerator {
 
                     if (intrinsicModel.keySubQuery != null) {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                        validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+                        final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
 
                         return new FilterOnSubQueryRecordCursorFactory(
                                 metadata,
                                 dfcFactory,
                                 rcf,
                                 keyColumnIndex,
-                                filter
+                                filter,
+                                func
                         );
                     }
                     assert nKeyValues > 0;
@@ -2085,9 +2087,9 @@ public class SqlCodeGenerator {
         }
     }
 
-    private void validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
-        final int firstColumnType = metadata.getColumnType(0);
-        if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
+    private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
+        final int zeroColumnType = metadata.getColumnType(0);
+        if (zeroColumnType != ColumnType.STRING && zeroColumnType != ColumnType.SYMBOL) {
             assert intrinsicModel.keySubQuery.getBottomUpColumns() != null;
             assert intrinsicModel.keySubQuery.getBottomUpColumns().size() > 0;
 
@@ -2096,8 +2098,10 @@ public class SqlCodeGenerator {
                     .put("unsupported column type: ")
                     .put(metadata.getColumnName(0))
                     .put(": ")
-                    .put(ColumnType.nameOf(firstColumnType));
+                    .put(ColumnType.nameOf(zeroColumnType));
         }
+
+        return zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
     }
 
     static {

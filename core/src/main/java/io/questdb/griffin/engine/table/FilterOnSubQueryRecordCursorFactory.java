@@ -43,13 +43,15 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final RecordCursorFactory recordCursorFactory;
     private IntObjHashMap<RowCursorFactory> factories;
+    private final Record.CharSequenceFunction func;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull Record.CharSequenceFunction func
     ) {
         super(metadata, dataFrameCursorFactory);
         this.recordCursorFactory = recordCursorFactory;
@@ -58,6 +60,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
         this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter);
+        this.func = func;
     }
 
     @Override
@@ -92,7 +95,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                final CharSequence symbol = record.getStr(0);
+                final CharSequence symbol = func.get(record, 0);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
 

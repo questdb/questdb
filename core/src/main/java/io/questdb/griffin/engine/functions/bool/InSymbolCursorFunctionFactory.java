@@ -57,10 +57,12 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
+        final Record.CharSequenceFunction func = zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
+
         if (symbolFunction.getStaticSymbolTable() != null) {
-            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction);
+            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction, func);
         }
-        return new StrInCursorFunction(position, symbolFunction, cursorFunction);
+        return new StrInCursorFunction(position, symbolFunction, cursorFunction, func);
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -68,11 +70,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final SymbolFunction valueArg;
         private final Function cursorArg;
         private final IntHashSet symbolKeys = new IntHashSet();
+        private final Record.CharSequenceFunction func;
 
-        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg) {
+        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             super(position);
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
+            this.func = func;
         }
 
         @Override
@@ -103,7 +107,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    int key = symbolTable.keyOf(record.getStr(0));
+                    int key = symbolTable.keyOf(func.get(record, 0));
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         symbolKeys.add(key + 1);
                     }
@@ -118,13 +122,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function cursorArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
+        private final Record.CharSequenceFunction func;
         private CharSequenceHashSet valueSet;
 
-        public StrInCursorFunction(int position, Function valueArg, Function cursorArg) {
+        public StrInCursorFunction(int position, Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             super(position);
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.valueSet = valueSetA;
+            this.func = func;
         }
 
         @Override
@@ -151,7 +157,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    CharSequence value = record.getStr(0);
+                    CharSequence value = func.get(record, 0);
                     if (value == null) {
                         valueSet.addNull();
                     } else {
