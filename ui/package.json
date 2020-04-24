@@ -105,7 +105,8 @@
     "webpack": "4.43.0",
     "webpack-bundle-analyzer": "3.8.0",
     "webpack-cli": "3.3.11",
-    "webpack-dev-server": "3.11.0"
+    "webpack-dev-server": "3.11.0",
+    "worker-loader": "2.0.0"
   },
   "author": {
     "name": "QuestDB"
