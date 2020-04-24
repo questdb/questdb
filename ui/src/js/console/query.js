@@ -32,12 +32,10 @@ $.fn.query = function () {
   function handleServerResponse(r) {
     bus.trigger(qdb.MSG_QUERY_OK, {
       count: r.count,
-      timings: r.timings
-        ? {
-            ...r.timings,
-            fetch: (Date.now() - time) * 1e6 - r.timings.execute,
-          }
-        : {},
+      timings: r.timings && {
+        ...r.timings,
+        fetch: (Date.now() - time) * 1e6 - r.timings.execute,
+      },
     })
 
     if (r.dataset) {
@@ -158,7 +156,23 @@ $.fn.domController = function () {
   }
 
   function formatTiming(nanos) {
-    return Math.round(nanos / 1e7 + Number.EPSILON) / 100
+    if (nanos === 0) {
+      return "0"
+    }
+
+    if (nanos > 1e9) {
+      return `${Math.round(nanos / 1e9 + Number.EPSILON) / 100}s`
+    }
+
+    if (nanos > 1e6) {
+      return `${Math.round(nanos / 1e6 + Number.EPSILON) / 100}ms`
+    }
+
+    if (nanos > 1e3) {
+      return `${Math.round(nanos / 1e3 + Number.EPSILON) / 100}μs`
+    }
+
+    return `${nanos}ns`
   }
 
   //noinspection JSUnusedLocalSymbols
@@ -167,18 +181,24 @@ $.fn.domController = function () {
     divMsg.removeClass("query-message-error").addClass("query-message-ok")
 
     const rows = m.count
-      ? m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+      ? `<div class="query-result-value">
+            <div>
+              Row count
+            </div>
+            <div>
+                ${m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
+            </div>
+         </div>`
       : ""
-    console.log(x, m)
 
-    if (m.count) {
+    if (m.timings) {
       divMsg.html(`
     <div class="query-result-value">
       <div>
         Execution time
       </div>
       <div>
-        ${formatTiming(m.timings.execute)}s
+        ${formatTiming(m.timings.execute)}
       </div>
     </div>
     <div class="query-result-value">
@@ -186,7 +206,7 @@ $.fn.domController = function () {
         Fetching time
       </div>
       <div>
-        ${formatTiming(m.timings.fetch)}s
+        ${formatTiming(m.timings.fetch)}
       </div>
     </div>
     <div class="query-result-value">
@@ -194,7 +214,7 @@ $.fn.domController = function () {
         Compiling time
       </div>
       <div>
-        ${formatTiming(m.timings.compiler)}s
+        ${formatTiming(m.timings.compiler)}
       </div>
     </div>
     <div class="query-result-value">
@@ -202,18 +222,13 @@ $.fn.domController = function () {
         Counting time
       </div>
       <div>
-        ${formatTiming(m.timings.count)}s
+        ${formatTiming(m.timings.count)}
       </div>
     </div>
-    <div class="query-result-value">
-      <div>
-        Row count
-      </div>
-      <div>
-        ${rows}
-      </div>
-    </div>
+    ${rows}
     `)
+    } else if (rows) {
+      divMsg.html(rows)
     } else {
       divMsg.html("&nbsp;Success!")
     }
