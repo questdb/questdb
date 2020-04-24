@@ -67,7 +67,7 @@ public class TableWriter implements Closeable {
     private final LongList refs = new LongList();
     private final LongList tempRefs = new LongList();
     private final Row row = new Row();
-    private final Row tempOutOfOrderRow = new Row();
+    private final Row tempOutOfOrderRow = new TempRow();
     private final int rootLen;
     private final ReadWriteMemory txMem;
     private final ReadOnlyMemory metaMem;
@@ -1472,6 +1472,7 @@ public class TableWriter implements Closeable {
     private void doClose(boolean truncate) {
         boolean tx = inTransaction();
         freeColumns(truncate);
+        freeTempColumns(truncate);
         freeSymbolMapWriters();
         freeIndexers();
         try {
@@ -1487,6 +1488,17 @@ public class TableWriter implements Closeable {
                 Misc.free(path);
                 freeTempMem();
                 LOG.info().$("closed '").utf8(name).$('\'').$();
+            }
+        }
+    }
+
+    private void freeTempColumns(boolean truncate) {
+        if (tempColumns != null) {
+            for (int i = 0, n = tempColumns.size(); i < n; i++) {
+                AppendMemory m = tempColumns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate);
+                }
             }
         }
     }
@@ -2836,21 +2848,14 @@ public class TableWriter implements Closeable {
     }
 
     public class TempRow extends Row {
-
         int outOfOrderRowCount = 0;
 
         public void append() {
-//            if ((masterRef & 1) == 0) {
-//                return;
-//            }
-
             for (int i = 0; i < columnCount; i++) {
                 if (tempRefs.getQuick(i) < masterRef) {
                     tempNullers.getQuick(i).run();
                 }
             }
-
-//            masterRef++;
             outOfOrderRowCount++;
         }
 
