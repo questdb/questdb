@@ -52,7 +52,7 @@ You can find more documentation [here](https://www.questdb.io/docs/documentation
 
 ## Roadmap
 
-Our roadmap is [here](https://www.questdb.io/docs/roadmap)
+Our roadmap is [here](https://github.com/questdb/questdb/projects/2)
 
 ## Building from source
 
