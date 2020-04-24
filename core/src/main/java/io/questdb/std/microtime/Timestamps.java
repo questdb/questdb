@@ -71,16 +71,6 @@ final public class Timestamps {
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
-    static {
-        long minSum = 0;
-        long maxSum = 0;
-        for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
-            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
-            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
-        }
-    }
     private Timestamps() {
     }
 
@@ -88,17 +78,13 @@ final public class Timestamps {
         return micros + days * DAY_MICROS;
     }
 
-    public static long addWeeks(long micros, int weeks) {
-        return micros + weeks * WEEK_MICROS;
-    }
-
     public static long addHours(long micros, int hours) {
         return micros + hours * HOUR_MICROS;
     }
 
-    public static long addSeconds(long micros, int seconds) { return micros + seconds * SECOND_MICROS;}
-
-    public static long addMinutes(long micros, int minutes) {return micros + minutes * MINUTE_MICROS;}
+    public static long addMinutes(long micros, int minutes) {
+        return micros + minutes * MINUTE_MICROS;
+    }
 
     public static long addMonths(final long micros, int months) {
         if (months == 0) {
@@ -150,6 +136,14 @@ final public class Timestamps {
             default:
                 return Numbers.LONG_NaN;
         }
+    }
+
+    public static long addSeconds(long micros, int seconds) {
+        return micros + seconds * SECOND_MICROS;
+    }
+
+    public static long addWeeks(long micros, int weeks) {
+        return micros + weeks * WEEK_MICROS;
     }
 
     public static long addYear(long micros, int years) {
@@ -408,24 +402,7 @@ final public class Timestamps {
     }
 
     public static long getYearsBetween(long a, long b) {
-        if (b < a) {
-            return getYearsBetween(b, a);
-        }
-
-        int aYear = getYear(a);
-        int bYear = getYear(b);
-        boolean aLeap = isLeapYear(aYear);
-        boolean bLeap = isLeapYear(bYear);
-
-        long aResidual = a - yearMicros(aYear, aLeap);
-        long bResidual = b - yearMicros(bYear, bLeap);
-        long months = bYear - aYear;
-
-        if (aResidual > bResidual) {
-            return months - 1;
-        } else {
-            return months;
-        }
+        return getMonthsBetween(a, b) / 12;
     }
 
     /**
@@ -650,5 +627,16 @@ final public class Timestamps {
     @FunctionalInterface
     public interface TimestampAddMethod {
         long calculate(long minTimestamp, int partitionIndex);
+    }
+
+    static {
+        long minSum = 0;
+        long maxSum = 0;
+        for (int i = 0; i < 11; i++) {
+            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
+            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
+            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
+        }
     }
 }

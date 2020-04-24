@@ -363,24 +363,7 @@ final public class Dates {
     }
 
     public static long getYearsBetween(long a, long b) {
-        if (b < a) {
-            return getYearsBetween(b, a);
-        }
-
-        int aYear = getYear(a);
-        int bYear = getYear(b);
-        boolean aLeap = isLeapYear(aYear);
-        boolean bLeap = isLeapYear(bYear);
-
-        long aResidual = a - yearMillis(aYear, aLeap);
-        long bResidual = b - yearMillis(bYear, bLeap);
-        long months = bYear - aYear;
-
-        if (aResidual > bResidual) {
-            return months - 1;
-        } else {
-            return months;
-        }
+        return getMonthsBetween(a, b) / 12;
     }
 
     /**

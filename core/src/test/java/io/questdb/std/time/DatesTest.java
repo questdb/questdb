@@ -48,6 +48,23 @@ public class DatesTest {
     }
 
     @Test
+    public void testYearsBetween2() throws NumericException {
+        long millis1 = DateFormatUtils.parseDateTime("2020-04-24T01:49:12.005Z");
+        long millis2 = DateFormatUtils.parseDateTime("2025-04-24T01:49:12.005Z");
+        Assert.assertEquals(5, Dates.getYearsBetween(millis1, millis2));
+        Assert.assertEquals(5, Dates.getYearsBetween(millis2, millis1));
+    }
+
+    @Test
+    public void testYearsBetween3() throws NumericException {
+        long millis1 = DateFormatUtils.parseDateTime("2020-04-24T01:49:12.005Z");
+        long millis2 = DateFormatUtils.parseDateTime("2024-04-24T01:49:12.005Z");
+        Assert.assertEquals(4, Dates.getYearsBetween(millis1, millis2));
+        Assert.assertEquals(4, Dates.getYearsBetween(millis2, millis1));
+    }
+
+
+    @Test
     public void testAddMonths() throws Exception {
         long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
         DateFormatUtils.appendDateTime(sink, Dates.addMonths(millis, -10));
