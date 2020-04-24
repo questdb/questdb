@@ -265,7 +265,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
 //                properties.setProperty("sslmode", "disable");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 Statement statement = connection.createStatement();
 
                 try {
@@ -332,7 +332,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
             properties.setProperty("user", "admin");
             properties.setProperty("password", "quest");
 
-            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
 
             PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
             stmt.execute();
@@ -493,7 +493,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(50)");
                 Statement statement1 = connection.createStatement();
 
@@ -681,7 +681,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "dunno");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
@@ -709,7 +709,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("user", "joe");
                 properties.setProperty("password", "quest");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
@@ -904,7 +904,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                 Statement statement1 = connection.createStatement();
 
@@ -1184,7 +1184,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
@@ -1257,7 +1257,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("sslmode", "disable");
                 properties.setProperty("binaryTransfer", "false");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
@@ -1353,7 +1353,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("preferQueryMode", "simple");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
                         "select " +
@@ -1464,7 +1464,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
             properties.setProperty("password", "quest");
             properties.setProperty("sslmode", "disable");
 
-            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
             PreparedStatement statement = connection.prepareStatement("create table x");
             try {
                 statement.execute();
@@ -1501,7 +1501,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)");
                 // TIME is passed over protocol as UNSPECIFIED type
                 // it will rely on date parser to work out what it is
@@ -2007,7 +2007,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
                         "select " +
