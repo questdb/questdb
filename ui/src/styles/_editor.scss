@@ -28,6 +28,7 @@
 }
 
 #console-top {
+  min-height: 140px;
   display: flex;
   flex-direction: column;
 }
@@ -35,10 +36,10 @@
 #editor {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 #sqlEditor {
-  min-height: 140px;
   flex: 1;
   font: 1.1em "source-code-pro", monospace !important;
   line-height: 1.5em !important;
