@@ -62,6 +62,72 @@ public class DatediffTimestampFunctionFactory implements FunctionFactory {
                 }
                 return new DateDiffFuncSecondConstant(position, args.getQuick(1), args.getQuick(2));
             }
+            if (periodValue == 'm') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncMinuteConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncMinuteConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncMinuteConstant(position, args.getQuick(1), args.getQuick(2));
+            }
+            if (periodValue == 'h') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncHourConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncHourConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncHourConstant(position, args.getQuick(1), args.getQuick(2));
+            }
+            if (periodValue == 'd') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncDayConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncDayConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncDayConstant(position, args.getQuick(1), args.getQuick(2));
+            }
+            if (periodValue == 'w') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncWeekConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncWeekConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncWeekConstant(position, args.getQuick(1), args.getQuick(2));
+            }
+            if (periodValue == 'M') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncMonthConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncMonthConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncMonthConstant(position, args.getQuick(1), args.getQuick(2));
+            }
+            if (periodValue == 'y') {
+                if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long startValue = start.getLong(null);
+                    return new DateDiffFuncYearConstantTimestampConstant(position, args.getQuick(2), startValue);
+                }
+                if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    long endValue = end.getLong(null);
+                    return new DateDiffFuncYearConstantTimestampConstant(position, args.getQuick(1), endValue);
+                }
+                return new DateDiffFuncYearConstant(position, args.getQuick(1), args.getQuick(2));
+            }
             return new TimestampConstant(position, Numbers.LONG_NaN);
         }
         return new DateDiffFunc(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
@@ -124,7 +190,342 @@ public class DatediffTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class DateDiffFuncMinuteConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
 
+        public DateDiffFuncMinuteConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('m', l, r);
+        }
+    }
+
+    private static class DateDiffFuncMinuteConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncMinuteConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('m', l, constantTime);
+        }
+    }
+
+    private static class DateDiffFuncHourConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
+
+        public DateDiffFuncHourConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('h', l, r);
+        }
+    }
+
+    private static class DateDiffFuncHourConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncHourConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('h', l, constantTime);
+        }
+    }
+
+    private static class DateDiffFuncDayConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
+
+        public DateDiffFuncDayConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('d', l, r);
+        }
+    }
+
+    private static class DateDiffFuncDayConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncDayConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('d', l, constantTime);
+        }
+    }
+
+    private static class DateDiffFuncWeekConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
+
+        public DateDiffFuncWeekConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('w', l, r);
+        }
+    }
+
+    private static class DateDiffFuncWeekConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncWeekConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('w', l, constantTime);
+        }
+    }
+
+    private static class DateDiffFuncMonthConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
+
+        public DateDiffFuncMonthConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('M', l, r);
+        }
+    }
+
+    private static class DateDiffFuncMonthConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncMonthConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('M', l, constantTime);
+        }
+    }
+
+    private static class DateDiffFuncYearConstant extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
+
+        public DateDiffFuncYearConstant(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('y', l, r);
+        }
+    }
+
+    private static class DateDiffFuncYearConstantTimestampConstant extends LongFunction implements UnaryFunction {
+        private final Function arg;
+        private final long constantTime;
+
+        public DateDiffFuncYearConstantTimestampConstant(int position, Function left, long right) {
+            super(position);
+            this.arg = left;
+            this.constantTime = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween('y', l, constantTime);
+        }
+    }
+    
 private static class DateDiffFunc extends LongFunction implements TernaryFunction {
     final Function left;
     final Function center;
