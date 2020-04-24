@@ -295,6 +295,8 @@ $.fn.quickVis = function (msgBus) {
     xAxisPicker.setData(x)
     yAxisPicker.setData(x)
 
+    yAxisPicker.set(x.slice(1).map((item) => item.text))
+
     // stash query text so that we can use this later to server for chart column values
     query = data.query
     clearChart()

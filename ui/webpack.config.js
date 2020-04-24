@@ -33,7 +33,7 @@ const basePlugins = [
       removeRedundantAttributes: true,
       removeScriptTypeAttributes: true,
       removeStyleLinkTypeAttributes: true,
-      useShortDoctype: true
+      useShortDoctype: true,
     },
   }),
   new MiniCssExtractPlugin({
@@ -63,7 +63,7 @@ module.exports = {
     },
     port: PORT,
     proxy: {
-      context: ["/imp", "/exp", "/exec"],
+      context: ["/imp", "/exp", "/exec", "/chk"],
       target: `http://localhost:${BACKEND_PORT}/`,
     },
   },
