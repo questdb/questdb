@@ -138,9 +138,11 @@ public class TableReader implements Closeable {
             }
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
-            this.columns.setPos(capacity);
+            this.columns.setPos(capacity + 2);
+            this.columns.setQuick(0, NullColumn.INSTANCE);
+            this.columns.setQuick(1, NullColumn.INSTANCE);
             this.bitmapIndexes = new ObjList<>(capacity);
-            this.bitmapIndexes.setPos(capacity);
+            this.bitmapIndexes.setPos(capacity + 2);
             this.partitionRowCounts = new LongList(partitionCount);
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
@@ -153,7 +155,7 @@ public class TableReader implements Closeable {
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {
-        return base + index * 2;
+        return 2 + base + index * 2;
     }
 
     public double avgDouble(int columnIndex) {
@@ -545,8 +547,8 @@ public class TableReader implements Closeable {
 
     private void closeColumn(int columnBase, int columnIndex) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        Misc.free(columns.getAndSetQuick(index, ForceNullColumn.INSTANCE));
-        Misc.free(columns.getAndSetQuick(index + 1, ForceNullColumn.INSTANCE));
+        Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
+        Misc.free(columns.getAndSetQuick(index + 1, NullColumn.INSTANCE));
         Misc.free(bitmapIndexes.getAndSetQuick(index, null));
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
     }
@@ -580,7 +582,7 @@ public class TableReader implements Closeable {
         if (prevMinTimestamp != minTimestamp) {
             assert prevMinTimestamp < minTimestamp;
             int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
-            columns.remove(0, getColumnBase(delta) - 1);
+            columns.remove(2, getColumnBase(delta) + 1);
             prevMinTimestamp = minTimestamp;
             partitionCount -= delta;
         }
@@ -595,7 +597,7 @@ public class TableReader implements Closeable {
             long partitionRowCount,
             boolean lastPartition) {
         ReadOnlyColumn mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof ForceNullColumn) && mem1.isDeleted();
+        final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -651,9 +653,11 @@ public class TableReader implements Closeable {
         final ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
         final LongList columnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity);
-        columns.setPos(capacity);
+        columns.setPos(capacity + 2);
+        columns.setQuick(0, NullColumn.INSTANCE);
+        columns.setQuick(1, NullColumn.INSTANCE);
         columnTops.setPos(capacity / 2);
-        indexReaders.setPos(capacity);
+        indexReaders.setPos(capacity + 2);
         final long pIndexBase = pTransitionIndex + 8;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -1023,7 +1027,7 @@ public class TableReader implements Closeable {
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                if (mem1 != null && mem1 != ForceNullColumn.INSTANCE) {
+                if (mem1 != null && mem1 != NullColumn.INSTANCE) {
                     mem1.of(ff, path, ff.getMapPageSize(), ff.length(path));
                 } else {
                     if (lastPartition) {
@@ -1041,7 +1045,7 @@ public class TableReader implements Closeable {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
-                        if (mem2 != null && mem2 != ForceNullColumn.INSTANCE) {
+                        if (mem2 != null && mem2 != NullColumn.INSTANCE) {
                             mem2.of(ff, path, ff.getMapPageSize(), ff.length(path));
                         } else {
                             if (lastPartition) {
@@ -1307,7 +1311,7 @@ public class TableReader implements Closeable {
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof ForceNullColumn) {
+                            if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             }
                             continue;
@@ -1344,8 +1348,8 @@ public class TableReader implements Closeable {
 
     private void updateCapacities() {
         int capacity = getColumnBase(partitionCount);
-        columns.setPos(capacity);
-        bitmapIndexes.setPos(capacity);
+        columns.setPos(capacity + 2);
+        bitmapIndexes.setPos(capacity + 2);
         this.partitionRowCounts.seed(partitionCount, -1);
         this.columnTops.setPos(capacity / 2);
     }
@@ -1363,10 +1367,6 @@ public class TableReader implements Closeable {
     @FunctionalInterface
     private interface PartitionPathGenerator {
         Path generate(TableReader reader, int partitionIndex);
-    }
-
-    private static class ForceNullColumn extends NullColumn {
-        private static final ForceNullColumn INSTANCE = new ForceNullColumn();
     }
 
     private static class ColumnCopyStruct {

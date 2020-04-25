@@ -2768,7 +2768,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         if (counter < N) {
                             // roll random generator to make sure it returns same values
                             rnd.nextChars(15);
-                            Assert.assertNull(record.getSym(1));
+                            Assert.assertNull(record.getStr(1));
                         } else {
                             Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
                         }

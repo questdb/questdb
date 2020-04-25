@@ -25,8 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
+
+import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 
 public class TableReaderSelectedColumnRecord implements Record {
 
@@ -39,81 +44,79 @@ public class TableReaderSelectedColumnRecord implements Record {
         this.columnIndexes = columnIndexes;
     }
 
+    public long getAdjustedRecordIndex() {
+        return recordIndex;
+    }
+
     @Override
     public BinarySequence getBin(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return colA(col).getBin(colB(col).getLong(recordIndex * 8));
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getBin(
+                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
+        );
     }
 
     @Override
     public long getBinLen(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return TableUtils.NULL_LEN;
-        }
-        return colA(col).getBinLen(colB(col).getLong(recordIndex * 8));
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getBinLen(
+                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
+        );
     }
 
     @Override
     public boolean getBool(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        return recordIndex > -1 && colA(col).getBool(recordIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getBool(offset);
     }
 
     @Override
     public byte getByte(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return 0;
-        }
-        return colA(col).getByte(recordIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getByte(offset);
     }
 
     @Override
     public double getDouble(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return Double.NaN;
-        }
-        return colA(col).getDouble(recordIndex * 8);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Double.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getDouble(offset);
     }
 
     @Override
     public float getFloat(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return Float.NaN;
-        }
-        return colA(col).getFloat(recordIndex * 4);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Float.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getFloat(offset);
     }
 
     @Override
     public int getInt(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return Numbers.INT_NaN;
-        }
-        return colA(col).getInt(recordIndex * 4);
-    }
-
-    @Override
-    public long getLong(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return Numbers.LONG_NaN;
-        }
-        return colA(col).getLong(recordIndex * 8);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getInt(offset);
     }
 
     @Override
@@ -122,97 +125,107 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public long getLong(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return 0;
-        }
-        return colA(col).getShort(recordIndex * 2);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getShort(offset);
     }
 
     @Override
     public char getChar(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return 0;
-        }
-        return colA(col).getChar(recordIndex * 2);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Character.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getChar(offset);
     }
 
     @Override
     public CharSequence getStr(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return colA(col).getStr(colB(col).getLong(recordIndex * 8));
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getStr(
+                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
+        );
     }
 
     @Override
     public void getLong256(int columnIndex, CharSink sink) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return;
-        }
-        colA(col).getLong256(recordIndex * Long256.BYTES, sink);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        reader.getColumn(absoluteColumnIndex).getLong256(offset, sink);
     }
 
     @Override
     public Long256 getLong256A(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return colA(col).getLong256A(recordIndex * Long256.BYTES);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getLong256A(offset);
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return colA(col).getLong256B(recordIndex * Long256.BYTES);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return colA(col).getStr2(colB(col).getLong(recordIndex * 8));
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getStr2(
+                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
+        );
     }
 
     @Override
     public int getStrLen(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return TableUtils.NULL_LEN;
-        }
-        return colA(col).getStrLen(colB(col).getLong(recordIndex * 8));
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getColumn(absoluteColumnIndex).getStrLen(
+                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
+        );
     }
 
     @Override
     public CharSequence getSym(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getRecordIndex(col);
-        if (recordIndex < 0) {
-            return null;
-        }
-        return reader.getSymbolMapReader(col).valueOf(colA(col).getInt(recordIndex * 4));
-    }
-
-    public long getRecordIndex() {
-        return recordIndex;
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
     }
 
     public void setRecordIndex(long recordIndex) {
@@ -232,21 +245,12 @@ public class TableReaderSelectedColumnRecord implements Record {
         this.reader = reader;
     }
 
-    private ReadOnlyColumn colA(int col) {
-        return reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, col));
-    }
-
-    private ReadOnlyColumn colB(int col) {
-        return reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, col) + 1);
-    }
-
     private int deferenceColumn(int columnIndex) {
         return columnIndexes.getQuick(columnIndex);
     }
 
-    private long getRecordIndex(int col) {
+    private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
-        final long top = reader.getColumnTop(columnBase, col);
-        return top > 0L ? recordIndex - top : recordIndex;
+        return recordIndex - reader.getColumnTop(columnBase, col);
     }
 }

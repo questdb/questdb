@@ -113,22 +113,22 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final CharSequence getStr(Record rec) {
-        return getSymbol(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        sink.put(getSymbol(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        return getSymbol(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getStrLen(Record rec) {
-        return getSymbol(rec).length();
+        throw new UnsupportedOperationException();
     }
 
     @Override

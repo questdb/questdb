@@ -70,7 +70,7 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (recordA.getRecordIndex() < maxRecordIndex || switchPartition()) {
+        if (recordA.getAdjustedRecordIndex() < maxRecordIndex || switchPartition()) {
             recordA.incrementRecordIndex();
             return true;
         }

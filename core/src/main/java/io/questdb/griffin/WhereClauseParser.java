@@ -37,7 +37,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
-final class WhereClauseParser {
+final class WhereClauseParser implements Mutable {
 
     private static final int INTRINCIC_OP_IN = 1;
     private static final int INTRINCIC_OP_GREATER = 2;
@@ -59,6 +59,14 @@ final class WhereClauseParser {
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private CharSequence timestamp;
     private CharSequence preferredKeyColumn;
+
+    @Override
+    public void clear() {
+        this.models.clear();
+        this.stack.clear();
+        this.keyNodes.clear();
+        this.csPool.clear();
+    }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
         if (node.lhs == null || node.rhs == null) {
@@ -405,17 +413,6 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean revertProcessedNodes(IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
-        for (int n = 0, k = keyNodes.size(); n < k; n++) {
-            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-        }
-        keyNodes.clear();
-        model.keyColumn = columnName;
-        keyNodes.add(node);
-        node.intrinsicValue = IntrinsicModel.TRUE;
-        return true;
-    }
-
     private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m)
@@ -635,7 +632,6 @@ final class WhereClauseParser {
             CharSequence preferredKeyColumn,
             int timestampIndex
     ) throws SqlException {
-        reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
@@ -714,11 +710,15 @@ final class WhereClauseParser {
         }
     }
 
-    void reset() {
-        this.models.clear();
-        this.stack.clear();
-        this.keyNodes.clear();
-        this.csPool.clear();
+    private boolean revertProcessedNodes(IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
+        for (int n = 0, k = keyNodes.size(); n < k; n++) {
+            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        }
+        keyNodes.clear();
+        model.keyColumn = columnName;
+        keyNodes.add(node);
+        node.intrinsicValue = IntrinsicModel.TRUE;
+        return true;
     }
 
     /**
