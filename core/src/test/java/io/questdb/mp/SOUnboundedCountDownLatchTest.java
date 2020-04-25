@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.time.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -74,6 +75,7 @@ public class SOUnboundedCountDownLatchTest {
     private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) {
         new Thread() {
             int doneCount = 0;
+            long time = System.currentTimeMillis();
 
             @Override
             public void run() {
@@ -87,6 +89,16 @@ public class SOUnboundedCountDownLatchTest {
                         latch.countDown();
                         Assert.assertEquals(last + 1, c);
                         last = c;
+                    }
+                    if (System.currentTimeMillis() - time > Dates.MINUTE_MILLIS) {
+                        LOG.error()
+                                .$("so_latch_state [doneCount=").$(doneCount)
+                                .$(", count=").$(count)
+                                .$(", seq.current").$(subSeq.current())
+                                .$(", seq.cache=").$(pubSeq.cache)
+                                .$(", latch.count=").$(latch.getCount())
+                                .$(']').$();
+                        time = System.currentTimeMillis();
                     }
                 }
             }

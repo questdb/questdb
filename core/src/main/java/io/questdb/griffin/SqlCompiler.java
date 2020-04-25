@@ -1032,6 +1032,7 @@ public class SqlCompiler implements Closeable {
 
         // lexer would have parsed first token to determine direction of execution flow
         lexer.unparse();
+        codeGenerator.clear();
 
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {

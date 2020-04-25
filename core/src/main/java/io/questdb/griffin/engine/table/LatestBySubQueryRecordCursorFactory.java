@@ -40,6 +40,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final IntHashSet symbolKeys = new IntHashSet();
     private final RecordCursorFactory recordCursorFactory;
     private final Function filter;
+    private final Record.CharSequenceFunction func;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -48,7 +49,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
-            boolean indexed
+            boolean indexed,
+            @NotNull Record.CharSequenceFunction func
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (indexed) {
@@ -67,6 +69,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         this.columnIndex = columnIndex;
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
+        this.func = func;
     }
 
     @Override
@@ -88,7 +91,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                int symbolKey = symbolTable.keyOf(record.getSym(0));
+                int symbolKey = symbolTable.keyOf(func.get(record, 0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }

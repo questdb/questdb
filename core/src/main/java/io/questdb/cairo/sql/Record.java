@@ -30,6 +30,10 @@ import io.questdb.std.str.CharSink;
 
 public interface Record {
 
+    CharSequenceFunction GET_STR = Record::getStr;
+
+    CharSequenceFunction GET_SYM = Record::getSym;
+
     default BinarySequence getBin(int col) {
         throw new UnsupportedOperationException();
     }
@@ -43,6 +47,10 @@ public interface Record {
     }
 
     default byte getByte(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default char getChar(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -66,26 +74,6 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default long getRowId() {
-        throw new UnsupportedOperationException();
-    }
-
-    default short getShort(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default char getChar(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default CharSequence getStr(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default void getStr(int col, CharSink sink) {
-        sink.put(getStr(col));
-    }
-
     default void getLong256(int col, CharSink sink) {
         throw new UnsupportedOperationException();
     }
@@ -96,6 +84,22 @@ public interface Record {
 
     default Long256 getLong256B(int col) {
         throw new UnsupportedOperationException();
+    }
+
+    default long getRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    default short getShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default CharSequence getStr(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getStr(int col, CharSink sink) {
+        sink.put(getStr(col));
     }
 
     default CharSequence getStrB(int col) {
@@ -112,5 +116,10 @@ public interface Record {
 
     default long getTimestamp(int col) {
         return getLong(col);
+    }
+
+    @FunctionalInterface
+    interface CharSequenceFunction {
+        CharSequence get(Record record, int col);
     }
 }

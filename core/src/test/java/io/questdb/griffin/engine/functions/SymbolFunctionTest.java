@@ -27,8 +27,6 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -37,18 +35,17 @@ public class SymbolFunctionTest {
 
     private static final SymbolFunction function = new SymbolFunction(25) {
         @Override
+        public int getInt(Record rec) {
+            return 0;
+        }
+
+        @Override
         public CharSequence getSymbol(Record rec) {
             return "XYZ";
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return "XYZ";
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return 0;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
 
         @Override
@@ -57,9 +54,15 @@ public class SymbolFunctionTest {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public CharSequence valueOf(int symbolKey) {
+            return "XYZ";
         }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -107,23 +110,6 @@ public class SymbolFunctionTest {
     }
 
     @Test
-    public void testGetStr() {
-        Assert.assertEquals("XYZ", function.getStr(null));
-    }
-
-    @Test
-    public void testGetStrB() {
-        Assert.assertEquals("XYZ", function.getStrB(null));
-    }
-
-    @Test
-    public void testGetStrSink() {
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("XYZ", sink);
-    }
-
-    @Test
     public void testGetPosition() {
         Assert.assertEquals(25, function.getPosition());
     }
@@ -138,18 +124,28 @@ public class SymbolFunctionTest {
         function.getShort(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStr() {
+        Assert.assertEquals("XYZ", function.getStr(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrB() {
+        Assert.assertEquals("XYZ", function.getStrB(null));
+    }
+
     public void testGetStrLen() {
         Assert.assertEquals(3, function.getStrLen(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
+    public void testGetStrSink() {
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
+    public void testGetTimestamp() {
+        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
