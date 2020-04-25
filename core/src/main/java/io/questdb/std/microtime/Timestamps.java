@@ -264,10 +264,51 @@ final public class Timestamps {
     }
 
     public static long getDaysBetween(long a, long b) {
-        if (b < a) {
-            return getDaysBetween(b, a);
-        } else {
-            return (b - a) / DAY_MICROS;
+            return Math.abs(a-b) / DAY_MICROS;
+    }
+
+    public static long getWeeksBetween(long a, long b) {
+        return Math.abs(a-b) / WEEK_MICROS;
+    }
+
+    public static long getMicrosBetween(long a, long b) {
+        return Math.abs(a-b);
+    }
+
+    public static long getMillisBetween(long a, long b) {
+        return Math.abs(a-b) / MILLI_MICROS;
+    }
+
+    public static long getSecondsBetween(long a, long b) {
+        return Math.abs(a-b) / SECOND_MICROS;
+    }
+
+    public static long getMinutesBetween(long a, long b) {
+        return Math.abs(a-b) / MINUTE_MICROS;
+    }
+
+    public static long getHoursBetween(long a, long b) {
+        return Math.abs(a-b) / HOUR_MICROS;
+    }
+
+    public static long getPeriodBetween(char type, long start, long end) {
+        switch (type) {
+            case 's':
+                return Timestamps.getSecondsBetween(start, end);
+            case 'm':
+                return Timestamps.getMinutesBetween(start, end);
+            case 'h':
+                return Timestamps.getHoursBetween(start, end);
+            case 'd':
+                return Timestamps.getDaysBetween(start, end);
+            case 'w':
+                return Timestamps.getWeeksBetween(start, end);
+            case 'M':
+                return Timestamps.getMonthsBetween(start, end);
+            case 'y':
+                return Timestamps.getYearsBetween(start, end);
+            default:
+                return Numbers.LONG_NaN;
         }
     }
 
