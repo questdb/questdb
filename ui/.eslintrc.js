@@ -17,6 +17,7 @@ module.exports = {
     "prettier/babel",
     "prettier/standard",
   ],
+  globals: { ace: true },
   parser: "@typescript-eslint/parser",
   parserOptions: {
     ecmaFeatures: {},
@@ -29,6 +30,8 @@ module.exports = {
   rules: {
     "@typescript-eslint/prefer-interface": "off",
     "@typescript-eslint/no-empty-function": "off",
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/no-this-alias": "off",
     "quote-props": ["error", "as-needed"],
     "object-shorthand": ["error", "always"],
     "no-var": ["error"],
