@@ -490,41 +490,32 @@ $.fn.grid = function (msgBus) {
     }
   }
 
-  function viewportScroll(force) {
+  function viewportScroll(event) {
     header.scrollLeft(viewport.scrollLeft)
 
     var scrollTop = viewport.scrollTop
-    if (scrollTop !== top || force) {
+    if (scrollTop !== top || event) {
       var oldY = y
-      if (Math.abs(scrollTop - top) > 4 * vp) {
-        y =
-          scrollTop === 0
-            ? 0
-            : Math.min(Math.ceil((scrollTop + vp) * M - vp), yMax - vp)
+      // if grid content fits in viewport we don't need to adjust activeRow
+      if (scrollTop >= h - vp) {
+        // final leap to bottom of grid
+        // this happens when container div runs out of vertical height
+        // and we artificially force leap to bottom
+        y = Math.max(0, yMax - vp)
         top = scrollTop
         o = y - top
-      } else if (h - vp > 0) {
-        // if grid content fits in viewport we don't need to adjust activeRow
-        if (scrollTop >= h - vp) {
-          // final leap to bottom of grid
-          // this happens when container div runs out of vertical height
-          // and we artificially force leap to bottom
-          y = Math.max(0, yMax - vp)
-          top = scrollTop
-          o = y - top
-          activeRowDown(r - activeRow)
+        activeRowDown(r - activeRow)
+      } else {
+        if (scrollTop === 0 && top > 0) {
+          // this happens when grid is coming slowly back up after being scrolled down harshly
+          // because 'y' is much greater than top, we have to jump to top artificially.
+          y = 0
+          o = 0
+          activeRowUp(activeRow)
         } else {
-          if (scrollTop === 0 && top > 0) {
-            // this happens when grid is coming slowly back up after being scrolled down harshly
-            // because 'y' is much greater than top, we have to jump to top artificially.
-            y = 0
-            o = 0
-            activeRowUp(activeRow)
-          } else {
-            y += scrollTop - top
-          }
-          top = scrollTop
+          y += scrollTop - top
         }
+        top = scrollTop
       }
       renderViewport(y - oldY)
     }
