@@ -34,7 +34,7 @@ $.fn.query = function () {
       count: r.count,
       timings: r.timings && {
         ...r.timings,
-        fetch: (Date.now() - time) * 1e6 - r.timings.execute,
+        fetch: (Date.now() - time) * 1e6,
       },
     })
 
@@ -155,21 +155,25 @@ $.fn.domController = function () {
     }
   }
 
+  function roundTiming(time) {
+    return Math.round((time + Number.EPSILON) * 100) / 100
+  }
+
   function formatTiming(nanos) {
     if (nanos === 0) {
       return "0"
     }
 
     if (nanos > 1e9) {
-      return `${Math.round(nanos / 1e9 + Number.EPSILON) / 100}s`
+      return `${roundTiming(nanos / 1e9)}s`
     }
 
     if (nanos > 1e6) {
-      return `${Math.round(nanos / 1e6 + Number.EPSILON) / 100}ms`
+      return `${roundTiming(nanos / 1e6)}ms`
     }
 
     if (nanos > 1e3) {
-      return `${Math.round(nanos / 1e3 + Number.EPSILON) / 100}μs`
+      return `${roundTiming(nanos / 1e3)}μs`
     }
 
     return `${nanos}ns`
@@ -195,14 +199,6 @@ $.fn.domController = function () {
       divMsg.html(`
     <div class="query-result-value">
       <div>
-        Execution time
-      </div>
-      <div>
-        ${formatTiming(m.timings.execute)}
-      </div>
-    </div>
-    <div class="query-result-value">
-      <div>
         Fetching time
       </div>
       <div>
@@ -211,10 +207,10 @@ $.fn.domController = function () {
     </div>
     <div class="query-result-value">
       <div>
-        Compiling time
+        Execution time
       </div>
       <div>
-        ${formatTiming(m.timings.compiler)}
+        ${formatTiming(m.timings.execute)}
       </div>
     </div>
     <div class="query-result-value">
@@ -223,6 +219,14 @@ $.fn.domController = function () {
       </div>
       <div>
         ${formatTiming(m.timings.count)}
+      </div>
+    </div>
+    <div class="query-result-value">
+      <div>
+        Compiling time
+      </div>
+      <div>
+        ${formatTiming(m.timings.compiler)}
       </div>
     </div>
     ${rows}
@@ -314,7 +318,9 @@ $.fn.editor = function (msgBus) {
       const col = localStorage.getItem(storeKeys.col)
 
       if (row && col) {
-        edit.gotoLine(row, col)
+        setTimeout(() => {
+          edit.gotoLine(row, col)
+        }, 50)
       }
     }
   }
