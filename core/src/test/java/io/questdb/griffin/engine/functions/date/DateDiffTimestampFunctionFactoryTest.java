@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class DatediffTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class DateDiffTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testUnknownPeriod() throws SqlException {
@@ -436,7 +436,7 @@ public class DatediffTimestampFunctionFactoryTest extends AbstractFunctionFactor
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new DatediffTimestampFunctionFactory();
+        return new DateDiffTimestampFunctionFactory();
     }
 
 }
