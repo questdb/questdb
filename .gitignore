@@ -5,6 +5,7 @@
 out
 benchmarks/target
 core/target
+core/src/main/resources/site/public
 *.iml
 deploy*.bat
 win64svc/cmake-build-debug

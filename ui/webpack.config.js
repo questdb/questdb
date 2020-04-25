@@ -109,4 +109,11 @@ module.exports = {
     ...(isProdBuild ? prodPlugins : devPlugins),
     ...(runBundleAnalyzer ? [new AnalyzerPlugin({ analyzerPort: 9999 })] : []),
   ],
+  stats: {
+    all: false,
+    chunks: true,
+    env: true,
+    errors: true,
+    errorDetails: true,
+  },
 }

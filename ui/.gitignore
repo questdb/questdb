@@ -1,8 +1,7 @@
 node_modules
+node
 test/bower_components
 
 dist
 .tmp
 .sass-cache
-
-package-lock.json
