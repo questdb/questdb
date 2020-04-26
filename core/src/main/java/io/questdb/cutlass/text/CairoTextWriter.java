@@ -127,7 +127,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     @Override
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         long timestamp = 0L;
-        if (timestampIndex != -1) {
+        if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
             TimestampAdapter adapter = (TimestampAdapter) types.getQuick(timestampIndex);
             final DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
             try {
@@ -138,7 +138,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
         final TableWriter.Row w = writer.newRow(timestamp);
         for (int i = 0; i < valuesLength; i++) {
-            if (i == timestampIndex) {
+            if (i == timestampIndex && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
                 continue;
             }
             final DirectByteCharSequence dbcs = values.getQuick(i);
