@@ -67,8 +67,8 @@ We have a lot of unit tests, most of which are of "integration" type, e.g. test 
 
 ## Dependencies
 
-QuestDB does not have dependencies. This may sound unorthodox but in realitiy we try not to reinvent the wheel but rather than using libraries we
-implement best algorithms ourselves to ensure perfect fit with existing code. With that in mind we expect contribitions that do not add third-party dependencies.
+QuestDB does not have dependencies. This may sound unorthodox but in reality we try not to reinvent the wheel but rather than using libraries we
+implement best algorithms ourselves to ensure perfect fit with existing code. With that in mind we expect contributions that do not add third-party dependencies.
 
 ## Allocations, "new" operator and garbage collection
 
@@ -77,7 +77,7 @@ contribute zero-GC code, do not hesitate to reach out!
 
 ## Committing
 
-We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to auto-generate release notes. We require all commit comments to conform. To that end commits have to be granular enough to be successfuly described using this method.
+We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to auto-generate release notes. We require all commit comments to conform. To that end commits have to be granular enough to be successfully described using this method.
 
 ## Squashing commits
 

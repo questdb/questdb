@@ -28,7 +28,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 
 /**
- * Instances of DateFormat do not have state. They are thread-safe. In that multuple threads can use
+ * Instances of DateFormat do not have state. They are thread-safe. In that multiple threads can use
  * same DateFormat instance without disk of data corruption.
  */
 public interface DateFormat {
