@@ -26,17 +26,11 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.text.types.BadDateAdapter;
-import io.questdb.cutlass.text.types.BadTimestampAdapter;
-import io.questdb.cutlass.text.types.TypeAdapter;
-import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
@@ -59,6 +53,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     private boolean overwrite;
     private boolean durable;
     private int atomicity;
+    private int partitionBy;
+    private int timestampIndex;
+    private CharSequence timestampIndexCol;
     private ObjList<TypeAdapter> types;
 
     public CairoTextWriter(
@@ -107,7 +104,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     }
 
     public int getPartitionBy() {
-        return writer == null ? PartitionBy.NONE : writer.getPartitionBy();
+        return partitionBy;
     }
 
     public CharSequence getTableName() {
@@ -118,17 +115,32 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity) {
+    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
+        this.partitionBy = partitionBy;
+        this.timestampIndexCol = timestampIndexCol;
     }
 
     @Override
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
-        final TableWriter.Row w = writer.newRow();
+        long timestamp = 0L;
+        if (timestampIndex != -1) {
+            TimestampAdapter adapter = (TimestampAdapter) types.getQuick(timestampIndex);
+            final DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+            try {
+                timestamp = adapter.getTimestamp(dbcs);
+            } catch (NumericException e) {
+                logError(line, timestampIndex, dbcs);
+            }
+        }
+        final TableWriter.Row w = writer.newRow(timestamp);
         for (int i = 0; i < valuesLength; i++) {
+            if (i == timestampIndex) {
+                continue;
+            }
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
                 continue;
@@ -289,20 +301,13 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return false;
-        }
+        public boolean isIndexed(int columnIndex) { return false; }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
-        }
+        public boolean isSequential(int columnIndex) { return false; }
 
         @Override
-        public int getPartitionBy() {
-            // not yet on protocol
-            return PartitionBy.NONE;
-        }
+        public int getPartitionBy() { return partitionBy; }
 
         @Override
         public boolean getSymbolCacheFlag(int columnIndex) {
@@ -320,14 +325,12 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
 
         @Override
-        public int getTimestampIndex() {
-            // not yet on protocol
-            return -1;
-        }
+        public int getTimestampIndex() { return timestampIndex; }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) {
             this.names = names;
             this.types = types;
+            timestampIndex = names.indexOf(timestampIndexCol);
             return this;
         }
     }
