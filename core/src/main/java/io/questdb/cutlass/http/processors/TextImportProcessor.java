@@ -286,6 +286,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 throw ServerDisconnectException.INSTANCE;
             }
 
+            CharSequence timestampIndexCol = rh.getUrlParam("timestamp");
+
             CharSequence partitionedBy = rh.getUrlParam("partitionBy");
             if (partitionedBy == null) {
                 partitionedBy = "NONE";
@@ -295,8 +297,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 transientContext.simpleResponse().sendStatus(400, "invalid partitionBy");
                 throw ServerDisconnectException.INSTANCE;
             }
-
-            CharSequence timestampIndexCol = rh.getUrlParam("timestampIndex");
+            if (partitionBy != PartitionBy.NONE && timestampIndexCol == null) {
+                transientContext.simpleResponse().sendStatus(400, "when specifying partitionBy you must also specify timestamp");
+                throw ServerDisconnectException.INSTANCE;
+            }
 
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
