@@ -4,7 +4,7 @@ To build docker images successfully please follow these instructions precisely. 
 
 - Use Windows OS. Docker Desktop might also work on Mac, but not on Linux.
 - Download Docker Desktop _Edge_. At the time of writing (Nov 2019) only Edge version is able to build ARM63 images and help create multi-platform manifest.
-- Ensure "experiemental" features are enabled.
+- Ensure "experimental" features are enabled.
 
 To verify that your Docker Desktop is good to go try the following command:
 
@@ -76,7 +76,7 @@ docker push questdb/questdb:4.0.0-windows-amd64
 
 ### Create manifest
 
-The purpose of the manifest is to simplify image usage by end user. They will just hopefully install `questdb/questdb` and Docker Hub sill figure out appropriate image for target paltform.
+The purpose of the manifest is to simplify image usage by end user. They will just hopefully install `questdb/questdb` and Docker Hub sill figure out appropriate image for target platform.
 
 ```
 docker manifest create questdb/questdb:4.0.0 questdb/questdb:4.0.0-linux-arm64 questdb/questdb:4.0.0-linux-amd64 questdb/questdb:4.0.0-windows-amd64
