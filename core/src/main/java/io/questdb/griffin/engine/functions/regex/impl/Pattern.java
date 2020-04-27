@@ -2169,15 +2169,22 @@ public final class Pattern
             // property construct \p{name=value}
             String value = name.substring(i + 1);
             name = name.substring(0, i).toLowerCase(Locale.ENGLISH);
-            if ("sc".equals(name) || "script".equals(name)) {
-                node = unicodeScriptPropertyFor(value);
-            } else if ("blk".equals(name) || "block".equals(name)) {
-                node = unicodeBlockPropertyFor(value);
-            } else if ("gc".equals(name) || "general_category".equals(name)) {
-                node = charPropertyNodeFor(value);
-            } else {
-                throw error("Unknown Unicode property {name=<" + name + ">, "
-                        + "value=<" + value + ">}");
+            switch (name) {
+                case "sc":
+                case "script":
+                    node = unicodeScriptPropertyFor(value);
+                    break;
+                case "blk":
+                case "block":
+                    node = unicodeBlockPropertyFor(value);
+                    break;
+                case "gc":
+                case "general_category":
+                    node = charPropertyNodeFor(value);
+                    break;
+                default:
+                    throw error("Unknown Unicode property {name=<" + name + ">, "
+                            + "value=<" + value + ">}");
             }
         } else {
             if (name.startsWith("In")) {
