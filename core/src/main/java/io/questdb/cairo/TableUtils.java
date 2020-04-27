@@ -61,6 +61,7 @@ public final class TableUtils {
     static final TimestampFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
+    static final String TEMP_PARTITION_NAME = "temp";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
