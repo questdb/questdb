@@ -807,7 +807,7 @@ public class TableReader implements Closeable {
         }
     }
 
-    long openPartition(int partitionIndex) {
+    public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
             return size;

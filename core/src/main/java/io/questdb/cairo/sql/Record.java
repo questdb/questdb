@@ -86,6 +86,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default BinarySequence getRawBytes(int col, int len) {
+        throw new UnsupportedOperationException();
+    }
+
     default long getRowId() {
         throw new UnsupportedOperationException();
     }

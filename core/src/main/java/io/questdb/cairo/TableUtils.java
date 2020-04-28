@@ -60,14 +60,14 @@ public final class TableUtils {
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     static final long TX_OFFSET_MAX_TIMESTAMP = 32;
-    static final long TX_OFFSET_STRUCT_VERSION = 40;
+    public static final long TX_OFFSET_STRUCT_VERSION = 40;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    static final long TX_OFFSET_TXN_CHECK = 64;
+    public static final long TX_OFFSET_TXN_CHECK = 64;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
     /**
      * TXN file structure
@@ -88,12 +88,12 @@ public final class TableUtils {
 
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
-    static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_COUNT = 0;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_VERSION = 12;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;
@@ -420,7 +420,7 @@ public final class TableUtils {
         return path.concat(columnName).put(".i").$();
     }
 
-    static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
+    public static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 

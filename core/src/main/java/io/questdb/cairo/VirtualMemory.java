@@ -198,6 +198,10 @@ public class VirtualMemory implements Closeable {
         return long256B;
     }
 
+    public final BinarySequence getRawBytes(long offset, int len) {
+        return bsview.of(offset, len);
+    }
+
     public final short getShort(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi - Short.BYTES) {
             return Unsafe.getUnsafe().getShort(absolutePointer + offset);
@@ -486,8 +490,8 @@ public class VirtualMemory implements Closeable {
                 Unsafe.getUnsafe().putLong(appendPointer + 24, 0);
                 long o = 0;
                 for (int i = len / 2 - 1; i > 0; i--) {
-                    final int d1 = Numbers.hexNumbers[(int) hexString.charAt(i * 2)];
-                    final int d2 = Numbers.hexNumbers[(int) hexString.charAt(i * 2 + 1)];
+                    final int d1 = Numbers.hexNumbers[hexString.charAt(i * 2)];
+                    final int d2 = Numbers.hexNumbers[hexString.charAt(i * 2 + 1)];
                     Unsafe.getUnsafe().putByte(appendPointer + o++, (byte) ((d1 << 4) + d2));
                 }
             }
@@ -952,8 +956,8 @@ public class VirtualMemory implements Closeable {
             putLong(0);
             putLong(0);
             for (int i = len / 2 - 1; i > 0; i--) {
-                int d1 = Numbers.hexNumbers[(int) hexString.charAt(i * 2)];
-                int d2 = Numbers.hexNumbers[(int) hexString.charAt(i * 2 + 1)];
+                int d1 = Numbers.hexNumbers[hexString.charAt(i * 2)];
+                int d2 = Numbers.hexNumbers[hexString.charAt(i * 2 + 1)];
                 putByte(offset++, (byte) ((d1 << 4) + d2));
             }
         }
@@ -1120,6 +1124,7 @@ public class VirtualMemory implements Closeable {
         private long readAddress;
         private long readLimit;
 
+        @Override
         public byte byteAt(long index) {
             try {
                 if (index == lastIndex + 1 && readAddress < readLimit) {
@@ -1148,6 +1153,7 @@ public class VirtualMemory implements Closeable {
             }
         }
 
+        @Override
         public long length() {
             return len;
         }

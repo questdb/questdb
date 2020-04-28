@@ -121,6 +121,17 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
+    public BinarySequence getRawBytes(int col, int len) {
+        int colType = reader.getMetadata().getColumnType(col);
+        int colSz = ColumnType.sizeOf(colType);
+        final long offset = getAdjustedRecordIndex(col) * colSz;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col));
+        return reader.getColumn(absoluteColumnIndex).getRawBytes(offset, len);
+    }
+
+    @Override
     public long getRowId() {
         return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);
     }
