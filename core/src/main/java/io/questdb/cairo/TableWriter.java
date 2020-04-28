@@ -102,6 +102,7 @@ public class TableWriter implements Closeable {
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
+    private LongConsumer tempTimestampSetter;
     private int columnCount;
     private long fixedRowCount = 0;
     private long txn;
@@ -238,6 +239,7 @@ public class TableWriter implements Closeable {
             configureColumnMemory();
             configureTempColumnMemory();
             timestampSetter = configureTimestampSetter();
+            tempTimestampSetter = configureTempTimestampSetter();
             configureAppendPosition();
             purgeUnusedPartitions();
             loadRemovedPartitions();
@@ -1356,6 +1358,17 @@ public class TableWriter implements Closeable {
         } else {
             nullers.setQuick(index, NOOP);
             return getPrimaryColumn(index)::putLong;
+        }
+    }
+
+    private LongConsumer configureTempTimestampSetter() {
+        int index = metadata.getTimestampIndex();
+        if (index == -1) {
+            return value -> {
+            };
+        } else {
+            tempNullers.setQuick(index, NOOP);
+            return getPrimaryColumnForTempRow(index)::putLong;
         }
     }
 
@@ -2689,6 +2702,7 @@ public class TableWriter implements Closeable {
             }
 
             if (inOutOfOrderMode) {
+                tempTimestampSetter.accept(timestamp);
                 return tempOutOfOrderRow;
             }
             updateMaxTimestamp(timestamp);
@@ -2715,6 +2729,7 @@ public class TableWriter implements Closeable {
             }
 
             if (inOutOfOrderMode) {
+                tempTimestampSetter.accept(timestamp);
                 return tempOutOfOrderRow;
             }
 

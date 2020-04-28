@@ -53,6 +53,7 @@ public final class TableUtils {
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
+    public static final String TEMP_PARTITION_NAME = "temp";
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -61,7 +62,6 @@ public final class TableUtils {
     static final TimestampFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
-    static final String TEMP_PARTITION_NAME = "temp";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
