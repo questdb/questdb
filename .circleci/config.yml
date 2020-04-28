@@ -8,7 +8,7 @@ jobs:
     docker:
       # specify the version you desire here
     - image: circleci/openjdk:8u171-jdk
-      
+
       # Specify service dependencies here if necessary
       # CircleCI maintains a library of pre-built images
       # documented at https://circleci.com/docs/2.0/circleci-images/
@@ -19,7 +19,7 @@ jobs:
     environment:
       # Customize the JVM maximum heap limit
       MAVEN_OPTS: -Xmx3200m
-    
+
     steps:
       - checkout
 
@@ -30,13 +30,12 @@ jobs:
           # fallback to using the latest cache if no exact match is found
           - v1-dependencies-
 
-      - run: mvn compile -DskipTests
+      - run: mvn compile -DskipTests -Dprofile.install-local-nodejs
 
       - save_cache:
           paths:
             - ~/.m2
           key: v1-dependencies-{{ checksum "pom.xml" }}
-        
-      # run tests!
-      - run: mvn integration-test
 
+      # run tests!
+      - run: mvn integration-test -Dprofile.install-local-nodejs

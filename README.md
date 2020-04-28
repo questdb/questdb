@@ -9,42 +9,49 @@
   <a href="https://serieux-saucisson-79115.herokuapp.com/"><img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg"></a>
   <a href="https://github.com/questdb/questdb/releases/download/4.2.0/questdb-4.2.0-bin.tar.gz"><img src="https://img.shields.io/github/downloads/questdb/questdb/total"></a>
   <a href="https://search.maven.org/search?q=g:org.questdb"><img src="https://img.shields.io/maven-central/v/org.questdb/core"></a>
-</p
-
-<p/>
 
 ## What is QuestDB
 
-QuestDB is an open-source NewSQL relational database designed to process time-series data, faster. Our approach comes from low-latency trading; QuestDB’s stack is engineered from scratch, zero-GC Java and dependency-free.
+QuestDB is an open-source NewSQL relational database designed to process
+time-series data, faster. Our approach comes from low-latency trading; QuestDB’s
+stack is engineered from scratch, zero-GC Java and dependency-free.
 
-QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or directly from Java. Reading data is done using SQL via HTTP,
-PostgreSQL wire protocol or via Java API. The whole database and console fits in a 3.5Mb package.
+QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or
+directly from Java. Reading data is done using SQL via HTTP, PostgreSQL wire
+protocol or via Java API. The whole database and console fits in a 3.5Mb
+package.
 
 ## Project goals
 
-- Treat time-series as first class citizen within a relational database framework.
+- Treat time-series as first class citizen within a relational database
+  framework.
 
-- Minimise hardware resources through software optimisation. Don’t waste CPU cycles, memory nor storage.
+- Minimise hardware resources through software optimisation. Don’t waste CPU
+  cycles, memory nor storage.
 
 - Be a reliable and trustworthy store of critical data.
 
-- Low friction operation. Empower developers with SQL. Simplify every database interaction.
+- Low friction operation. Empower developers with SQL. Simplify every database
+  interaction.
 
-- Operate efficiently at both extremes: allow users to prioritise performance over data loss, and vice versa.
+- Operate efficiently at both extremes: allow users to prioritise performance
+  over data loss, and vice versa.
 
 - Be both embedded and standalone.
 
 ## Getting Started
 
-See our [My First Database](https://www.questdb.io/docs/myFirstDatabase) tutorial.
-The easiest way to get started is to play with our
-web [console](https://www.questdb.io/docs/usingWebConsole). This will allow you to import
-and query data using an intuitive interface.
+See our [My First Database](https://www.questdb.io/docs/myFirstDatabase)
+tutorial. The easiest way to get started is to play with our web
+[console](https://www.questdb.io/docs/usingWebConsole). This will allow you to
+import and query data using an intuitive interface.
 
-You may also take a look at our [storage model](https://www.questdb.io/docs/storageModel). In short,
-we are a column-oriented database, which partitions data by time intervals.
+You may also take a look at our
+[storage model](https://www.questdb.io/docs/storageModel). In short, we are a
+column-oriented database, which partitions data by time intervals.
 
-You can find more documentation [here](https://www.questdb.io/docs/documentationOverview)
+You can find our documentation
+[here](https://www.questdb.io/docs/documentationOverview)
 
 ## Support / Contact
 
@@ -56,55 +63,55 @@ Our roadmap is [here](https://github.com/questdb/questdb/projects/2)
 
 ## Building from source
 
-### Pre-requitites:
+### Pre-requisites
 
-- Java 8 64-bit. We recommend Oracle Java 8, but OpenJDK8 will also work (although a little slower).
-- Maven 3
-- Compatible 64-bit Operating System: Windows, Linux, OSX or ARM Linux
-- Configure JAVA_HOME environment variable
-- Add Maven "bin" directory to PATH environment variable
+- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
+  (AArch64/A64)**: Linux
+- Java 8 64-bit. We recommend Oracle Java 8, but OpenJDK8 will also work
+  (although a little slower)
+- Maven 3 (from your package manager on Linux / OSX
+  ([Homebrew](https://github.com/Homebrew/brew)) or
+  [from the jar](https://maven.apache.org/install.html) for any OS)
+- Node.js 12 / npm 6 (to manage your Node.js versions we recommend
+  [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
+  [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
+  OPTIONAL
 
-```
-Note: Java versions above 8 are not yet supported. It is possible to build QuestDB with Java 11,
-but this requires backward incompatible source code changes.
-```
+> Java versions above 8 are not yet supported. It is possible to build QuestDB
+> with Java 11, but this requires backward incompatible changes. If your java
+> version is above 8 you can download & install JDK8 and use the absolute path
+> to the java executable instead of "`java`".
 
 ### Building & Running
 
-```
-git clone https://github.com/questdb/questdb.git
+```bash
+git clone git@github.com:questdb/questdb.git
 cd questdb
 
-# check java version
-# output should be similar to:
+# Check the java version, the output should be similar to:
 #
 # java version "1.8.0_212"
 # Java(TM) SE Runtime Environment (build 1.8.0_212-b10)
 # Java HotSpot(TM) 64-Bit Server VM (build 25.212-b10, mixed mode)
-#
-# if your java version is above 8 you can download & install JDK8 and use absolute
-# path to java executable instead of 'java'
-
 java -version
 
 # remove 'skipTests' if you want to run all tests (3000+ unit tests, 3-5 mins)
 mvn clean package -DskipTests
 
-# check contents of 'core/target' directory to find QuestDB's current version number
-
-# create QuestDB root directory if one does not exist already
-# replace <root_dir> with actual directory name
+# replace <root_dir> with the actual directory name, example "out"
 mkdir <root_dir>
 
-# <version> is QuestDB's current version from pom.xml
-# <root_dir> is the root directory created at the previous step
-java -cp core/target/core-<version>.jar io.questdb.ServerMain -d <dir>
+java -cp core/target/core-4.2.1-SNAPSHOT.jar io.questdb.ServerMain -d <root_dir>
 ```
 
-QuestDB will start the HTTP server on 0:9000, which you can visit from your browser: http://localhost:9000. HTTP server is constrained by directory specified as program argument (-d). Additionally QuestDB will start PostgreSQL's server on 0:8812, default login credentials are admin/quest. Both HTTP and PostresSQL server reference database in `<root_directory>/db`
-
+QuestDB will start an HTTP server with the web console available at
+[localhost:9000](http://localhost:9000). Additionally, a PostgreSQL server will
+be started and available on port 8812, the default login credentials are
+`admin`/`quest`. Both the HTTP and PostresSQL servers reference the database in
+`<root_directory>/db`.
 
 ## Contribution
 
-Feel free to contribute to the project by forking the repository and submitting pull requests.
-Please make sure you have read our [contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+Feel free to contribute to the project by forking the repository and submitting
+pull requests. Please make sure you have read our
+[contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).

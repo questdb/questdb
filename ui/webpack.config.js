@@ -6,7 +6,7 @@ const CopyWebpackPlugin = require("copy-webpack-plugin")
 const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 const MiniCssExtractPlugin = require("mini-css-extract-plugin")
 
-const PORT = 9001
+const PORT = 9999
 const BACKEND_PORT = 9000
 const isProdBuild = process.env.NODE_ENV === "production"
 const runBundleAnalyzer = process.env.ANALYZE
@@ -107,7 +107,7 @@ module.exports = {
   plugins: [
     ...basePlugins,
     ...(isProdBuild ? prodPlugins : devPlugins),
-    ...(runBundleAnalyzer ? [new AnalyzerPlugin({ analyzerPort: 9999 })] : []),
+    ...(runBundleAnalyzer ? [new AnalyzerPlugin({ analyzerPort: 9998 })] : []),
   ],
   stats: {
     all: false,
