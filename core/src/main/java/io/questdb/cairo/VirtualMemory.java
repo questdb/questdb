@@ -515,6 +515,15 @@ public class VirtualMemory implements Closeable {
         putInt(offset, TableUtils.NULL_LEN);
     }
 
+    public final void putRawBytes(long from, long len) {
+        if (len < pageHi - appendPointer) {
+            Unsafe.getUnsafe().copyMemory(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
+        }
+    }
+
     public void putShort(long offset, short value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2) {
             Unsafe.getUnsafe().putShort(absolutePointer + offset, value);

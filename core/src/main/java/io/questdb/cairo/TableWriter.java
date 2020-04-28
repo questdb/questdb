@@ -24,6 +24,61 @@
 
 package io.questdb.cairo;
 
+import static io.questdb.cairo.TableUtils.ARCHIVE_FILE_NAME;
+import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
+import static io.questdb.cairo.TableUtils.META_COLUMN_DATA_RESERVED;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_INDEXED;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_SEQUENTIAL;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COLUMN_TYPES;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COUNT;
+import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
+import static io.questdb.cairo.TableUtils.META_OFFSET_TIMESTAMP_INDEX;
+import static io.questdb.cairo.TableUtils.META_PREV_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_SWAP_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_RESTORE_META;
+import static io.questdb.cairo.TableUtils.TODO_TRUNCATE;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_DATA_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_FIXED_ROW_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MAP_WRITER_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MAX_TIMESTAMP;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_STRUCT_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN_CHECK;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.fmtDay;
+import static io.questdb.cairo.TableUtils.fmtMonth;
+import static io.questdb.cairo.TableUtils.fmtYear;
+import static io.questdb.cairo.TableUtils.getColumnNameOffset;
+import static io.questdb.cairo.TableUtils.getColumnType;
+import static io.questdb.cairo.TableUtils.getIndexBlockCapacity;
+import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
+import static io.questdb.cairo.TableUtils.getPartitionTableSizeOffset;
+import static io.questdb.cairo.TableUtils.getSymbolWriterIndexOffset;
+import static io.questdb.cairo.TableUtils.getTodoText;
+import static io.questdb.cairo.TableUtils.getTxMemSize;
+import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.isColumnIndexed;
+import static io.questdb.cairo.TableUtils.isSequential;
+import static io.questdb.cairo.TableUtils.lockName;
+import static io.questdb.cairo.TableUtils.openMetaSwapFile;
+import static io.questdb.cairo.TableUtils.readColumnTop;
+import static io.questdb.cairo.TableUtils.readPartitionSize;
+import static io.questdb.cairo.TableUtils.resetTxn;
+import static io.questdb.cairo.TableUtils.topFile;
+import static io.questdb.cairo.TableUtils.validate;
+
+import java.io.Closeable;
+import java.util.function.LongConsumer;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
@@ -32,7 +87,23 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.Long256;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
@@ -40,13 +111,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnIndexerTask;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
-import java.util.function.LongConsumer;
-
-import static io.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
 
@@ -2720,6 +2784,11 @@ public class TableWriter implements Closeable {
 
         public void putLong256(int index, CharSequence hexString) {
             getPrimaryColumn(index).putLong256(hexString);
+            notNull(index);
+        }
+
+        public void putRawBytes(int index, long from, long len) {
+            getPrimaryColumn(index).putRawBytes(from, len);
             notNull(index);
         }
 
