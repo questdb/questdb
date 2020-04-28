@@ -80,6 +80,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            longIncrement.init(symbolTableSource, executionContext);
         }
     }
 }

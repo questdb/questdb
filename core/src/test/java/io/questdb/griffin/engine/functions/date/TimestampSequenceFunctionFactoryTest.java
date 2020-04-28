@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,6 +41,35 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
     @Test
     public void testIncrement2() throws SqlException {
         assertFunction(call(0L, 1000L).getFunction2());
+    }
+
+    @Test
+    public void testInitCall() throws Exception {
+        final String expected = "ts\n" +
+                "2021-04-25T00:00:00.000000Z\n" +
+                "2021-04-25T00:00:00.300000Z\n" +
+                "2021-04-25T00:00:00.600000Z\n" +
+                "2021-04-25T00:00:00.600000Z\n" +
+                "2021-04-25T00:00:00.600000Z\n" +
+                "2021-04-25T00:00:01.300000Z\n" +
+                "2021-04-25T00:00:01.300000Z\n" +
+                "2021-04-25T00:00:01.800000Z\n" +
+                "2021-04-25T00:00:02.700000Z\n" +
+                "2021-04-25T00:00:03.700000Z\n";
+
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_sequence(\n" +
+                            "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                            "         rnd_long(1,10,2) * 100000L\n" +
+                            ") ts from long_sequence(10, 900, 800)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+        });
     }
 
     @Test
