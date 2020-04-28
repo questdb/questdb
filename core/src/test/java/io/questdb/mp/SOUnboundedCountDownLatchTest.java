@@ -30,6 +30,8 @@ import io.questdb.std.time.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SOUnboundedCountDownLatchTest {
@@ -37,7 +39,7 @@ public class SOUnboundedCountDownLatchTest {
     private static final Log LOG = LogFactory.getLog(SOUnboundedCountDownLatchTest.class);
 
     @Test
-    public void testUnboundedLatch() {
+    public void testUnboundedLatch() throws BrokenBarrierException, InterruptedException {
         SPSequence pubSeq = new SPSequence(64);
         SCSequence subSeq = new SCSequence();
 
@@ -72,39 +74,48 @@ public class SOUnboundedCountDownLatchTest {
         Assert.assertEquals(count, dc.get());
     }
 
-    private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) {
+    private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) throws BrokenBarrierException, InterruptedException {
+        final CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicInteger errors = new AtomicInteger();
         new Thread() {
             int doneCount = 0;
             long time = System.currentTimeMillis();
 
             @Override
             public void run() {
-                long last = s - 1;
-                while (doneCount < count) {
-                    long c = subSeq.next();
-                    if (c > -1) {
-                        subSeq.done(c);
-                        doneCount++;
-                        dc.incrementAndGet();
-                        latch.countDown();
-                        Assert.assertEquals(last + 1, c);
-                        last = c;
+                try {
+                    barrier.await();
+                    long last = s - 1;
+                    while (doneCount < count) {
+                        long c = subSeq.next();
+                        if (c > -1) {
+                            subSeq.done(c);
+                            doneCount++;
+                            dc.incrementAndGet();
+                            latch.countDown();
+                            Assert.assertEquals(last + 1, c);
+                            last = c;
+                        }
+                        if (System.currentTimeMillis() - time > Dates.MINUTE_MILLIS) {
+                            LOG.error()
+                                    .$("so_latch_state [doneCount=").$(doneCount)
+                                    .$(", count=").$(count)
+                                    .$(", seq.current").$(subSeq.current())
+                                    .$(", seq.cache=").$(pubSeq.cache)
+                                    .$(", latch.count=").$(latch.getCount())
+                                    .$(']').$();
+                            time = System.currentTimeMillis();
+                        }
                     }
-                    if (System.currentTimeMillis() - time > Dates.MINUTE_MILLIS) {
-                        LOG.error()
-                                .$("so_latch_state [doneCount=").$(doneCount)
-                                .$(", count=").$(count)
-                                .$(", seq.current").$(subSeq.current())
-                                .$(", seq.cache=").$(pubSeq.cache)
-                                .$(", latch.count=").$(latch.getCount())
-                                .$(']').$();
-                        time = System.currentTimeMillis();
-                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
                 }
             }
         }.start();
 
+        barrier.await();
         for (int i = 0; i < count; ) {
+            Assert.assertEquals(0, errors.get());
             long c = pubSeq.next();
             if (c > -1) {
                 i++;
