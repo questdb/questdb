@@ -56,6 +56,7 @@ public class SOUnboundedCountDownLatchTest {
 
         doTest(pubSeq, subSeq, latch, dc, count, 0);
 
+        LOG.info().$("waiting on [count=").$(count).$(']').$();
         latch.await(count);
 
         LOG.info().$("section 1 done").$();
@@ -67,6 +68,7 @@ public class SOUnboundedCountDownLatchTest {
 
         doTest(pubSeq, subSeq, latch, dc, count, count);
 
+        LOG.info().$("waiting on [count=").$(count).$(']').$();
         latch.await(count);
 
         LOG.info().$("section 2 done").$();
@@ -77,6 +79,7 @@ public class SOUnboundedCountDownLatchTest {
     private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) throws BrokenBarrierException, InterruptedException {
         final CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicInteger errors = new AtomicInteger();
+        LOG.info().$("starting thread").$();
         new Thread() {
             int doneCount = 0;
             long time = System.currentTimeMillis();
@@ -84,7 +87,9 @@ public class SOUnboundedCountDownLatchTest {
             @Override
             public void run() {
                 try {
+                    LOG.info().$("thread is running").$();
                     barrier.await();
+                    LOG.info().$("thread is away").$();
                     long last = s - 1;
                     while (doneCount < count) {
                         long c = subSeq.next();
@@ -110,10 +115,13 @@ public class SOUnboundedCountDownLatchTest {
                 } catch (Exception e) {
                     errors.incrementAndGet();
                 }
+                LOG.info().$("thread ended").$();
             }
         }.start();
 
+        LOG.info().$("about to start publishing").$();
         barrier.await();
+        LOG.info().$("publishing").$();
         for (int i = 0; i < count; ) {
             Assert.assertEquals(0, errors.get());
             long c = pubSeq.next();
@@ -122,5 +130,6 @@ public class SOUnboundedCountDownLatchTest {
                 pubSeq.done(c);
             }
         }
+        LOG.info().$("all published").$();
     }
 }
