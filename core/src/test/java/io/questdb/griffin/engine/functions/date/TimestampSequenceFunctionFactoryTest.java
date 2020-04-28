@@ -68,6 +68,8 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals(expected, sink);
                 }
+            } finally {
+                sqlExecutionContext.setRandom(null);
             }
         });
     }
