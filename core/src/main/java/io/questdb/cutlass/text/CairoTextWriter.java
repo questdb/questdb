@@ -57,6 +57,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     private int timestampIndex;
     private CharSequence timestampIndexCol;
     private ObjList<TypeAdapter> types;
+    private TimestampAdapter timestampAdapter;
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -127,18 +128,18 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     @Override
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         long timestamp = 0L;
-        if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
-            TimestampAdapter adapter = (TimestampAdapter) types.getQuick(timestampIndex);
+        if (timestampIndex != -1) {
             final DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
             try {
-                timestamp = adapter.getTimestamp(dbcs);
+                timestamp = timestampAdapter.getTimestamp(dbcs);
             } catch (NumericException e) {
                 logError(line, timestampIndex, dbcs);
+                return;
             }
         }
         final TableWriter.Row w = writer.newRow(timestamp);
         for (int i = 0; i < valuesLength; i++) {
-            if (i == timestampIndex && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
+            if (i == timestampIndex) {
                 continue;
             }
             final DirectByteCharSequence dbcs = values.getQuick(i);
@@ -175,7 +176,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext
-    ) {
+    ) throws TextException {
         engine.creatTable(
                 cairoSecurityContext,
                 appendMemory,
@@ -248,7 +249,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes
-    ) {
+    ) throws TextException {
         assert writer == null;
 
         if (detectedTypes.size() == 0) {
@@ -274,6 +275,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
+        timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
     }
 
     private class TableStructureAdapter implements TableStructure {
@@ -327,10 +329,20 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         @Override
         public int getTimestampIndex() { return timestampIndex; }
 
-        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) {
+        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
             this.names = names;
             this.types = types;
-            timestampIndex = names.indexOf(timestampIndexCol);
+            if (timestampIndexCol == null) {
+                timestampIndex = -1;
+            } else {
+                timestampIndex = names.indexOf(timestampIndexCol);
+                if (timestampIndex == -1) {
+                    throw TextException.$("invalid timestamp column '").put(timestampIndexCol).put('\'');
+                }
+                if (types.getQuick(timestampIndex).getType() != ColumnType.TIMESTAMP) {
+                    throw TextException.$("not a timestamp '").put(timestampIndexCol).put('\'');
+                }
+            }
             return this;
         }
     }
