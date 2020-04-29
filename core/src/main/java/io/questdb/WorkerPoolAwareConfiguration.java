@@ -38,13 +38,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             WorkerPoolAwareConfiguration configuration,
             WorkerPool sharedPool
     ) {
-        final WorkerPool localPool;
-        if (configuration.getWorkerCount() > 0) {
-            localPool = new WorkerPool(configuration);
-        } else {
-            localPool = sharedPool;
-        }
-        return localPool;
+        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration) : sharedPool;
     }
 
     @Nullable
@@ -61,12 +55,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
             final boolean local = localPool != sharedWorkerPool;
-            final MessageBus bus;
-            if (local) {
-                bus = new MessageBusImpl();
-            } else {
-                bus = messageBus;
-            }
+            final MessageBus bus = local ? new MessageBusImpl() : messageBus;
 
             server = factory.create(configuration, cairoEngine, localPool, local, bus);
 
