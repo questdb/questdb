@@ -578,6 +578,12 @@ public class TableReader implements Closeable {
                 }
             }
         }
+        LOG.info()
+                .$("purging memory [prevMinTimestamp=").$ts(prevMinTimestamp)
+                .$(", minTimestamp=").$ts(minTimestamp)
+                .$(", partitionCount=").$(partitionCount)
+                .$(']').$();
+
         // adjust columns list when leading partitions have been removed
         if (prevMinTimestamp != minTimestamp) {
             assert prevMinTimestamp < minTimestamp;
@@ -989,7 +995,8 @@ public class TableReader implements Closeable {
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(transientRowCount)
                             .$(", fixedRowCount=").$(fixedRowCount)
-                            .$(", maxTimestamp=").$(maxTimestamp)
+                            .$(", minTimestamp=").$ts(this.minTimestamp)
+                            .$(", maxTimestamp=").$ts(this.maxTimestamp)
                             .$(", attempts=").$(count)
                             .$(']').$();
                     return true;

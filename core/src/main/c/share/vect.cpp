@@ -438,7 +438,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
 
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
-    int nans = horizontal_add(nancount);
+    int64_t nans = horizontal_add(nancount);
     for (; d < lim; d++) {
         double x = *d;
         if (x == x) {
@@ -459,6 +459,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
+//    return sumDoubleNeumaier_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
@@ -483,7 +484,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
 
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
-    int nans = horizontal_add(nancount);
+    int64_t nans = horizontal_add(nancount);
     for (; d < lim; d++) {
         double input = *d;
         if (input == input) {
