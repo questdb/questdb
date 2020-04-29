@@ -74,49 +74,11 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testKeyedNSumDoubleAllNaN() throws Exception {
-        assertQuery("s\tnsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
-                "select s, nsum(d) nsum from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
-                        " from" +
-                        " long_sequence(200)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
         assertQuery("s\tksum\n" +
                         "aa\t37.816973659638755\n" +
                         "bb\t50.90642211368272\n",
                 "select s, ksum(d) ksum from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('aa','bb') s," +
-                        " rnd_double(2) d" +
-                        " from" +
-                        " long_sequence(200)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testKeyedNSumDoubleSomeNaN() throws Exception {
-        assertQuery("s\tnsum\n" +
-                        "aa\t37.816973659638755\n" +
-                        "bb\t50.90642211368272\n",
-                "select s, nsum(d) nsum from x",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -454,6 +416,44 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testKeyedNSumDoubleAllNaN() throws Exception {
+        assertQuery("s\tnsum\n" +
+                        "aa\tNaN\n" +
+                        "bb\tNaN\n",
+                "select s, nsum(d) nsum from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " NaN d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedNSumDoubleSomeNaN() throws Exception {
+        assertQuery("s\tnsum\n" +
+                        "aa\t37.816973659638755\n" +
+                        "bb\t50.90642211368272\n",
+                "select s, nsum(d) nsum from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_double(2) d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
                         "aa\tNaN\n" +
@@ -585,6 +585,23 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testVectorKSumOneDouble() throws Exception {
+        assertQuery("sum\n" +
+                        "416711.27751251\n",
+                "select round(ksum(d),8) sum from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2) d" +
+                        " from" +
+                        " long_sequence(1000000)" +
+                        ")",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testVectorNSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
                         "NaN\n",
@@ -595,23 +612,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " NaN d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testVectorKSumOneDouble() throws Exception {
-        assertQuery("sum\n" +
-                        "416711.27751251357\n",
-                "select ksum(d) sum from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(2) d" +
-                        " from" +
-                        " long_sequence(1000000)" +
                         ")",
                 null,
                 false
