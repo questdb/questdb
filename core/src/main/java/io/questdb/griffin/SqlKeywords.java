@@ -75,7 +75,7 @@ public class SqlKeywords {
         int i = 0;
         return (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 'd';
+                && (tok.charAt(i) | 32) == 'd';
     }
 
     public static boolean isAscKeyword(CharSequence tok) {
