@@ -24,6 +24,16 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "tonytamwk",
+      "name": "tonytamwk",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/20872271?v=4",
+      "profile": "https://github.com/tonytamwk",
+      "contributions": [
+        "code",
+        "userTesting"
+      ]
     }
   ],
   "contributorsPerLine": 7,
