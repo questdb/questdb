@@ -203,9 +203,7 @@ public class ServerMain {
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
         CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
         String flag = null;
-        for (int i = 0, n = args.length; i < n; i++) {
-            String s = args[i];
-
+        for (String s : args) {
             if (s.startsWith("-")) {
                 if (flag != null) {
                     optHash.put(flag, "");
@@ -319,8 +317,8 @@ public class ServerMain {
             if (notSymlink(file)) {
                 File[] files = file.listFiles();
                 if (files != null) {
-                    for (int i = 0; i < files.length; i++) {
-                        deleteOrException(files[i]);
+                    for (File f : files) {
+                        deleteOrException(f);
                     }
                 }
             }
