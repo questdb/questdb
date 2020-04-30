@@ -11,7 +11,9 @@
       "avatar_url": "https://avatars1.githubusercontent.com/u/43246297?v=4",
       "profile": "https://github.com/clickingbuttons",
       "contributions": [
-        "code"
+        "code",
+        "ideas",
+        "userTesting"
       ]
     }
   ],
@@ -20,5 +22,6 @@
   "projectOwner": "questdb",
   "repoType": "github",
   "repoHost": "https://github.com",
-  "skipCi": true
+  "skipCi": true,
+  "commitConvention": "angular"
 }
