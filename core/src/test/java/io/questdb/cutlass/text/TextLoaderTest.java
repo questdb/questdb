@@ -2338,6 +2338,61 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testImportTimestampPartitionByDay() throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            assertNoLeak(
+                engine,
+                textLoader -> {
+                    String expected = "StrSym\tts\n" +
+                            "CMP1\t2015-01-13T19:15:09.000000Z\n" +
+                            "CMP2\t2015-01-14T19:15:09.000234Z\n" +
+                            "CMP1\t2015-01-15T19:15:09.000455Z\n" +
+                            "CMP2\t2015-01-16T19:15:09.000754Z\n" +
+                            "CMP1\t2015-01-17T19:15:09.000903Z\n";
+
+
+                    String csv = "StrSym,ts\n" +
+                            "CMP1,2015-01-13T19:15:09.000000Z\n" +
+                            "CMP2,2015-01-14T19:15:09.000234Z\n" +
+                            "CMP1,2015-01-15T19:15:09.000455Z\n" +
+                            "CMP2,2015-01-16T19:15:09.000754Z\n" +
+                            "CMP1,2015-01-17T19:15:09.000903Z\n";
+
+                    configureLoaderDefaults(textLoader, (byte) ',', 0, false, PartitionBy.DAY, "ts");
+                    textLoader.setForceHeaders(false);
+                    playText(
+                            engine,
+                            textLoader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                            5,
+                            5
+                    );
+
+                    try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                        Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
+                    }
+                }
+            );
+        }
+    }
+
     private void assertNoLeak(TestCode code) throws Exception {
         assertNoLeak(engine, code);
     }
@@ -2376,16 +2431,24 @@ public class TextLoaderTest extends AbstractGriffinTest {
         configureLoaderDefaults(textLoader, columnSeparator, Atomicity.SKIP_ROW);
     }
 
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity) {
+        configureLoaderDefaults(textLoader, columnSeparator, atomicity, false);
+    }
+
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity);
+        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity) {
-        configureLoaderDefaults(textLoader, columnSeparator, atomicity, false);
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite, int partitionBy, CharSequence timestampIndexCol) {
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, timestampIndexCol);
+        if (columnSeparator > 0) {
+            textLoader.configureColumnDelimiter(columnSeparator);
+        }
     }
 
     private void playJson(TextLoader textLoader, String jsonStr) throws TextException {

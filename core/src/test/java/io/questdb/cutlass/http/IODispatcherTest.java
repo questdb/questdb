@@ -1001,8 +1001,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2c\r\n" +
-                        "{\"status\":\"DATE format pattern is required\"}\r\n" +
+                        "31\r\n" +
+                        "{\"status\":\"TIMESTAMP format pattern is required\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +

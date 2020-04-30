@@ -286,12 +286,30 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 throw ServerDisconnectException.INSTANCE;
             }
 
+            CharSequence partitionedBy = rh.getUrlParam("partitionBy");
+            if (partitionedBy == null) {
+                partitionedBy = "NONE";
+            }
+            int partitionBy = PartitionBy.fromString(partitionedBy);
+            if (partitionBy == -1) {
+                transientContext.simpleResponse().sendStatus(400, "invalid partitionBy");
+                throw ServerDisconnectException.INSTANCE;
+            }
+
+            CharSequence timestampIndexCol = rh.getUrlParam("timestamp");
+            if (partitionBy != PartitionBy.NONE && timestampIndexCol == null) {
+                transientContext.simpleResponse().sendStatus(400, "when specifying partitionBy you must also specify timestamp");
+                throw ServerDisconnectException.INSTANCE;
+            }
+
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
                     name,
                     Chars.equalsNc("true", rh.getUrlParam("overwrite")),
                     Chars.equalsNc("true", rh.getUrlParam("durable")),
-                    getAtomicity(rh.getUrlParam("atomicity"))
+                    getAtomicity(rh.getUrlParam("atomicity")),
+                    partitionBy,
+                    timestampIndexCol
             );
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));

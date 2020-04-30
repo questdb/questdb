@@ -250,7 +250,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
                 // timestamp pattern is required
                 if (pattern == null) {
-                    throw JsonException.$(0, "DATE format pattern is required");
+                    throw JsonException.$(0, "TIMESTAMP format pattern is required");
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
                 break;
