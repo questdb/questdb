@@ -34,7 +34,7 @@
 		<nodejs.version>v12.16.2</nodejs.version>
 	</properties>
 
-    <version>4.2.1</version>
+    <version>4.3.0-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
