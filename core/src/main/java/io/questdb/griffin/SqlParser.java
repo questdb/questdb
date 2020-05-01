@@ -314,6 +314,19 @@ public final class SqlParser {
             CopyModel model = copyModelPool.next();
             model.setTableName(tableName);
             model.setFileName(fileName);
+
+            tok = optTok(lexer);
+            if (tok != null && isWithKeyword(tok)) {
+                tok = tok(lexer, "copy option");
+                while (tok != null) {
+                    if (isHeaderKeyword(tok)) {
+                        model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
+                        tok = optTok(lexer);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected option");
+                    }
+                }
+            }
             return model;
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");

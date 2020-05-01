@@ -33,6 +33,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
     private ExpressionNode tableName;
     private ExpressionNode fileName;
+    private boolean header;
 
     @Override
     public void clear() {
@@ -57,6 +58,14 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
+    }
+
+    public boolean isHeader() {
+        return header;
+    }
+
+    public void setHeader(boolean header) {
+        this.header = header;
     }
 
     @Override

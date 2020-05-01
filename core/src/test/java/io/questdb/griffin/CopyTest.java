@@ -577,6 +577,47 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSimpleCopyForceHeader() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("copy x from '/target/test-classes/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
+
+            final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
+                    "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                    "CDE\tbb\tb\tsentence 1\n" +
+                    "sentence 2\t12\n";
+
+            assertQuery(
+                    expected,
+                    "x",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSimpleCopyForceHeader2() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("copy x from '/target/test-classes/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
+
+            final String expected = "f0\tf1\tf2\tf3\tf4\n" +
+                    "type\tvalue\tactive\tdesc\t1\n" +
+                    "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                    "CDE\tbb\tb\tsentence 1\n" +
+                    "sentence 2\t12\n";
+
+            assertQuery(
+                    expected,
+                    "x",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCopyEmptyFileName() throws Exception {
         assertMemoryLeak(() -> assertFailure(
                 "copy x from ''",
