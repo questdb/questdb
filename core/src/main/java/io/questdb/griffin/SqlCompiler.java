@@ -1085,6 +1085,7 @@ public class SqlCompiler implements Closeable {
                     long fileLen = ff.length(fd);
                     long n = ff.read(fd, buf, len, 0);
                     if (n > 0) {
+                        textLoader.setForceHeaders(model.isHeader());
                         textLoader.setSkipRowsWithExtraValues(false);
                         textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
                         textLoader.setState(TextLoader.LOAD_DATA);
