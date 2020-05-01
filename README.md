@@ -79,7 +79,7 @@ You can find our documentation
 
 ## Roadmap
 
-Our roadmap is [here](https://github.com/questdb/questdb/projects/2)
+[Our roadmap is here](https://github.com/questdb/questdb/projects/3)
 
 ## Building from source
 
