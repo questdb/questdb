@@ -66,6 +66,7 @@ io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 # '<>'
 io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.NotEqIntFunctionFactory
+io.questdb.griffin.engine.functions.eq.NotEqDoubleFunctionFactory
 
 # '>'
 io.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
