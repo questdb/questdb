@@ -985,6 +985,92 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportOneColumn() throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public double getMaxRequiredLineLengthStdDev() {
+                return 2.0;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "s\n" +
+                                "0.5035558920000001\n" +
+                                "0.5370835850000001\n" +
+                                "0.518392756\n" +
+                                "0.898078974\n" +
+                                "0.153959029\n" +
+                                "0.368878817\n" +
+                                "0.7685725170000001\n" +
+                                "0.409412157\n" +
+                                "0.959138401\n" +
+                                "0.49868191100000003\n" +
+                                "0.466161354\n" +
+                                "0.6500869570000001\n" +
+                                "0.201807867\n" +
+                                "0.699247724\n" +
+                                "0.8836387710000001\n" +
+                                "0.855572368\n" +
+                                "0.7143630950000001\n" +
+                                "0.14668836100000002\n" +
+                                "0.507968298\n" +
+                                "0.064159752\n" +
+                                "0.19579689800000002\n" +
+                                "0.7118503740000001\n" +
+                                "0.24136422300000002\n";
+
+
+                        String csv = "s\n" +
+                                "0.503555892\n" +
+                                "0.537083585\n" +
+                                "0.518392756\n" +
+                                "0.898078974\n" +
+                                "0.153959029\n" +
+                                "0.368878817\n" +
+                                "0.768572517\n" +
+                                "0.409412157\n" +
+                                "0.959138401\n" +
+                                "0.498681911\n" +
+                                "0.466161354\n" +
+                                "0.650086957\n" +
+                                "0.201807867\n" +
+                                "0.699247724\n" +
+                                "0.883638771\n" +
+                                "0.855572368\n" +
+                                "0.714363095\n" +
+                                "0.146688361\n" +
+                                "0.507968298\n" +
+                                "0.064159752\n" +
+                                "0.195796898\n" +
+                                "0.711850374\n" +
+                                "0.241364223\n";
+
+                        configureLoaderDefaults(textLoader, (byte) -1);
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"s\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                                23,
+                                23
+                        );
+                    });
+        }
+    }
+
+    @Test
     public void testImportTimestamp() throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override

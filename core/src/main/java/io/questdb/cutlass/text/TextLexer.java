@@ -99,10 +99,6 @@ public class TextLexer implements Closeable, Mutable {
         fieldMax = -1;
     }
 
-    public long getErrorCount() {
-        return errorCount;
-    }
-
     @Override
     public void close() {
         if (lineRollBufPtr != 0) {
@@ -112,8 +108,20 @@ public class TextLexer implements Closeable, Mutable {
         metadataDetector.close();
     }
 
+    public long getErrorCount() {
+        return errorCount;
+    }
+
     public long getLineCount() {
         return lineCount;
+    }
+
+    public boolean isSkipLinesWithExtraValues() {
+        return skipLinesWithExtraValues;
+    }
+
+    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
+        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
     }
 
     public void of(byte columnDelimiter) {
@@ -184,6 +192,29 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
+    private void extraField(int fieldIndex) {
+        LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$(", fieldIndex=").$(fieldIndex).$(", fieldMax=").$(fieldMax).$("]\n\t").$(lineCount).$(" -> ");
+        for (int i = 0, n = fields.size(); i < n; i++) {
+            if (i > 0) {
+                logRecord.$(',');
+            }
+            logRecord.$(fields.getQuick(i));
+        }
+        logRecord.$(" ...").$();
+
+        if (skipLinesWithExtraValues) {
+            errorCount++;
+            ignoreEolOnce = true;
+            this.fieldIndex = 0;
+        } else {
+            // prepare for next field
+            if (lastQuotePos > -1) {
+                lastQuotePos = -1;
+            }
+            this.fieldLo = this.fieldHi;
+        }
+    }
+
     ObjList<CharSequence> getColumnNames() {
         return metadataDetector.getColumnNames();
     }
@@ -227,14 +258,6 @@ public class TextLexer implements Closeable, Mutable {
         if (growRollBuf(lineRollBufLen + 1, true)) {
             Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
         }
-    }
-
-    public boolean isSkipLinesWithExtraValues() {
-        return skipLinesWithExtraValues;
-    }
-
-    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
-        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
     }
 
     private void ignoreEolOnce() {
@@ -383,26 +406,7 @@ public class TextLexer implements Closeable, Mutable {
         }
 
         if (fieldIndex > fieldMax) {
-            LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$(", fieldIndex=").$(fieldIndex).$(", fieldMax=").$(fieldMax).$("]\n\t").$(lineCount).$(" -> ");
-            for (int i = 0, n = fields.size(); i < n; i++) {
-                if (i > 0) {
-                    logRecord.$(',');
-                }
-                logRecord.$(fields.getQuick(i));
-            }
-            logRecord.$(" ...").$();
-
-            if (skipLinesWithExtraValues) {
-                errorCount++;
-                ignoreEolOnce = true;
-                this.fieldIndex = 0;
-            } else {
-                // prepare for next field
-                if (lastQuotePos > -1) {
-                    lastQuotePos = -1;
-                }
-                this.fieldLo = this.fieldHi;
-            }
+            extraField(fieldIndex);
             return;
         }
 

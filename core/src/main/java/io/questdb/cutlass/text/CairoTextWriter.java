@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
+public class CairoTextWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -57,7 +57,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     private int timestampIndex;
     private CharSequence timestampIndexCol;
     private ObjList<TypeAdapter> types;
+    private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
+    private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -112,6 +114,10 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         return tableName;
     }
 
+    public TextLexer.Listener getTextListener() {
+        return timestampAdapter != null ? partitionedListener : nonPartitionedListener;
+    }
+
     public long getWrittenLineCount() {
         return writer == null ? 0 : writer.size() - _size;
     }
@@ -125,23 +131,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         this.timestampIndexCol = timestampIndexCol;
     }
 
-    @Override
-    public void onFields(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
-        long timestamp = 0L;
-        if (timestampAdapter != null) {
-            final DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
-            try {
-                timestamp = timestampAdapter.getTimestamp(dbcs);
-            } catch (NumericException e) {
-                logError(line, timestampIndex, dbcs);
-                return;
-            }
-        }
-        final TableWriter.Row w = writer.newRow(timestamp);
+    public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+        final TableWriter.Row w = writer.newRow();
         for (int i = 0; i < valuesLength; i++) {
-            if (timestampAdapter != null && i == timestampIndex) {
-                continue;
-            }
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
                 continue;
@@ -166,10 +158,37 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         w.append();
     }
 
-    private void logError(long line, int i, DirectByteCharSequence dbcs) {
-        LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
-        columnErrorCounts.increment(i);
+    public void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+        final int timestampIndex = this.timestampIndex;
+        DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+        try {
+            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
+            for (int i = 0; i < valuesLength; i++) {
+                dbcs = values.getQuick(i);
+                if (i == timestampIndex || dbcs.length() == 0) {
+                    continue;
+                }
+                try {
+                    types.getQuick(i).write(w, i, dbcs);
+                } catch (Exception ignore) {
+                    logError(line, i, dbcs);
+                    switch (atomicity) {
+                        case Atomicity.SKIP_ALL:
+                            writer.rollback();
+                            throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
+                        case Atomicity.SKIP_ROW:
+                            w.cancel();
+                            return;
+                        default:
+                            // SKIP column
+                            break;
+                    }
+                }
+            }
+            w.append();
+        } catch (NumericException e) {
+            logError(line, timestampIndex, dbcs);
+        }
     }
 
     private void createTable(
@@ -184,6 +203,12 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
                 tableStructureAdapter.of(names, detectedTypes)
         );
         this.types = detectedTypes;
+    }
+
+    private void logError(long line, int i, DirectByteCharSequence dbcs) {
+        LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
+        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        columnErrorCounts.increment(i);
     }
 
     private void logTypeError(int i) {
@@ -305,13 +330,19 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) { return false; }
+        public boolean isIndexed(int columnIndex) {
+            return false;
+        }
 
         @Override
-        public boolean isSequential(int columnIndex) { return false; }
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
 
         @Override
-        public int getPartitionBy() { return partitionBy; }
+        public int getPartitionBy() {
+            return partitionBy;
+        }
 
         @Override
         public boolean getSymbolCacheFlag(int columnIndex) {
@@ -329,7 +360,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         }
 
         @Override
-        public int getTimestampIndex() { return timestampIndex; }
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
             this.names = names;

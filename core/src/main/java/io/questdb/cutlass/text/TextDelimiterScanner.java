@@ -235,7 +235,8 @@ public class TextDelimiterScanner implements Closeable {
 
         assert delimiter > 0;
 
-        if (lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
+        // exclude '.' as delimiter
+        if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
                     .$("scan result [table=`").$(tableName)
                     .$("`, delimiter='").$((char) delimiter)
@@ -258,6 +259,8 @@ public class TextDelimiterScanner implements Closeable {
                 .$(", delimiterMaxStdDev=").$(maxRequiredDelimiterStdDev)
                 .$(", lineLengthStdDev=").$(lineLengthStdDev)
                 .$(", lineLengthMaxStdDev=").$(maxRequiredLineLengthStdDev)
+                .$(", lineCountLimit=").$(lineCountLimit)
+                .$(", lineCount=").$(lineCount)
                 .$(']').$();
 
         throw TextException.$("min deviation is too high [delimiterStdDev=")
@@ -265,6 +268,8 @@ public class TextDelimiterScanner implements Closeable {
                 .put(", delimiterMaxStdDev=").put(maxRequiredDelimiterStdDev)
                 .put(", lineLengthStdDev=").put(lineLengthStdDev)
                 .put(", lineLengthMaxStdDev=").put(maxRequiredLineLengthStdDev)
+                .put(", lineCountLimit=").put(lineCountLimit)
+                .put(", lineCount=").put(lineCount)
                 .put(']');
     }
 

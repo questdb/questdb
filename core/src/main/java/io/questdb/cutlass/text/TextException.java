@@ -65,6 +65,11 @@ public class TextException extends Exception implements Sinkable {
         return this;
     }
 
+    public TextException put(long c) {
+        message.put(c);
+        return this;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put(message);

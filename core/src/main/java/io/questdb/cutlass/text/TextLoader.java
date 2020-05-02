@@ -198,7 +198,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
     }
 
     private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
@@ -224,7 +224,7 @@ public class TextLoader implements Closeable, Mutable {
                 textMetadataParser.getColumnTypes()
         );
         textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter);
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
         state = LOAD_DATA;
     }
 

@@ -1105,7 +1105,6 @@ public class SqlCompiler implements Closeable {
                 }
             } finally {
                 textLoader.clear();
-                Unsafe.free(buf, len);
             }
         } catch (TextException e) {
             // we do not expect JSON exception here
