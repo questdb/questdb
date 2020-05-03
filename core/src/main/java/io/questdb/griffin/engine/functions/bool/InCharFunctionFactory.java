@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 
-public class InCharFunctionFactory implements FunctionFactory {
+public class InCharFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "in(Av)";

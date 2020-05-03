@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndDateFunctionFactory implements FunctionFactory {
+public class RndDateFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_date()";

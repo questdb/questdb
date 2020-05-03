@@ -37,7 +37,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
 
-public class SwitchFunctionFactory implements FunctionFactory {
+public class SwitchFunctionFactory extends FunctionFactory {
 
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;

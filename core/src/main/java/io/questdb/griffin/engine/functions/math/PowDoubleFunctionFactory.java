@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
-public class PowDoubleFunctionFactory implements FunctionFactory {
+public class PowDoubleFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "^(DD)";

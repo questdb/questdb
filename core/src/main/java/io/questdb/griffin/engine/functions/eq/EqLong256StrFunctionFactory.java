@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqLong256StrFunctionFactory implements FunctionFactory {
+public class EqLong256StrFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(Hs)";
@@ -88,7 +88,10 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final long long0;
         private final long long1;
@@ -107,7 +110,12 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
-            return value.getLong0() == long0 && value.getLong1() == long1 && value.getLong2() == long2 && value.getLong3() == long3;
+            return isNegated != (
+                    value.getLong0() == long0 &&
+                    value.getLong1() == long1 &&
+                    value.getLong2() == long2 &&
+                    value.getLong3() == long3
+            );
         }
 
         @Override

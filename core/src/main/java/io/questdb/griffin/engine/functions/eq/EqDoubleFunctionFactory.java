@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class EqDoubleFunctionFactory implements FunctionFactory {
+public class EqDoubleFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(DD)";
@@ -88,7 +88,10 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    protected static class Func extends BooleanFunction implements BinaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    protected class Func extends BooleanFunction implements BinaryFunction {
         protected final Function left;
         protected final Function right;
 
@@ -102,7 +105,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            return l != l && r != r || Math.abs(l - r) < 0.0000000001;
+            return isNegated != (l != l && r != r || Math.abs(l - r) < 0.0000000001);
         }
 
         @Override
@@ -116,7 +119,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncIntIsNaN(int position, Function arg) {
@@ -126,7 +129,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == Numbers.INT_NaN;
+            return isNegated != (arg.getInt(rec) == Numbers.INT_NaN);
         }
 
         @Override
@@ -135,7 +138,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncLongIsNaN(int position, Function arg) {
@@ -145,7 +148,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getLong(rec) == Numbers.LONG_NaN;
+            return isNegated != (arg.getLong(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -154,7 +157,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncDateIsNaN(int position, Function arg) {
@@ -164,7 +167,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getDate(rec) == Numbers.LONG_NaN;
+            return isNegated != (arg.getDate(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -173,7 +176,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncTimestampIsNaN(int position, Function arg) {
@@ -183,7 +186,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getTimestamp(rec) == Numbers.LONG_NaN;
+            return isNegated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -192,7 +195,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncFloatIsNaN(int position, Function arg) {
@@ -202,7 +205,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Float.isNaN(arg.getFloat(rec));
+            return isNegated != (Float.isNaN(arg.getFloat(rec)));
         }
 
         @Override
@@ -211,7 +214,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
+    protected class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
         protected final Function arg;
 
         public FuncDoubleIsNaN(int position, Function arg) {
@@ -221,7 +224,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Double.isNaN(arg.getDouble(rec));
+            return isNegated != (Double.isNaN(arg.getDouble(rec)));
         }
 
         @Override

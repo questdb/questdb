@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 
-public class DayOfWeekFunctionFactory implements FunctionFactory {
+public class DayOfWeekFunctionFactory extends FunctionFactory {
 
     @Override
     public String getSignature() {

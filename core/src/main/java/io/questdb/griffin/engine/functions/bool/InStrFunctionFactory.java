@@ -37,7 +37,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class InStrFunctionFactory implements FunctionFactory {
+public class InStrFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "in(Sv)";

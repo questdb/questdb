@@ -35,7 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class CastSymbolToStrFunctionFactory implements FunctionFactory {
+public class CastSymbolToStrFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ks)";

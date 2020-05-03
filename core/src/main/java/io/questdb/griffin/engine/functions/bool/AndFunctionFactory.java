@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class AndFunctionFactory implements FunctionFactory {
+public class AndFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "and(TT)";

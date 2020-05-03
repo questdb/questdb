@@ -30,7 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.ObjList;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
+public class UserByIdCatalogueFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "pg_catalog.pg_get_userbyid(I)";

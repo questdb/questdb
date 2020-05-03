@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.ObjList;
 
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class NamespaceCatalogueFunctionFactory extends FunctionFactory {
     private static final RecordMetadata METADATA;
 
     static {

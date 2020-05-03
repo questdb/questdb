@@ -37,7 +37,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public class ToCharBinFunctionFactory implements FunctionFactory {
+public class ToCharBinFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "to_char(U)";

@@ -34,7 +34,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.TimestampFormatUtils;
 
-public class CastStrToTimestampFunctionFactory implements FunctionFactory {
+public class CastStrToTimestampFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Sn)";

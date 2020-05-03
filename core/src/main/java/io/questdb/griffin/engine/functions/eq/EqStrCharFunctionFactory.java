@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqStrCharFunctionFactory implements FunctionFactory {
+public class EqStrCharFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(SA)";
@@ -70,7 +70,10 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         return new Func(position, strFunc, charFunc);
     }
 
-    private static class ConstChrFunc extends BooleanFunction implements UnaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class ConstChrFunc extends BooleanFunction implements UnaryFunction {
         private final Function strFunc;
         private final char chrConst;
 
@@ -87,11 +90,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(strFunc.getStr(rec), chrConst);
+            return isNegated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
         }
     }
 
-    private static class ConstStrFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstStrFunc extends BooleanFunction implements UnaryFunction {
         private final Function chrFunc;
         private final char chrConst;
 
@@ -108,11 +111,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return chrFunc.getChar(rec) == chrConst;
+            return isNegated != (chrFunc.getChar(rec) == chrConst);
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    private class Func extends BooleanFunction implements BinaryFunction {
 
         private final Function strFunc;
         private final Function chrFunc;
@@ -135,7 +138,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec));
+            return isNegated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
         }
     }
 }

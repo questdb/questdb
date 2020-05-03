@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
-public class EqLong256FunctionFactory implements FunctionFactory {
+public class EqLong256FunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(HH)";
@@ -44,7 +44,10 @@ public class EqLong256FunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class Func extends BooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -58,7 +61,7 @@ public class EqLong256FunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
             final Long256 rv = right.getLong256A(rec);
-            return lv.equals(rv);
+            return isNegated != lv.equals(rv);
         }
 
         @Override

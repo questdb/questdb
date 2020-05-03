@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class AbsIntFunctionFactory implements FunctionFactory {
+public class AbsIntFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "abs(I)";

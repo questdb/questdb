@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
-public class LtDoubleVVFunctionFactory implements FunctionFactory {
+public class LtDoubleVVFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "<(DD)";
@@ -43,7 +43,10 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
         return new FuncVV(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class FuncVV extends BooleanFunction implements BinaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class FuncVV extends BooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -55,7 +58,9 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getDouble(rec) < right.getDouble(rec);
+            return isNegated
+                    ? left.getDouble(rec) > right.getDouble(rec)
+                    : left.getDouble(rec) < right.getDouble(rec);
         }
 
         @Override

@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastDateToBooleanFunctionFactory implements FunctionFactory {
+public class CastDateToBooleanFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Mt)";

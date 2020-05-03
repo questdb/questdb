@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastByteToFloatFunctionFactory implements FunctionFactory {
+public class CastByteToFloatFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Bf)";

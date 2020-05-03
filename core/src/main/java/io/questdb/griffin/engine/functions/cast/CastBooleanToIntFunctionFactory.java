@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastBooleanToIntFunctionFactory implements FunctionFactory {
+public class CastBooleanToIntFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ti)";

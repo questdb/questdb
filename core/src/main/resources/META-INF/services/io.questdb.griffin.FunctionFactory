@@ -62,14 +62,7 @@ io.questdb.griffin.engine.functions.eq.EqStrCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
-
-# '<>'
-io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory
-io.questdb.griffin.engine.functions.eq.NotEqIntFunctionFactory
-io.questdb.griffin.engine.functions.eq.NotEqDoubleFunctionFactory
-
-# '>'
-io.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
@@ -116,7 +109,6 @@ io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory
 
 # '!~'
 io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
-io.questdb.griffin.engine.functions.eq.NotEqIntStrCFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory

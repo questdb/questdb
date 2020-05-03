@@ -36,7 +36,7 @@ import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TestMatchFunctionFactory implements FunctionFactory {
+public class TestMatchFunctionFactory extends FunctionFactory {
 
     private static final AtomicInteger openCounter = new AtomicInteger();
     private static final AtomicInteger topCounter = new AtomicInteger();

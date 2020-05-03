@@ -41,7 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
-public class CastCharToSymbolFunctionFactory implements FunctionFactory {
+public class CastCharToSymbolFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ak)";

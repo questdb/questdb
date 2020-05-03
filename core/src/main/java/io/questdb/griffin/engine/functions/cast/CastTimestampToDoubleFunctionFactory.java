@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
+public class CastTimestampToDoubleFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Nd)";

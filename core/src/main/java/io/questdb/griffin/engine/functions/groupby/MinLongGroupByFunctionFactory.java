@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class MinLongGroupByFunctionFactory implements FunctionFactory {
+public class MinLongGroupByFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "min(L)";

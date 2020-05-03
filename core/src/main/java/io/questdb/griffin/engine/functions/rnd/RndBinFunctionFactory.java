@@ -37,7 +37,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndBinFunctionFactory implements FunctionFactory {
+public class RndBinFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_bin()";

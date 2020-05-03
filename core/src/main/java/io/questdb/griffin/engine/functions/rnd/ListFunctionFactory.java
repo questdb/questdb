@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.ObjList;
 
-public class ListFunctionFactory implements FunctionFactory {
+public class ListFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "list(V)";

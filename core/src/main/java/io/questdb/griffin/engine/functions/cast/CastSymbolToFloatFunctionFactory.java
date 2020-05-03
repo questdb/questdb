@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class CastSymbolToFloatFunctionFactory implements FunctionFactory {
+public class CastSymbolToFloatFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Kf)";

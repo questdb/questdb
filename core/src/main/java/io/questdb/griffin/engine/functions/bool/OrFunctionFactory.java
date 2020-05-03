@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class OrFunctionFactory implements FunctionFactory {
+public class OrFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "or(TT)";

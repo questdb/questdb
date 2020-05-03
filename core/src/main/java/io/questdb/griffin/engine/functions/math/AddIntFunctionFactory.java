@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class AddIntFunctionFactory implements FunctionFactory {
+public class AddIntFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "+(II)";

@@ -38,7 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndLongCCFunctionFactory implements FunctionFactory {
+public class RndLongCCFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_long(lli)";

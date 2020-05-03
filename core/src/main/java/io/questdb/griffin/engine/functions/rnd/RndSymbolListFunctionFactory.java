@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndSymbolListFunctionFactory implements FunctionFactory {
+public class RndSymbolListFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_symbol(V)";

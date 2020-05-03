@@ -30,7 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class IsTableVisibleCatalogueFunctionFactory implements FunctionFactory {
+public class IsTableVisibleCatalogueFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "pg_catalog.pg_table_is_visible(I)";

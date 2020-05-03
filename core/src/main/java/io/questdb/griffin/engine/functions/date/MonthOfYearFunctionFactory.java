@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 
-public class MonthOfYearFunctionFactory implements FunctionFactory {
+public class MonthOfYearFunctionFactory extends FunctionFactory {
 
     @Override
     public String getSignature() {

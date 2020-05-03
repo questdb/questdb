@@ -36,7 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class RndLong256FunctionFactory implements FunctionFactory {
+public class RndLong256FunctionFactory extends FunctionFactory {
 
     @Override
     public String getSignature() {

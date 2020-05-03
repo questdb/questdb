@@ -35,7 +35,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.time.DateFormatUtils;
 
-public class CastStrToDateFunctionFactory implements FunctionFactory {
+public class CastStrToDateFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Sm)";

@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class RoundDoubleFunctionFactory implements FunctionFactory {
+public class RoundDoubleFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "round(DI)";

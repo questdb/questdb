@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class CaseFunctionFactory implements FunctionFactory {
+public class CaseFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "case(V)";

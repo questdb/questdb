@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastSymbolToByteFunctionFactory implements FunctionFactory {
+public class CastSymbolToByteFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Kb)";

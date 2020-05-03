@@ -42,7 +42,7 @@ import io.questdb.std.time.DateFormatCompiler;
 import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.Nullable;
 
-public class ToStrDateFunctionFactory implements FunctionFactory {
+public class ToStrDateFunctionFactory extends FunctionFactory {
 
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);

@@ -71,6 +71,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> negatedFactories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
@@ -336,11 +337,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             FunctionFactory factory,
             @Transient ObjList<Function> args,
             int position,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            boolean isNegated
     ) throws SqlException {
         Function function;
         try {
-            function = factory.newInstance(args, position, configuration);
+            function = isNegated
+                    ? factory.newNegatedInstance(args, position, configuration)
+                    : factory.newInstance(args, position, configuration);
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {
@@ -466,9 +470,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             ExpressionNode node,
             @Transient ObjList<Function> args
     ) throws SqlException {
+        boolean isNegated = false;
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
-            throw invalidFunction("unknown function name", node, args);
+            isNegated = true;
+            overload = negatedFactories.get(node.token);
+            if (overload == null) {
+                throw invalidFunction("unknown function name", node, args);
+            }
         }
 
         final int argCount;
@@ -510,7 +519,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return checkAndCreateFunction(factory, args, node.position, configuration);
+                return checkAndCreateFunction(factory, args, node.position, configuration, isNegated);
             }
 
             // otherwise, is number of arguments the same?
@@ -644,7 +653,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         LOG.info().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
-        return checkAndCreateFunction(candidate, args, node.position, configuration);
+        return checkAndCreateFunction(candidate, args, node.position, configuration, isNegated);
     }
 
     private Function functionToConstant(int position, Function function) {
@@ -752,8 +761,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             String name = sig.substring(0, openBraceIndex);
-            final int index = factories.keyIndex(name);
-            final ObjList<FunctionFactory> overload;
+            int index = factories.keyIndex(name);
+            ObjList<FunctionFactory> overload;
             if (index < 0) {
                 overload = factories.valueAtQuick(index);
             } else {
@@ -761,8 +770,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 factories.putAt(index, name, overload);
             }
             overload.add(factory);
-
-            if (factory.isGroupBy()) {
+            // Add != counterparts to equality function factories
+            if (factory.isNegatable()) {
+                switch (name) {
+                    case "=":
+                        name = "!" + name;
+                        break;
+                    case "<":
+                        name = ">";
+                        break;
+                    case ">":
+                        name = "<";
+                        break;
+                }
+                index = negatedFactories.keyIndex(name);
+                if (index < 0) {
+                    overload = negatedFactories.valueAtQuick(index);
+                } else {
+                    overload = new ObjList<>(4);
+                    negatedFactories.putAt(index, name, overload);
+                }
+                overload.add(factory);
+            }
+            else if (factory.isGroupBy()) {
                 groupByFunctionNames.add(name);
             }
         }

@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
+public class RoundHalfEvenDoubleFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "round_half_even(DI)";

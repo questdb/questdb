@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class SubLongFunctionFactory implements FunctionFactory {
+public class SubLongFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "-(LL)";

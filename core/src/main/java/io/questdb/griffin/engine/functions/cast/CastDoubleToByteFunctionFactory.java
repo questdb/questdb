@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastDoubleToByteFunctionFactory implements FunctionFactory {
+public class CastDoubleToByteFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Db)";

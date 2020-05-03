@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class AddLongToTimestampFunctionFactory implements FunctionFactory {
+public class AddLongToTimestampFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "+(NL)";

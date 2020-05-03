@@ -28,44 +28,53 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class NotEqIntFunctionFactory implements FunctionFactory {
+public class EqIntStrCFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
-        return "<>(II)";
+        return "=(Is)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        try {
+            final CharSequence value = args.getQuick(1).getStr(null);
+            if (value == null) {
+                return new Func(position, args.getQuick(0), Numbers.INT_NaN);
+            }
+            return new Func(position, args.getQuick(0), Numbers.parseInt(value));
+        } catch (NumericException e) {
+            return new BooleanConstant(args.getQuick(1).getPosition(), false);
+        }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
+    @Override
+    public boolean isNegatable() { return true; }
 
-        public Func(int position, Function left, Function right) {
+    private class Func extends BooleanFunction implements UnaryFunction {
+        private final Function left;
+        private final int right;
+
+        public Func(int position, Function left, int right) {
             super(position);
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return left.getInt(rec) != right.getInt(rec);
-        }
-
-        @Override
-        public Function getLeft() {
+        public Function getArg() {
             return left;
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public boolean getBool(Record rec) {
+            return isNegated != (left.getInt(rec) == right);
         }
     }
 }

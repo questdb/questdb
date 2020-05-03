@@ -29,8 +29,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public interface FunctionFactory {
-
+public abstract class FunctionFactory {
+    protected boolean isNegated = false;
     /**
      * Function signature in a form of "name(type...)". Name is a literal that does not
      * start with number and contains no control characters, which can be confused with
@@ -59,15 +59,29 @@ public interface FunctionFactory {
      *
      * @return signature, for example "substr(SII)"
      */
-    String getSignature();
+    public abstract String getSignature();
 
-    default boolean isGroupBy() {
+    public boolean isGroupBy() {
         return false;
     }
 
-    Function newInstance(
+    // Will auto-generate != version in FunctionParser and sets isNegated = true for subclasses
+    public boolean isNegatable() {
+        return false;
+    }
+
+    public abstract Function newInstance(
             @Transient ObjList<Function> args,
             int position,
             CairoConfiguration configuration
     ) throws SqlException;
+
+    Function newNegatedInstance(
+            @Transient ObjList<Function> args,
+            int position,
+            CairoConfiguration configuration
+    ) throws SqlException {
+        isNegated = true;
+        return newInstance(args, position, configuration);
+    }
 }

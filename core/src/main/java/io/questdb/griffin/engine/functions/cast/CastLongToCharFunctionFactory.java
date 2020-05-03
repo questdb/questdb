@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastLongToCharFunctionFactory implements FunctionFactory {
+public class CastLongToCharFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(La)";

@@ -37,7 +37,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class ConcatFunctionFactory implements FunctionFactory {
+public class ConcatFunctionFactory extends FunctionFactory {
     private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
 
     static {

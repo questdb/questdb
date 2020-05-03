@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqStrFunctionFactory implements FunctionFactory {
+public class EqStrFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(SS)";
@@ -61,6 +61,9 @@ public class EqStrFunctionFactory implements FunctionFactory {
         return new Func(position, a, b);
     }
 
+    @Override
+    public boolean isNegatable() { return true; }
+
     private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
 
@@ -71,7 +74,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(position, varFunc, constValue);
     }
 
-    private static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
+    private class NullCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
 
         public NullCheckFunc(int position, Function arg) {
@@ -86,11 +89,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getStrLen(rec) == -1L;
+            return isNegated != (arg.getStrLen(rec) == -1L);
         }
     }
 
-    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
 
@@ -107,12 +110,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(constant, arg.getStr(rec));
+            return isNegated != Chars.equalsNc(constant, arg.getStr(rec));
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-
+    private class Func extends BooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -144,7 +146,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
                 return b == null;
             }
 
-            return b != null && Chars.equals(a, b);
+            return isNegated != (b != null && Chars.equals(a, b));
         }
     }
 }

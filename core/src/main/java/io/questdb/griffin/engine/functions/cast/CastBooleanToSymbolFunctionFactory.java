@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.ObjList;
 
-public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
+public class CastBooleanToSymbolFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Tk)";

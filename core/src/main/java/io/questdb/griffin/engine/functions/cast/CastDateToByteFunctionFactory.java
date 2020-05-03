@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastDateToByteFunctionFactory implements FunctionFactory {
+public class CastDateToByteFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Mb)";

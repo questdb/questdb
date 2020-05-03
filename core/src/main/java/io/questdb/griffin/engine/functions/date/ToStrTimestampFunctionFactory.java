@@ -42,7 +42,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public class ToStrTimestampFunctionFactory implements FunctionFactory {
+public class ToStrTimestampFunctionFactory extends FunctionFactory {
 
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);

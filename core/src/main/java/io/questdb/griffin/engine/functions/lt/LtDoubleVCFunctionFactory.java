@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class LtDoubleVCFunctionFactory implements FunctionFactory {
+public class LtDoubleVCFunctionFactory extends FunctionFactory {
 
     @Override
     public String getSignature() {

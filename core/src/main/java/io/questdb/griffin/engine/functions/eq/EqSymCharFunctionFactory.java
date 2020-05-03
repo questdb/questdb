@@ -39,7 +39,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
 
-public class EqSymCharFunctionFactory implements FunctionFactory {
+public class EqSymCharFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(KA)";
@@ -70,7 +70,10 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         return new Func(position, symFunc, chrFunc);
     }
 
-    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final char constant;
 
@@ -87,11 +90,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(arg.getSymbol(rec), constant);
+            return isNegated != Chars.equalsNc(arg.getSymbol(rec), constant);
         }
     }
 
-    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final char constant;
         private int valueIndex;
@@ -109,7 +112,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == valueIndex;
+            return isNegated != (arg.getInt(rec) == valueIndex);
         }
 
         @Override
@@ -121,7 +124,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    private class Func extends BooleanFunction implements BinaryFunction {
 
         private final Function symFunc;
         private final Function chrFunc;
@@ -144,7 +147,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
+            return isNegated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
     }
 }

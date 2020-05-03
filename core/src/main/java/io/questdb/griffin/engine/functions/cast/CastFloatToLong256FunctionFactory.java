@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class CastFloatToLong256FunctionFactory implements FunctionFactory {
+public class CastFloatToLong256FunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Fh)";

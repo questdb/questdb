@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
-public class EqCharCharFunctionFactory implements FunctionFactory {
+public class EqCharCharFunctionFactory extends FunctionFactory {
     @Override
     public String getSignature() {
         return "=(AA)";
@@ -51,7 +51,10 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
         return new Func(position, chrFunc1, chrFunc2);
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    @Override
+    public boolean isNegatable() { return true; }
+
+    private class Func extends BooleanFunction implements BinaryFunction {
 
         private final Function chrFunc1;
         private final Function chrFunc2;
@@ -74,7 +77,7 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec);
+            return isNegated != (chrFunc1.getChar(rec) == chrFunc2.getChar(rec));
         }
     }
 }
