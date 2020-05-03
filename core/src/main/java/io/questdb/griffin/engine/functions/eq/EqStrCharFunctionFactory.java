@@ -54,33 +54,35 @@ public class EqStrCharFunctionFactory extends FunctionFactory {
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStr(null);
             if (str == null || str.length() != 1) {
-                return new BooleanConstant(position, false);
+                return new BooleanConstant(position, isNegated);
             }
-            return new ConstStrFunc(position, charFunc, str.charAt(0));
+            return new ConstStrFunc(position, charFunc, str.charAt(0), isNegated);
         }
 
         if (!strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstChrFunc(position, strFunc, charFunc.getChar(null));
+            return new ConstChrFunc(position, strFunc, charFunc.getChar(null), isNegated);
         }
 
         if (strFunc.isConstant() && charFunc.isConstant()) {
-            return new BooleanConstant(position, Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
+            return new BooleanConstant(position, isNegated != Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
         }
 
-        return new Func(position, strFunc, charFunc);
+        return new Func(position, strFunc, charFunc, isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
     private class ConstChrFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function strFunc;
         private final char chrConst;
 
-        public ConstChrFunc(int position, Function strFunc, char chrConst) {
+        public ConstChrFunc(int position, Function strFunc, char chrConst, boolean isNegated) {
             super(position);
             this.strFunc = strFunc;
             this.chrConst = chrConst;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -95,13 +97,15 @@ public class EqStrCharFunctionFactory extends FunctionFactory {
     }
 
     private class ConstStrFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function chrFunc;
         private final char chrConst;
 
-        public ConstStrFunc(int position, Function chrFunc, char chrConst) {
+        public ConstStrFunc(int position, Function chrFunc, char chrConst, boolean isNegated) {
             super(position);
             this.chrFunc = chrFunc;
             this.chrConst = chrConst;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -116,14 +120,15 @@ public class EqStrCharFunctionFactory extends FunctionFactory {
     }
 
     private class Func extends BooleanFunction implements BinaryFunction {
-
+        private final boolean isNegated;
         private final Function strFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function strFunc, Function chrFunc) {
+        public Func(int position, Function strFunc, Function chrFunc, boolean isNegated) {
             super(position);
             this.strFunc = strFunc;
             this.chrFunc = chrFunc;
+            this.isNegated = isNegated;
         }
 
         @Override

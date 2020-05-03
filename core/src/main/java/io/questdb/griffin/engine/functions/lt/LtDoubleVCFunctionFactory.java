@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVCFunctionFactory extends FunctionFactory {
-
     @Override
     public String getSignature() {
         return "<(Dd)";
@@ -44,19 +43,21 @@ public class LtDoubleVCFunctionFactory extends FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         double right = args.getQuick(1).getDouble(null);
         if (Double.isNaN(right)) {
-            return new BooleanConstant(position, false);
+            return new BooleanConstant(position, isNegated);
         }
-        return new FuncVC(position, args.getQuick(0), right);
+        return new FuncVC(position, args.getQuick(0), right, isNegated);
     }
 
     private static class FuncVC extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final double right;
 
-        public FuncVC(int position, Function left, double right) {
+        public FuncVC(int position, Function left, double right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

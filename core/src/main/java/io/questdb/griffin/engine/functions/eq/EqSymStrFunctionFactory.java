@@ -53,33 +53,35 @@ public class EqSymStrFunctionFactory extends FunctionFactory {
 
         // SYMBOL cannot be constant
         if (strFunc.isConstant()) {
-            return createHalfConstantFunc(position, strFunc, symFunc);
+            return createHalfConstantFunc(position, strFunc, symFunc, isNegated);
         }
-        return new Func(position, symFunc, strFunc);
+        return new Func(position, symFunc, strFunc, isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
+    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc, boolean isNegated) {
         CharSequence constValue = constFunc.getStr(null);
         SymbolFunction func = (SymbolFunction) varFunc;
         if (func.getStaticSymbolTable() != null) {
-            return new ConstCheckColumnFunc(position, func, constValue);
+            return new ConstCheckColumnFunc(position, func, constValue, isNegated);
         } else {
             if (constValue == null) {
-                return new NullCheckFunc(position, varFunc);
+                return new NullCheckFunc(position, varFunc, isNegated);
             }
-            return new ConstCheckFunc(position, varFunc, constValue);
+            return new ConstCheckFunc(position, varFunc, constValue, isNegated);
         }
     }
 
     private class NullCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg) {
+        public NullCheckFunc(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -94,13 +96,15 @@ public class EqSymStrFunctionFactory extends FunctionFactory {
     }
 
     private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
+        public ConstCheckFunc(int position, Function arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -115,14 +119,16 @@ public class EqSymStrFunctionFactory extends FunctionFactory {
     }
 
     private class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final SymbolFunction arg;
         private final CharSequence constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant) {
+        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -150,14 +156,15 @@ public class EqSymStrFunctionFactory extends FunctionFactory {
     }
 
     private class Func extends BooleanFunction implements BinaryFunction {
-
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

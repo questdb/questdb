@@ -51,35 +51,37 @@ public class EqStrFunctionFactory extends FunctionFactory {
         Function b = args.getQuick(1);
 
         if (a.isConstant() && !b.isConstant()) {
-            return createHalfConstantFunc(position, a, b);
+            return createHalfConstantFunc(position, a, b, isNegated);
         }
 
         if (!a.isConstant() && b.isConstant()) {
-            return createHalfConstantFunc(position, b, a);
+            return createHalfConstantFunc(position, b, a, isNegated);
         }
 
-        return new Func(position, a, b);
+        return new Func(position, a, b, isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
+    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc, boolean isNegated) {
         CharSequence constValue = constFunc.getStr(null);
 
         if (constValue == null) {
-            return new NullCheckFunc(position, varFunc);
+            return new NullCheckFunc(position, varFunc, isNegated);
         }
 
-        return new ConstCheckFunc(position, varFunc, constValue);
+        return new ConstCheckFunc(position, varFunc, constValue, isNegated);
     }
 
     private class NullCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg) {
+        public NullCheckFunc(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -94,13 +96,15 @@ public class EqStrFunctionFactory extends FunctionFactory {
     }
 
     private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
+        public ConstCheckFunc(int position, Function arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -115,13 +119,15 @@ public class EqStrFunctionFactory extends FunctionFactory {
     }
 
     private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -143,7 +149,7 @@ public class EqStrFunctionFactory extends FunctionFactory {
             final CharSequence b = right.getStrB(rec);
 
             if (a == null) {
-                return b == null;
+                return isNegated != (b == null);
             }
 
             return isNegated != (b != null && Chars.equals(a, b));

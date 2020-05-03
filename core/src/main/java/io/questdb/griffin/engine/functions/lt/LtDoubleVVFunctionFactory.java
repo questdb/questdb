@@ -40,20 +40,22 @@ public class LtDoubleVVFunctionFactory extends FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new FuncVV(position, args.getQuick(0), args.getQuick(1));
+        return new FuncVV(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
     private class FuncVV extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public FuncVV(int position, Function left, Function right) {
+        public FuncVV(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

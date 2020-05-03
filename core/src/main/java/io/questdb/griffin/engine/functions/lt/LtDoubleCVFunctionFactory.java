@@ -44,19 +44,21 @@ public class LtDoubleCVFunctionFactory extends FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         final double left = args.getQuick(0).getDouble(null);
         if (Double.isNaN(left)) {
-            return new BooleanConstant(position, false);
+            return new BooleanConstant(position, isNegated);
         }
-        return new FuncCV(position, left, args.getQuick(1));
+        return new FuncCV(position, left, args.getQuick(1), isNegated);
     }
 
     private static class FuncCV extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final double left;
         private final Function right;
 
-        public FuncCV(int position, double left, Function right) {
+        public FuncCV(int position, double left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

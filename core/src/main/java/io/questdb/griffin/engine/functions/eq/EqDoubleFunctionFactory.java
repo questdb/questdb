@@ -55,50 +55,52 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
         if (left.isConstant() && left.getType() == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null))) {
             switch (right.getType()) {
                 case ColumnType.INT:
-                    return new FuncIntIsNaN(position, right);
+                    return new FuncIntIsNaN(position, right, isNegated);
                 case ColumnType.LONG:
-                    return new FuncLongIsNaN(position, right);
+                    return new FuncLongIsNaN(position, right, isNegated);
                 case ColumnType.DATE:
-                    return new FuncDateIsNaN(position, right);
+                    return new FuncDateIsNaN(position, right, isNegated);
                 case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(position, right);
+                    return new FuncTimestampIsNaN(position, right, isNegated);
                 case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(position, right);
+                    return new FuncFloatIsNaN(position, right, isNegated);
                 default:
                     // double
-                    return new FuncDoubleIsNaN(position, right);
+                    return new FuncDoubleIsNaN(position, right, isNegated);
             }
         } else if (right.isConstant() && right.getType() == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null))) {
             switch (left.getType()) {
                 case ColumnType.INT:
-                    return new FuncIntIsNaN(position, left);
+                    return new FuncIntIsNaN(position, left, isNegated);
                 case ColumnType.LONG:
-                    return new FuncLongIsNaN(position, left);
+                    return new FuncLongIsNaN(position, left, isNegated);
                 case ColumnType.DATE:
-                    return new FuncDateIsNaN(position, left);
+                    return new FuncDateIsNaN(position, left, isNegated);
                 case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(position, left);
+                    return new FuncTimestampIsNaN(position, left, isNegated);
                 case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(position, left);
+                    return new FuncFloatIsNaN(position, left, isNegated);
                 default:
                     // double
-                    return new FuncDoubleIsNaN(position, left);
+                    return new FuncDoubleIsNaN(position, left, isNegated);
             }
         }
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
     protected class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         protected final Function left;
         protected final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -120,11 +122,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncIntIsNaN(int position, Function arg) {
+        public FuncIntIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -139,11 +143,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncLongIsNaN(int position, Function arg) {
+        public FuncLongIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -158,11 +164,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncDateIsNaN(int position, Function arg) {
+        public FuncDateIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -177,11 +185,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncTimestampIsNaN(int position, Function arg) {
+        public FuncTimestampIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -196,11 +206,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncFloatIsNaN(int position, Function arg) {
+        public FuncFloatIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -215,11 +227,13 @@ public class EqDoubleFunctionFactory extends FunctionFactory {
     }
 
     protected class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         protected final Function arg;
 
-        public FuncDoubleIsNaN(int position, Function arg) {
+        public FuncDoubleIsNaN(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override

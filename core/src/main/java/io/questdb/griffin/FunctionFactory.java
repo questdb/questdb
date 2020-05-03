@@ -76,12 +76,7 @@ public abstract class FunctionFactory {
             CairoConfiguration configuration
     ) throws SqlException;
 
-    Function newNegatedInstance(
-            @Transient ObjList<Function> args,
-            int position,
-            CairoConfiguration configuration
-    ) throws SqlException {
-        isNegated = true;
-        return newInstance(args, position, configuration);
+    public void setNegated(boolean isNegated) {
+        this.isNegated = isNegated;
     }
 }

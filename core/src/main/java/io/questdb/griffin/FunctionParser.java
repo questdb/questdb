@@ -342,9 +342,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     ) throws SqlException {
         Function function;
         try {
-            function = isNegated
-                    ? factory.newNegatedInstance(args, position, configuration)
-                    : factory.newInstance(args, position, configuration);
+            factory.setNegated(isNegated);
+            function = factory.newInstance(args, position, configuration);
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {

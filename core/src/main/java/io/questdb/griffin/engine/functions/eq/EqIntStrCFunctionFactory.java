@@ -46,11 +46,11 @@ public class EqIntStrCFunctionFactory extends FunctionFactory {
         try {
             final CharSequence value = args.getQuick(1).getStr(null);
             if (value == null) {
-                return new Func(position, args.getQuick(0), Numbers.INT_NaN);
+                return new Func(position, args.getQuick(0), Numbers.INT_NaN, isNegated);
             }
-            return new Func(position, args.getQuick(0), Numbers.parseInt(value));
+            return new Func(position, args.getQuick(0), Numbers.parseInt(value), isNegated);
         } catch (NumericException e) {
-            return new BooleanConstant(args.getQuick(1).getPosition(), false);
+            return new BooleanConstant(args.getQuick(1).getPosition(), isNegated);
         }
     }
 
@@ -58,13 +58,15 @@ public class EqIntStrCFunctionFactory extends FunctionFactory {
     public boolean isNegatable() { return true; }
 
     private class Func extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final int right;
 
-        public Func(int position, Function left, int right) {
+        public Func(int position, Function left, int right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

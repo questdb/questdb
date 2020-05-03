@@ -41,20 +41,22 @@ public class EqLong256FunctionFactory extends FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
     private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override

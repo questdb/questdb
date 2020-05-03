@@ -81,7 +81,7 @@ public class EqLong256StrFunctionFactory extends FunctionFactory {
                 throw SqlException.position(args.getQuick(1).getPosition()).put("value is too long");
             }
 
-            return new Func(position, args.getQuick(0), long0, long1, long2, long3);
+            return new Func(position, args.getQuick(0), long0, long1, long2, long3, isNegated);
         } catch (NumericException e) {
             throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
         }
@@ -92,19 +92,21 @@ public class EqLong256StrFunctionFactory extends FunctionFactory {
     public boolean isNegatable() { return true; }
 
     private class Func extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final long long0;
         private final long long1;
         private final long long2;
         private final long long3;
 
-        public Func(int position, Function arg, long long0, long long1, long long2, long long3) {
+        public Func(int position, Function arg, long long0, long long1, long long2, long long3, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.long0 = long0;
             this.long1 = long1;
             this.long2 = long2;
             this.long3 = long3;
+            this.isNegated = isNegated;
         }
 
         @Override

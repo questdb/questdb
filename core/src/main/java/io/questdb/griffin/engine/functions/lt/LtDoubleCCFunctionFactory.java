@@ -42,14 +42,14 @@ public class LtDoubleCCFunctionFactory extends FunctionFactory {
 
         final double left = args.getQuick(0).getDouble(null);
         if (Double.isNaN(left)) {
-            return new BooleanConstant(position, false);
+            return new BooleanConstant(position, isNegated);
         }
 
         final double right = args.getQuick(1).getDouble(null);
         if (Double.isNaN(right)) {
-            return new BooleanConstant(position, false);
+            return new BooleanConstant(position, isNegated);
         }
 
-        return new BooleanConstant(position, left < right);
+        return new BooleanConstant(position, isNegated ? left > right : left < right);
     }
 }

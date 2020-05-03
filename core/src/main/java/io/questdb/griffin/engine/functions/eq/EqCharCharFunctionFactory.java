@@ -48,21 +48,22 @@ public class EqCharCharFunctionFactory extends FunctionFactory {
         Function chrFunc1 = args.getQuick(0);
         Function chrFunc2 = args.getQuick(1);
 
-        return new Func(position, chrFunc1, chrFunc2);
+        return new Func(position, chrFunc1, chrFunc2, isNegated);
     }
 
     @Override
     public boolean isNegatable() { return true; }
 
     private class Func extends BooleanFunction implements BinaryFunction {
-
+        private final boolean isNegated;
         private final Function chrFunc1;
         private final Function chrFunc2;
 
-        public Func(int position, Function chrFunc1, Function chrFunc2) {
+        public Func(int position, Function chrFunc1, Function chrFunc2, boolean isNegated) {
             super(position);
             this.chrFunc1 = chrFunc1;
             this.chrFunc2 = chrFunc2;
+            this.isNegated = isNegated;
         }
 
         @Override
