@@ -67,7 +67,7 @@ public class LtDoubleVCFunctionFactory extends FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getDouble(rec) < right;
+            return isNegated ? left.getDouble(rec) > right : left.getDouble(rec) < right;
         }
     }
 }

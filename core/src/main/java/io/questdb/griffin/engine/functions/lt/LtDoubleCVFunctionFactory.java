@@ -68,7 +68,9 @@ public class LtDoubleCVFunctionFactory extends FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left < right.getDouble(rec);
+            return isNegated
+                ? left > right.getDouble(rec)
+                : left < right.getDouble(rec);
         }
     }
 }
