@@ -24,20 +24,33 @@
 
 package io.questdb.cairo;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+import io.questdb.cairo.TableWriter.BlockWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableWriterTest extends AbstractCairoTest {
 
@@ -737,6 +750,69 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         testOutOfOrderRecords(N);
+    }
+
+    @Test
+    public void testAddSequentialBlockNoPartitioning() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int nRows = 20;
+
+            final int timestampSz = ColumnType.sizeOf(ColumnType.TIMESTAMP);
+            final long timestampStart = Unsafe.malloc(nRows * timestampSz);
+            final long firstTimestamp = 1546300800000000l;
+
+            final int intcolSz = ColumnType.sizeOf(ColumnType.INT);
+            final long intcolStart = Unsafe.malloc(nRows * intcolSz);
+            final int firstIntcol = 1;
+
+            long timestampPos = timestampStart;
+            long timestampV = firstTimestamp;
+            long intcolPos = intcolStart;
+            long intcolV = firstIntcol;
+            for (int n = 0; n < nRows; n++) {
+                Unsafe.getUnsafe().putLong(timestampPos, timestampV);
+                timestampPos += Long.BYTES;
+                timestampV++;
+
+                Unsafe.getUnsafe().putLong(intcolPos, intcolV);
+                intcolPos += Integer.BYTES;
+                intcolV++;
+            }
+            long lastTimestamp = timestampV - 1;
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .timestamp()
+                    .col("intcol", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+            }
+
+            long offset = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                BlockWriter sblk = writer.getBlockWriter();
+                sblk.writeBlock(0, 0, timestampStart, offset, nRows * timestampSz);
+                sblk.writeBlock(0, 1, intcolStart, offset, nRows * intcolSz);
+                sblk.commit(0, firstTimestamp, lastTimestamp, nRows);
+            }
+
+            Unsafe.free(timestampStart, nRows * timestampSz);
+            Unsafe.free(intcolStart, nRows * intcolSz);
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                int nRowsWritten = 0;
+                long expectedTimestamp = firstTimestamp;
+                int expectedIntcol = firstIntcol;
+                RecordCursor cursor = reader.getCursor();
+                final Record r = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    long timestamp = r.getTimestamp(0);
+                    int intCol = r.getInt(1);
+                    nRowsWritten++;
+                    Assert.assertEquals(expectedTimestamp++, timestamp);
+                    Assert.assertEquals(expectedIntcol++, intCol);
+                }
+                Assert.assertEquals(nRows, nRowsWritten);
+            }
+        });
+
     }
 
     @Test

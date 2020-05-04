@@ -188,6 +188,7 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
+    public final BlockWriter blockWriter = new BlockWriter();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -630,6 +631,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public BlockWriter getBlockWriter() {
+        return blockWriter;
     }
 
     public long getStructureVersion() {
@@ -2787,11 +2792,6 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
-        public void putRawBytes(int index, long from, long len) {
-            getPrimaryColumn(index).putRawBytes(from, len);
-            notNull(index);
-        }
-
         public void putShort(int index, short value) {
             getPrimaryColumn(index).putShort(value);
             notNull(index);
@@ -2823,6 +2823,49 @@ public class TableWriter implements Closeable {
 
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
+        }
+    }
+
+    public class BlockWriter {
+        public void writeBlock(int partitionIndex, int columnIndex, long sourceAddress, long offset, int len) {
+            // TODO: Replication handle partition index
+            if (partitionIndex != 0) {
+                throw new RuntimeException("Partitioned tables is not implemented");
+            }
+            AppendMemory mem = getPrimaryColumn(columnIndex);
+            mem.jumpTo(offset);
+            mem.putBlockOfBytes(sourceAddress, len);
+        }
+
+        public void commit(int partitionIndex, long firstTimestamp, long lastTimestamp, int nRows) {
+            assert firstTimestamp <= lastTimestamp;
+            // TODO: Replication handle partition index
+            if (partitionIndex != 0) {
+                throw new RuntimeException("Partitioned tables is not implemented");
+            }
+
+            bumpMasterRef();
+            if (lastTimestamp < maxTimestamp) {
+                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            }
+
+            if (minTimestamp == Long.MAX_VALUE) {
+                minTimestamp = firstTimestamp;
+            }
+            TableWriter.this.prevMaxTimestamp = TableWriter.this.maxTimestamp;
+            TableWriter.this.maxTimestamp = lastTimestamp;
+
+            for (int i = 0; i < columnCount; i++) {
+                refs.setQuick(i, masterRef);
+            }
+
+            transientRowCount += nRows;
+            masterRef++;
+            if (prevMinTimestamp == Long.MAX_VALUE) {
+                prevMinTimestamp = minTimestamp;
+            }
+
+            TableWriter.this.commit();
         }
     }
 
