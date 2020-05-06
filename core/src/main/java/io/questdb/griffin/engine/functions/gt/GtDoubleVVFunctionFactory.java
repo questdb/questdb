@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 public class GtDoubleVVFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(DD)";
+        return ">(DD)";
     }
 
     @Override

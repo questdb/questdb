@@ -65,15 +65,9 @@ io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 
 # '<' operator
-io.questdb.griffin.engine.functions.lt.LtDoubleCCFunctionFactory
-io.questdb.griffin.engine.functions.lt.LtDoubleCVFunctionFactory
-io.questdb.griffin.engine.functions.lt.LtDoubleVCFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
 
 # '>' operator
-io.questdb.griffin.engine.functions.gt.GtDoubleCCFunctionFactory
-io.questdb.griffin.engine.functions.gt.GtDoubleCVFunctionFactory
-io.questdb.griffin.engine.functions.gt.GtDoubleVCFunctionFactory
 io.questdb.griffin.engine.functions.gt.GtDoubleVVFunctionFactory
 
 # '+' operator
