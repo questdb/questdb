@@ -40,7 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
-public class CastByteToSymbolFunctionFactory extends FunctionFactory {
+public class CastByteToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Bk)";

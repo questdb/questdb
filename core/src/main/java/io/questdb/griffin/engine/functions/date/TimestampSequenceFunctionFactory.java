@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class TimestampSequenceFunctionFactory extends FunctionFactory {
+public class TimestampSequenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "timestamp_sequence(nL)";

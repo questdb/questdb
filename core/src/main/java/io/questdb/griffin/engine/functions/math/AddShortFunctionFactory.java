@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.ObjList;
 
-public class AddShortFunctionFactory extends FunctionFactory {
+public class AddShortFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "+(EE)";

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -35,7 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqSymStrFunctionFactory extends FunctionFactory {
+public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(KS)";
@@ -57,9 +58,6 @@ public class EqSymStrFunctionFactory extends FunctionFactory {
         }
         return new Func(position, symFunc, strFunc, isNegated);
     }
-
-    @Override
-    public boolean isNegatable() { return true; }
 
     private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc, boolean isNegated) {
         CharSequence constValue = constFunc.getStr(null);

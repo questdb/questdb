@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class CastBooleanToStrFunctionFactory extends FunctionFactory {
+public class CastBooleanToStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ts)";

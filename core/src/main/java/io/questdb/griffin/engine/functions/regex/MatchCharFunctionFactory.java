@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class MatchCharFunctionFactory extends FunctionFactory {
+public class MatchCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "~=(Sa)";

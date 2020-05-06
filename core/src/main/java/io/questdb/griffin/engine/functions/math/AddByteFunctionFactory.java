@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.ObjList;
 
-public class AddByteFunctionFactory extends FunctionFactory {
+public class AddByteFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "+(BB)";

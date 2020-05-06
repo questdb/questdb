@@ -37,7 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 
-public class TimestampDiffFunctionFactory extends FunctionFactory {
+public class TimestampDiffFunctionFactory implements FunctionFactory {
     private static final ObjList<LongDiffFunction> diffFunctions = new ObjList<>();
     private static final int diffFunctionsMax;
 

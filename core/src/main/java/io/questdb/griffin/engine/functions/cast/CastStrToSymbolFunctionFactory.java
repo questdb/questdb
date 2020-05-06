@@ -39,7 +39,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class CastStrToSymbolFunctionFactory extends FunctionFactory {
+public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Sk)";

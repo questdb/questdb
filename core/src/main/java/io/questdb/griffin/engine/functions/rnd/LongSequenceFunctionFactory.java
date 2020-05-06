@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class LongSequenceFunctionFactory extends FunctionFactory {
+public class LongSequenceFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
 
     @Override

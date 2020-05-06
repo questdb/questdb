@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class CountGroupByFunctionFactory extends FunctionFactory {
+public class CountGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "count()";

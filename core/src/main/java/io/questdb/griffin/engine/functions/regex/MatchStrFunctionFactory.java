@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.regex.impl.PatternSyntaxException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class MatchStrFunctionFactory extends FunctionFactory {
+public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "~=(Ss)";

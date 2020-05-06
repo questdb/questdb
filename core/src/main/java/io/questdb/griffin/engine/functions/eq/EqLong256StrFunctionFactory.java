@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -36,7 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqLong256StrFunctionFactory extends FunctionFactory {
+public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(Hs)";
@@ -87,9 +88,6 @@ public class EqLong256StrFunctionFactory extends FunctionFactory {
         }
 
     }
-
-    @Override
-    public boolean isNegatable() { return true; }
 
     private class Func extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;

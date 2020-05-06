@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class MaxDateGroupByFunctionFactory extends FunctionFactory {
+public class MaxDateGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "max(M)";

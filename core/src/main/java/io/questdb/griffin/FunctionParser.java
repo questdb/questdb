@@ -342,7 +342,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     ) throws SqlException {
         Function function;
         try {
-            factory.setNegated(isNegated);
+            if (factory instanceof AbstractBooleanFunctionFactory) {
+                ((AbstractBooleanFunctionFactory) factory).setNegated(isNegated);
+            }
             function = factory.newInstance(args, position, configuration);
         } catch (SqlException e) {
             throw e;
@@ -770,16 +772,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
             overload.add(factory);
             // Add != counterparts to equality function factories
-            if (factory.isNegatable()) {
+            if (factory instanceof AbstractBooleanFunctionFactory) {
                 switch (name) {
                     case "=":
-                        name = "!" + name;
+                        name = "!=";
                         break;
                     case "<":
-                        name = ">";
+                        name = ">=";
                         break;
                     case ">":
-                        name = "<";
+                        name = "<=";
                         break;
                 }
                 index = negatedFactories.keyIndex(name);

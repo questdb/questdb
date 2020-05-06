@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.ObjList;
 
-public class CastShortToTimestampFunctionFactory extends FunctionFactory {
+public class CastShortToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(En)";

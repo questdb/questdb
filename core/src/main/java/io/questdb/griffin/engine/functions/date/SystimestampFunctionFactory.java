@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.MicrosecondClock;
 
-public class SystimestampFunctionFactory extends FunctionFactory {
+public class SystimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "systimestamp()";

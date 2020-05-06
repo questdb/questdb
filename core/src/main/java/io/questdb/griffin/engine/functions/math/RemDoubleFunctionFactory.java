@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
-public class RemDoubleFunctionFactory extends FunctionFactory {
+public class RemDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "%(DD)";

@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 
-public class MinuteOfHourFunctionFactory extends FunctionFactory {
+public class MinuteOfHourFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {

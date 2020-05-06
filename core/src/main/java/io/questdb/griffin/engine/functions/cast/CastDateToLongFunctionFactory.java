@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastDateToLongFunctionFactory extends FunctionFactory {
+public class CastDateToLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ml)";

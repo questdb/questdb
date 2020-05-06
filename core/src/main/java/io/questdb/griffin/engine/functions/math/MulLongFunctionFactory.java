@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.ObjList;
 
-public class MulLongFunctionFactory extends FunctionFactory {
+public class MulLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "*(LL)";

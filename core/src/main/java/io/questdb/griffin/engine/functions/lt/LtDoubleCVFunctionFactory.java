@@ -27,14 +27,14 @@ package io.questdb.griffin.engine.functions.lt;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class LtDoubleCVFunctionFactory extends FunctionFactory {
-
+public class LtDoubleCVFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "<(dD)";
@@ -69,7 +69,7 @@ public class LtDoubleCVFunctionFactory extends FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return isNegated
-                ? left > right.getDouble(rec)
+                ? left >= right.getDouble(rec)
                 : left < right.getDouble(rec);
         }
     }

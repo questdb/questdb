@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndBooleanFunctionFactory extends FunctionFactory {
+public class RndBooleanFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {

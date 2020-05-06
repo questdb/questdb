@@ -38,7 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndDateCCCFunctionFactory extends FunctionFactory {
+public class RndDateCCCFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_date(mmi)";

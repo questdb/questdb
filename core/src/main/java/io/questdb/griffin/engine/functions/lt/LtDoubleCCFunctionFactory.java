@@ -26,12 +26,12 @@ package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.ObjList;
 
-public class LtDoubleCCFunctionFactory extends FunctionFactory {
-
+public class LtDoubleCCFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "<(dd)";
@@ -50,6 +50,6 @@ public class LtDoubleCCFunctionFactory extends FunctionFactory {
             return new BooleanConstant(position, isNegated);
         }
 
-        return new BooleanConstant(position, isNegated ? left > right : left < right);
+        return new BooleanConstant(position, isNegated ? left >= right : left < right);
     }
 }

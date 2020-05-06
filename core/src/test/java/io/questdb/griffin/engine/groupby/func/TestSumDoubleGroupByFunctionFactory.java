@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class TestSumDoubleGroupByFunctionFactory extends FunctionFactory {
+public class TestSumDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "sum_t(D)";

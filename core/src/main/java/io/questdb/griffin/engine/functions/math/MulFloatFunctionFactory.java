@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.ObjList;
 
-public class MulFloatFunctionFactory extends FunctionFactory {
+public class MulFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "*(FF)";

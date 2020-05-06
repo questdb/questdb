@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class AbsShortFunctionFactory extends FunctionFactory {
+public class AbsShortFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "abs(E)";

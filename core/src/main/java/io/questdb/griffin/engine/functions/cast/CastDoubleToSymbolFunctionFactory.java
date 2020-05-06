@@ -41,7 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
-public class CastDoubleToSymbolFunctionFactory extends FunctionFactory {
+public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Dk)";

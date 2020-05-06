@@ -42,7 +42,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 
-public class InSymbolFunctionFactory extends FunctionFactory {
+public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "in(Kv)";

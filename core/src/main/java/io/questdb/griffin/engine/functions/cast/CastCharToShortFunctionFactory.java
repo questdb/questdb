@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class CastCharToShortFunctionFactory extends FunctionFactory {
+public class CastCharToShortFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ae)";

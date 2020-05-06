@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractEntityCastFunctionFactory extends FunctionFactory {
+public abstract class AbstractEntityCastFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return args.getQuick(0);

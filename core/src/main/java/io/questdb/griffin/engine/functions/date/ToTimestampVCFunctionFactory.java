@@ -38,7 +38,7 @@ import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
 
-public class ToTimestampVCFunctionFactory extends FunctionFactory {
+public class ToTimestampVCFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
 
     @Override

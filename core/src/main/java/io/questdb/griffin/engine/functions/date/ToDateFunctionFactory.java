@@ -38,7 +38,7 @@ import io.questdb.std.time.DateFormat;
 import io.questdb.std.time.DateFormatCompiler;
 import io.questdb.std.time.DateLocale;
 
-public class ToDateFunctionFactory extends FunctionFactory {
+public class ToDateFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
 
     @Override

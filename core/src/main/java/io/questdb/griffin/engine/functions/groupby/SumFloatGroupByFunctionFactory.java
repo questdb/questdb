@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class SumFloatGroupByFunctionFactory extends FunctionFactory {
+public class SumFloatGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "sum(F)";

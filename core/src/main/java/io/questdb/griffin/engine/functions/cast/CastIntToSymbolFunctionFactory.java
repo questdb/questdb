@@ -38,7 +38,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
-public class CastIntToSymbolFunctionFactory extends FunctionFactory {
+public class CastIntToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ik)";

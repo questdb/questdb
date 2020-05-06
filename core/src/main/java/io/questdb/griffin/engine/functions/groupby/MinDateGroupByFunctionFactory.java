@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class MinDateGroupByFunctionFactory extends FunctionFactory {
+public class MinDateGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "min(M)";

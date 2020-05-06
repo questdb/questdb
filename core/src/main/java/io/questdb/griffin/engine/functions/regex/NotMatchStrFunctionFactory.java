@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.regex.impl.PatternSyntaxException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class NotMatchStrFunctionFactory extends FunctionFactory {
+public class NotMatchStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "!~(Ss)";

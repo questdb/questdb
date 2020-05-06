@@ -38,7 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 
-public class InSymbolCursorFunctionFactory extends FunctionFactory {
+public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "in(KC)";

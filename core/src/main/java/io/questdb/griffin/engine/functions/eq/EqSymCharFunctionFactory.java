@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -39,7 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
 
-public class EqSymCharFunctionFactory extends FunctionFactory {
+public class EqSymCharFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(KA)";
@@ -69,9 +70,6 @@ public class EqSymCharFunctionFactory extends FunctionFactory {
 
         return new Func(position, symFunc, chrFunc, isNegated);
     }
-
-    @Override
-    public boolean isNegatable() { return true; }
 
     private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;

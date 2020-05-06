@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.time.MillisecondClock;
 
-public class SysdateFunctionFactory extends FunctionFactory {
+public class SysdateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "sysdate()";

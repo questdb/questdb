@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class CastStrToShortFunctionFactory extends FunctionFactory {
+public class CastStrToShortFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Se)";

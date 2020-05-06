@@ -34,7 +34,7 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-public class ClassCatalogueFunctionFactory extends FunctionFactory {
+public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
 

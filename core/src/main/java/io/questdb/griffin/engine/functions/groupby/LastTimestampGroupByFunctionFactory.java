@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class LastTimestampGroupByFunctionFactory extends FunctionFactory {
+public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "last(N)";

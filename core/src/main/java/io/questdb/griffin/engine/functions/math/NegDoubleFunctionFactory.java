@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class NegDoubleFunctionFactory extends FunctionFactory {
+public class NegDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "-(D)";

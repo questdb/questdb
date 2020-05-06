@@ -37,7 +37,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 
-public class RoundDownDoubleFunctionFactory extends FunctionFactory {
+public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {

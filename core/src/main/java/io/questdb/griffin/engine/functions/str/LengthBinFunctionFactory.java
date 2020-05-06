@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class LengthBinFunctionFactory extends FunctionFactory {
+public class LengthBinFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "length(U)";
