@@ -67,9 +67,6 @@ io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
 
-# '>' operator
-io.questdb.griffin.engine.functions.gt.GtDoubleVVFunctionFactory
-
 # '+' operator
 io.questdb.griffin.engine.functions.math.AddByteFunctionFactory
 io.questdb.griffin.engine.functions.math.AddShortFunctionFactory
