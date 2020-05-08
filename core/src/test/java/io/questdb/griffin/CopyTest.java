@@ -52,6 +52,7 @@ public class CopyTest extends AbstractCairoTest {
     private static CairoEngine engine;
     private static SqlCompiler compiler;
 
+
     public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
@@ -432,6 +433,7 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleCopy() throws Exception {
+        System.out.println("in test");
         assertMemoryLeak(() -> {
 
             compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'", sqlExecutionContext);

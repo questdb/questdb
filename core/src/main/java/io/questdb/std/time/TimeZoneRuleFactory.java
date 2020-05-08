@@ -29,6 +29,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import java.time.ZoneId;
+import java.time.zone.ZoneRulesProvider;
 import java.util.Map;
 
 public class TimeZoneRuleFactory {
@@ -40,8 +41,8 @@ public class TimeZoneRuleFactory {
 
     public TimeZoneRuleFactory() {
         int index = 0;
-        for (String z : ZoneId.getAvailableZoneIds()) {
-            ruleList.add(new TimeZoneRulesImpl(ZoneId.of(z).getRules()));
+        for (String z : ZoneRulesProvider.getAvailableZoneIds()) {
+            ruleList.add(new TimeZoneRulesImpl(ZoneRulesProvider.getRules(z, true)));
             ruleMap.put(z, index++);
         }
 

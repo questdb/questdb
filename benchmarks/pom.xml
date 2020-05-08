@@ -73,12 +73,12 @@
         <!--
             JMH version to use with this project.
           -->
-        <jmh.version>1.21</jmh.version>
+        <jmh.version>1.23</jmh.version>
 
         <!--
             Java source/target to use for compilation.
           -->
-        <javac.target>1.8</javac.target>
+        <javac.target>11</javac.target>
 
         <!--
             Name of the benchmark Uber-JAR to generate.
@@ -91,9 +91,8 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.1</version>
+                <version>3.6.1</version>
                 <configuration>
-                    <compilerVersion>${javac.target}</compilerVersion>
                     <source>${javac.target}</source>
                     <target>${javac.target}</target>
                 </configuration>

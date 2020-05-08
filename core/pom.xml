@@ -32,6 +32,7 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<nodejs.npm.cmd>npm</nodejs.npm.cmd>
 		<nodejs.version>v12.16.2</nodejs.version>
+        <javac.target>11</javac.target>
 	</properties>
 
     <version>4.3.0-SNAPSHOT</version>
@@ -65,14 +66,15 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.6.1</version>
+                <version>3.8.1</version>
                 <configuration>
-                    <!-- these args suppress warning about using internal java APIs -->
-                    <compilerArgument>-XDignore.symbol.file</compilerArgument>
+                    <compilerArgs>
+                        <arg>--add-exports</arg>
+                        <arg>java.base/jdk.internal.math=io.questdb</arg>
+                    </compilerArgs>
                     <fork>true</fork>
-                    <!-- end -->
-                    <source>1.8</source>
-                    <target>1.8</target>
+                    <source>${javac.target}</source>
+                    <target>${javac.target}</target>
                 </configuration>
             </plugin>
             <plugin>
@@ -177,7 +179,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.19</version>
                 <configuration>
-                    <argLine>-Xmx512m</argLine>
+                    <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
         </plugins>
@@ -319,7 +321,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.2.5</version>
+            <version>42.2.12</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

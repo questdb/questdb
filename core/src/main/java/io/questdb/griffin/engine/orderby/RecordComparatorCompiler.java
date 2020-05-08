@@ -64,7 +64,7 @@ public class RecordComparatorCompiler {
         asm.setupPool();
 
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/orderby/comparator"));
         int interfaceClassIndex = asm.poolClass(RecordComparator.class);
         int recordClassIndex = asm.poolClass(Record.class);
         // this is name re-use, it used on all static interfaces that compare values
