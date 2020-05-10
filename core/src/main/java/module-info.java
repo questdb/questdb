@@ -4,6 +4,9 @@ open module io.questdb {
     requires static org.jetbrains.annotations;
     requires static java.sql;
 
+    uses io.questdb.griffin.FunctionFactory;
+
+    exports io.questdb;
     exports io.questdb.cairo;
     exports io.questdb.cairo.map;
     exports io.questdb.cairo.sql;
@@ -21,6 +24,25 @@ open module io.questdb {
     exports io.questdb.cutlass.text.types;
 
     exports io.questdb.griffin;
+    exports io.questdb.griffin.engine;
+    exports io.questdb.griffin.engine.functions.rnd;
+    exports io.questdb.griffin.engine.functions.bind;
+    exports io.questdb.griffin.engine.functions.bool;
+    exports io.questdb.griffin.engine.functions.cast;
+    exports io.questdb.griffin.engine.functions.catalogue;
+    exports io.questdb.griffin.engine.functions.columns;
+    exports io.questdb.griffin.engine.functions.conditional;
+    exports io.questdb.griffin.engine.functions.constants;
+    exports io.questdb.griffin.engine.functions.date;
+    exports io.questdb.griffin.engine.functions.eq;
+    exports io.questdb.griffin.engine.functions.groupby;
+    exports io.questdb.griffin.engine.functions.gt;
+    exports io.questdb.griffin.engine.functions.lt;
+    exports io.questdb.griffin.engine.functions.math;
+    exports io.questdb.griffin.engine.functions.regex;
+    exports io.questdb.griffin.engine.functions.str;
+    exports io.questdb.griffin.engine.groupby;
+    exports io.questdb.griffin.engine.groupby.vect;
 
     exports io.questdb.std;
     exports io.questdb.std.str;
