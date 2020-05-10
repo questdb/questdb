@@ -43,7 +43,7 @@ RUN echo "PS1='🐳  \[\033[1;36m\]\h \[\033[1;34m\]\W\[\033[0;35m\] \[\033[1;36
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
-EXPOSE 8892/tcp
+EXPOSE 8812/tcp
 
 # Run questdb when the container launches
 CMD ["/app/jre/bin/java", "-cp", "/app/questdb/questdb.jar", "io.questdb.ServerMain", "-d", "/root/.questdb"]

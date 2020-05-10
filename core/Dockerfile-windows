@@ -28,7 +28,7 @@ WORKDIR /app/questdb-${QUESTDB_VERSION}
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
-EXPOSE 8892/tcp
+EXPOSE 8812/tcp
 
 # create QuestDB root directory
 RUN mkdir C:\questdb
