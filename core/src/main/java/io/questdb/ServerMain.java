@@ -30,7 +30,6 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -43,7 +42,6 @@ import java.net.URL;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -137,7 +135,6 @@ public class ServerMain {
                 break;
         }
 
-        ServiceLoader.load(FunctionFactory.class);
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final MessageBus messageBus = new MessageBusImpl();
 
