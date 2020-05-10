@@ -97,13 +97,13 @@ docker pull questdb/questdb:4.0.0
 
 To run QuestDB as interactive sandbox:
 ```
-docker run --rm -it -p 9000:9000 -p 8892:8892 questdb/questdb:4.0.0
+docker run --rm -it -p 9000:9000 -p 8812:8812 questdb/questdb:4.0.0
 ```
 You can Ctrl+C QuestDB. Container and all the data is removed when container stops.
 
 To run QuestDB sensibly, create container without running it:
 ```
-docker create --name questdb -p 9000:9000 -p 8892:8892 questdb/questdb:4.0.0
+docker create --name questdb -p 9000:9000 -p 8812:8812 questdb/questdb:4.0.0
 ```
 
 Start QuestDB
