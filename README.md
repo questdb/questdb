@@ -26,7 +26,9 @@
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
 [![All Contributors](https://img.shields.io/badge/all_contributors-4-orange.svg?style=flat-square)](#contributors-)
+
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -87,7 +89,7 @@ You can find our documentation
 
 - Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
   (AArch64/A64)**: Linux
-- Java 8 64-bit. We recommend Oracle Java 8, but OpenJDK8 will also work
+- Java 11 64-bit. We recommend Oracle Java 11, but OpenJDK 11 will also work
   (although a little slower)
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
@@ -110,12 +112,21 @@ cd questdb
 
 # Check the java version, the output should be similar to:
 #
-# java version "1.8.0_212"
-# Java(TM) SE Runtime Environment (build 1.8.0_212-b10)
-# Java HotSpot(TM) 64-Bit Server VM (build 25.212-b10, mixed mode)
+# openjdk 11.0.6 2020-01-14
+# OpenJDK Runtime Environment (build 11.0.6+10)
+# OpenJDK 64-Bit Server VM (build 11.0.6+10, mixed mode)
+#
+# For OpenJDK, for Oracle JDK you should get:
+#
+# java version "11.0.6" 2019-01-14 LTS
+# Java(TM) SE Runtime Environment 18.9 (build 11.0.6+8-LTS)
+# Java HotSpot(TM) 64-Bit Server VM 18.9 (build 11.0.6+8-LTS, mixed mode)
 java -version
 
-# remove 'skipTests' if you want to run all tests (3000+ unit tests, 3-5 mins)
+# Maven flags:
+# 1. Remove 'skipTests' if you want to run all tests (3000+ unit tests, 3-5 mins)
+# 2. You can add the parameter '-Dprofile.install-local-nodejs' if you do not want
+# to rely on a local version of NodeJS, it will be pulled by maven instead
 mvn clean package -DskipTests
 
 # replace <root_dir> with the actual directory name, example "out"
@@ -155,6 +166,7 @@ Thanks goes to these wonderful people
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
