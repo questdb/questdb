@@ -161,7 +161,7 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private interface HttpRequestProcessorBuilder {
+    public interface HttpRequestProcessorBuilder {
         HttpRequestProcessor newInstance();
     }
 
