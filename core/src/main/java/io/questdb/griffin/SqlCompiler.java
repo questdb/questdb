@@ -153,10 +153,7 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo
         );
-
-        System.err.println("SqlCompiler 5");
         this.textLoader = new TextLoader(engine);
-        System.err.println("SqlCompiler 6");
     }
 
     public static void configureLexer(GenericLexer lexer) {
