@@ -3439,7 +3439,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",
+                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -3456,8 +3456,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "FROM pg_catalog.pg_class c\n" +
                         "         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
                         "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname <> 'pg_catalog'\n" +
-                        "  AND n.nspname <> 'information_schema'\n" +
+                        "  AND n.nspname != 'pg_catalog'\n" +
+                        "  AND n.nspname != 'information_schema'\n" +
                         "  AND n.nspname !~ '^pg_toast'\n" +
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
                         "ORDER BY 1, 2"
@@ -3698,7 +3698,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from ((select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relnamespace, relkind, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname <> 'pg_catalog' and nspname <> 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name) _xQdbA1))",
+        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from ((select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relnamespace, relkind, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name) _xQdbA1))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -3716,8 +3716,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "FROM pg_catalog.pg_class c\n" +
                         "         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
                         "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname <> 'pg_catalog'\n" +
-                        "  AND n.nspname <> 'information_schema'\n" +
+                        "  AND n.nspname != 'pg_catalog'\n" +
+                        "  AND n.nspname != 'information_schema'\n" +
                         "  AND n.nspname !~ '^pg_toast'\n" +
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
                         "ORDER BY 1, 2);\n"

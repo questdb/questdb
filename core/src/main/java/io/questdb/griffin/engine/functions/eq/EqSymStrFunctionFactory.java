@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -35,7 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqSymStrFunctionFactory implements FunctionFactory {
+public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(KS)";
@@ -53,30 +54,32 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         // SYMBOL cannot be constant
         if (strFunc.isConstant()) {
-            return createHalfConstantFunc(position, strFunc, symFunc);
+            return createHalfConstantFunc(position, strFunc, symFunc, isNegated);
         }
-        return new Func(position, symFunc, strFunc);
+        return new Func(position, symFunc, strFunc, isNegated);
     }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
+    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc, boolean isNegated) {
         CharSequence constValue = constFunc.getStr(null);
         SymbolFunction func = (SymbolFunction) varFunc;
         if (func.getStaticSymbolTable() != null) {
-            return new ConstCheckColumnFunc(position, func, constValue);
+            return new ConstCheckColumnFunc(position, func, constValue, isNegated);
         } else {
             if (constValue == null) {
-                return new NullCheckFunc(position, varFunc);
+                return new NullCheckFunc(position, varFunc, isNegated);
             }
-            return new ConstCheckFunc(position, varFunc, constValue);
+            return new ConstCheckFunc(position, varFunc, constValue, isNegated);
         }
     }
 
-    private static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
+    private class NullCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg) {
+        public NullCheckFunc(int position, Function arg, boolean isNegated) {
             super(position);
             this.arg = arg;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -86,18 +89,20 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getSymbol(rec) == null;
+            return isNegated != (arg.getSymbol(rec) == null);
         }
     }
 
-    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
+        public ConstCheckFunc(int position, Function arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -107,19 +112,21 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(constant, arg.getSymbol(rec));
+            return isNegated != Chars.equalsNc(constant, arg.getSymbol(rec));
         }
     }
 
-    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final SymbolFunction arg;
         private final CharSequence constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant) {
+        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -129,7 +136,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == valueIndex;
+            return isNegated != (arg.getInt(rec) == valueIndex);
         }
 
         @Override
@@ -146,15 +153,16 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-
+    private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -176,10 +184,10 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             final CharSequence b = right.getStr(rec);
 
             if (a == null) {
-                return b == null;
+                return isNegated != (b == null);
             }
 
-            return Chars.equalsNc(a, b);
+            return isNegated != Chars.equalsNc(a, b);
         }
     }
 }

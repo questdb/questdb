@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -36,7 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqLong256StrFunctionFactory implements FunctionFactory {
+public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(Hs)";
@@ -81,33 +82,40 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
                 throw SqlException.position(args.getQuick(1).getPosition()).put("value is too long");
             }
 
-            return new Func(position, args.getQuick(0), long0, long1, long2, long3);
+            return new Func(position, args.getQuick(0), long0, long1, long2, long3, isNegated);
         } catch (NumericException e) {
             throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
         }
 
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    private class Func extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final long long0;
         private final long long1;
         private final long long2;
         private final long long3;
 
-        public Func(int position, Function arg, long long0, long long1, long long2, long long3) {
+        public Func(int position, Function arg, long long0, long long1, long long2, long long3, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.long0 = long0;
             this.long1 = long1;
             this.long2 = long2;
             this.long3 = long3;
+            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
-            return value.getLong0() == long0 && value.getLong1() == long1 && value.getLong2() == long2 && value.getLong3() == long3;
+            return isNegated != (
+                    value.getLong0() == long0 &&
+                    value.getLong1() == long1 &&
+                    value.getLong2() == long2 &&
+                    value.getLong3() == long3
+            );
         }
 
         @Override

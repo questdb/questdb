@@ -27,13 +27,14 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 
-public class EqLong256FunctionFactory implements FunctionFactory {
+public class EqLong256FunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(HH)";
@@ -41,24 +42,26 @@ public class EqLong256FunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
+    private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
             final Long256 rv = right.getLong256A(rec);
-            return lv.equals(rv);
+            return isNegated != lv.equals(rv);
         }
 
         @Override

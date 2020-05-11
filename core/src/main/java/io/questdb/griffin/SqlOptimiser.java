@@ -1647,6 +1647,9 @@ class SqlOptimiser {
                 if (reverse) {
                     node.token = "=";
                 }
+                else {
+                    node.token = "!=";
+                }
                 return node;
             default:
                 if (reverse) {
@@ -2883,6 +2886,7 @@ class SqlOptimiser {
         notOps.put("<=", NOT_OP_LESS_EQ);
         notOps.put("=", NOT_OP_EQUAL);
         notOps.put("!=", NOT_OP_NOT_EQ);
+        notOps.put("<>", NOT_OP_NOT_EQ);
 
         joinBarriers = new IntHashSet();
         joinBarriers.add(QueryModel.JOIN_OUTER);

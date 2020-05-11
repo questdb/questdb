@@ -30,7 +30,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface FunctionFactory {
-
     /**
      * Function signature in a form of "name(type...)". Name is a literal that does not
      * start with number and contains no control characters, which can be confused with
@@ -59,11 +58,9 @@ public interface FunctionFactory {
      *
      * @return signature, for example "substr(SII)"
      */
-    String getSignature();
+     String getSignature();
 
-    default boolean isGroupBy() {
-        return false;
-    }
+    default boolean isGroupBy() { return false; }
 
     Function newInstance(
             @Transient ObjList<Function> args,

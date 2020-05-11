@@ -22,25 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class LtDoubleCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testAll() throws SqlException {
-        call(10.34, 45.99999).andAssert(true);
-        call(10.99999, 10.999).andAssert(false);
-        call(Double.NaN, 10.999).andAssert(false);
-        call(54.34, Double.NaN).andAssert(false);
-        call(Double.NaN, Double.NaN).andAssert(false);
-    }
+public abstract class AbstractBooleanFunctionFactory {
+    protected boolean isNegated = false;
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new LtDoubleCCFunctionFactory();
+    public void setNegated(boolean isNegated) {
+        this.isNegated = isNegated;
     }
 }

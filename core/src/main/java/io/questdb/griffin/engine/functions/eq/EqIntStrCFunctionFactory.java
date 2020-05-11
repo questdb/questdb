@@ -22,41 +22,49 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class LtDoubleVCFunctionFactory implements FunctionFactory {
-
+public class EqIntStrCFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(Dd)";
+        return "=(Is)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return new BooleanConstant(position, false);
+        try {
+            final CharSequence value = args.getQuick(1).getStr(null);
+            if (value == null) {
+                return new Func(position, args.getQuick(0), Numbers.INT_NaN, isNegated);
+            }
+            return new Func(position, args.getQuick(0), Numbers.parseInt(value), isNegated);
+        } catch (NumericException e) {
+            return new BooleanConstant(args.getQuick(1).getPosition(), isNegated);
         }
-        return new FuncVC(position, args.getQuick(0), right);
     }
 
-    private static class FuncVC extends BooleanFunction implements UnaryFunction {
+    private class Func extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function left;
-        private final double right;
+        private final int right;
 
-        public FuncVC(int position, Function left, double right) {
+        public Func(int position, Function left, int right, boolean isNegated) {
             super(position);
             this.left = left;
             this.right = right;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -66,7 +74,7 @@ public class LtDoubleVCFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getDouble(rec) < right;
+            return isNegated != (left.getInt(rec) == right);
         }
     }
 }

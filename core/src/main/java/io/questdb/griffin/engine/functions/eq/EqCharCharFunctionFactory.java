@@ -27,12 +27,13 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
-public class EqCharCharFunctionFactory implements FunctionFactory {
+public class EqCharCharFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(AA)";
@@ -48,18 +49,19 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
         Function chrFunc1 = args.getQuick(0);
         Function chrFunc2 = args.getQuick(1);
 
-        return new Func(position, chrFunc1, chrFunc2);
+        return new Func(position, chrFunc1, chrFunc2, isNegated);
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-
+    private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function chrFunc1;
         private final Function chrFunc2;
 
-        public Func(int position, Function chrFunc1, Function chrFunc2) {
+        public Func(int position, Function chrFunc1, Function chrFunc2, boolean isNegated) {
             super(position);
             this.chrFunc1 = chrFunc1;
             this.chrFunc2 = chrFunc2;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -74,7 +76,7 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec);
+            return isNegated != (chrFunc1.getChar(rec) == chrFunc2.getChar(rec));
         }
     }
 }

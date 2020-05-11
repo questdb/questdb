@@ -71,6 +71,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> booleanFactories = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> commutativeBooleanFactories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
@@ -336,10 +338,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             FunctionFactory factory,
             @Transient ObjList<Function> args,
             int position,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            boolean isNegated,
+            boolean isFlipped
     ) throws SqlException {
         Function function;
         try {
+            if (factory instanceof AbstractBooleanFunctionFactory) {
+                ((AbstractBooleanFunctionFactory) factory).setNegated(isNegated);
+            }
+            if (isFlipped) {
+                Function tmp = args.getQuick(0);
+                args.setQuick(0, args.getQuick(1));
+                args.setQuick(1, tmp);
+            }
             function = factory.newInstance(args, position, configuration);
         } catch (SqlException e) {
             throw e;
@@ -467,6 +479,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             @Transient ObjList<Function> args
     ) throws SqlException {
         ObjList<FunctionFactory> overload = factories.get(node.token);
+        boolean isNegated = booleanFactories.get(node.token) != null;
+        boolean isFlipped = commutativeBooleanFactories.get(node.token) != null;
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);
         }
@@ -510,7 +524,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return checkAndCreateFunction(factory, args, node.position, configuration);
+                return checkAndCreateFunction(factory, args, node.position, configuration, isNegated, isFlipped);
             }
 
             // otherwise, is number of arguments the same?
@@ -644,7 +658,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         LOG.info().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
-        return checkAndCreateFunction(candidate, args, node.position, configuration);
+        return checkAndCreateFunction(candidate, args, node.position, configuration, isNegated, isFlipped);
     }
 
     private Function functionToConstant(int position, Function function) {
@@ -739,6 +753,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return factories.size();
     }
 
+    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactory>> list, String name, FunctionFactory factory) {
+        int index = list.keyIndex(name);
+        ObjList<FunctionFactory> overload;
+        if (index < 0) {
+            overload = list.valueAtQuick(index);
+        } else {
+            overload = new ObjList<>(4);
+            list.putAt(index, name, overload);
+        }
+        overload.add(factory);
+    }
+
+    // Add a factory to `factories` and optionally `extraList`
+    private void addFactory(CharSequenceObjHashMap<ObjList<FunctionFactory>> extraList, String name, FunctionFactory factory) {
+        addFactoryToList(factories, name, factory);
+        addFactoryToList(extraList, name, factory);
+    }
+
     private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories) {
         for (FunctionFactory factory : functionFactories) {
 
@@ -751,18 +783,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 continue;
             }
 
-            String name = sig.substring(0, openBraceIndex);
-            final int index = factories.keyIndex(name);
-            final ObjList<FunctionFactory> overload;
-            if (index < 0) {
-                overload = factories.valueAtQuick(index);
-            } else {
-                overload = new ObjList<>(4);
-                factories.putAt(index, name, overload);
-            }
-            overload.add(factory);
+            final String name = sig.substring(0, openBraceIndex);
+            addFactoryToList(factories, name, factory);
 
-            if (factory.isGroupBy()) {
+            // Add != counterparts to equality function factories
+            if (factory instanceof AbstractBooleanFunctionFactory) {
+                switch (name) {
+                    case "=":
+                        addFactory(booleanFactories, "!=", factory);
+                        break;
+                    case "<":
+                        // `a < b` == `a >= b`
+                        addFactory(booleanFactories, ">=", factory);
+                        if (sig.charAt(2) == sig.charAt(3)) {
+                            // `a < b` == `b > a`
+                            addFactory(commutativeBooleanFactories, ">", factory);
+                            // `a < b` == `b > a` == `b <= a`
+                            addFactory(booleanFactories, "<=", factory);
+                            addFactory(commutativeBooleanFactories, "<=", factory);
+                        }
+                        break;
+                }
+            }
+            else if (factory.isGroupBy()) {
                 groupByFunctionNames.add(name);
             }
         }

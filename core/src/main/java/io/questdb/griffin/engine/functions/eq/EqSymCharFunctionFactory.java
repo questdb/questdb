@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -39,7 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
 
-public class EqSymCharFunctionFactory implements FunctionFactory {
+public class EqSymCharFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(KA)";
@@ -61,23 +62,25 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         if (chrFunc.isConstant()) {
             final char constValue = chrFunc.getChar(null);
             if (symFunc.getStaticSymbolTable() != null) {
-                return new ConstCheckColumnFunc(position, symFunc, constValue);
+                return new ConstCheckColumnFunc(position, symFunc, constValue, isNegated);
             } else {
-                return new ConstCheckFunc(position, symFunc, constValue);
+                return new ConstCheckFunc(position, symFunc, constValue, isNegated);
             }
         }
 
-        return new Func(position, symFunc, chrFunc);
+        return new Func(position, symFunc, chrFunc, isNegated);
     }
 
-    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final Function arg;
         private final char constant;
 
-        public ConstCheckFunc(int position, Function arg, char constant) {
+        public ConstCheckFunc(int position, Function arg, char constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -87,19 +90,21 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(arg.getSymbol(rec), constant);
+            return isNegated != Chars.equalsNc(arg.getSymbol(rec), constant);
         }
     }
 
-    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+    private class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
         private final SymbolFunction arg;
         private final char constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolFunction arg, char constant) {
+        public ConstCheckColumnFunc(int position, SymbolFunction arg, char constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -109,7 +114,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == valueIndex;
+            return isNegated != (arg.getInt(rec) == valueIndex);
         }
 
         @Override
@@ -121,15 +126,16 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-
+    private class Func extends BooleanFunction implements BinaryFunction {
+        private final boolean isNegated;
         private final Function symFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function symFunc, Function chrFunc) {
+        public Func(int position, Function symFunc, Function chrFunc, boolean isNegated) {
             super(position);
             this.symFunc = symFunc;
             this.chrFunc = chrFunc;
+            this.isNegated = isNegated;
         }
 
         @Override
@@ -144,7 +150,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
+            return isNegated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
     }
 }
