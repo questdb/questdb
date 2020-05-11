@@ -170,20 +170,20 @@ public final class Os {
             if (osName.contains("Linux")) {
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
                     type = LINUX_ARM64;
-                    loadLib("/binaries/armlinux/libquestdb.so");
+                    loadLib("/io/questdb/bin/armlinux/libquestdb.so");
                 } else {
                     type = LINUX_AMD64;
-                    loadLib("/binaries/linux/libquestdb.so");
+                    loadLib("/io/questdb/bin/linux/libquestdb.so");
                 }
             } else if (osName.contains("Mac")) {
                 type = OSX; // darwin
-                loadLib("/binaries/osx/libquestdb.dylib");
+                loadLib("/io/questdb/bin/osx/libquestdb.dylib");
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
-                loadLib("/binaries/windows/libquestdb.dll");
+                loadLib("/io/questdb/bin/windows/libquestdb.dll");
             } else if (osName.contains("FreeBSD")) {
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/binaries/freebsd/libquestdb.so");
+                loadLib("/io/questdb/bin/freebsd/libquestdb.so");
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }
