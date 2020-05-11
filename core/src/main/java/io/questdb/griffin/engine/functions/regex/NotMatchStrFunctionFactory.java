@@ -31,11 +31,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.regex.impl.Matcher;
-import io.questdb.griffin.engine.functions.regex.impl.Pattern;
-import io.questdb.griffin.engine.functions.regex.impl.PatternSyntaxException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public class NotMatchStrFunctionFactory implements FunctionFactory {
     @Override
@@ -71,14 +72,14 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs == null || !matcher.reset(cs).find();
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs == null || !matcher.reset(cs).find();
         }
     }
 }

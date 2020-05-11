@@ -28,11 +28,12 @@
     <name>QuestDB Core</name>
     <description>QuestDB is High Performance Time Series Database</description>
 
-	<properties>
-		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<nodejs.npm.cmd>npm</nodejs.npm.cmd>
-		<nodejs.version>v12.16.2</nodejs.version>
-	</properties>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <nodejs.npm.cmd>npm</nodejs.npm.cmd>
+        <nodejs.version>v12.16.2</nodejs.version>
+        <javac.target>11</javac.target>
+    </properties>
 
     <version>4.3.0-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
@@ -65,20 +66,24 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.6.1</version>
+                <version>3.8.1</version>
                 <configuration>
-                    <!-- these args suppress warning about using internal java APIs -->
-                    <compilerArgument>-XDignore.symbol.file</compilerArgument>
+                    <compilerArgs>
+                        <arg>--add-exports</arg>
+                        <arg>java.base/jdk.internal.math=io.questdb</arg>
+                    </compilerArgs>
                     <fork>true</fork>
-                    <!-- end -->
-                    <source>1.8</source>
-                    <target>1.8</target>
+                    <source>${javac.target}</source>
+                    <target>${javac.target}</target>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>1.6.0</version>
+                <configuration>
+                    <longModulepath>false</longModulepath>
+                </configuration>
                 <executions>
                     <execution>
                         <id>npm-install</id>
@@ -112,6 +117,28 @@
                             <workingDirectory>../ui</workingDirectory>
                         </configuration>
                     </execution>
+                    <execution>
+                        <id>jlink</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <phase>package</phase>
+                        <configuration>
+                            <executable>${java.home}/bin/jlink</executable>
+                            <arguments>
+                                <argument>--module-path</argument>
+                                <argument>${build.outputDirectory}</argument>
+                                <argument>--add-modules</argument>
+                                <argument>io.questdb</argument>
+                                <argument>--output</argument>
+                                <argument>${build.directory}/runtime</argument>
+                                <argument>--no-header-files</argument>
+                                <argument>--no-man-pages</argument>
+                                <argument>--compress=2</argument>
+                            </arguments>
+                            <workingDirectory>../core</workingDirectory>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -140,23 +167,8 @@
                 <version>3.0.0</version>
                 <configuration>
                     <tarLongFileMode>posix</tarLongFileMode>
-                    <descriptors>
-                        <descriptor>src/main/assembly/assembly.xml</descriptor>
-                    </descriptors>
                 </configuration>
                 <executions>
-                    <execution>
-                        <id>create-jar</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/main/assembly/assembly.xml</descriptor>
-                            </descriptors>
-                        </configuration>
-                    </execution>
                     <execution>
                         <id>create-binary</id>
                         <phase>package</phase>
@@ -170,6 +182,19 @@
                             <finalName>questdb-${project.version}</finalName>
                         </configuration>
                     </execution>
+                    <execution>
+                        <id>create-runtime</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/main/assembly/runtime.xml</descriptor>
+                            </descriptors>
+                            <finalName>questdb-${project.version}</finalName>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -177,7 +202,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.19</version>
                 <configuration>
-                    <argLine>-Xmx512m</argLine>
+                    <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
         </plugins>
@@ -251,8 +276,8 @@
                     </plugin>
                 </plugins>
             </build>
-	      </profile>
-		    <profile>
+        </profile>
+        <profile>
             <id>install-local-nodejs</id>
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
@@ -283,7 +308,7 @@
                     </plugin>
                 </plugins>
             </build>
-		    </profile>
+        </profile>
         <profile>
             <id>platform-windows</id>
             <activation>
@@ -319,7 +344,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.2.5</version>
+            <version>42.2.12</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

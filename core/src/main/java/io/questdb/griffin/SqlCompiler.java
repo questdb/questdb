@@ -222,7 +222,7 @@ public class SqlCompiler implements Closeable {
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
@@ -1105,6 +1105,7 @@ public class SqlCompiler implements Closeable {
                 }
             } finally {
                 textLoader.clear();
+                Unsafe.free(buf, len);
             }
         } catch (TextException e) {
             // we do not expect JSON exception here

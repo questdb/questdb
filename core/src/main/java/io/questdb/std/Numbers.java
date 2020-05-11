@@ -25,8 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-import sun.misc.DoubleConsts;
-import sun.misc.FDBigInteger;
+import jdk.internal.math.FDBigInteger;
 
 import java.util.Arrays;
 
@@ -39,6 +38,11 @@ public final class Numbers {
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;
     public final static int pow10max;
+    public static final int SIGNIFICAND_WIDTH = 53;
+    private static final int EXP_BIAS = 1023;
+    private static final long SIGN_BIT_MASK = 0x8000000000000000L;
+    private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
+    private static final long SIGNIF_BIT_MASK = 0x000FFFFFFFFFFFFFL;
     private static final int[] SMALL_5_POW = new int[]{1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125};
     private static final long[] LONG_5_POW = new long[]{1L, 5L, 25L, 125L, 625L, 3125L, 15625L, 78125L, 390625L, 1953125L, 9765625L, 48828125L, 244140625L, 1220703125L, 6103515625L, 30517578125L, 152587890625L, 762939453125L, 3814697265625L, 19073486328125L, 95367431640625L, 476837158203125L, 2384185791015625L, 11920928955078125L, 59604644775390625L, 298023223876953125L, 1490116119384765625L};
     private static final int MAX_SMALL_BIN_EXP = 62;
@@ -55,242 +59,10 @@ public final class Numbers {
     private static final LongHexAppender[] longHexAppender = new LongHexAppender[Long.SIZE + 1];
     private static final LongHexAppender[] longHexAppenderPad64 = new LongHexAppender[Long.SIZE + 1];
     private static final int[] N_5_BITS = new int[]{0, 3, 5, 7, 10, 12, 14, 17, 19, 21, 24, 26, 28, 31, 33, 35, 38, 40, 42, 45, 47, 49, 52, 54, 56, 59, 61};
-    private static final int EXP_SHIFT = DoubleConsts.SIGNIFICAND_WIDTH - 1;
-    static final long EXP_ONE = ((long) DoubleConsts.EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
+    private static final int EXP_SHIFT = SIGNIFICAND_WIDTH - 1;
+    static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
-
-    static {
-        pow10 = new long[20];
-        pow10max = 18;
-        pow10[0] = 1;
-        for (int i = 1; i < pow10.length; i++) {
-            pow10[i] = pow10[i - 1] * 10;
-        }
-
-        hexNumbers = new int[128];
-        Arrays.fill(hexNumbers, -1);
-        hexNumbers['0'] = 0;
-        hexNumbers['1'] = 1;
-        hexNumbers['2'] = 2;
-        hexNumbers['3'] = 3;
-        hexNumbers['4'] = 4;
-        hexNumbers['5'] = 5;
-        hexNumbers['6'] = 6;
-        hexNumbers['7'] = 7;
-        hexNumbers['8'] = 8;
-        hexNumbers['9'] = 9;
-        hexNumbers['A'] = 10;
-        hexNumbers['a'] = 10;
-        hexNumbers['B'] = 11;
-        hexNumbers['b'] = 11;
-        hexNumbers['C'] = 12;
-        hexNumbers['c'] = 12;
-        hexNumbers['D'] = 13;
-        hexNumbers['d'] = 13;
-        hexNumbers['E'] = 14;
-        hexNumbers['e'] = 14;
-        hexNumbers['F'] = 15;
-        hexNumbers['f'] = 15;
-    }
-
-    static {
-        final LongHexAppender a4 = Numbers::appendLongHex4;
-        longHexAppender[0] = a4;
-        longHexAppender[1] = a4;
-        longHexAppender[2] = a4;
-        longHexAppender[3] = a4;
-        longHexAppender[4] = a4;
-
-        final LongHexAppender a8 = Numbers::appendLongHex8;
-        longHexAppender[5] = a8;
-        longHexAppender[6] = a8;
-        longHexAppender[7] = a8;
-        longHexAppender[8] = a8;
-
-        LongHexAppender a12 = Numbers::appendLongHex12;
-        longHexAppender[9] = a12;
-        longHexAppender[10] = a12;
-        longHexAppender[11] = a12;
-        longHexAppender[12] = a12;
-
-        LongHexAppender a16 = Numbers::appendLongHex16;
-        longHexAppender[13] = a16;
-        longHexAppender[14] = a16;
-        longHexAppender[15] = a16;
-        longHexAppender[16] = a16;
-
-        LongHexAppender a20 = Numbers::appendLongHex20;
-        longHexAppender[17] = a20;
-        longHexAppender[18] = a20;
-        longHexAppender[19] = a20;
-        longHexAppender[20] = a20;
-
-        LongHexAppender a24 = Numbers::appendLongHex24;
-        longHexAppender[21] = a24;
-        longHexAppender[22] = a24;
-        longHexAppender[23] = a24;
-        longHexAppender[24] = a24;
-
-        LongHexAppender a28 = Numbers::appendLongHex28;
-        longHexAppender[25] = a28;
-        longHexAppender[26] = a28;
-        longHexAppender[27] = a28;
-        longHexAppender[28] = a28;
-
-        LongHexAppender a32 = Numbers::appendLongHex32;
-        longHexAppender[29] = a32;
-        longHexAppender[30] = a32;
-        longHexAppender[31] = a32;
-        longHexAppender[32] = a32;
-
-        LongHexAppender a36 = Numbers::appendLongHex36;
-        longHexAppender[33] = a36;
-        longHexAppender[34] = a36;
-        longHexAppender[35] = a36;
-        longHexAppender[36] = a36;
-
-        LongHexAppender a40 = Numbers::appendLongHex40;
-        longHexAppender[37] = a40;
-        longHexAppender[38] = a40;
-        longHexAppender[39] = a40;
-        longHexAppender[40] = a40;
-
-        LongHexAppender a44 = Numbers::appendLongHex44;
-        longHexAppender[41] = a44;
-        longHexAppender[42] = a44;
-        longHexAppender[43] = a44;
-        longHexAppender[44] = a44;
-
-        LongHexAppender a48 = Numbers::appendLongHex48;
-        longHexAppender[45] = a48;
-        longHexAppender[46] = a48;
-        longHexAppender[47] = a48;
-        longHexAppender[48] = a48;
-
-        LongHexAppender a52 = Numbers::appendLongHex52;
-        longHexAppender[49] = a52;
-        longHexAppender[50] = a52;
-        longHexAppender[51] = a52;
-        longHexAppender[52] = a52;
-
-        LongHexAppender a56 = Numbers::appendLongHex56;
-        longHexAppender[53] = a56;
-        longHexAppender[54] = a56;
-        longHexAppender[55] = a56;
-        longHexAppender[56] = a56;
-
-        LongHexAppender a60 = Numbers::appendLongHex60;
-        longHexAppender[57] = a60;
-        longHexAppender[58] = a60;
-        longHexAppender[59] = a60;
-        longHexAppender[60] = a60;
-
-        LongHexAppender a64 = Numbers::appendLongHex64;
-        longHexAppender[61] = a64;
-        longHexAppender[62] = a64;
-        longHexAppender[63] = a64;
-        longHexAppender[64] = a64;
-    }
-
-    static {
-        final LongHexAppender a4 = Numbers::appendLongHex4Pad64;
-        longHexAppenderPad64[0] = a4;
-        longHexAppenderPad64[1] = a4;
-        longHexAppenderPad64[2] = a4;
-        longHexAppenderPad64[3] = a4;
-        longHexAppenderPad64[4] = a4;
-
-        final LongHexAppender a8 = Numbers::appendLongHex8Pad64;
-        longHexAppenderPad64[5] = a8;
-        longHexAppenderPad64[6] = a8;
-        longHexAppenderPad64[7] = a8;
-        longHexAppenderPad64[8] = a8;
-
-        LongHexAppender a12 = Numbers::appendLongHex12Pad64;
-        longHexAppenderPad64[9] = a12;
-        longHexAppenderPad64[10] = a12;
-        longHexAppenderPad64[11] = a12;
-        longHexAppenderPad64[12] = a12;
-
-        LongHexAppender a16 = Numbers::appendLongHex16Pad64;
-        longHexAppenderPad64[13] = a16;
-        longHexAppenderPad64[14] = a16;
-        longHexAppenderPad64[15] = a16;
-        longHexAppenderPad64[16] = a16;
-
-        LongHexAppender a20 = Numbers::appendLongHex20Pad64;
-        longHexAppenderPad64[17] = a20;
-        longHexAppenderPad64[18] = a20;
-        longHexAppenderPad64[19] = a20;
-        longHexAppenderPad64[20] = a20;
-
-        LongHexAppender a24 = Numbers::appendLongHex24Pad64;
-        longHexAppenderPad64[21] = a24;
-        longHexAppenderPad64[22] = a24;
-        longHexAppenderPad64[23] = a24;
-        longHexAppenderPad64[24] = a24;
-
-        LongHexAppender a28 = Numbers::appendLongHex28Pad64;
-        longHexAppenderPad64[25] = a28;
-        longHexAppenderPad64[26] = a28;
-        longHexAppenderPad64[27] = a28;
-        longHexAppenderPad64[28] = a28;
-
-        LongHexAppender a32 = Numbers::appendLongHex32Pad64;
-        longHexAppenderPad64[29] = a32;
-        longHexAppenderPad64[30] = a32;
-        longHexAppenderPad64[31] = a32;
-        longHexAppenderPad64[32] = a32;
-
-        LongHexAppender a36 = Numbers::appendLongHex36Pad64;
-        longHexAppenderPad64[33] = a36;
-        longHexAppenderPad64[34] = a36;
-        longHexAppenderPad64[35] = a36;
-        longHexAppenderPad64[36] = a36;
-
-        LongHexAppender a40 = Numbers::appendLongHex40Pad64;
-        longHexAppenderPad64[37] = a40;
-        longHexAppenderPad64[38] = a40;
-        longHexAppenderPad64[39] = a40;
-        longHexAppenderPad64[40] = a40;
-
-        LongHexAppender a44 = Numbers::appendLongHex44Pad64;
-        longHexAppenderPad64[41] = a44;
-        longHexAppenderPad64[42] = a44;
-        longHexAppenderPad64[43] = a44;
-        longHexAppenderPad64[44] = a44;
-
-        LongHexAppender a48 = Numbers::appendLongHex48Pad64;
-        longHexAppenderPad64[45] = a48;
-        longHexAppenderPad64[46] = a48;
-        longHexAppenderPad64[47] = a48;
-        longHexAppenderPad64[48] = a48;
-
-        LongHexAppender a52 = Numbers::appendLongHex52Pad64;
-        longHexAppenderPad64[49] = a52;
-        longHexAppenderPad64[50] = a52;
-        longHexAppenderPad64[51] = a52;
-        longHexAppenderPad64[52] = a52;
-
-        LongHexAppender a56 = Numbers::appendLongHex56Pad64;
-        longHexAppenderPad64[53] = a56;
-        longHexAppenderPad64[54] = a56;
-        longHexAppenderPad64[55] = a56;
-        longHexAppenderPad64[56] = a56;
-
-        LongHexAppender a60 = Numbers::appendLongHex60;
-        longHexAppenderPad64[57] = a60;
-        longHexAppenderPad64[58] = a60;
-        longHexAppenderPad64[59] = a60;
-        longHexAppenderPad64[60] = a60;
-
-        LongHexAppender a64 = Numbers::appendLongHex64;
-        longHexAppenderPad64[61] = a64;
-        longHexAppenderPad64[62] = a64;
-        longHexAppenderPad64[63] = a64;
-        longHexAppenderPad64[64] = a64;
-    }
 
     private Numbers() {
     }
@@ -470,6 +242,51 @@ public final class Numbers {
         }
     }
 
+    public static void append(CharSink sink, double value) {
+        final char[] digits = sink.getDoubleDigitsBuffer();
+        final long doubleBits = Double.doubleToRawLongBits(value);
+        boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
+        long significantBitCount = doubleBits & SIGNIF_BIT_MASK;
+        int binExp = (int) ((doubleBits & EXP_BIT_MASK) >> EXP_SHIFT);
+
+        if (binExp == 2047) {
+            if (significantBitCount == 0L) {
+                if (negative) {
+                    sink.put("-Infinity");
+                } else {
+                    sink.put("Infinity");
+                }
+            } else {
+                sink.put("NaN");
+            }
+        } else {
+            int fractionLen;
+            if (binExp == 0) {
+                if (significantBitCount == 0L) {
+                    if (negative) {
+                        sink.put("-0.0");
+                    } else {
+                        sink.put("0.0");
+                    }
+                    return;
+                }
+
+                int leadingZeros = Long.numberOfLeadingZeros(significantBitCount);
+                int shift = leadingZeros - (63 - EXP_SHIFT);
+                significantBitCount <<= shift;
+                binExp = 1 - shift;
+                fractionLen = 64 - leadingZeros;
+            } else {
+                significantBitCount |= FRACT_HOB;
+                fractionLen = 53;
+            }
+
+            binExp -= EXP_BIAS;
+
+            append(binExp, significantBitCount, fractionLen, negative, digits, sink);
+        }
+    }
+
     public static void appendHex(CharSink sink, final int value) {
         int i = value;
         if (i < 0) {
@@ -540,167 +357,6 @@ public final class Numbers {
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value - 1);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
-    }
-
-    private static void appendLongHex4(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
-    }
-
-    private static void appendLongHex4Pad64(CharSink sink, long value) {
-        sink.put("00000000000000");
-        appendLongHex4(sink, value);
-    }
-
-    private static void appendLongHex64(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 60) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 56) & 0xf)]);
-        appendLongHex56(sink, value);
-    }
-
-    private static void appendLongHex60(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 56) & 0xf)]);
-        appendLongHex56(sink, value);
-    }
-
-    private static void appendLongHex56Pad64(CharSink sink, long value) {
-        sink.put("00");
-        appendLongHex56(sink, value);
-    }
-
-    private static void appendLongHex56(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 52) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 48) & 0xf)]);
-        appendLongHex48(sink, value);
-    }
-
-    private static void appendLongHex52Pad64(CharSink sink, long value) {
-        sink.put("00");
-        appendLongHex52(sink, value);
-    }
-
-    private static void appendLongHex52(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 48) & 0xf)]);
-        appendLongHex48(sink, value);
-    }
-
-    private static void appendLongHex48Pad64(CharSink sink, long value) {
-        sink.put("0000");
-        appendLongHex48(sink, value);
-    }
-
-    private static void appendLongHex48(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 44) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 40) & 0xf)]);
-        appendLongHex40(sink, value);
-    }
-
-    private static void appendLongHex44Pad64(CharSink sink, long value) {
-        sink.put("0000");
-        appendLongHex44(sink, value);
-    }
-
-    private static void appendLongHex44(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 40) & 0xf)]);
-        appendLongHex40(sink, value);
-    }
-
-    private static void appendLongHex40(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 36) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 32) & 0xf)]);
-        appendLongHex32(sink, value);
-    }
-
-    private static void appendLongHex28Pad64(CharSink sink, long value) {
-        sink.put("00000000");
-        appendLongHex28(sink, value);
-    }
-
-    private static void appendLongHex28(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 24) & 0xf)]);
-        appendLongHex24(sink, value);
-    }
-
-    private static void appendLongHex20Pad64(CharSink sink, long value) {
-        sink.put("0000000000");
-        appendLongHex20(sink, value);
-    }
-
-    private static void appendLongHex20(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 16) & 0xf)]);
-        appendLongHex16(sink, value);
-    }
-
-    private static void appendLongHex12Pad64(CharSink sink, long value) {
-        sink.put("000000000000");
-        appendLongHex12(sink, value);
-    }
-
-    private static void appendLongHex12(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 8) & 0xf)]);
-        appendLongHex8(sink, value);
-    }
-
-    private static void appendLongHex36Pad64(CharSink sink, long value) {
-        sink.put("000000");
-        appendLongHex36(sink, value);
-    }
-
-    private static void appendLongHex40Pad64(CharSink sink, long value) {
-        sink.put("000000");
-        appendLongHex40(sink, value);
-    }
-
-    private static void appendLongHex36(CharSink sink, long value) {
-        appendLongHexPad(sink, hexDigits[(int) ((value >> 32) & 0xf)]);
-        appendLongHex32(sink, value);
-    }
-
-    private static void appendLongHex32Pad64(CharSink sink, long value) {
-        sink.put("00000000");
-        appendLongHex32(sink, value);
-    }
-
-    private static void appendLongHex32(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 28) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 24) & 0xf)]);
-        appendLongHex24(sink, value);
-    }
-
-    private static void appendLongHex24Pad64(CharSink sink, long value) {
-        sink.put("0000000000");
-        appendLongHex24(sink, value);
-    }
-
-    private static void appendLongHex24(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 20) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 16) & 0xf)]);
-        appendLongHex16(sink, value);
-    }
-
-    private static void appendLongHex16Pad64(CharSink sink, long value) {
-        sink.put("000000000000");
-        appendLongHex16(sink, value);
-    }
-
-    private static void appendLongHex16(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 12) & 0xf)]);
-        sink.put(hexDigits[(int) ((value >> 8) & 0xf)]);
-        appendLongHex8(sink, value);
-    }
-
-    private static void appendLongHex8Pad64(CharSink sink, long value) {
-        sink.put("00000000000000");
-        appendLongHex8(sink, value);
-    }
-
-    private static void appendLongHex8(CharSink sink, long value) {
-        sink.put(hexDigits[(int) ((value >> 4) & 0xf)]);
-        sink.put(hexDigits[(int) ((value) & 0xf)]);
-    }
-
-    private static void appendLongHexPad(CharSink sink, char hexDigit) {
-        sink.put('0');
-        sink.put(hexDigit);
     }
 
     public static void appendHexPadded(CharSink sink, final int value) {
@@ -787,6 +443,29 @@ public final class Numbers {
             sink.put(hexDigits[(c = c % 0x100) / 0x10]);
             sink.put(hexDigits[c % 0x10]);
         }
+    }
+
+    public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
+        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
+            return;
+        }
+        sink.put("0x");
+        if (d != 0) {
+            appendLong256Four(a, b, c, d, sink);
+            return;
+        }
+
+        if (c != 0) {
+            appendLong256Three(a, b, c, sink);
+            return;
+        }
+
+        if (b != 0) {
+            appendLong256Two(a, b, sink);
+            return;
+        }
+
+        appendHex(sink, a, false);
     }
 
     public static void appendTrim(CharSink sink, double value, final int inScale) {
@@ -1384,6 +1063,14 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
+    public static double roundDownNegScale(double value, int scale) {
+        return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
+    }
+
+    public static double roundDownPosScale(double value, int scale) {
+        return value < 0 ? -roundDown00PosScale(-value, scale) : roundDown00PosScale(value, scale);
+    }
+
     public static double roundHalfDown(double value, int scale) throws NumericException {
         if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfDown0(value, scale) : -roundHalfDown0(-value, scale);
@@ -1398,8 +1085,42 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
-    private static double roundHalfUp0(double value, int scale) {
-        return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
+    public static double roundHalfEven0NegScale(double value, int scale) {
+        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
+        long remainder = val % 100;
+
+        if (remainder < 50) {
+            return roundDown00NegScale(value, scale);
+        }
+
+        if (remainder == 50 && ((long) (value * pow10dNeg[scale]) & 1) == 0) {
+            return roundDown00NegScale(value, scale);
+        }
+
+        return roundUp00NegScale(value, scale);
+    }
+
+    public static double roundHalfEven0PosScale(double value, int scale) {
+        long val = (long) (value * pow10[scale] * pow10[2] + TOLERANCE);
+        long remainder = val % 100;
+
+        if (remainder < 50) {
+            return roundDown00PosScale(value, scale);
+        }
+
+        if (remainder == 50 && ((long) (value * pow10[scale]) & 1) == 0) {
+            return roundDown00PosScale(value, scale);
+        }
+
+        return roundUp00PosScale(value, scale);
+    }
+
+    public static double roundHalfEvenNegScale(double value, int scale) {
+        return value > 0 ? roundHalfEven0NegScale(value, scale) : -roundHalfEven0NegScale(-value, scale);
+    }
+
+    public static double roundHalfEvenPosScale(double value, int scale) {
+        return value > 0 ? roundHalfEven0PosScale(value, scale) : -roundHalfEven0PosScale(-value, scale);
     }
 
     public static double roundHalfUp(double value, int scale) throws NumericException {
@@ -1409,11 +1130,192 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
+    public static double roundHalfUpNegScale(double value, int scale) {
+        return value < 0 ? -roundHalfUp0NegScale(-value, scale) : roundHalfUp0NegScale(value, scale);
+    }
+
+    public static double roundHalfUpPosScale(double value, int scale) {
+        return value < 0 ? -roundHalfUp0PosScale(-value, scale) : roundHalfUp0PosScale(value, scale);
+    }
+
     public static double roundUp(double value, int scale) throws NumericException {
         if (scale < pow10max && scale > -pow10max) {
             return roundUp0(value, scale);
         }
         throw NumericException.INSTANCE;
+    }
+
+    public static double roundUpNegScale(double value, int scale) {
+        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
+    }
+
+    public static double roundUpPosScale(double value, int scale) {
+        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
+    }
+
+    private static void appendLongHex4(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
+    }
+
+    private static void appendLongHex4Pad64(CharSink sink, long value) {
+        sink.put("00000000000000");
+        appendLongHex4(sink, value);
+    }
+
+    private static void appendLongHex64(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 60) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 56) & 0xf)]);
+        appendLongHex56(sink, value);
+    }
+
+    private static void appendLongHex60(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 56) & 0xf)]);
+        appendLongHex56(sink, value);
+    }
+
+    private static void appendLongHex56Pad64(CharSink sink, long value) {
+        sink.put("00");
+        appendLongHex56(sink, value);
+    }
+
+    private static void appendLongHex56(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 52) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 48) & 0xf)]);
+        appendLongHex48(sink, value);
+    }
+
+    private static void appendLongHex52Pad64(CharSink sink, long value) {
+        sink.put("00");
+        appendLongHex52(sink, value);
+    }
+
+    private static void appendLongHex52(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 48) & 0xf)]);
+        appendLongHex48(sink, value);
+    }
+
+    private static void appendLongHex48Pad64(CharSink sink, long value) {
+        sink.put("0000");
+        appendLongHex48(sink, value);
+    }
+
+    private static void appendLongHex48(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 44) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 40) & 0xf)]);
+        appendLongHex40(sink, value);
+    }
+
+    private static void appendLongHex44Pad64(CharSink sink, long value) {
+        sink.put("0000");
+        appendLongHex44(sink, value);
+    }
+
+    private static void appendLongHex44(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 40) & 0xf)]);
+        appendLongHex40(sink, value);
+    }
+
+    private static void appendLongHex40(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 36) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 32) & 0xf)]);
+        appendLongHex32(sink, value);
+    }
+
+    private static void appendLongHex28Pad64(CharSink sink, long value) {
+        sink.put("00000000");
+        appendLongHex28(sink, value);
+    }
+
+    private static void appendLongHex28(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 24) & 0xf)]);
+        appendLongHex24(sink, value);
+    }
+
+    private static void appendLongHex20Pad64(CharSink sink, long value) {
+        sink.put("0000000000");
+        appendLongHex20(sink, value);
+    }
+
+    private static void appendLongHex20(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 16) & 0xf)]);
+        appendLongHex16(sink, value);
+    }
+
+    private static void appendLongHex12Pad64(CharSink sink, long value) {
+        sink.put("000000000000");
+        appendLongHex12(sink, value);
+    }
+
+    private static void appendLongHex12(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 8) & 0xf)]);
+        appendLongHex8(sink, value);
+    }
+
+    private static void appendLongHex36Pad64(CharSink sink, long value) {
+        sink.put("000000");
+        appendLongHex36(sink, value);
+    }
+
+    private static void appendLongHex40Pad64(CharSink sink, long value) {
+        sink.put("000000");
+        appendLongHex40(sink, value);
+    }
+
+    private static void appendLongHex36(CharSink sink, long value) {
+        appendLongHexPad(sink, hexDigits[(int) ((value >> 32) & 0xf)]);
+        appendLongHex32(sink, value);
+    }
+
+    private static void appendLongHex32Pad64(CharSink sink, long value) {
+        sink.put("00000000");
+        appendLongHex32(sink, value);
+    }
+
+    private static void appendLongHex32(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 28) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 24) & 0xf)]);
+        appendLongHex24(sink, value);
+    }
+
+    private static void appendLongHex24Pad64(CharSink sink, long value) {
+        sink.put("0000000000");
+        appendLongHex24(sink, value);
+    }
+
+    private static void appendLongHex24(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 20) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 16) & 0xf)]);
+        appendLongHex16(sink, value);
+    }
+
+    private static void appendLongHex16Pad64(CharSink sink, long value) {
+        sink.put("000000000000");
+        appendLongHex16(sink, value);
+    }
+
+    private static void appendLongHex16(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 12) & 0xf)]);
+        sink.put(hexDigits[(int) ((value >> 8) & 0xf)]);
+        appendLongHex8(sink, value);
+    }
+
+    private static void appendLongHex8Pad64(CharSink sink, long value) {
+        sink.put("00000000000000");
+        appendLongHex8(sink, value);
+    }
+
+    private static void appendLongHex8(CharSink sink, long value) {
+        sink.put(hexDigits[(int) ((value >> 4) & 0xf)]);
+        sink.put(hexDigits[(int) ((value) & 0xf)]);
+    }
+
+    private static void appendLongHexPad(CharSink sink, char hexDigit) {
+        sink.put('0');
+        sink.put(hexDigit);
+    }
+
+    private static double roundHalfUp0(double value, int scale) {
+        return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
 
     private static void appendInt10(CharSink sink, int i) {
@@ -1465,6 +1367,8 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
+
+    //////////////////////
 
     private static void appendInt6(CharSink sink, int i) {
         int c;
@@ -1589,49 +1493,9 @@ public final class Numbers {
         return val % 100 < 50 ? roundDown0PosScale(value, scale) : roundUp0PosScale(value, scale);
     }
 
-    //////////////////////
-
     private static double roundHalfUp0NegScale(double value, int scale) {
         long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
         return val % 100 < 50 ? roundDown0NegScale(value, scale) : roundUp0NegScale(value, scale);
-    }
-
-    public static double roundHalfEven0NegScale(double value, int scale) {
-        long val = (long) (value * pow10dNeg[scale] * pow10[2] + TOLERANCE);
-        long remainder = val % 100;
-
-        if (remainder < 50) {
-            return roundDown00NegScale(value, scale);
-        }
-
-        if (remainder == 50 && ((long) (value * pow10dNeg[scale]) & 1) == 0) {
-            return roundDown00NegScale(value, scale);
-        }
-
-        return roundUp00NegScale(value, scale);
-    }
-
-    public static double roundHalfEven0PosScale(double value, int scale) {
-        long val = (long) (value * pow10[scale] * pow10[2] + TOLERANCE);
-        long remainder = val % 100;
-
-        if (remainder < 50) {
-            return roundDown00PosScale(value, scale);
-        }
-
-        if (remainder == 50 && ((long) (value * pow10[scale]) & 1) == 0) {
-            return roundDown00PosScale(value, scale);
-        }
-
-        return roundUp00PosScale(value, scale);
-    }
-
-    public static double roundHalfEvenNegScale(double value, int scale) {
-        return value > 0 ? roundHalfEven0NegScale(value, scale) : -roundHalfEven0NegScale(-value, scale);
-    }
-
-    public static double roundHalfEvenPosScale(double value, int scale) {
-        return value > 0 ? roundHalfEven0PosScale(value, scale) : -roundHalfEven0PosScale(-value, scale);
     }
 
     private static double roundHalfEven0(double value, int scale) {
@@ -1697,30 +1561,6 @@ public final class Numbers {
         long powten = pow10[scale];
         double powtenNeg = pow10dNeg[scale];
         return ((double) (long) (value * powtenNeg - TOLERANCE)) * powten;
-    }
-
-    public static double roundDownPosScale(double value, int scale) {
-        return value < 0 ? -roundDown00PosScale(-value, scale) : roundDown00PosScale(value, scale);
-    }
-
-    public static double roundDownNegScale(double value, int scale) {
-        return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
-    }
-
-    public static double roundHalfUpNegScale(double value, int scale) {
-        return value < 0 ? -roundHalfUp0NegScale(-value, scale) : roundHalfUp0NegScale(value, scale);
-    }
-
-    public static double roundHalfUpPosScale(double value, int scale) {
-        return value < 0 ? -roundHalfUp0PosScale(-value, scale) : roundHalfUp0PosScale(value, scale);
-    }
-
-    public static double roundUpNegScale(double value, int scale) {
-        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
-    }
-
-    public static double roundUpPosScale(double value, int scale) {
-        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
     }
 
     private static void appendLong10(CharSink sink, long i) {
@@ -2014,29 +1854,6 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
-    public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
-        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
-            return;
-        }
-        sink.put("0x");
-        if (d != 0) {
-            appendLong256Four(a, b, c, d, sink);
-            return;
-        }
-
-        if (c != 0) {
-            appendLong256Three(a, b, c, sink);
-            return;
-        }
-
-        if (b != 0) {
-            appendLong256Two(a, b, sink);
-            return;
-        }
-
-        appendHex(sink, a, false);
-    }
-
     private static void appendLong256Two(long a, long b, CharSink sink) {
         appendHex(sink, b, false);
         appendHex(sink, a, true);
@@ -2050,51 +1867,6 @@ public final class Numbers {
     private static void appendLong256Four(long a, long b, long c, long d, CharSink sink) {
         appendLong256Three(b, c, d, sink);
         appendHex(sink, a, true);
-    }
-
-    public static void append(CharSink sink, double value) {
-        final char[] digits = sink.getDoubleDigitsBuffer();
-        final long doubleBits = Double.doubleToRawLongBits(value);
-        boolean negative = (doubleBits & DoubleConsts.SIGN_BIT_MASK) != 0L;
-        long significantBitCount = doubleBits & DoubleConsts.SIGNIF_BIT_MASK;
-        int binExp = (int) ((doubleBits & DoubleConsts.EXP_BIT_MASK) >> EXP_SHIFT);
-
-        if (binExp == 2047) {
-            if (significantBitCount == 0L) {
-                if (negative) {
-                    sink.put("-Infinity");
-                } else {
-                    sink.put("Infinity");
-                }
-            } else {
-                sink.put("NaN");
-            }
-        } else {
-            int fractionLen;
-            if (binExp == 0) {
-                if (significantBitCount == 0L) {
-                    if (negative) {
-                        sink.put("-0.0");
-                    } else {
-                        sink.put("0.0");
-                    }
-                    return;
-                }
-
-                int leadingZeros = Long.numberOfLeadingZeros(significantBitCount);
-                int shift = leadingZeros - (63 - EXP_SHIFT);
-                significantBitCount <<= shift;
-                binExp = 1 - shift;
-                fractionLen = 64 - leadingZeros;
-            } else {
-                significantBitCount |= FRACT_HOB;
-                fractionLen = 53;
-            }
-
-            binExp -= DoubleConsts.EXP_BIAS;
-
-            append(binExp, significantBitCount, fractionLen, negative, digits, sink);
-        }
     }
 
     private static int insignificantDigitsForPow2(int p2) {
@@ -2467,17 +2239,17 @@ public final class Numbers {
     }
 
     private static int estimateDecExp(long fractBits, int binExp) {
-        double d2 = Double.longBitsToDouble(EXP_ONE | fractBits & DoubleConsts.SIGNIF_BIT_MASK);
+        double d2 = Double.longBitsToDouble(EXP_ONE | fractBits & SIGNIF_BIT_MASK);
         double d = (d2 - 1.5D) * 0.289529654D + 0.176091259D + (double) binExp * 0.301029995663981D;
         long dBits = Double.doubleToRawLongBits(d);
-        int exponent = (int) ((dBits & DoubleConsts.EXP_BIT_MASK) >> EXP_SHIFT) - DoubleConsts.EXP_BIAS;
-        final boolean isNegative = (dBits & DoubleConsts.SIGN_BIT_MASK) != 0L;
+        int exponent = (int) ((dBits & EXP_BIT_MASK) >> EXP_SHIFT) - EXP_BIAS;
+        final boolean isNegative = (dBits & SIGN_BIT_MASK) != 0L;
         if (exponent > -1 && exponent < 52) {
-            final long mask = DoubleConsts.SIGNIF_BIT_MASK >> exponent;
-            final int r = (int) ((dBits & DoubleConsts.SIGNIF_BIT_MASK | FRACT_HOB) >> EXP_SHIFT - exponent);
+            final long mask = SIGNIF_BIT_MASK >> exponent;
+            final int r = (int) ((dBits & SIGNIF_BIT_MASK | FRACT_HOB) >> EXP_SHIFT - exponent);
             return isNegative ? ((mask & dBits) == 0L ? -r : -r - 1) : r;
         } else if (exponent < 0) {
-            return (dBits & ~DoubleConsts.SIGN_BIT_MASK) == 0L ? 0 : (isNegative ? -1 : 0);
+            return (dBits & ~SIGN_BIT_MASK) == 0L ? 0 : (isNegative ? -1 : 0);
         } else {
             return (int) d;
         }
@@ -2486,5 +2258,237 @@ public final class Numbers {
     @FunctionalInterface
     private interface LongHexAppender {
         void append(CharSink sink, long value);
+    }
+
+    static {
+        pow10 = new long[20];
+        pow10max = 18;
+        pow10[0] = 1;
+        for (int i = 1; i < pow10.length; i++) {
+            pow10[i] = pow10[i - 1] * 10;
+        }
+
+        hexNumbers = new int[128];
+        Arrays.fill(hexNumbers, -1);
+        hexNumbers['0'] = 0;
+        hexNumbers['1'] = 1;
+        hexNumbers['2'] = 2;
+        hexNumbers['3'] = 3;
+        hexNumbers['4'] = 4;
+        hexNumbers['5'] = 5;
+        hexNumbers['6'] = 6;
+        hexNumbers['7'] = 7;
+        hexNumbers['8'] = 8;
+        hexNumbers['9'] = 9;
+        hexNumbers['A'] = 10;
+        hexNumbers['a'] = 10;
+        hexNumbers['B'] = 11;
+        hexNumbers['b'] = 11;
+        hexNumbers['C'] = 12;
+        hexNumbers['c'] = 12;
+        hexNumbers['D'] = 13;
+        hexNumbers['d'] = 13;
+        hexNumbers['E'] = 14;
+        hexNumbers['e'] = 14;
+        hexNumbers['F'] = 15;
+        hexNumbers['f'] = 15;
+    }
+
+    static {
+        final LongHexAppender a4 = Numbers::appendLongHex4;
+        longHexAppender[0] = a4;
+        longHexAppender[1] = a4;
+        longHexAppender[2] = a4;
+        longHexAppender[3] = a4;
+        longHexAppender[4] = a4;
+
+        final LongHexAppender a8 = Numbers::appendLongHex8;
+        longHexAppender[5] = a8;
+        longHexAppender[6] = a8;
+        longHexAppender[7] = a8;
+        longHexAppender[8] = a8;
+
+        LongHexAppender a12 = Numbers::appendLongHex12;
+        longHexAppender[9] = a12;
+        longHexAppender[10] = a12;
+        longHexAppender[11] = a12;
+        longHexAppender[12] = a12;
+
+        LongHexAppender a16 = Numbers::appendLongHex16;
+        longHexAppender[13] = a16;
+        longHexAppender[14] = a16;
+        longHexAppender[15] = a16;
+        longHexAppender[16] = a16;
+
+        LongHexAppender a20 = Numbers::appendLongHex20;
+        longHexAppender[17] = a20;
+        longHexAppender[18] = a20;
+        longHexAppender[19] = a20;
+        longHexAppender[20] = a20;
+
+        LongHexAppender a24 = Numbers::appendLongHex24;
+        longHexAppender[21] = a24;
+        longHexAppender[22] = a24;
+        longHexAppender[23] = a24;
+        longHexAppender[24] = a24;
+
+        LongHexAppender a28 = Numbers::appendLongHex28;
+        longHexAppender[25] = a28;
+        longHexAppender[26] = a28;
+        longHexAppender[27] = a28;
+        longHexAppender[28] = a28;
+
+        LongHexAppender a32 = Numbers::appendLongHex32;
+        longHexAppender[29] = a32;
+        longHexAppender[30] = a32;
+        longHexAppender[31] = a32;
+        longHexAppender[32] = a32;
+
+        LongHexAppender a36 = Numbers::appendLongHex36;
+        longHexAppender[33] = a36;
+        longHexAppender[34] = a36;
+        longHexAppender[35] = a36;
+        longHexAppender[36] = a36;
+
+        LongHexAppender a40 = Numbers::appendLongHex40;
+        longHexAppender[37] = a40;
+        longHexAppender[38] = a40;
+        longHexAppender[39] = a40;
+        longHexAppender[40] = a40;
+
+        LongHexAppender a44 = Numbers::appendLongHex44;
+        longHexAppender[41] = a44;
+        longHexAppender[42] = a44;
+        longHexAppender[43] = a44;
+        longHexAppender[44] = a44;
+
+        LongHexAppender a48 = Numbers::appendLongHex48;
+        longHexAppender[45] = a48;
+        longHexAppender[46] = a48;
+        longHexAppender[47] = a48;
+        longHexAppender[48] = a48;
+
+        LongHexAppender a52 = Numbers::appendLongHex52;
+        longHexAppender[49] = a52;
+        longHexAppender[50] = a52;
+        longHexAppender[51] = a52;
+        longHexAppender[52] = a52;
+
+        LongHexAppender a56 = Numbers::appendLongHex56;
+        longHexAppender[53] = a56;
+        longHexAppender[54] = a56;
+        longHexAppender[55] = a56;
+        longHexAppender[56] = a56;
+
+        LongHexAppender a60 = Numbers::appendLongHex60;
+        longHexAppender[57] = a60;
+        longHexAppender[58] = a60;
+        longHexAppender[59] = a60;
+        longHexAppender[60] = a60;
+
+        LongHexAppender a64 = Numbers::appendLongHex64;
+        longHexAppender[61] = a64;
+        longHexAppender[62] = a64;
+        longHexAppender[63] = a64;
+        longHexAppender[64] = a64;
+    }
+
+    static {
+        final LongHexAppender a4 = Numbers::appendLongHex4Pad64;
+        longHexAppenderPad64[0] = a4;
+        longHexAppenderPad64[1] = a4;
+        longHexAppenderPad64[2] = a4;
+        longHexAppenderPad64[3] = a4;
+        longHexAppenderPad64[4] = a4;
+
+        final LongHexAppender a8 = Numbers::appendLongHex8Pad64;
+        longHexAppenderPad64[5] = a8;
+        longHexAppenderPad64[6] = a8;
+        longHexAppenderPad64[7] = a8;
+        longHexAppenderPad64[8] = a8;
+
+        LongHexAppender a12 = Numbers::appendLongHex12Pad64;
+        longHexAppenderPad64[9] = a12;
+        longHexAppenderPad64[10] = a12;
+        longHexAppenderPad64[11] = a12;
+        longHexAppenderPad64[12] = a12;
+
+        LongHexAppender a16 = Numbers::appendLongHex16Pad64;
+        longHexAppenderPad64[13] = a16;
+        longHexAppenderPad64[14] = a16;
+        longHexAppenderPad64[15] = a16;
+        longHexAppenderPad64[16] = a16;
+
+        LongHexAppender a20 = Numbers::appendLongHex20Pad64;
+        longHexAppenderPad64[17] = a20;
+        longHexAppenderPad64[18] = a20;
+        longHexAppenderPad64[19] = a20;
+        longHexAppenderPad64[20] = a20;
+
+        LongHexAppender a24 = Numbers::appendLongHex24Pad64;
+        longHexAppenderPad64[21] = a24;
+        longHexAppenderPad64[22] = a24;
+        longHexAppenderPad64[23] = a24;
+        longHexAppenderPad64[24] = a24;
+
+        LongHexAppender a28 = Numbers::appendLongHex28Pad64;
+        longHexAppenderPad64[25] = a28;
+        longHexAppenderPad64[26] = a28;
+        longHexAppenderPad64[27] = a28;
+        longHexAppenderPad64[28] = a28;
+
+        LongHexAppender a32 = Numbers::appendLongHex32Pad64;
+        longHexAppenderPad64[29] = a32;
+        longHexAppenderPad64[30] = a32;
+        longHexAppenderPad64[31] = a32;
+        longHexAppenderPad64[32] = a32;
+
+        LongHexAppender a36 = Numbers::appendLongHex36Pad64;
+        longHexAppenderPad64[33] = a36;
+        longHexAppenderPad64[34] = a36;
+        longHexAppenderPad64[35] = a36;
+        longHexAppenderPad64[36] = a36;
+
+        LongHexAppender a40 = Numbers::appendLongHex40Pad64;
+        longHexAppenderPad64[37] = a40;
+        longHexAppenderPad64[38] = a40;
+        longHexAppenderPad64[39] = a40;
+        longHexAppenderPad64[40] = a40;
+
+        LongHexAppender a44 = Numbers::appendLongHex44Pad64;
+        longHexAppenderPad64[41] = a44;
+        longHexAppenderPad64[42] = a44;
+        longHexAppenderPad64[43] = a44;
+        longHexAppenderPad64[44] = a44;
+
+        LongHexAppender a48 = Numbers::appendLongHex48Pad64;
+        longHexAppenderPad64[45] = a48;
+        longHexAppenderPad64[46] = a48;
+        longHexAppenderPad64[47] = a48;
+        longHexAppenderPad64[48] = a48;
+
+        LongHexAppender a52 = Numbers::appendLongHex52Pad64;
+        longHexAppenderPad64[49] = a52;
+        longHexAppenderPad64[50] = a52;
+        longHexAppenderPad64[51] = a52;
+        longHexAppenderPad64[52] = a52;
+
+        LongHexAppender a56 = Numbers::appendLongHex56Pad64;
+        longHexAppenderPad64[53] = a56;
+        longHexAppenderPad64[54] = a56;
+        longHexAppenderPad64[55] = a56;
+        longHexAppenderPad64[56] = a56;
+
+        LongHexAppender a60 = Numbers::appendLongHex60;
+        longHexAppenderPad64[57] = a60;
+        longHexAppenderPad64[58] = a60;
+        longHexAppenderPad64[59] = a60;
+        longHexAppenderPad64[60] = a60;
+
+        LongHexAppender a64 = Numbers::appendLongHex64;
+        longHexAppenderPad64[61] = a64;
+        longHexAppenderPad64[62] = a64;
+        longHexAppenderPad64[63] = a64;
+        longHexAppenderPad64[64] = a64;
     }
 }

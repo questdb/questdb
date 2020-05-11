@@ -37,25 +37,36 @@ import io.questdb.std.*;
 import io.questdb.std.time.Dates;
 import sun.misc.Signal;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
+import java.io.*;
 import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Properties;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
-
-import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class ServerMain {
-    public ServerMain(String[] args) throws Exception {
+    public static void deleteOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        deleteDirContentsOrException(file);
+
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
+            throw new RuntimeException("Cannot delete file " + file);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
         System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
         if (args.length < 1) {
             System.err.println("Root directory name expected");
@@ -69,13 +80,14 @@ public class ServerMain {
 
         final CharSequenceObjHashMap<String> optHash = hashArgs(args);
 
+        final Log log = LogFactory.getLog("server-main");
         // expected flags:
         // -d <root dir> = sets root directory
         // -f = forces copy of site to root directory even if site exists
         // -n = disables handling of HUP signal
 
         final String rootDirectory = optHash.get("-d");
-        extractSite(rootDirectory, optHash.get("-f") != null);
+        extractSite(rootDirectory, optHash.get("-f") != null, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
@@ -96,30 +108,30 @@ public class ServerMain {
             path.$();
 
             if (io.questdb.std.Files.mkdirs(path, configuration.getCairoConfiguration().getMkDirMode()) != 0) {
-                System.err.println("Could not create database root directory: " + path.toString());
+                log.error().$("could not create database root [dir=").$(path).$(']').$();
                 System.exit(30);
             } else {
-                System.out.println("Database root is '" + path + "'");
+                log.info().$("database root [dir=").$(path).$(']').$();
             }
         }
         switch (Os.type) {
             case Os.WINDOWS:
-                System.out.println("OS: windows-amd64 " + Vect.getSupportedInstructionSetName());
+                log.info().$("OS: windows-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_AMD64:
-                System.out.println("OS: linux-amd64" + Vect.getSupportedInstructionSetName());
+                log.info().$("OS: linux-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX:
-                System.out.println("OS: apple-amd64" + Vect.getSupportedInstructionSetName());
+                log.info().$("OS: apple-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_ARM64:
-                System.out.println("OS: linux-arm64" + Vect.getSupportedInstructionSetName());
+                log.info().$("OS: linux-arm64 ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.FREEBSD:
-                System.out.println("OS: freebsd-amd64" + Vect.getSupportedInstructionSetName());
+                log.info().$("OS: freebsd-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                System.err.println("Unsupported OS");
+                log.error().$("Unsupported OS ").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
 
@@ -127,7 +139,6 @@ public class ServerMain {
         final MessageBus messageBus = new MessageBusImpl();
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final Log log = LogFactory.getLog("server-main");
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
@@ -178,28 +189,6 @@ public class ServerMain {
         }));
     }
 
-    public static void deleteOrException(File file) {
-        if (!file.exists()) {
-            return;
-        }
-        deleteDirContentsOrException(file);
-
-        int retryCount = 3;
-        boolean deleted = false;
-        while (retryCount > 0 && !(deleted = file.delete())) {
-            retryCount--;
-            Thread.yield();
-        }
-
-        if (!deleted) {
-            throw new RuntimeException("Cannot delete file " + file);
-        }
-    }
-
-    public static void main(String[] args) throws Exception {
-        new ServerMain(args);
-    }
-
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
         CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
         String flag = null;
@@ -227,86 +216,57 @@ public class ServerMain {
         return optHash;
     }
 
-    private static void extractSite(String dir, boolean force) throws URISyntaxException, IOException {
-        System.out.println("Preparing site content...");
-        URL url = ServerMain.class.getResource("/site/");
-        String[] components = url.toURI().toString().split("!");
-        FileSystem fs = null;
-        final Path source;
-        final int sourceLen;
-        if (components.length > 1) {
-            fs = FileSystems.newFileSystem(URI.create(components[0]), new HashMap<>());
-            source = fs.getPath(components[1]);
-            sourceLen = source.toAbsolutePath().toString().length();
-        } else {
-            source = Paths.get(url.toURI());
-            sourceLen = source.toAbsolutePath().toString().length() + 1;
-        }
-
-        try {
-            final Path target = Paths.get(dir);
-            final EnumSet<FileVisitOption> walkOptions = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
-            final CopyOption[] copyOptions = new CopyOption[]{COPY_ATTRIBUTES, REPLACE_EXISTING};
-
-            if (force) {
-                File pub = new File(dir, "public");
-                if (pub.exists()) {
-                    delete(pub);
-                }
-            }
-
-            Files.walkFileTree(source, walkOptions, Integer.MAX_VALUE, new FileVisitor<Path>() {
-
-                private boolean skip = true;
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    if (skip) {
-                        skip = false;
-                    } else {
-                        try {
-                            doCopy(dir);
-                        } catch (FileAlreadyExistsException ignore) {
-                        } catch (IOException x) {
-                            return FileVisitResult.SKIP_SUBTREE;
+    private static void extractSite(String dir, boolean force, Log log) throws IOException {
+        final String publicZip = "/io/questdb/site/public.zip";
+        final byte[] buffer = new byte[1024 * 1024];
+        try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(dir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(force, buffer, dest, zip, log);
                         }
+                        zip.closeEntry();
                     }
-                    return FileVisitResult.CONTINUE;
                 }
-
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    doCopy(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
-                    return FileVisitResult.CONTINUE;
-                }
-
-                private void doCopy(Path dir) throws IOException {
-                    Path to = toDestination(dir);
-                    Files.copy(dir, to, copyOptions);
-                    System.out.println("Extracted " + dir + " -> " + to);
-                }
-
-                private Path toDestination(final Path path) {
-                    final Path tmp = path.toAbsolutePath();
-                    return target.resolve(tmp.toString().substring(sourceLen));
-                }
-            });
-        } finally {
-            System.out.println("Site content is ready");
-            if (fs != null) {
-                fs.close();
+            } else {
+                log.error().$("could not find site [resource=").$(publicZip).$(']').$();
             }
         }
+        copyConfResource(dir, force, buffer, "conf/date.formats", log);
+        copyConfResource(dir, force, buffer, "conf/mime.types", log);
+        copyConfResource(dir, force, buffer, "conf/server.conf", log);
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        File out = new File(dir, res);
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+            if (is != null) {
+                copyInputStream(force, buffer, out, is, log);
+            }
+        }
+    }
+
+    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
+        final boolean exists = out.exists();
+        if (force || !exists) {
+            File dir = out.getParentFile();
+            if (!dir.exists() && !dir.mkdirs()) {
+                log.error().$("could not create directory [path=").$(dir).$(']').$();
+                return;
+            }
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                int n;
+                while ((n = is.read(buffer, 0, buffer.length)) > 0) {
+                    fos.write(buffer, 0, n);
+                }
+            }
+            log.info().$("extracted [path=").$(out).$(']').$();
+            return;
+        }
+        log.debug().$("skipped [path=").$(out).$(']').$();
     }
 
     private static void deleteDirContentsOrException(File file) {
@@ -346,11 +306,7 @@ public class ServerMain {
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
 
-    static void delete(File file) {
-        deleteOrException(file);
-    }
-
-    private String getVersion() throws IOException {
+    private static String getVersion() throws IOException {
         Enumeration<URL> resources = ServerMain.class.getClassLoader()
                 .getResources("META-INF/MANIFEST.MF");
         while (resources.hasMoreElements()) {
@@ -365,11 +321,11 @@ public class ServerMain {
         return "[DEVELOPMENT]";
     }
 
-    protected void shutdownQuestDb(final WorkerPool workerPool,
-                                   final CairoEngine cairoEngine,
-                                   final HttpServer httpServer,
-                                   final PGWireServer pgWireServer,
-                                   final AbstractLineProtoReceiver lineProtocolReceiver
+    protected static void shutdownQuestDb(final WorkerPool workerPool,
+                                          final CairoEngine cairoEngine,
+                                          final HttpServer httpServer,
+                                          final PGWireServer pgWireServer,
+                                          final AbstractLineProtoReceiver lineProtocolReceiver
     ) {
         lineProtocolReceiver.halt();
         workerPool.halt();
@@ -379,7 +335,7 @@ public class ServerMain {
         Misc.free(lineProtocolReceiver);
     }
 
-    protected void startQuestDb(
+    protected static void startQuestDb(
             final WorkerPool workerPool,
             final AbstractLineProtoReceiver lineProtocolReceiver,
             final Log log

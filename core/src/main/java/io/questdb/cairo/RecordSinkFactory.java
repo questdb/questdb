@@ -33,7 +33,7 @@ public class RecordSinkFactory {
     public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
         asm.init(RecordSink.class);
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
         int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");

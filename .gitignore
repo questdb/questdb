@@ -6,8 +6,7 @@ out
 benchmarks/target
 core/target
 core/node
-core/src/main/resources/site/public
-*.iml
+core/src/main/resources/io/questdb/site/public
 deploy*.bat
 win64svc/cmake-build-debug
 win64svc/build
@@ -21,4 +20,3 @@ core/CMakeCache.txt
 **/.project
 **/.settings
 **/.classpath
-**/bin

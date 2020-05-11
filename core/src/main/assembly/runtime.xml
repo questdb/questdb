@@ -23,26 +23,28 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>all</id>
+    <id>win-amd64</id>
     <formats>
         <format>tar.gz</format>
     </formats>
     <includeBaseDirectory>false</includeBaseDirectory>
+    <files>
+        <file>
+            <source>../LICENSE.txt</source>
+            <outputDirectory>questdb-${artifact.version}-win-amd64/legal</outputDirectory>
+        </file>
+    </files>
     <fileSets>
         <fileSet>
-            <directory>${project.basedir}/src</directory>
-            <outputDirectory>src</outputDirectory>
+            <directory>src/main/bin</directory>
+            <includes>
+                <include>*.exe</include>
+            </includes>
+            <outputDirectory>questdb-${artifact.version}-win-amd64/bin</outputDirectory>
         </fileSet>
         <fileSet>
-            <directory>${project.build.directory}/site</directory>
-            <outputDirectory>docs</outputDirectory>
+            <directory>target/runtime</directory>
+            <outputDirectory>questdb-${artifact.version}-win-amd64</outputDirectory>
         </fileSet>
     </fileSets>
-    <dependencySets>
-        <dependencySet>
-            <outputDirectory>/</outputDirectory>
-            <useProjectArtifact>true</useProjectArtifact>
-            <scope>runtime</scope>
-        </dependencySet>
-    </dependencySets>
 </assembly>

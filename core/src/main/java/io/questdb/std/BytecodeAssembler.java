@@ -393,7 +393,7 @@ public class BytecodeAssembler {
     public <T> T newInstance() {
         Class<T> x = loadClass(host);
         try {
-            return x.newInstance();
+            return x.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
             LOG.error().$("Failed to create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;

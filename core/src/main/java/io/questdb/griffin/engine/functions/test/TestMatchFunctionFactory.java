@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.str;
+package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
-import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -42,16 +41,14 @@ public class TestMatchFunctionFactory implements FunctionFactory {
     private static final AtomicInteger topCounter = new AtomicInteger();
     private static final AtomicInteger closeCount = new AtomicInteger();
 
+    public static boolean assertAPI() {
+        return openCounter.get() > 0 && topCounter.get() > 0 && closeCount.get() == 1;
+    }
+
     public static void clear() {
         openCounter.set(0);
         topCounter.set(0);
         closeCount.set(0);
-    }
-
-    public static void assertAPI() {
-        Assert.assertTrue(openCounter.get() > 0);
-        Assert.assertTrue(topCounter.get() > 0);
-        Assert.assertEquals(1, closeCount.get());
     }
 
     @Override

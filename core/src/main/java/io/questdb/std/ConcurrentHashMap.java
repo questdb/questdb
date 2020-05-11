@@ -887,9 +887,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     // ConcurrentMap methods
 
     private static long initialSeed() {
-        String pp = java.security.AccessController.doPrivileged(
-                new sun.security.action.GetPropertyAction(
-                        "java.util.secureRandomSeed"));
+        String pp = System.getProperty("java.util.secureRandomSeed");
+
         if (pp != null && pp.equalsIgnoreCase("true")) {
             byte[] seedBytes = java.security.SecureRandom.getSeed(8);
             long s = (long) (seedBytes[0]) & 0xffL;
@@ -2063,7 +2062,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * A padded cell for distributing counts.  Adapted from LongAdder
      * and Striped64.  See their internal docs for explanation.
      */
-    @sun.misc.Contended
     static final class CounterCell {
         final long value;
 

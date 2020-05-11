@@ -22,13 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {

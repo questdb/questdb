@@ -34,7 +34,7 @@ include_directories($ENV{JAVA_HOME}/include/)
 
 if (APPLE)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
+    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.c
@@ -46,7 +46,7 @@ elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for FreeBSD")
         include_directories($ENV{JAVA_HOME}/include/freebsd/)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/freebsd)
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
         set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/freebsd/kqueue.c
@@ -59,10 +59,10 @@ elseif (UNIX)
         include_directories($ENV{JAVA_HOME}/include/linux/)
         message(${CMAKE_SYSTEM_PROCESSOR})
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/armlinux)
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
             set(AARCH64 1)
         else ()
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
         endif ()
         set(
             SOURCE_FILES ${SOURCE_FILES}
@@ -78,7 +78,7 @@ endif (APPLE)
 
 if (WIN32)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
+    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
