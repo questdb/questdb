@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.func;
+package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
@@ -35,13 +35,13 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+public class TestSumTDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     // allocate just to test that close() is correctly invoked
     private final long mem = Unsafe.malloc(1024);
     private int valueIndex;
 
-    public TestSumDoubleGroupByFunction(int position, @NotNull Function arg) {
+    public TestSumTDoubleGroupByFunction(int position, @NotNull Function arg) {
         super(position);
         this.arg = arg;
     }

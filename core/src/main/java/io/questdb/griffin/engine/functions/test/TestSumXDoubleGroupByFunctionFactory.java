@@ -22,14 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.std.ObjList;
 
-public class TestSumDoubleGroupByFunctionFactory implements FunctionFactory {
+public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "sumx(DS)";

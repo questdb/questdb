@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -62,7 +63,6 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.date;
     exports io.questdb.griffin.engine.functions.eq;
     exports io.questdb.griffin.engine.functions.groupby;
-    exports io.questdb.griffin.engine.functions.gt;
     exports io.questdb.griffin.engine.functions.lt;
     exports io.questdb.griffin.engine.functions.math;
     exports io.questdb.griffin.engine.functions.regex;
@@ -77,6 +77,11 @@ open module io.questdb {
     exports io.questdb.mp;
 
     provides FunctionFactory with
+            // test functions
+            io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
+            TestSumXDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.bool.OrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.AndFunctionFactory,
             io.questdb.griffin.engine.functions.bool.NotFunctionFactory,
@@ -91,11 +96,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
-//                  '<>'
-            io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NotEqIntFunctionFactory,
-//                  '>'
-            io.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
 //                   '+' operator
@@ -133,7 +134,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    # '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NotEqIntStrCFunctionFactory,
 //                    # 'to_char',
             io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory,

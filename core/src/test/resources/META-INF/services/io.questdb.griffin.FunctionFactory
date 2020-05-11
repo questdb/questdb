@@ -46,12 +46,34 @@
 #
 ################################################################################
 
-io.questdb.griffin.engine.functions.str.TestMatchFunctionFactory
-io.questdb.griffin.engine.functions.TestSumDoubleGroupByFunctionFactory
-io.questdb.griffin.engine.groupby.func.TestSumDoubleGroupByFunctionFactory
-io.questdb.griffin.engine.groupby.func.TestSumStringGroupByFunctionFactory
+################################################################################
+#     ___                  _   ____  ____
+#    / _ \ _   _  ___  ___| |_|  _ \| __ )
+#   | | | | | | |/ _ \/ __| __| | | |  _ \
+#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#    \__\_\\__,_|\___||___/\__|____/|____/
+#
+#  Copyright (c) 2014-2019 Appsicle
+#  Copyright (c) 2019-2020 QuestDB
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+################################################################################
 
-
+io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
+io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
@@ -69,13 +91,7 @@ io.questdb.griffin.engine.functions.eq.EqStrCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
-
-# '<>'
-io.questdb.griffin.engine.functions.eq.NotEqStrFunctionFactory
-io.questdb.griffin.engine.functions.eq.NotEqIntFunctionFactory
-
-# '>'
-io.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
@@ -122,7 +138,6 @@ io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory
 
 # '!~'
 io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
-io.questdb.griffin.engine.functions.eq.NotEqIntStrCFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
