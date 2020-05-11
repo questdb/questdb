@@ -149,13 +149,19 @@ public class ServerMain {
 
         final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine);
 
-        final PGWireServer pgWireServer = PGWireServer.create(
+        final PGWireServer pgWireServer;
+        if (null != configuration.getPGWireConfiguration()) {
+            pgWireServer = PGWireServer
+                    .create(
                 configuration.getPGWireConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
                 messageBus
         );
+        } else {
+            pgWireServer = null;
+        }
 
         final AbstractLineProtoReceiver lineProtocolReceiver;
 
@@ -343,7 +349,9 @@ public class ServerMain {
     ) {
         lineProtocolReceiver.halt();
         workerPool.halt();
-        Misc.free(pgWireServer);
+        if (null != pgWireServer) {
+            Misc.free(pgWireServer);
+        }
         Misc.free(httpServer);
         Misc.free(cairoEngine);
         Misc.free(lineProtocolReceiver);

@@ -110,12 +110,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
-    private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
-    };
+    private final PGWireConfiguration pgWireConfiguration;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final String inputRoot;
@@ -377,6 +372,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             default:
                 lineUdpTimestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
                 break;
+        }
+
+        if (getBoolean(properties, "pgwire.enabled", true)) {
+            // TODO: Create a PropPGWireConfiguration
+            pgWireConfiguration = new DefaultPGWireConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 0;
+                }
+            };
+        } else {
+            pgWireConfiguration = null;
         }
     }
 
