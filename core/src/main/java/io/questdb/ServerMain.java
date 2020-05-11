@@ -146,6 +146,7 @@ public class ServerMain {
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        initQuestDb(workerPool, cairoEngine, log);
 
         final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine);
 
@@ -357,7 +358,15 @@ public class ServerMain {
         Misc.free(lineProtocolReceiver);
     }
 
-    protected static void startQuestDb(
+    protected void initQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        // For extension
+    }
+
+    protected void startQuestDb(
             final WorkerPool workerPool,
             final CairoEngine cairoEngine,
             final AbstractLineProtoReceiver lineProtocolReceiver,
