@@ -56,22 +56,22 @@ public class SqlCompiler implements Closeable {
     private final CharacterStore characterStore;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final GenericLexer lexer;
+    protected final GenericLexer lexer;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
+    protected final Path path = new Path();
     private final Path renamePath = new Path();
     private final AppendMemory mem = new AppendMemory();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
-    private final CairoEngine engine;
+    protected final CairoEngine engine;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
-    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     private final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
@@ -154,7 +154,9 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
 
+        System.err.println("SqlCompiler 5");
         this.textLoader = new TextLoader(engine);
+        System.err.println("SqlCompiler 6");
     }
 
     public static void configureLexer(GenericLexer lexer) {
@@ -1791,7 +1793,7 @@ public class SqlCompiler implements Closeable {
     }
 
     @FunctionalInterface
-    private interface KeywordBasedExecutor {
+    protected interface KeywordBasedExecutor {
         CompiledQuery execute(SqlExecutionContext executionContext) throws SqlException;
     }
 

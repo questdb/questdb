@@ -55,7 +55,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
-    private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
+    protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final NanosecondClock nanosecondClock;
 
     public JsonQueryProcessor(
@@ -64,8 +64,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable MessageBus messageBus,
             int workerCount
     ) {
-        this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine);
+        this(configuration, engine, messageBus, workerCount, new SqlCompiler(engine));
+    }
+
+    public JsonQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            @Nullable MessageBus messageBus,
+            int workerCount,
+            SqlCompiler sqlCompiler
+    ) {
+         this.configuration = configuration;
+        this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -254,7 +264,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
-    private static void sendConfirmation(
+    protected static void sendConfirmation(
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
@@ -404,7 +414,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @FunctionalInterface
-    private interface QueryExecutor {
+    protected interface QueryExecutor {
         void execute(
                 JsonQueryProcessorState state,
                 CompiledQuery cc,

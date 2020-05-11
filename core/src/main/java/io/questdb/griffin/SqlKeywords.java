@@ -541,6 +541,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
+    public static boolean isStartKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i) | 32) == 't';
+    }
+
     public static boolean isTimestampKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;

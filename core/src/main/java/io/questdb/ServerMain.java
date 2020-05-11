@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
@@ -100,8 +101,7 @@ public class ServerMain {
         try (InputStream is = new FileInputStream(configurationFile)) {
             properties.load(is);
         }
-
-        configuration = new PropServerConfiguration(rootDirectory, properties);
+        readServerConfiguration(rootDirectory, properties);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -147,13 +147,7 @@ public class ServerMain {
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
-        final HttpServer httpServer = HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                messageBus
-        );
+        final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine);
 
         final PGWireServer pgWireServer = PGWireServer.create(
                 configuration.getPGWireConfiguration(),
@@ -192,6 +186,21 @@ public class ServerMain {
             shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
             System.err.println(new Date() + " QuestDB is down");
         }));
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final MessageBus messageBus, final Log log, final CairoEngine cairoEngine) {
+        return HttpServer
+                .create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                messageBus
+        );
+    }
+
+    protected void readServerConfiguration(final String rootDirectory, final Properties properties) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties);
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
