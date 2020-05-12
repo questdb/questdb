@@ -680,18 +680,18 @@ public class SqlCompiler implements Closeable {
 
             tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
-            if (Chars.equalsLowerCaseAscii(tok, "add")) {
+            if (SqlKeywords.isAddKeyword(tok)) {
                 alterTableAddColumn(tableNamePosition, writer);
-            } else if (Chars.equalsLowerCaseAscii(tok, "drop")) {
+            } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
-                if (Chars.equalsLowerCaseAscii(tok, "column")) {
+                if (SqlKeywords.isColumnKeyword(tok)) {
                     alterTableDropColumn(tableNamePosition, writer);
-                } else if (Chars.equalsLowerCaseAscii(tok, "partition")) {
+                } else if (SqlKeywords.isPartitionKeyword(tok)) {
                     alterTableDropPartition(writer);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
-            } else if (Chars.equalsLowerCaseAscii(tok, "alter")) {
+            } else if (SqlKeywords.isAlterKeyword(tok)) {
                 alterTableColumnAddIndex(executionContext, tableNamePosition, tableName);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");

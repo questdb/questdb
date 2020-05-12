@@ -261,7 +261,7 @@ class ExpressionParser {
                         break;
                     case 'c':
                     case 'C':
-                        if (Chars.equalsLowerCaseAscii(tok, "cast")) {
+                        if (SqlKeywords.isCastKeyword(tok)) {
                             castBraceCountStack.push(-1);
                             thisBranch = BRANCH_OPERATOR;
                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lexer.lastTokenPosition()));
@@ -271,7 +271,7 @@ class ExpressionParser {
                         break;
                     case 'a':
                     case 'A':
-                        if (Chars.equalsLowerCaseAscii(tok, "as")) {
+                        if (SqlKeywords.isAsKeyword(tok)) {
                             if (castAsCount < castBraceCountStack.size()) {
 
                                 thisBranch = BRANCH_CAST_AS;
@@ -296,7 +296,7 @@ class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (Chars.equalsLowerCaseAscii(tok, "select")) {
+                        if (SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
                         } else {
@@ -359,8 +359,8 @@ class ExpressionParser {
                     case 'T':
                     case 'f':
                     case 'F':
-                        if (Chars.equalsLowerCaseAscii(tok, "nan") || Chars.equalsLowerCaseAscii(tok, "null")
-                                || Chars.equalsLowerCaseAscii(tok, "true") || Chars.equalsLowerCaseAscii(tok, "false")) {
+                        if (SqlKeywords.isNanKeyword(tok) || SqlKeywords.isNullKeyword(tok)
+                                || SqlKeywords.isTrueKeyword(tok) || SqlKeywords.isFalseKeyword(tok)) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
@@ -461,7 +461,7 @@ class ExpressionParser {
 
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
-                        if (Chars.toLowerCaseAscii(thisChar) == 'c' && Chars.equalsLowerCaseAscii(tok, "case")) {
+                        if (Chars.toLowerCaseAscii(thisChar) == 'c' && SqlKeywords.isCaseKeyword(tok)) {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
@@ -481,7 +481,7 @@ class ExpressionParser {
                         if (caseCount > 0) {
                             switch (Chars.toLowerCaseAscii(thisChar)) {
                                 case 'e':
-                                    if (Chars.equalsLowerCaseAscii(tok, "end")) {
+                                    if (SqlKeywords.isEndKeyword(tok)) {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lexer.lastTokenPosition());
                                         }
@@ -495,7 +495,7 @@ class ExpressionParser {
                                         // Pop the left parenthesis from the stack, but not onto the output queue.
                                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                                        while ((node = opStack.pop()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
+                                        while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth);
                                         }
 
@@ -535,7 +535,7 @@ class ExpressionParser {
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
                                         int argCount = 0;
-                                        while ((node = opStack.pop()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
+                                        while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth);
                                             argCount++;
                                         }
@@ -626,7 +626,7 @@ class ExpressionParser {
                     throw SqlException.$(node.position, "unbalanced (");
                 }
 
-                if (Chars.equalsLowerCaseAscii(node.token, "case")) {
+                if (SqlKeywords.isCaseKeyword(node.token)) {
                     throw SqlException.$(node.position, "unbalanced 'case'");
                 }
 
