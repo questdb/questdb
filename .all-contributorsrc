@@ -17,12 +17,14 @@
       ]
     },
     {
-      "login": "sirinath",
-      "name": "Suminda Sirinath Salpitikorala Dharmasena",
-      "avatar_url": "https://avatars2.githubusercontent.com/u/637415?v=4",
-      "profile": "http://sirinath.com/",
+      "login": "ideoma",
+      "name": "ideoma",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/2159629?v=4",
+      "profile": "https://github.com/ideoma",
       "contributions": [
-        "ideas"
+        "code",
+        "userTesting",
+        "test"
       ]
     },
     {
@@ -36,14 +38,12 @@
       ]
     },
     {
-      "login": "ideoma",
-      "name": "Alex Pelagenko",
-      "avatar_url": "https://avatars0.githubusercontent.com/u/2159629?v=4",
-      "profile": "https://github.com/ideoma",
+      "login": "sirinath",
+      "name": "sirinath",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/637415?v=4",
+      "profile": "http://sirinath.com/",
       "contributions": [
-        "code",
-        "userTesting",
-        "test"
+        "ideas"
       ]
     }
   ],

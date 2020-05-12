@@ -26,9 +26,7 @@
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-
 [![All Contributors](https://img.shields.io/badge/all_contributors-4-orange.svg?style=flat-square)](#contributors-)
-
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -85,7 +83,7 @@ You can find our documentation
 
 ## Building from source
 
-### Pre-requisites
+### Prerequisites
 
 - Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
   (AArch64/A64)**: Linux
@@ -98,11 +96,6 @@ You can find our documentation
   [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
   [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
   OPTIONAL
-
-> Java versions above 8 are not yet supported. It is possible to build QuestDB
-> with Java 11, but this requires backward incompatible changes. If your java
-> version is above 8 you can download & install JDK8 and use the absolute path
-> to the java executable instead of "`java`".
 
 ### Building & Running
 
@@ -129,16 +122,17 @@ java -version
 # to rely on a local version of NodeJS, it will be pulled by maven instead
 mvn clean package -DskipTests
 
-# replace <root_dir> with the actual directory name, example "out"
+# <root_dir> is where the data and configuration will live
+# replace the value with an actual directory name, example "out"
 mkdir <root_dir>
 
-java -cp core/target/core-4.2.1-SNAPSHOT.jar io.questdb.ServerMain -d <root_dir>
+java -cp core/target/core-4.3.0-SNAPSHOT.jar io.questdb.ServerMain -d <root_dir>
 ```
 
 QuestDB will start an HTTP server with the web console available at
 [localhost:9000](http://localhost:9000). Additionally, a PostgreSQL server will
 be started and available on port 8812, the default login credentials are
-`admin`/`quest`. Both the HTTP and PostresSQL servers reference the database in
+`admin`/`quest`. Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
 
 ## Contribution
@@ -158,15 +152,14 @@ Thanks goes to these wonderful people
 <table>
   <tr>
     <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
-    <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>Suminda Sirinath Salpitikorala Dharmasena</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>ideoma</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
     <td align="center"><a href="https://github.com/tonytamwk"><img src="https://avatars2.githubusercontent.com/u/20872271?v=4" width="100px;" alt=""/><br /><sub><b>tonytamwk</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=tonytamwk" title="Code">💻</a> <a href="#userTesting-tonytamwk" title="User Testing">📓</a></td>
-    <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>Alex Pelagenko</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
+    <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>sirinath</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
   </tr>
 </table>
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
-
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
