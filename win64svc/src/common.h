@@ -27,6 +27,7 @@
 typedef struct {
     int command;
     BOOL forceCopy;
+    BOOL localRuntime;
     LPSTR dir;
     int errorCode;
     LPSTR javaExec;
@@ -56,6 +57,6 @@ int svcStart(CONFIG *config);
 
 int svcStop(CONFIG *config);
 
-void log_event(WORD logType, char* serviceName, char *message);
+void log_event(WORD logType, char* serviceName, const char *message);
 
 #endif //WIN64SVC_COMMON_H
