@@ -429,11 +429,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return new StrConstant(node.position, node.token);
         }
 
-        if (Chars.equalsLowerCaseAscii(node.token, "true")) {
+        if (SqlKeywords.isTrueKeyword(node.token)) {
             return new BooleanConstant(node.position, true);
         }
 
-        if (Chars.equalsLowerCaseAscii(node.token, "false")) {
+        if (SqlKeywords.isFalseKeyword(node.token)) {
             return new BooleanConstant(node.position, false);
         }
 

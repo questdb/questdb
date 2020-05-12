@@ -30,6 +30,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -158,7 +159,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         localePosition = position;
                         break;
                     case P_UTF8:
-                        utf8 = Chars.equalsLowerCaseAscii("true", tag);
+                        utf8 = SqlKeywords.isTrueKeyword(tag);
                         break;
                     default:
                         LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
