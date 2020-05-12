@@ -12,7 +12,7 @@ deep diving into the code base.
 
 - Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
   (AArch64/A64)**: Linux
-- Java 8 64-bit. We recommend Oracle Java 8, but OpenJDK8 will also work
+- Java 11 64-bit. We recommend Oracle Java 11, but OpenJDK 11 will also work
   (although a little slower)
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
@@ -50,7 +50,7 @@ with Java 11, but this requires backward incompatible changes. If your java
 version is above 8 you can download & install JDK8 and use the absolute path to
 the java executable instead of "`java`".
 
-Unless your default Java is 8 you may want to set `JAVA_HOME` to the Java 8
+Unless your default Java is 11 you may want to set `JAVA_HOME` to the Java 11
 directory before running `maven`:
 
 Linux/OSX
