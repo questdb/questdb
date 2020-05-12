@@ -21,9 +21,32 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
+const fs = require("fs")
+const path = require("path")
+const archiver = require("archiver")
 const rimraf = require("rimraf")
-const wrench = require("wrench")
 
-rimraf.sync("../core/src/main/resources/io/questdb/site/public")
-wrench.copyDirSyncRecursive("dist", "../core/src/main/resources/io/questdb/site/public")
+const source = path.join(process.cwd(), "/dist/")
+const destination = path.join(
+  process.cwd(),
+  "..",
+  "core/src/main/resources/io/questdb/site/public.zip",
+)
+
+const start = async () => {
+  const archive = archiver("zip", { zlib: { level: 9 } })
+
+  rimraf.sync(destination)
+  const stream = fs.createWriteStream(destination)
+
+  archive
+    .on("error", (err) => {
+      throw err
+    })
+    .directory(source, false)
+    .pipe(stream)
+
+  await archive.finalize()
+}
+
+start()
