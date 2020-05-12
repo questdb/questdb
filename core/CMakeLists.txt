@@ -9,6 +9,7 @@ endif ($ENV{JAVA_HOME})
 set(
         VCL_FILES
         src/main/c/share/vect.cpp
+        src/main/c/share/sort.cpp
 )
 
 set(
@@ -17,6 +18,9 @@ set(
         src/main/c/share/vect_vanilla.cpp
         src/main/c/share/vect.cpp
         src/main/c/share/vcl/instrset_detect.cpp
+        src/main/c/share/sort.cpp
+        src/main/c/share/sort_vanilla.cpp
+        src/main/c/share/sort_vanilla.h
 )
 
 set(
@@ -120,6 +124,8 @@ if (AARCH64)
             AARCH64_FILES
             src/main/c/aarch64/vect.cpp
             src/main/c/share/vect_vanilla.cpp
+            src/main/c/aarch64/range.cpp
+            src/main/c/share/sort_vanilla.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
