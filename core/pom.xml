@@ -180,7 +180,6 @@
                             <descriptors>
                                 <descriptor>src/main/assembly/binaries.xml</descriptor>
                             </descriptors>
-                            <finalName>questdb-${project.version}</finalName>
                         </configuration>
                     </execution>
                     <execution>
@@ -193,7 +192,6 @@
                             <descriptors>
                                 <descriptor>${runtime.assembly}</descriptor>
                             </descriptors>
-                            <finalName>questdb-${project.version}</finalName>
                         </configuration>
                     </execution>
                 </executions>
