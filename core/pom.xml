@@ -32,6 +32,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <nodejs.npm.cmd>npm</nodejs.npm.cmd>
         <nodejs.version>v12.16.2</nodejs.version>
+        <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
     </properties>
 
@@ -190,7 +191,7 @@
                         </goals>
                         <configuration>
                             <descriptors>
-                                <descriptor>src/main/assembly/runtime.xml</descriptor>
+                                <descriptor>${runtime.assembly}</descriptor>
                             </descriptors>
                             <finalName>questdb-${project.version}</finalName>
                         </configuration>
@@ -310,7 +311,7 @@
             </build>
         </profile>
         <profile>
-            <id>platform-windows</id>
+            <id>platform-windows-amd64</id>
             <activation>
                 <os>
                     <family>windows</family>
@@ -321,6 +322,46 @@
             </activation>
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
+                <runtime.name>questdb-${version}-windows-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-amd64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>questdb-${version}-linux-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-aarch64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>questdb-${version}-linux-aarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-osx-amd64</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>questdb-${version}-osx-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
     </profiles>

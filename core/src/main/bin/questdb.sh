@@ -44,22 +44,30 @@ function export_pid {
 
 function export_java {
 
-    if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
-        JAVA_HOME=$(/usr/libexec/java_home -v 1.8)
+    # check if this is our runtime
+    if [ -f "$BASE/java" ]; then
+        export JAVA="$BASE/java"
+    else
+      if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
+          JAVA_HOME=$(/usr/libexec/java_home -v 11)
+      fi
+
+      # check that JAVA_HOME is defined
+      if [ "$JAVA_HOME" = "" ]; then
+          echo "JAVA_HOME is undefined"
+          exit 55
+      fi
+
+      # check that Java binary is executable
+      export JAVA=${JAVA_HOME}/bin/java
     fi
 
-    # check that JAVA_HOME is defined
-    if [ "$JAVA_HOME" = "" ]; then
-        echo "JAVA_HOME is undefined"
-        exit 55
-    fi
-
-    # check that Java binary is executable
-    export JAVA=${JAVA_HOME}/bin/java
     if [ ! -x "$JAVA" ]; then
         echo "$JAVA is not executable"
         exit 55;
     fi
+
+    echo "JAVA: $JAVA"
 }
 
 function export_args {
@@ -116,6 +124,13 @@ function start {
         exit 55
     fi
 
+    LINK=$(read_link $0)
+    if [ "$LINK" != "" ]; then
+        BASE=$(dirname ${LINK})
+    else
+        BASE=$(dirname $0)
+    fi
+
     export_java
 
     # create root directory if it does not exist
@@ -127,39 +142,26 @@ function start {
     QDB_LOG=${QDB_ROOT}/log
     mkdir -p ${QDB_LOG}
 
-    LINK=$(read_link $0)
-    if [ "$LINK" != "" ]; then
-        BASE=$(dirname ${LINK})
-    else
-        BASE=$(dirname $0)
-    fi
-
     JAVA_LIB="$BASE/questdb.jar"
 
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
-    -da -Dnoebug
-    -XX:+PrintGCApplicationStoppedTime
-    -XX:+PrintSafepointStatistics
-    -XX:PrintSafepointStatisticsCount=1
-    -XX:+PrintGCDetails
-    -XX:+PrintGCTimeStamps
-    -XX:+PrintGCDateStamps
-    -XX:+UnlockDiagnosticVMOptions
-    -XX:GuaranteedSafepointInterval=90000000
-    -XX:-UseBiasedLocking
-    -XX:BiasedLockingStartupDelay=0"
+    -ea -Dnoebug
+    -XX:+UnlockExperimentalVMOptions
+    -XX:+AlwaysPreTouch
+    -XX:+UseParallelOldGC
+    --add-exports java.base/jdk.internal.math=io.questdb"
 
-    JAVA_MAIN="io.questdb.ServerMain"
+    JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
         sleep 0.5
     else
-        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
     fi
 }
 
