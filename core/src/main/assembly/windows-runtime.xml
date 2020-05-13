@@ -31,7 +31,7 @@
     <files>
         <file>
             <source>../LICENSE.txt</source>
-            <outputDirectory>questdb-${artifact.version}-win-amd64/legal</outputDirectory>
+            <outputDirectory>${runtime.name}/legal</outputDirectory>
         </file>
     </files>
     <fileSets>
@@ -40,11 +40,11 @@
             <includes>
                 <include>*.exe</include>
             </includes>
-            <outputDirectory>questdb-${artifact.version}-win-amd64/bin</outputDirectory>
+            <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
         <fileSet>
             <directory>target/runtime</directory>
-            <outputDirectory>questdb-${artifact.version}-win-amd64</outputDirectory>
+            <outputDirectory>${runtime.name}</outputDirectory>
         </fileSet>
     </fileSets>
 </assembly>
