@@ -1,27 +1,27 @@
+FROM openjdk:11.0.7-nanoserver-1809
+
+RUN curl -L "https://github.com/git-for-windows/git/releases/download/v2.12.2.windows.2/MinGit-2.12.2.2-64-bit.zip"  --output c:\mingit.zip
+RUN mkdir c:\mingit
+RUN tar -xf c:\mingit.zip -C c:\mingit
+
+RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output c:\maven.zip
+RUN tar -xf c:\maven.zip
+                                    
+RUN c:\mingit\cmd\git clone https://github.com/questdb/questdb.git
+
+RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs -f C:\questdb
+
+RUN dir c:\questdb\core\target
+
+
 FROM microsoft/nanoserver:1803
-
-ENV JRE jre-8u231-windows-x64.tar.gz
-ENV QUESTDB_VERSION 4.2.1
-
-# Copy the binary file into the container at /app
-COPY target/questdb-${QUESTDB_VERSION}-bin.tar.gz /app/
-
-# Copy win64 JDK into the container at /app
-COPY dist/${JRE} /app/
 
 WORKDIR /app
 
-# Install questdb
-RUN tar.exe xvfz questdb-%QUESTDB_VERSION%-bin.tar.gz
-RUN del questdb-%QUESTDB_VERSION%-bin.tar.gz
-RUN del questdb-%QUESTDB_VERSION%\questdb.exe
-RUN del questdb-%QUESTDB_VERSION%\questdb.sh
+COPY --from=0 c:/questdb/core/target/core-4.3.0-SNAPSHOT-win-amd64.tar.gz .
 
-# install JRE8
-RUN tar xvfz %JRE%
-
-# remove JRE tarball
-RUN del %JRE%
+RUN tar xvfz core-4.3.0-SNAPSHOT-win-amd64.tar.gz
+RUN del core-4.3.0-SNAPSHOT-win-amd64.tar.gz
 
 # Make working folder the quest db folder
 WORKDIR /app/questdb-${QUESTDB_VERSION}

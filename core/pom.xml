@@ -192,6 +192,7 @@
                             <descriptors>
                                 <descriptor>${runtime.assembly}</descriptor>
                             </descriptors>
+                            <finalName>questdb</finalName>
                         </configuration>
                     </execution>
                 </executions>
@@ -330,7 +331,7 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>questdb-${version}-windows-amd64</runtime.name>
+                <runtime.name>rt-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -343,7 +344,7 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>questdb-${version}-linux-amd64</runtime.name>
+                <runtime.name>rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -356,7 +357,7 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>questdb-${version}-linux-aarch64</runtime.name>
+                <runtime.name>rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -368,7 +369,7 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>questdb-${version}-osx-amd64</runtime.name>
+                <runtime.name>rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>

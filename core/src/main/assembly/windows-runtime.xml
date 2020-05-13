@@ -23,7 +23,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>windows-amd64</id>
+    <id>${runtime.name}</id>
     <formats>
         <format>tar.gz</format>
     </formats>
