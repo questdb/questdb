@@ -359,7 +359,7 @@
             </activation>
             <properties>
                 <runtime.name>questdb-${version}-osx-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/osx-runtime.xml</runtime.assembly>
             </properties>
         </profile>
     </profiles>
