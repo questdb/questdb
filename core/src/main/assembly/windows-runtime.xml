@@ -23,7 +23,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>win-amd64</id>
+    <id>windows-amd64</id>
     <formats>
         <format>tar.gz</format>
     </formats>

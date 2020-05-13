@@ -309,7 +309,7 @@
             </build>
         </profile>
         <profile>
-            <id>platform-windows-amd64</id>
+            <id>platform-windows-amd64-node</id>
             <activation>
                 <os>
                     <family>windows</family>
@@ -320,6 +320,16 @@
             </activation>
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-windows-amd64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
                 <runtime.name>questdb-${version}-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
             </properties>
