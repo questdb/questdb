@@ -1,30 +1,38 @@
 FROM openjdk:11.0.7-nanoserver-1809
 
-RUN curl -L "https://github.com/git-for-windows/git/releases/download/v2.12.2.windows.2/MinGit-2.12.2.2-64-bit.zip"  --output c:\mingit.zip
+## install GIT
+
+RUN curl -L "https://github.com/git-for-windows/git/releases/download/v2.25.0.windows.4/MinGit-2.25.0.windows.4-64-bit.zip"  --output c:\mingit.zip
 RUN mkdir c:\mingit
 RUN tar -xf c:\mingit.zip -C c:\mingit
 
+## install Maven
+
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output c:\maven.zip
 RUN tar -xf c:\maven.zip
-                                    
-RUN c:\mingit\cmd\git clone https://github.com/questdb/questdb.git
 
-RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs -f C:\questdb
+## clone GIT repo
+RUN c:\mingit\cmd\git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
 
-RUN dir c:\questdb\core\target
+WORKDIR c:/questdb
 
+## build from source
 
-FROM microsoft/nanoserver:1803
+RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs
+
+## unpack the runtime
+
+WORKDIR c:/questdb/core/target
+RUN tar xvfz questdb-rt-windows-amd64.tar.gz
+
+FROM mcr.microsoft.com/windows/nanoserver:1903
 
 WORKDIR /app
 
-COPY --from=0 c:/questdb/core/target/core-4.3.0-SNAPSHOT-win-amd64.tar.gz .
-
-RUN tar xvfz core-4.3.0-SNAPSHOT-win-amd64.tar.gz
-RUN del core-4.3.0-SNAPSHOT-win-amd64.tar.gz
+COPY --from=0 c:/questdb/core/target/rt-windows-amd64 .
 
 # Make working folder the quest db folder
-WORKDIR /app/questdb-${QUESTDB_VERSION}
+WORKDIR /app/rt-windows-amd64
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
@@ -36,4 +44,4 @@ RUN mkdir C:\questdb
 VOLUME C:/questdb/db
 
 # Run questdb when the container launches
-CMD ["/app/jre1.8.0_231/bin/java", "-cp", "./questdb.jar", "io.questdb.ServerMain", "-d", "c:/questdb"]
+CMD ["/app/rt-windows-amd64/bin/java", "-m", "io.questdb/io.questdb.ServerMain", "-d", "c:/questdb"]
