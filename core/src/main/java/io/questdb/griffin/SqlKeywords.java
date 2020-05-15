@@ -642,4 +642,37 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i) | 32) == 'n';
     }
+
+    public static boolean isMaxKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 'x';
+    }
+
+    public static boolean isMinKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isAvgKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i) | 32) == 'g';
+    }
 }

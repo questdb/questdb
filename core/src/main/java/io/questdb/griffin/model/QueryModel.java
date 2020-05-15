@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -133,10 +134,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
-        aliasToColumnNameMap.put(alias, ast.token);
-        columnNameToAliasMap.put(ast.token, alias);
+        CharSequence columnName = ast.token;
+        if (isMaxMinOrAvg(ast, columnName)) {
+            columnName = ast.rhs.token;
+        }
+        aliasToColumnNameMap.put(alias, columnName);
+        columnNameToAliasMap.put(columnName, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
+    }
+
+    private boolean isMaxMinOrAvg(ExpressionNode ast, CharSequence columnName) {
+        return ast.type == ExpressionNode.FUNCTION && ast.rhs != null &&
+                (SqlKeywords.isMaxKeyword(columnName) ||
+                        SqlKeywords.isMinKeyword(columnName) ||
+                        SqlKeywords.isAvgKeyword(columnName));
     }
 
     public void addJoinColumn(ExpressionNode node) {
