@@ -26,7 +26,9 @@
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
 [![All Contributors](https://img.shields.io/badge/all_contributors-4-orange.svg?style=flat-square)](#contributors-)
+
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -126,7 +128,7 @@ mvn clean package -DskipTests
 # replace the value with an actual directory name, example "out"
 mkdir <root_dir>
 
-java -cp core/target/core-4.3.0-SNAPSHOT.jar io.questdb.ServerMain -d <root_dir>
+java -p core/target/core-4.3.0-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
 
 QuestDB will start an HTTP server with the web console available at
@@ -160,6 +162,7 @@ Thanks goes to these wonderful people
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
