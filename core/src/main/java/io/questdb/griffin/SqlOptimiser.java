@@ -1163,22 +1163,9 @@ class SqlOptimiser {
             return orderByAdvice;
         }
 
-        CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = model.getAliasToColumnMap();
+        CharSequenceObjHashMap<CharSequence> map = model.getAliasToColumnNameMap();
         for (int i = 0; i < len; i++) {
-            QueryColumn queryColumn = aliasToColumnMap.get(orderBy.getQuick(i).token);
-            if (queryColumn.getAst().type == ExpressionNode.FUNCTION && queryColumn.getAst().rhs != null) {
-                orderByAdvice.add(nextLiteral(queryColumn.getAst().rhs.token));
-            } else if (queryColumn.getAst().type == ExpressionNode.OPERATION) {
-                if (queryColumn.getAst().rhs != null) {
-                    orderByAdvice.add(nextLiteral(queryColumn.getAst().rhs.token));
-                } else if (queryColumn.getAst().lhs != null) {
-                    orderByAdvice.add(nextLiteral(queryColumn.getAst().lhs.token));
-                } else {
-                    orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
-                }
-            } else {
-                orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
-            }
+            orderByAdvice.add(nextLiteral(map.get(orderBy.getQuick(i).token)));
         }
         return orderByAdvice;
     }
