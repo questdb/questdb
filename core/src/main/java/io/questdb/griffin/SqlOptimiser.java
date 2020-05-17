@@ -1163,10 +1163,22 @@ class SqlOptimiser {
             return orderByAdvice;
         }
 
-        CharSequenceObjHashMap<CharSequence> map = model.getAliasToColumnNameMap();
+        CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
-            orderByAdvice.add(nextLiteral(map.get(orderBy.getQuick(i).token)));
-
+            QueryColumn queryColumn = aliasToColumnMap.get(orderBy.getQuick(i).token);
+            if (queryColumn.getAst().type == ExpressionNode.FUNCTION && queryColumn.getAst().rhs != null) {
+                orderByAdvice.add(nextLiteral(queryColumn.getAst().rhs.token));
+            } else if (queryColumn.getAst().type == ExpressionNode.OPERATION) {
+                if (queryColumn.getAst().rhs != null) {
+                    orderByAdvice.add(nextLiteral(queryColumn.getAst().rhs.token));
+                } else if (queryColumn.getAst().lhs != null) {
+                    orderByAdvice.add(nextLiteral(queryColumn.getAst().lhs.token));
+                } else {
+                    orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
+                }
+            } else {
+                orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
+            }
         }
         return orderByAdvice;
     }
@@ -1646,8 +1658,7 @@ class SqlOptimiser {
             case NOT_OP_NOT_EQ:
                 if (reverse) {
                     node.token = "=";
-                }
-                else {
+                } else {
                     node.token = "!=";
                 }
                 return node;

@@ -816,4 +816,91 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         );
     }
+
+
+    @Test
+    public void testFunctionSearchOrderByAlias() throws Exception {
+        final String expected = "sym\tmaxp\n" +
+                "DXR\t0.97613283653158\n" +
+                "ABB\t0.9809851788419132\n" +
+                "HBC\t0.9940353811420282\n";
+
+        assertQuery(
+                "sym\tmaxp\n",
+                "select sym , max(price) maxp from x where ts='1970-01-04' order by maxp",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(1000)) timestamp (ts)",
+                expected,
+                true
+
+        );
+    }
+
+    @Test
+    public void testFunctionSearchOrderByAlias2() throws Exception {
+        final String expected = "sym\tmaxp\n" +
+                "DXR\t0.008134052047644613\n" +
+                "HBC\t0.008427132543617488\n" +
+                "ABB\t0.008444033230580739\n";
+
+        assertQuery(
+                "sym\tmaxp\n",
+                "select sym , min(price) maxp from x where ts='1970-01-04' order by maxp",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(1000)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testExpressionSearchOrderByAlias() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "HBC\t-1912873112\n" +
+                "HBC\t-1707758909\n" +
+                "DXR\t-1021839040\n" +
+                "HBC\t-850582456\n" +
+                "ABB\t4171981\n" +
+                "ABB\t74196247\n" +
+                "ABB\t417348950\n" +
+                "ABB\t1191199593\n" +
+                "ABB\t1233285715\n" +
+                "DXR\t1275864035\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where ts='1970-01-03' order by spread",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
 }

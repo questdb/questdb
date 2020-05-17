@@ -134,12 +134,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
-        CharSequence columnName = ast.token;
-        if (isMaxMinOrAvg(ast, columnName)) {
-            columnName = ast.rhs.token;
-        }
-        aliasToColumnNameMap.put(alias, columnName);
-        columnNameToAliasMap.put(columnName, alias);
+        aliasToColumnNameMap.put(alias, ast.token);
+        columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
     }
