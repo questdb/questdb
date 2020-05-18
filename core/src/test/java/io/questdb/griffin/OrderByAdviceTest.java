@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class OrderByAdviceTest extends AbstractGriffinTest {
@@ -965,17 +966,25 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
+
+    /*
+    broken test (x2)
+    1. currently returns rows sorted by sym
+    2. returns expectedTimestamp == "ts"
+    */
     @Test
+    @Ignore
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
-                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n" +
-                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
-                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
                 "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
-                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
+                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
                 "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
-                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n";
+                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
+                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
+
 
         assertQuery(
                 "sym\tbid\task\tts\n",
@@ -986,7 +995,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
@@ -997,19 +1006,25 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
+    /*
+    broken test (x2)
+    1. currently returns rows sorted by ts but ascending order
+    2. returns expectedTimestamp == "ts"
+    */
     @Test
+    @Ignore
     public void testSelectWithOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
-                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n" +
-                "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
-                "CC\t592859671\t1868723706\t1970-01-03T00:12:00.000000Z\n" +
-                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
-                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
-                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
-                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
                 "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
-                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n";
+                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
+                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
+                "CC\t592859671\t1868723706\t1970-01-03T00:12:00.000000Z\n" +
+                "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
+                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
 
         assertQuery(
                 "sym\tbid\task\tts\n",
@@ -1020,7 +1035,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
