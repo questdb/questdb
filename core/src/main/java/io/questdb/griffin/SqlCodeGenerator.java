@@ -1791,7 +1791,6 @@ public class SqlCodeGenerator implements Mutable {
                     assert nKeyValues > 0;
 
                     boolean orderByKeyColumn = false;
-                    boolean clearTimestampIndex = false;
                     int indexDirection = BitmapIndexReader.DIR_FORWARD;
                     if (intervalHitsOnlyOnePartition) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
@@ -1801,7 +1800,7 @@ public class SqlCodeGenerator implements Mutable {
                             //    ordering in the code that returns rows from index rather than having an
                             //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                                clearTimestampIndex = true;
+                                metadata.setTimestampIndex(-1);
                                 if (orderByAdviceSize == 1) {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
@@ -1831,10 +1830,6 @@ public class SqlCodeGenerator implements Mutable {
                                 rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection);
                             }
                         }
-
-                        if (clearTimestampIndex) {
-                            metadata.setTimestampIndex(-1);
-                        }
                         return new DataFrameRecordCursorFactory(metadata, dfcFactory, rcf, orderByKeyColumn, filter);
                     }
 
@@ -1851,10 +1846,6 @@ public class SqlCodeGenerator implements Mutable {
                         } else {
                             symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR_DESC);
                         }
-                    }
-
-                    if (clearTimestampIndex) {
-                        metadata.setTimestampIndex(-1);
                     }
 
                     return new FilterOnValuesRecordCursorFactory(
