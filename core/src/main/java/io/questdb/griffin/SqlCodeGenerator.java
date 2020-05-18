@@ -1872,7 +1872,7 @@ public class SqlCodeGenerator implements Mutable {
                         final int columnIndex = metadata.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
 
                         // this is our kind of column
-                        if (columnIndex > -1 && metadata.isColumnIndexed(columnIndex)) {
+                        if (metadata.isColumnIndexed(columnIndex)) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = BitmapIndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
