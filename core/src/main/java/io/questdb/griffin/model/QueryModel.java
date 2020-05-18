@@ -25,7 +25,6 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
