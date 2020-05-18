@@ -155,6 +155,9 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
+        if (null == securityContext) {
+            throw new NullPointerException();
+        }
         return writerPool.get(tableName);
     }
 
@@ -163,7 +166,10 @@ public class CairoEngine implements Closeable {
             CharSequence tableName,
             CharSequence backupDirName
     ) {
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental 
+        if (null == securityContext) {
+            throw new NullPointerException();
+        }
+        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
 
@@ -316,7 +322,7 @@ public class CairoEngine implements Closeable {
         }
 
         protected boolean doRun() {
-        	return releaseInactive();
+            return releaseInactive();
         }
 
         @Override
