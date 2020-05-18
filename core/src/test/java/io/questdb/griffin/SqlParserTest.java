@@ -3087,6 +3087,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByGroupByColWithAliasDifferentToColumnName() throws SqlException {
+        assertQuery(
+                "select-group-by a, max(b) x from (select [a, b] from tab) order by x",
+                "select a, max(b) x from tab order by x",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+
+    @Test
     public void testOrderByGroupByColPrefixed() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab)",

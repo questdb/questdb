@@ -1163,10 +1163,15 @@ class SqlOptimiser {
             return orderByAdvice;
         }
 
-        CharSequenceObjHashMap<CharSequence> map = model.getAliasToColumnNameMap();
+        CharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
-            orderByAdvice.add(nextLiteral(map.get(orderBy.getQuick(i).token)));
-
+            QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
+            if (queryColumn.getAst().type == ExpressionNode.LITERAL) {
+                orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
+            } else {
+                orderByAdvice.clear();
+                break;
+            }
         }
         return orderByAdvice;
     }
@@ -1646,8 +1651,7 @@ class SqlOptimiser {
             case NOT_OP_NOT_EQ:
                 if (reverse) {
                     node.token = "=";
-                }
-                else {
+                } else {
                     node.token = "!=";
                 }
                 return node;
