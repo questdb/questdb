@@ -903,4 +903,33 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
+        final String expected = "sym\tprice\tts\n" +
+                "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
+                "AA\t315515118\t1970-01-03T00:00:00.000000Z\n" +
+                "AA\t339631474\t1970-01-03T00:54:00.000000Z\n" +
+                "AA\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
+                "BB\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
+                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n";
+
+        assertQuery(
+                "sym\tprice\tts\n",
+                "select * from tab where sym in ('AA', 'BB') order by sym, price",
+                "create table tab (\n" +
+                        "    sym symbol index,\n" +
+                        "    price int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
 }
