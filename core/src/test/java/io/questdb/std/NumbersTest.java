@@ -103,17 +103,6 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatDoubleNoPadding() {
-        sink.clear();
-        Numbers.appendTrim(sink, 40.2345d, 12);
-        Assert.assertEquals("40.2345", sink.toString());
-
-        sink.clear();
-        Numbers.appendTrim(sink, 4000, 12);
-        Assert.assertEquals("4000.0", sink.toString());
-    }
-
-    @Test
     public void testFormatFloat() {
         Numbers.append(sink, Float.POSITIVE_INFINITY, 3);
         Assert.assertEquals(Float.toString(Float.POSITIVE_INFINITY), sink.toString());

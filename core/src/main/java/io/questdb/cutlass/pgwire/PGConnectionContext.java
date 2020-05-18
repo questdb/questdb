@@ -511,7 +511,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            responseAsciiSink.put(doubleValue);
+            responseAsciiSink.put(doubleValue, Numbers.MAX_SCALE);
             responseAsciiSink.putLenEx(a);
         }
     }

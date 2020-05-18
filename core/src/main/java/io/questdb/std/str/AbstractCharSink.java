@@ -100,8 +100,8 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink put(double value) {
-        Numbers.append(this, value);
+    public CharSink put(double value, int scale) {
+        Numbers.append(this, value, scale);
         return this;
     }
 

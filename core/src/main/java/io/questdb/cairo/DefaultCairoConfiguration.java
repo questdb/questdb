@@ -323,4 +323,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public TimestampLocale getDefaultTimestampLocale() {
         return TimestampFormatUtils.enLocale;
     }
+
+    @Override
+    public int getDoubleToStrCastScale() {
+        return Numbers.MAX_SCALE;
+    }
+
+    @Override
+    public int getFloatToStrCastScale() {
+        return 4;
+    }
 }

@@ -33,12 +33,13 @@ public final class Numbers {
 
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
-    public static final double TOLERANCE = 1E-10d;
+    public static final double TOLERANCE = 1E-15d;
     public static final int SIZE_1MB = 1024 * 1024;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;
     public final static int pow10max;
     public static final int SIGNIFICAND_WIDTH = 53;
+    public static final int MAX_SCALE = 19;
     private static final int EXP_BIAS = 1023;
     private static final long SIGN_BIT_MASK = 0x8000000000000000L;
     private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
@@ -65,51 +66,6 @@ public final class Numbers {
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
 
     private Numbers() {
-    }
-
-    public static void append(CharSink sink, final double value, int scale) {
-        double d = value;
-        if (d == Double.POSITIVE_INFINITY) {
-            sink.put("Infinity");
-            return;
-        }
-
-        if (d == Double.NEGATIVE_INFINITY) {
-            sink.put("-Infinity");
-            return;
-        }
-
-        if (d != d) {
-            sink.put("NaN");
-            return;
-        }
-
-        if (value < 0) {
-            sink.put('-');
-            d = -value;
-        }
-
-        long factor = pow10[scale];
-        long scaled = (long) (d * factor + 0.5);
-        int targetScale = scale;
-        //noinspection StatementWithEmptyBody
-        while (++targetScale < 20 && pow10[targetScale] <= scaled) {
-        }
-
-        // factor overflow, fallback to slow method rather than throwing exception
-        if (targetScale == 20) {
-            sink.put(Double.toString(d));
-            return;
-        }
-
-        factor = pow10[targetScale - 1];
-        while (targetScale > 0) {
-            if (targetScale-- == scale) {
-                sink.put('.');
-            }
-            sink.put((char) ('0' + scaled / factor % 10));
-            factor /= 10;
-        }
     }
 
     public static void append(CharSink sink, final float value, int scale) {
@@ -243,6 +199,10 @@ public final class Numbers {
     }
 
     public static void append(CharSink sink, double value) {
+        append(sink, value, MAX_SCALE);
+    }
+
+    public static void append(CharSink sink, double value, int scale) {
         final char[] digits = sink.getDoubleDigitsBuffer();
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
@@ -260,7 +220,7 @@ public final class Numbers {
                 sink.put("NaN");
             }
         } else {
-            int fractionLen;
+            int fractionBits;
             if (binExp == 0) {
                 if (significantBitCount == 0L) {
                     if (negative) {
@@ -275,15 +235,15 @@ public final class Numbers {
                 int shift = leadingZeros - (63 - EXP_SHIFT);
                 significantBitCount <<= shift;
                 binExp = 1 - shift;
-                fractionLen = 64 - leadingZeros;
+                fractionBits = 64 - leadingZeros;
             } else {
                 significantBitCount |= FRACT_HOB;
-                fractionLen = 53;
+                fractionBits = 53;
             }
 
             binExp -= EXP_BIAS;
 
-            append(binExp, significantBitCount, fractionLen, negative, digits, sink);
+            append(binExp, significantBitCount, fractionBits, negative, digits, sink, scale);
         }
     }
 
@@ -466,67 +426,6 @@ public final class Numbers {
         }
 
         appendHex(sink, a, false);
-    }
-
-    public static void appendTrim(CharSink sink, double value, final int inScale) {
-        double d = value;
-        int scale = inScale;
-        if (d == Double.POSITIVE_INFINITY) {
-            sink.put("Infinity");
-            return;
-        }
-
-        if (d == Double.NEGATIVE_INFINITY) {
-            sink.put("-Infinity");
-            return;
-        }
-
-        if (d != d) {
-            sink.put("NaN");
-            return;
-        }
-
-        if (d == 0d) {
-            sink.put('0');
-            return;
-        }
-
-        if (d < 0) {
-            sink.put('-');
-            d = -d;
-        }
-
-        long scaled = (long) (d * pow10[scale] + 0.5);
-
-        // adjust scale to remove trailing zeroes
-        int k = 1;
-        while (scaled % pow10[k] == 0 && ((double) scaled) / pow10[k] > d) {
-            k++;
-        }
-        scale = scale - k + 1;
-
-        long factor = pow10[scale];
-        scaled = (long) (d * factor + 0.5);
-
-        int targetScale = scale + 1;
-        while (targetScale < 20 && pow10[targetScale] <= scaled) {
-            factor = pow10[targetScale++];
-        }
-
-
-        // factor overflow, fallback to slow method rather than throwing exception
-        if (targetScale == 20) {
-            sink.put(Double.toString(d));
-            return;
-        }
-
-        while (targetScale > 0) {
-            if (targetScale-- == scale) {
-                sink.put('.');
-            }
-            sink.put((char) ('0' + scaled / factor % 10));
-            factor /= 10;
-        }
     }
 
     public static int ceilPow2(int value) {
@@ -1357,6 +1256,8 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
+    //////////////////////
+
     private static void appendInt7(CharSink sink, int i) {
         int c;
         sink.put((char) ('0' + i / 1000000));
@@ -1367,8 +1268,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-    //////////////////////
 
     private static void appendInt6(CharSink sink, int i) {
         int c;
@@ -1489,8 +1388,8 @@ public final class Numbers {
     }
 
     private static double roundHalfUp0PosScale(double value, int scale) {
-        long val = (long) (value * pow10[scale + 2] + TOLERANCE);
-        return val % 100 < 50 ? roundDown0PosScale(value, scale) : roundUp0PosScale(value, scale);
+        long val = (long) ((value + TOLERANCE) * pow10[scale + 2]);
+        return val % 100 < 50 ? roundDown00PosScale(value, scale) : roundUp00PosScale(value, scale);
     }
 
     private static double roundHalfUp0NegScale(double value, int scale) {
@@ -1515,16 +1414,8 @@ public final class Numbers {
         return value < 0 ? -roundUp00(-value, scale) : roundUp00(value, scale);
     }
 
-    private static double roundDown0PosScale(double value, int scale) {
-        return value < 0 ? -roundDown00PosScale(-value, scale) : roundDown00PosScale(value, scale);
-    }
-
     private static double roundDown0NegScale(double value, int scale) {
         return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
-    }
-
-    private static double roundUp0PosScale(double value, int scale) {
-        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
     }
 
     private static double roundUp0NegScale(double value, int scale) {
@@ -1554,13 +1445,13 @@ public final class Numbers {
     private static double roundDown00PosScale(double value, int scale) {
         long powten = pow10[scale];
         double powtenNeg = pow10dNeg[scale];
-        return ((double) (long) (value * powten - TOLERANCE)) * powtenNeg;
+        return ((double) (long) ((value + TOLERANCE) * powten)) * powtenNeg;
     }
 
     private static double roundDown00NegScale(double value, int scale) {
         long powten = pow10[scale];
         double powtenNeg = pow10dNeg[scale];
-        return ((double) (long) (value * powtenNeg - TOLERANCE)) * powten;
+        return ((double) (long) ((value + TOLERANCE) * powtenNeg)) * powten;
     }
 
     private static void appendLong10(CharSink sink, long i) {
@@ -1879,8 +1770,8 @@ public final class Numbers {
             int significantBitCount,
             boolean negative,
             char[] digits,
-            CharSink out
-
+            CharSink out,
+            int outScale
     ) {
         assert fractionBits > 0L;
         assert (fractionBits & FRACT_HOB) != 0L;
@@ -2144,7 +2035,7 @@ public final class Numbers {
             }
         }
 
-        append(digits, firstDigitIndex, nDigits, negative, decExp, out);
+        append(digits, firstDigitIndex, nDigits, negative, decExp, out, outScale);
     }
 
     private static void append(
@@ -2153,9 +2044,10 @@ public final class Numbers {
             int nDigits,
             boolean isNegative,
             int decExp,
-            CharSink sink
+            CharSink sink,
+            int outScale
     ) {
-        assert nDigits <= 19 : nDigits;
+        assert nDigits <= MAX_SCALE : nDigits;
         if (isNegative) {
             sink.put('-');
         }
@@ -2172,7 +2064,7 @@ public final class Numbers {
             } else {
                 sink.put('.');
                 if (exp < nDigits) {
-                    sink.put(digits, firstDigitIndex + exp, nDigits - exp);
+                    sink.put(digits, firstDigitIndex + exp, Math.min(nDigits - exp, outScale));
                 } else {
                     sink.put('0');
                 }
@@ -2183,7 +2075,7 @@ public final class Numbers {
                 sink.fill('0', -decExp);
             }
 
-            sink.put(digits, firstDigitIndex, nDigits);
+            sink.put(digits, firstDigitIndex, Math.min(nDigits, outScale));
         } else {
             sink.put(digits[firstDigitIndex]);
             sink.put('.');
