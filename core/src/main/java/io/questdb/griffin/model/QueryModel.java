@@ -140,13 +140,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         aliasToColumnMap.put(alias, column);
     }
 
-    private boolean isMaxMinOrAvg(ExpressionNode ast, CharSequence columnName) {
-        return ast.type == ExpressionNode.FUNCTION && ast.rhs != null &&
-                (SqlKeywords.isMaxKeyword(columnName) ||
-                        SqlKeywords.isMinKeyword(columnName) ||
-                        SqlKeywords.isAvgKeyword(columnName));
-    }
-
     public void addJoinColumn(ExpressionNode node) {
         joinColumns.add(node);
     }

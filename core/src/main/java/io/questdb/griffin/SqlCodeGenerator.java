@@ -1881,6 +1881,7 @@ public class SqlCodeGenerator implements Mutable {
                         // we can only deal with 'order by symbol, timestamp' at best
                         // skip this optimisation if order by is more extensive
                         final int columnIndex = metadata.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
+                        assert columnIndex > -1;
 
                         // this is our kind of column
                         if (metadata.isColumnIndexed(columnIndex)) {
