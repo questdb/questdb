@@ -904,7 +904,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
+    public void testOrderByMultipleColumns() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
                 "AA\t315515118\t1970-01-03T00:00:00.000000Z\n" +
@@ -932,4 +932,37 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "AA\t4171981\n" +
+                "AA\t74196247\n" +
+                "AA\t417348950\n" +
+                "AA\t1191199593\n" +
+                "AA\t1233285715\n" +
+                "BB\t-1912873112\n" +
+                "BB\t-1707758909\n" +
+                "BB\t-850582456\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
 }
