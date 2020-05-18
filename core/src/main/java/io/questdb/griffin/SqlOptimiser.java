@@ -2181,7 +2181,10 @@ class SqlOptimiser {
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
-                    getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    if (baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
+                        throw SqlException.invalidColumn(orderBy.position, column);
+                    }
 
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by

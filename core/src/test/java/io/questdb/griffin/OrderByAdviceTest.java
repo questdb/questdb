@@ -816,4 +816,34 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         );
     }
+
+    @Test
+    public void testOrderByColumnNotInSelect() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
+                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
+                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
+                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
+                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
+                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x order by k, ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+
+        );
+    }
+    //select temp from (select * from readings limit 100) order by sensorId;
 }
