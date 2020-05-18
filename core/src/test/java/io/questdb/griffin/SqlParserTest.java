@@ -3223,7 +3223,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByOnNonSelectedColumn() throws SqlException {
         assertQuery(
-                "select-choose y from (select-choose [y, x] y, x from (select [y] from tab) order by x)",
+                "Invalid column: x",
                 "select y from tab order by x",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
