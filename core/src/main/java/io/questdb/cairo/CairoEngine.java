@@ -70,6 +70,12 @@ public class CairoEngine implements Closeable {
         return writerMaintenanceJob;
     }
 
+    private void checkWritePermission(CairoSecurityContext securityContext) {
+        if (null == securityContext || !securityContext.canWrite()) {
+            throw CairoException.instance(0).put("Write permission is denied");
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(writerPool);
@@ -155,9 +161,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        if (null == securityContext) {
-            throw new NullPointerException();
-        }
+        checkWritePermission(securityContext);
         return writerPool.get(tableName);
     }
 
@@ -166,9 +170,7 @@ public class CairoEngine implements Closeable {
             CharSequence tableName,
             CharSequence backupDirName
     ) {
-        if (null == securityContext) {
-            throw new NullPointerException();
-        }
+        checkWritePermission(securityContext);
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
@@ -177,6 +179,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
+        checkWritePermission(securityContext);
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {

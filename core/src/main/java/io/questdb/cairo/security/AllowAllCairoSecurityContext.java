@@ -28,4 +28,9 @@ import io.questdb.cairo.CairoSecurityContext;
 
 public class AllowAllCairoSecurityContext implements CairoSecurityContext {
     public static final AllowAllCairoSecurityContext INSTANCE = new AllowAllCairoSecurityContext();
+
+    @Override
+    public boolean canWrite() {
+        return true;
+    }
 }

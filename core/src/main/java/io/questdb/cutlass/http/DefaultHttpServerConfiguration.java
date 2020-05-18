@@ -209,4 +209,9 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public boolean haltOnError() {
         return false;
     }
+
+    @Override
+    public boolean readOnlySecurityContext() {
+        return false;
+    }
 }

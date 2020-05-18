@@ -25,4 +25,5 @@
 package io.questdb.cairo;
 
 public interface CairoSecurityContext {
+    boolean canWrite();
 }
