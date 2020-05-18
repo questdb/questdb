@@ -37,5 +37,7 @@ public interface JsonQueryProcessorConfiguration {
 
     int getFloatScale();
 
+    int getDoubleScale();
+
     CharSequence getKeepAliveHeader();
 }

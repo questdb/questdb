@@ -30,6 +30,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
@@ -84,6 +85,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getFloatScale() {
             return 10;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return Numbers.MAX_SCALE;
         }
 
         @Override

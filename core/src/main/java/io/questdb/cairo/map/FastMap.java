@@ -43,8 +43,8 @@ public class FastMap implements Map {
     private final int valueColumnCount;
     private final HashFunction hashFunction;
     private long capacity;
-    private int keyBlockOffset;
-    private int keyDataOffset;
+    private final int keyBlockOffset;
+    private final int keyDataOffset;
     private DirectLongList offsets;
     private long kStart;
     private long kLimit;

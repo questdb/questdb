@@ -218,22 +218,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhereClauseInsideInSubQuery() throws SqlException {
-        assertQuery(
-                "select-choose ts, sym, bid, ask from (select [ts, sym, bid, ask] from trades timestamp (ts) where ts = '2010-01-04' and sym in (select-choose sym from (select [sym, isNewSymbol] from symbols where not(isNewSymbol))))",
-                "select * from trades where ts='2010-01-04' and sym in (select sym from symbols where NOT isNewSymbol);",
-                modelOf("trades")
-                        .timestamp("ts")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.DOUBLE)
-                        .col("ask", ColumnType.DOUBLE),
-                modelOf("symbols")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("isNewSymbol", ColumnType.BOOLEAN)
-        );
-    }
-
-    @Test
     public void testCaseAndLimit() throws SqlException {
         assertQuery("select-virtual 'table' kind from (tab) limit 10",
                 "    select case a \n" +
@@ -4705,6 +4689,22 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWhereClauseInsideInSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose ts, sym, bid, ask from (select [ts, sym, bid, ask] from trades timestamp (ts) where ts = '2010-01-04' and sym in (select-choose sym from (select [sym, isNewSymbol] from symbols where not(isNewSymbol))))",
+                "select * from trades where ts='2010-01-04' and sym in (select sym from symbols where NOT isNewSymbol);",
+                modelOf("trades")
+                        .timestamp("ts")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.DOUBLE)
+                        .col("ask", ColumnType.DOUBLE),
+                modelOf("symbols")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("isNewSymbol", ColumnType.BOOLEAN)
         );
     }
 

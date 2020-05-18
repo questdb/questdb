@@ -136,6 +136,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimestampFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
+    private final int floatToStrCastScale;
+    private final int doubleToStrCastScale;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -178,6 +180,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
     private int jsonQueryFloatScale;
+    private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
 
@@ -250,7 +253,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
 
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
-            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
+            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
+            this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -308,6 +312,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
         this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.sql.copy.model.pool.capacity", 32);
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+        this.doubleToStrCastScale = getInt(properties, "cairo.sql.double.cast.scale", 12);
+        this.floatToStrCastScale = getInt(properties, "cairo.sql.float.cast.scale", 4);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
         final String dateLocale = getString(properties, "cairo.date.locale", "en");
@@ -924,6 +930,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDoubleToStrCastScale() {
+            return doubleToStrCastScale;
+        }
+
+        @Override
+        public int getFloatToStrCastScale() {
+            return floatToStrCastScale;
+        }
+
+        @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
         }
@@ -1240,6 +1256,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getFloatScale() {
             return jsonQueryFloatScale;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return jsonQueryDoubleScale;
         }
 
         @Override

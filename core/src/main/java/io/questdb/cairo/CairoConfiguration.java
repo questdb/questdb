@@ -59,6 +59,10 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
+    int getDoubleToStrCastScale();
+
+    int getFloatToStrCastScale();
+
     int getMaxSwapFileCount();
 
     MicrosecondClock getMicrosecondClock();

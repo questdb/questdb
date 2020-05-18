@@ -28,6 +28,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
@@ -125,7 +126,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(double x) {
-        sink().put(x);
+        sink().put(x, Numbers.MAX_SCALE);
         return this;
     }
 

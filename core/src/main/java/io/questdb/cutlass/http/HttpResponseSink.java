@@ -90,7 +90,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private long total = 0;
     private boolean header = true;
-    private boolean dumpNetworkTraffic;
+    private final boolean dumpNetworkTraffic;
 
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -536,12 +536,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public CharSink put(double value) {
+        public CharSink put(double value, int scale) {
             if (Double.isNaN(value) || Double.isInfinite(value)) {
                 put("null");
                 return this;
             }
-            return super.put(value);
+            return super.put(value, scale);
         }
 
         @Override
