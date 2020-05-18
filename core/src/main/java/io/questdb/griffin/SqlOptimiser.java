@@ -1164,11 +1164,18 @@ class SqlOptimiser {
         }
 
         CharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
+        boolean clearOrderByAdvice = false;
         for (int i = 0; i < len; i++) {
             QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
             if (queryColumn.getAst().type == ExpressionNode.LITERAL) {
                 orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
+            } else {
+                clearOrderByAdvice = true;
+                break;
             }
+        }
+        if (clearOrderByAdvice) {
+            orderByAdvice.clear();
         }
         return orderByAdvice;
     }

@@ -966,6 +966,38 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testVirtualColumnCancelsPropagationOfOrderByAdviceDesc() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "AA\t1233285715\n" +
+                "AA\t1191199593\n" +
+                "AA\t417348950\n" +
+                "AA\t74196247\n" +
+                "AA\t4171981\n" +
+                "BB\t-850582456\n" +
+                "BB\t-1707758909\n" +
+                "BB\t-1912873112\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
 
     /*
     broken test (x2)
