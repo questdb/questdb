@@ -24,6 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.CairoSecurityException;
+
 public interface CairoSecurityContext {
+
+    public static void checkWritePermission(CairoSecurityContext securityContext) {
+        if (null == securityContext || !securityContext.canWrite()) {
+            throw CairoSecurityException.instance().put("Write permission denied");
+        }
+    }
+
     boolean canWrite();
 }
