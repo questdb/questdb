@@ -3,7 +3,6 @@ package io.questdb.griffin;
 import org.junit.Assert;
 import org.junit.Test;
 
-import io.questdb.cairo.security.CairoSecurityException;
 import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
@@ -24,7 +23,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
             try {
@@ -58,7 +57,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     method.commit();
                 }
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
@@ -73,7 +72,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("drop table balances", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
             assertQuery("count\n0\n", "select count() from balances", null);
@@ -95,7 +94,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("alter table balances add column newcol int", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
@@ -110,7 +109,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("rename table balances to newname", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
             assertQuery("count\n0\n", "select count() from balances", null);
@@ -124,7 +123,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("backup table balances", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (CairoSecurityException ex) {
+            } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
         });
