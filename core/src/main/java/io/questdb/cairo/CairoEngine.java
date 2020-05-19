@@ -83,7 +83,7 @@ public class CairoEngine implements Closeable {
             Path path,
             TableStructure struct
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         TableUtils.createTable(
                 configuration.getFilesFacade(),
                 mem,
@@ -157,7 +157,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         return writerPool.get(tableName);
     }
 
@@ -166,7 +166,7 @@ public class CairoEngine implements Closeable {
             CharSequence tableName,
             CharSequence backupDirName
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
@@ -175,7 +175,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
@@ -231,7 +231,7 @@ public class CairoEngine implements Closeable {
             Path path,
             CharSequence tableName
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         if (lock(securityContext, tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
@@ -261,7 +261,7 @@ public class CairoEngine implements Closeable {
             Path otherPath,
             CharSequence newName
     ) {
-        CairoSecurityContext.checkWritePermission(securityContext);
+        securityContext.checkWritePermission();
         if (lock(securityContext, tableName)) {
             try {
                 rename0(path, tableName, otherPath, newName);

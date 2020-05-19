@@ -28,8 +28,8 @@ import io.questdb.cairo.security.CairoSecurityException;
 
 public interface CairoSecurityContext {
 
-    public static void checkWritePermission(CairoSecurityContext securityContext) {
-        if (null == securityContext || !securityContext.canWrite()) {
+    default void checkWritePermission() {
+        if (!canWrite()) {
             throw CairoSecurityException.instance().put("Write permission denied");
         }
     }

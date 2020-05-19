@@ -1571,7 +1571,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
-        CairoSecurityContext.checkWritePermission(executionContext.getCairoSecurityContext());
+        executionContext.getCairoSecurityContext().checkWritePermission();
         if (null == configuration.getBackupRoot()) {
             throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
         }
