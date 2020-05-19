@@ -1,5 +1,5 @@
-import "ace-builds/src-min-noconflict/ace"
-import "ace-builds/src-min-noconflict/theme-merbivore_soft"
+import "ace-builds"
+import "ace-builds/webpack-resolver"
 import "echarts/lib/chart/bar"
 import "echarts/lib/chart/line"
 import "echarts/lib/component/tooltip"
@@ -7,7 +7,6 @@ import "echarts/lib/component/title"
 import "docsearch.js/dist/cdn/docsearch.min.css"
 import $ from "jquery"
 import "metismenu"
-import "slim-select/dist/slimselect.min.css"
 
 import { setupConsoleController } from "./console-controller"
 import { setupImportController } from "./import-controller"
@@ -57,7 +56,7 @@ function switchToVis() {
 }
 
 function switchToImport() {
-  switchTo("import", 2)
+  switchTo("import", 1)
 }
 
 ace.define(
@@ -75,7 +74,7 @@ ace.define(
       i = e("./text_highlight_rules").TextHighlightRules,
       s = function () {
         var e =
-          "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename|truncate|asof|copy|alter|into|values|index|add|column|then"
+          "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename|truncate|asof|copy|alter|into|values|index|add|column|then|distinct"
         var t = "true|false"
         var n =
           "avg|count|first|last|max|min|sum|ucase|lcase|mid|len|round|rank|now|format|coalesce|ifnull|isnull|nvl"
@@ -157,6 +156,8 @@ ace.define(
 
 $(document).ready(function () {
   messageBus = $({})
+
+  window.bus = messageBus
 
   $("#side-menu").metisMenu()
   $("a#nav-console").click(switchToConsole)

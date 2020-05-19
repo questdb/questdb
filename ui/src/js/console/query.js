@@ -16,6 +16,7 @@ $.fn.query = function () {
   }
 
   function cancelActiveQuery() {
+    $(".js-query-refresh .fa").removeClass("fa-spin")
     if (hActiveRequest !== null) {
       hActiveRequest.abort()
       hActiveRequest = null
@@ -30,6 +31,7 @@ $.fn.query = function () {
   }
 
   function handleServerResponse(r) {
+    $(".js-query-refresh .fa").removeClass("fa-spin")
     bus.trigger(qdb.MSG_QUERY_OK, {
       count: r.count,
       timings: r.timings && {
@@ -45,6 +47,7 @@ $.fn.query = function () {
   }
 
   function handleServerError(r) {
+    $(".js-query-refresh .fa").removeClass("fa-spin")
     bus.trigger(qdb.MSG_QUERY_ERROR, {
       query: qry,
       r: r.responseJSON,
@@ -100,14 +103,14 @@ $.fn.domController = function () {
 
   function start() {
     running = true
-    runBtn.html('<i class="fa fa-stop"></i>Cancel')
-    runBtn.removeClass("js-query-run").addClass("js-query-cancel")
+    runBtn.html('<i class="fa fa-stop"></i><span>Cancel</span>')
+    runBtn.removeClass("js-query-run button-success").addClass("button-danger")
     timer = setTimeout(delayedStart, 500)
   }
 
   function stop() {
-    runBtn.html('<i class="fa fa-play"></i>Run')
-    runBtn.removeClass("js-query-cancel").addClass("js-query-run")
+    runBtn.html('<i class="fa fa-play"></i><span>Run</span>')
+    runBtn.removeClass("button-danger").addClass("js-query-run button-success")
     clearTimeout(timer)
     div.removeClass("query-progress-animated")
     running = false

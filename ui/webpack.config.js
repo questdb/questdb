@@ -48,6 +48,14 @@ const devPlugins = [
   }),
 ]
 
+const devLoaders = [
+  {
+    test: /\.(ts|js)x$/,
+    exclude: /node_modules/,
+    use: "stylelint-custom-processor-loader",
+  },
+]
+
 const prodPlugins = [
   new CopyWebpackPlugin([{ from: "./assets/", to: "assets/" }]),
 ]
@@ -68,12 +76,13 @@ module.exports = {
     },
   },
   mode: isProdBuild ? "production" : "development",
-  entry: "./src/js/index",
+  entry: "./src/index",
   output: {
     filename: "qdb.js",
   },
   resolve: {
     extensions: [".ts", ".tsx", ".js"],
+    modules: [path.resolve("./src"), path.resolve("./node_modules")],
   },
   module: {
     rules: [
@@ -102,6 +111,7 @@ module.exports = {
         test: /\.s[ac]ss$/i,
         use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
       },
+      ...(isProdBuild ? [] : devLoaders),
     ],
   },
   plugins: [

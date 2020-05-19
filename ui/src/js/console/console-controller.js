@@ -7,7 +7,7 @@ const divSqlPanel = $(".js-sql-panel")
 const divExportUrl = $(".js-export-url")
 const editor = $("#editor")
 const sqlEditor = $("#sqlEditor")
-const consoleTop = $("#console-top")
+const consoleTop = $(".console-wrapper")
 const wrapper = $("#page-wrapper")
 const msgPanel = editor.find(".js-query-message-panel")
 const navbar = $("nav.navbar-default")
@@ -25,7 +25,6 @@ function resize() {
   if (visible) {
     const navbarHeight = navbar.height()
     const wrapperHeight = wrapper.height()
-    const msgPanelHeight = msgPanel.height()
     let h
 
     if (navbarHeight > wrapperHeight) {
@@ -43,8 +42,7 @@ function resize() {
       // qdb.setHeight(wrapper, h - 1);
     }
 
-    qdb.setHeight(consoleTop, topHeight)
-    qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60)
+    consoleTop.css("flex-basis", topHeight)
   }
 }
 
@@ -79,17 +77,15 @@ function toggleVisibility(x, name) {
 function toggleChart() {
   toggleChartBtn.addClass("active")
   toggleGridBtn.removeClass("active")
-  grid.hide()
-  quickVis.show()
-  quickVis.resize()
+  grid.css("display", "none")
+  quickVis.css("display", "flex")
 }
 
 function toggleGrid() {
   toggleChartBtn.removeClass("active")
   toggleGridBtn.addClass("active")
-  grid.show()
-  quickVis.hide()
-  grid.resize()
+  grid.css("display", "flex")
+  quickVis.css("display", "none")
 }
 
 export function setupConsoleController(bus) {
@@ -105,6 +101,7 @@ export function setupConsoleController(bus) {
   /* eslint-disable no-new */
   new Clipboard(".js-export-copy-url")
   $(".js-query-refresh").click(function () {
+    $(".js-query-refresh .fa").addClass("fa-spin")
     bus.trigger("grid.refresh")
   })
 
