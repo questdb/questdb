@@ -697,8 +697,8 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
-            throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is busy");
+            LOG.info().$("failed to alter table: ").$((Sinkable) e).$();
+            throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' cannot be altered: ").put(e);
         }
 
         return compiledQuery.ofAlter();
@@ -1571,6 +1571,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
         if (null == configuration.getBackupRoot()) {
             throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
         }

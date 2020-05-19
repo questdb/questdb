@@ -27,6 +27,6 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.griffin.SqlException;
 
 @FunctionalInterface
-interface BindVariableSetter {
+public interface BindVariableSetter {
     void set(int index, long address, int valueLen) throws SqlException, BadProtocolException;
 }

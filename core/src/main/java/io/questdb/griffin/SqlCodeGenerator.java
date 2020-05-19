@@ -1800,6 +1800,7 @@ public class SqlCodeGenerator implements Mutable {
                             //    ordering in the code that returns rows from index rather than having an
                             //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                             if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
+                                metadata.setTimestampIndex(-1);
                                 if (orderByAdviceSize == 1) {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
@@ -1839,6 +1840,7 @@ public class SqlCodeGenerator implements Mutable {
                     }
 
                     if (orderByKeyColumn) {
+                        metadata.setTimestampIndex(-1);
                         if (model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                             symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR);
                         } else {

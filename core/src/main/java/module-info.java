@@ -71,6 +71,8 @@ open module io.questdb {
     exports io.questdb.griffin.engine.groupby.vect;
 
     exports io.questdb.std;
+    exports io.questdb.std.microtime;
+    exports io.questdb.std.time;
     exports io.questdb.std.str;
     exports io.questdb.network;
     exports io.questdb.log;

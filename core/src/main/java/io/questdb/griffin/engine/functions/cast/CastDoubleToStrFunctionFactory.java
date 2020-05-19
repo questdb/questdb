@@ -49,20 +49,22 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(intFunc.getDouble(null));
+            sink.put(intFunc.getDouble(null), configuration.getDoubleToStrCastScale());
             return new StrConstant(position, Chars.toString(sink));
         }
-        return new Func(position, args.getQuick(0));
+        return new Func(position, args.getQuick(0), configuration.getDoubleToStrCastScale());
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final int scale;
 
-        public Func(int position, Function arg) {
+        public Func(int position, Function arg, int scale) {
             super(position);
             this.arg = arg;
+            this.scale = scale;
         }
 
         @Override
@@ -77,7 +79,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            sinkA.put(value);
+            sinkA.put(value, scale);
             return sinkA;
         }
 
@@ -88,7 +90,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value);
+            sinkB.put(value, scale);
             return sinkB;
         }
 
@@ -98,7 +100,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
             if (Double.isNaN(value)) {
                 return;
             }
-            sink.put(value);
+            sink.put(value, scale);
         }
     }
 }

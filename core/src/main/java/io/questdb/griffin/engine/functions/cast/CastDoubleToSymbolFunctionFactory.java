@@ -52,10 +52,10 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(arg.getDouble(null));
+            sink.put(arg.getDouble(null), configuration.getDoubleToStrCastScale());
             return new SymbolConstant(position, Chars.toString(sink), 0);
         }
-        return new Func(position, arg);
+        return new Func(position, arg, configuration.getDoubleToStrCastScale());
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
@@ -63,43 +63,19 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         private final StringSink sink = new StringSink();
         private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
         private final ObjList<String> symbols = new ObjList<>();
+        private final int scale;
         private int next = 1;
 
-        public Func(int position, Function arg) {
+        public Func(int position, Function arg, int scale) {
             super(position);
             this.arg = arg;
             symbols.add(null);
+            this.scale = scale;
         }
 
         @Override
         public Function getArg() {
             return arg;
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return null;
-            }
-
-            final long key = Double.doubleToLongBits(value);
-            final int keyIndex = symbolTableShortcut.keyIndex(key);
-            if (keyIndex < 0) {
-                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, key, next++);
-            sink.clear();
-            sink.put(value);
-            final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
-            return str;
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         @Override
@@ -117,14 +93,30 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next);
             sink.clear();
-            sink.put(value);
+            sink.put(value, scale);
             symbols.add(Chars.toString(sink));
             return next++ - 1;
         }
 
         @Override
-        public boolean isSymbolTableStatic() {
-            return false;
+        public CharSequence getSymbol(Record rec) {
+            final double value = arg.getDouble(rec);
+            if (Double.isNaN(value)) {
+                return null;
+            }
+
+            final long key = Double.doubleToLongBits(value);
+            final int keyIndex = symbolTableShortcut.keyIndex(key);
+            if (keyIndex < 0) {
+                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
+            }
+
+            symbolTableShortcut.putAt(keyIndex, key, next++);
+            sink.clear();
+            sink.put(value, scale);
+            final String str = Chars.toString(sink);
+            symbols.add(Chars.toString(sink));
+            return str;
         }
 
         @Override
@@ -134,6 +126,16 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
             symbols.clear();
             symbols.add(null);
             next = 1;
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
     }
 }

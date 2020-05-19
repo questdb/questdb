@@ -111,7 +111,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
 
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
-        Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
+        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
@@ -359,6 +360,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCopyPoolCapacity());
             Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
+            Assert.assertEquals(8, configuration.getCairoConfiguration().getDoubleToStrCastScale());
+            Assert.assertEquals(3, configuration.getCairoConfiguration().getFloatToStrCastScale());
 
             Assert.assertEquals(CommitMode.ASYNC, configuration.getCairoConfiguration().getCommitMode());
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());

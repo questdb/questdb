@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -82,7 +83,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkDouble(CharSink sink, Function function, Record record) {
-        sink.put(function.getDouble(record));
+        sink.put(function.getDouble(record), Numbers.MAX_SCALE);
     }
 
     private static void sinkSymbol(CharSink sink, Function function, Record record) {
