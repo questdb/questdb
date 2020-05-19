@@ -818,14 +818,18 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByColumnNotInSelect() throws Exception {
+    public void testOrderBy2Columns() throws Exception {
         final String expected = "k\tprice\tts\n" +
-                "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
-                "HBC\t0.48422909268940273\t1970-01-04T09:48:00.000000Z\n" +
-                "HBC\t0.8756165114231503\t1970-01-04T09:24:00.000000Z\n" +
-                "HBC\t0.10287867683029772\t1970-01-04T09:12:00.000000Z\n" +
-                "HBC\t0.6367746812001958\t1970-01-04T08:42:00.000000Z\n" +
-                "HBC\t0.1572805871525168\t1970-01-04T08:24:00.000000Z\n";
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
+                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
+                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
 
         assertQuery(
                 "k\tprice\tts\n",
@@ -835,7 +839,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +

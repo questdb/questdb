@@ -2182,7 +2182,7 @@ class SqlOptimiser {
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
                     int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
-                    if (baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
+                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
                         throw SqlException.invalidColumn(orderBy.position, column);
                     }
 
@@ -2214,6 +2214,10 @@ class SqlOptimiser {
                             if (groupBy) {
                                 ascendColumns = false;
                             } else {
+                                if (dot > -1) {
+                                    throw SqlException.invalidColumn(orderBy.position, column);
+                                }
+
                                 if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
