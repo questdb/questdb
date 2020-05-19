@@ -2209,15 +2209,15 @@ class SqlOptimiser {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
                         } else {
+                            if (dot > -1) {
+                                throw SqlException.invalidColumn(orderBy.position, column);
+                            }
+
                             // we must attempt to ascend order by column
                             // when we have group by model, ascent is not possible
                             if (groupBy) {
                                 ascendColumns = false;
                             } else {
-                                if (dot > -1) {
-                                    throw SqlException.invalidColumn(orderBy.position, column);
-                                }
-
                                 if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);

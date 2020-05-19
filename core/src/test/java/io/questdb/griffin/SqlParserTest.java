@@ -3087,29 +3087,59 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByGroupByCol2() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab) order by a",
+                "select a, sum(b) b from tab order by a",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOrderByGroupByColPrefixed() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) b from (select [a, b] from tab)",
+                "select-group-by a, sum(b) b from (select [a, b] from tab) order by a",
+                "select a, sum(b) b from tab order by tab.a",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testFailureOrderByGroupByColPrefixed() throws Exception {
+        assertFailure(
                 "select a, sum(b) b from tab order by tab.b, a",
-                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                37,
+                "Invalid column: tab.b"
         );
     }
 
     @Test
-    public void testOrderByGroupByColPrefixed2() throws SqlException {
-        assertQuery(
-                "select-group-by a, sum(b) b from (select [a, b] from tab) order by a",
+    public void testFailureOrderByGroupByColPrefixed2() throws Exception {
+        assertFailure(
                 "select a, sum(b) b from tab order by a, tab.b",
-                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                40,
+                "Invalid column: tab.b"
         );
     }
 
     @Test
-    public void testOrderByGroupByColPrefixed3() throws SqlException {
-        assertQuery(
-                "select-group-by a, sum(b) b from (select [a, b] from tab) order by a",
+    public void testFailureOrderByGroupByColPrefixed3() throws Exception {
+        assertFailure(
                 "select a, sum(b) b from tab order by tab.a, tab.b",
-                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                44,
+                "Invalid column: tab.b"
         );
     }
 
@@ -3296,10 +3326,23 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testOrderByOnOuterResult() throws SqlException {
         assertQuery(
                 "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (select [x, y] from tab)) order by z",
-                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
+                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc",
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
                         .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
+        assertFailure(
+                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                59,
+                "Invalid column: tab.y"
         );
     }
 
