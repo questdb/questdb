@@ -3221,18 +3221,18 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn() throws SqlException {
-        assertQuery(
-                "Invalid column: x",
+    public void testOrderByOnNonSelectedColumn() throws Exception {
+        assertFailure(
                 "select y from tab order by x",
-                modelOf("tab")
-                        .col("x", ColumnType.DOUBLE)
-                        .col("y", ColumnType.INT)
-        );
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                27, "Invalid column: x");
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn2() throws SqlException {
+    public void testOrderByOnNonSelectedColumn2() throws Exception {
         assertQuery(
                 "select-choose column from (select-virtual [2 * y + x column, x] 2 * y + x column, x from (select-choose [x, y] x, y from (select [x, y] from tab)) order by x)",
                 "select 2*y+x from tab order by x",
@@ -3243,14 +3243,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn3() throws SqlException {
-        assertQuery(
-                "select-choose column, column1 from (select-virtual [2 * y + x column, 3 / x column1, x] 2 * y + x column, 3 / x column1, x from (select-choose [x, y] x, y from (select [x, y] from tab)) order by x)",
+    public void testOrderByOnNonSelectedColumn3() throws Exception {
+        assertFailure(
                 "select 2*y+x, 3/x from tab order by x",
-                modelOf("tab")
-                        .col("x", ColumnType.DOUBLE)
-                        .col("y", ColumnType.INT)
-        );
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                36, "Invalid column: x");
     }
 
     @Test
