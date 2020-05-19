@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine;
 
+import java.io.Closeable;
+
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-
-import java.io.Closeable;
 
 public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     // parent is at offset 0
@@ -44,6 +44,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     private static final byte BLACK = 0;
     protected final MemoryPages mem;
     protected long root = -1;
+    private long maxSize = -1;
 
     public AbstractRedBlackTree(long keyPageSize) {
         this.mem = new MemoryPages(keyPageSize);
@@ -53,6 +54,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     public void clear() {
         root = -1;
         this.mem.clear();
+    }
+
+    public void setMaxSize(long maxSize) {
+        this.maxSize = maxSize;
     }
 
     @Override
@@ -127,6 +132,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     }
 
     protected long allocateBlock() {
+        if (maxSize >= 0 && size() >= maxSize) {
+            throw LimitOverflowException.instance(maxSize);
+        }
         long p = mem.allocate(getBlockSize());
         setLeft(p, -1);
         setRight(p, -1);

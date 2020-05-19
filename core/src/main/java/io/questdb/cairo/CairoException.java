@@ -31,7 +31,7 @@ import io.questdb.std.str.StringSink;
 
 public class CairoException extends RuntimeException implements Sinkable {
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
-    private final StringSink message = new StringSink();
+    protected final StringSink message = new StringSink();
     private int errno;
 
     public static CairoException instance(int errno) {

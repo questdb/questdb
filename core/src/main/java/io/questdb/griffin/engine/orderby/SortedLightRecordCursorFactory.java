@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -58,8 +59,19 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor baseCursor = base.getCursor(executionContext);
-        this.cursor.of(baseCursor);
-        return cursor;
+        long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+        if (maxInMemoryRows >= 0 && baseCursor.size() >= 0 && baseCursor.size() > maxInMemoryRows) {
+            baseCursor.close();
+            throw LimitOverflowException.instance(maxInMemoryRows);
+        }
+        chain.setMaxSize(maxInMemoryRows);
+        try {
+            this.cursor.of(baseCursor);
+            return cursor;
+        } catch (RuntimeException ex) {
+            cursor.close();
+            throw ex;
+        }
     }
 
     @Override

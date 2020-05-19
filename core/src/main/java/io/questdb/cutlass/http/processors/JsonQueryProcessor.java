@@ -336,13 +336,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+        final RecordCursor cursor;
+        try {
+            cursor = factory.getCursor(sqlExecutionContext);
+        } catch (RuntimeException ex) {
+            factory.close();
+            throw ex;
+        }
         executeSelect(
                 state,
                 factory,
                 cursor,
-                keepAliveHeader
-        );
+                keepAliveHeader);
     }
 
     private void internalError(

@@ -33,4 +33,6 @@ public interface CairoSecurityContext {
     }
 
     boolean canWrite();
+
+    long getMaxInMemoryRows();
 }

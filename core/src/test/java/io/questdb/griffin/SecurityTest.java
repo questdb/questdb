@@ -3,7 +3,7 @@ package io.questdb.griffin;
 import org.junit.Assert;
 import org.junit.Test;
 
-import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 
@@ -13,7 +13,8 @@ public class SecurityTest extends AbstractGriffinTest {
             messageBus,
             1)
                     .with(
-                            ReadOnlyCairoSecurityContext.INSTANCE,
+                            new CairoSecurityContextImpl(false,
+                                    2),
                             bindVariableService,
                             null);
 
@@ -125,6 +126,36 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRows() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            // @formatter:off
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym,"
+                    +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            // @formatter:on
+            assertQuery(
+                    "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
+                    "select sym, d from tb1 where d < 0.3 ORDER BY d",
+                    null,
+                    true, readOnlyExecutionContext);
+            try {
+                assertQuery(
+                        "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\nPEHN\t0.3288176907679504\n",
+                        "select sym, d from tb1 where d < 0.34 ORDER BY d",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
             }
         });
     }

@@ -33,4 +33,9 @@ public class AllowAllCairoSecurityContext implements CairoSecurityContext {
     public boolean canWrite() {
         return true;
     }
+
+    @Override
+    public long getMaxInMemoryRows() {
+        return -1;
+    }
 }

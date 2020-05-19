@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.security.ReadOnlyCairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -72,7 +72,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
-        cairoSecurityContext = configuration.readOnlySecurityContext() ? ReadOnlyCairoSecurityContext.INSTANCE : AllowAllCairoSecurityContext.INSTANCE;
+        cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext(), configuration.getMaxInMemoryRows());
     }
 
     @Override
