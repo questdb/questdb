@@ -998,14 +998,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
-
-    /*
-    broken test (x2)
-    1. currently returns rows sorted by sym
-    2. returns expectedTimestamp == "ts"
-    */
     @Test
-    @Ignore
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -1038,13 +1031,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
-    /*
-    broken test (x2)
-    1. currently returns rows sorted by ts but ascending order
-    2. returns expectedTimestamp == "ts"
-    */
     @Test
-    @Ignore
     public void testSelectWithOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -1078,4 +1065,36 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testOrderBy2Columns() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
+                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
+                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x order by k, ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+
+        );
+    }
 }
