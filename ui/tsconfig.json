@@ -6,14 +6,17 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
-    "lib": ["esnext"],
+    "jsx": "react",
+    "lib": ["esnext", "dom"],
     "module": "esnext",
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "sourceMap": false,
     "strict": true,
-    "target": "es5"
+    "target": "es5",
+    "baseUrl": "./src",
+    "rootDir": "./src"
   },
   "include": ["src"]
 }
