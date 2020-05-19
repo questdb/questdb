@@ -998,14 +998,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
-
-    /*
-    broken test (x2)
-    1. currently returns rows sorted by sym
-    2. returns expectedTimestamp == "ts"
-    */
     @Test
-    @Ignore
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -1038,13 +1031,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
         );
     }
 
-    /*
-    broken test (x2)
-    1. currently returns rows sorted by ts but ascending order
-    2. returns expectedTimestamp == "ts"
-    */
     @Test
-    @Ignore
     public void testSelectWithOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -1110,5 +1097,4 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         );
     }
-    //select temp from (select * from readings limit 100) order by sensorId;
 }

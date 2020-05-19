@@ -4850,6 +4850,19 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testWhereClauseWithInStatement() throws SqlException {
+        assertQuery(
+                "select-choose sym, bid, ask, ts from (select [sym, bid, ask, ts] from x timestamp (ts) where sym in ('AA','BB')) order by ts desc",
+                "select * from x where sym in ('AA', 'BB' ) order by ts desc",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

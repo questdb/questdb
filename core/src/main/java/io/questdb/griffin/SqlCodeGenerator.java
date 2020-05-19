@@ -941,15 +941,14 @@ public class SqlCodeGenerator implements Mutable {
                 if (metadata.getTimestampIndex() == -1) {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                 } else {
-                    int index = metadata.getColumnIndexQuiet(columnNames.getQuick(0));
+                    CharSequence column = columnNames.getQuick(0);
+                    int index = metadata.getColumnIndexQuiet(column);
                     if (index == metadata.getTimestampIndex()) {
 
-                        if (size == 1) {
+                        if (size == 1 && orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                             return recordCursorFactory;
                         }
-
-                        orderedMetadata = copyMetadata(metadata);
-
+                        orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                     } else {
                         orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                     }

@@ -2920,7 +2920,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                "k",
+                null,
                 "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3178,7 +3178,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                "k",
+                null,
                 "insert into x select * from (" +
                         "select" +
                         " 852921272," +
