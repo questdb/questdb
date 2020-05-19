@@ -2185,7 +2185,10 @@ class SqlOptimiser {
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
-                    getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
+                        throw SqlException.invalidColumn(orderBy.position, column);
+                    }
 
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
@@ -2210,6 +2213,10 @@ class SqlOptimiser {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
                         } else {
+                            if (dot > -1) {
+                                throw SqlException.invalidColumn(orderBy.position, column);
+                            }
+
                             // we must attempt to ascend order by column
                             // when we have group by model, ascent is not possible
                             if (groupBy) {
