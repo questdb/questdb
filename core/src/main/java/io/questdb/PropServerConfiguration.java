@@ -183,6 +183,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
+    private boolean readOnlySecurityContext;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -255,6 +256,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
+            this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -864,6 +866,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return readOnlySecurityContext;
         }
     }
 

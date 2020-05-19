@@ -27,5 +27,9 @@ package io.questdb.cairo.pool.ex;
 import io.questdb.cairo.CairoException;
 
 public class EntryUnavailableException extends CairoException {
-    public static final EntryUnavailableException INSTANCE = new EntryUnavailableException();
+    public static final EntryUnavailableException INSTANCE;
+    static {
+        INSTANCE = new EntryUnavailableException();
+        INSTANCE.put("table busy");
+    }
 }
