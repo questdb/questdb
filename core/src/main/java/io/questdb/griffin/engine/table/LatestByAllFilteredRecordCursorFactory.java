@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -36,8 +39,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final Map map;
@@ -79,8 +80,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         if (maxInMemoryRows > dataFrameCursor.size() || dataFrameCursor.size() < 0) {
             map.setMaxSize(maxInMemoryRows);
             return super.getCursorInstance(dataFrameCursor, executionContext);
-        } else {
-            throw LimitOverflowException.instance(maxInMemoryRows);
         }
+        throw LimitOverflowException.instance(maxInMemoryRows);
     }
 }

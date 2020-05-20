@@ -217,6 +217,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public long getMaxInMemoryRows() {
-        return -1;
+        return Long.MAX_VALUE;
     }
 }

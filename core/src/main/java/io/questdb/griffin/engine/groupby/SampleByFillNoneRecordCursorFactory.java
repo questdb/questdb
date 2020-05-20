@@ -125,7 +125,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
         long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 0) {
+        if (maxInMemoryRows > baseCursor.size()) {
             map.setMaxSize(maxInMemoryRows);
             cursor.of(baseCursor);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
@@ -133,9 +133,8 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
                 recordFunctions.getQuick(i).init(cursor, executionContext);
             }
             return cursor;
-        } else {
-            baseCursor.close();
-            throw LimitOverflowException.instance(maxInMemoryRows);
         }
+        baseCursor.close();
+        throw LimitOverflowException.instance(maxInMemoryRows);
     }
 }

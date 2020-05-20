@@ -61,13 +61,12 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 1) {
+            if (maxInMemoryRows > baseCursor.size()) {
                 chain.setMaxSize(maxInMemoryRows);
                 this.cursor.of(baseCursor);
                 return cursor;
-            } else {
-                throw LimitOverflowException.instance(maxInMemoryRows);
             }
+            throw LimitOverflowException.instance(maxInMemoryRows);
         } catch (RuntimeException ex) {
             baseCursor.close();
             throw ex;

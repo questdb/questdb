@@ -181,7 +181,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
         try {
             map.clear();
             long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 0) {
+            if (maxInMemoryRows > baseCursor.size()) {
                 map.setMaxSize(maxInMemoryRows);
 
                 // This factory fills gaps in data. To do that we
@@ -219,9 +219,8 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
                 // we know base cursor has value
                 assert next;
                 return initFunctionsAndCursor(executionContext, baseCursor);
-            } else {
-                throw LimitOverflowException.instance(maxInMemoryRows);
             }
+            throw LimitOverflowException.instance(maxInMemoryRows);
         } catch (CairoException ex) {
             baseCursor.close();
             throw ex;

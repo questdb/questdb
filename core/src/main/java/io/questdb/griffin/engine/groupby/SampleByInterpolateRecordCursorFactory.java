@@ -206,7 +206,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final Record baseRecord = baseCursor.getRecord();
         try {
             long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 0) {
+            if (maxInMemoryRows > baseCursor.size()) {
                 dataMap.setMaxSize(maxInMemoryRows);
 
                 // Collect map of unique key values.
@@ -376,9 +376,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 }
 
                 return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
-            } else {
-                throw LimitOverflowException.instance(maxInMemoryRows);
             }
+            throw LimitOverflowException.instance(maxInMemoryRows);
         } catch (CairoException e) {
             baseCursor.close();
             throw e;
