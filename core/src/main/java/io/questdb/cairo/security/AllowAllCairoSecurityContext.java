@@ -36,6 +36,6 @@ public class AllowAllCairoSecurityContext implements CairoSecurityContext {
 
     @Override
     public long getMaxInMemoryRows() {
-        return -1;
+        return Long.MAX_VALUE;
     }
 }

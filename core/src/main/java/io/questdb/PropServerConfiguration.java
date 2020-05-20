@@ -290,7 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
             this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
-            this.maxInMemoryRows = getLong(properties, "http.security.max.in.memory.rows", -1);
+            this.maxInMemoryRows = getLong(properties, "http.security.max.in.memory.rows", Long.MAX_VALUE);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;

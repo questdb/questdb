@@ -340,6 +340,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
+        assertTimestampColumnValues(factory, sqlExecutionContext);
+    }
+
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -466,13 +470,17 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {
+        assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
+    }
+
+    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
         if (expectedTimestamp == null) {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         } else {
             int index = factory.getMetadata().getColumnIndex(expectedTimestamp);
             Assert.assertNotEquals(-1, index);
             Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory);
+            assertTimestampColumnValues(factory, sqlExecutionContext);
         }
     }
 
@@ -495,7 +503,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) {
-        assertTimestamp(expectedTimestamp, factory);
+        assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
         assertCursor(expected, factory, supportsRandomAccess, true, sqlExecutionContext);
         // make sure we get the same outcome when we get factory to create new cursor
         assertCursor(expected, factory, supportsRandomAccess, true, sqlExecutionContext);

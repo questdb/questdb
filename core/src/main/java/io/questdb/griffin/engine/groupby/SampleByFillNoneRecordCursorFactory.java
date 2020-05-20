@@ -24,7 +24,14 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -35,8 +42,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
@@ -115,16 +125,17 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
         long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows >= 0 && baseCursor.size() >= 0 && baseCursor.size() > maxInMemoryRows) {
+        if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 0) {
+            map.setMaxSize(maxInMemoryRows);
+            cursor.of(baseCursor);
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            for (int i = 0, m = recordFunctions.size(); i < m; i++) {
+                recordFunctions.getQuick(i).init(cursor, executionContext);
+            }
+            return cursor;
+        } else {
             baseCursor.close();
             throw LimitOverflowException.instance(maxInMemoryRows);
         }
-        map.setMaxSize(maxInMemoryRows);
-        cursor.of(baseCursor);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, executionContext);
-        }
-        return cursor;
     }
 }

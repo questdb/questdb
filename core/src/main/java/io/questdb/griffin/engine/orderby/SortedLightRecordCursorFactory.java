@@ -59,17 +59,17 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor baseCursor = base.getCursor(executionContext);
-        long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows >= 0 && baseCursor.size() >= 0 && baseCursor.size() > maxInMemoryRows) {
-            baseCursor.close();
-            throw LimitOverflowException.instance(maxInMemoryRows);
-        }
-        chain.setMaxSize(maxInMemoryRows);
         try {
-            this.cursor.of(baseCursor);
-            return cursor;
+            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+            if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 1) {
+                chain.setMaxSize(maxInMemoryRows);
+                this.cursor.of(baseCursor);
+                return cursor;
+            } else {
+                throw LimitOverflowException.instance(maxInMemoryRows);
+            }
         } catch (RuntimeException ex) {
-            cursor.close();
+            baseCursor.close();
             throw ex;
         }
     }

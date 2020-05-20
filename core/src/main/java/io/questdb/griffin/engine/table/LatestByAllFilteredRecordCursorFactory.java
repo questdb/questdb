@@ -76,10 +76,11 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             SqlExecutionContext executionContext
     ) {
         long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows >= 0 && dataFrameCursor.size() >= 0 && dataFrameCursor.size() > maxInMemoryRows) {
+        if (maxInMemoryRows > dataFrameCursor.size() || dataFrameCursor.size() < 0) {
+            map.setMaxSize(maxInMemoryRows);
+            return super.getCursorInstance(dataFrameCursor, executionContext);
+        } else {
             throw LimitOverflowException.instance(maxInMemoryRows);
         }
-        map.setMaxSize(maxInMemoryRows);
-        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

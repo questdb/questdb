@@ -134,7 +134,7 @@ public class CompactMap implements Map {
     private long keyCapacity;
     private long mask;
     private long size;
-    private long maxSize = -1;
+    private long maxSize = Long.MAX_VALUE;
 
     public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
@@ -670,27 +670,27 @@ public class CompactMap implements Map {
         }
 
         private CompactMapValue putNewEntryAt(long slot, byte flag) {
-            if (maxSize >= 0 && size >= maxSize) {
+            if (size < maxSize) {
+                // entry size is now known
+                // values are always fixed size and already accounted for
+                // so go ahead and finalize
+                entries.putByte(currentEntryOffset, flag);
+                entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
+                entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
+
+                if (++size == keyCapacity) {
+                    // reached capacity?
+                    // no need to populate slot, grow() will do the job for us
+                    grow();
+                } else {
+                    setOffsetAt(slot, currentEntryOffset);
+                }
+                // this would be offset of entry values
+                value.of(currentEntryOffset, true);
+                return value;
+            } else {
                 throw LimitOverflowException.instance(maxSize);
             }
-            // entry size is now known
-            // values are always fixed size and already accounted for
-            // so go ahead and finalize
-            entries.putByte(currentEntryOffset, flag);
-            entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
-            entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
-
-
-            if (++size == keyCapacity) {
-                // reached capacity?
-                // no need to populate slot, grow() will do the job for us
-                grow();
-            } else {
-                setOffsetAt(slot, currentEntryOffset);
-            }
-            // this would be offset of entry values
-            value.of(currentEntryOffset, true);
-            return value;
         }
 
         private void rehashEntry(long entryOffset, long currentEntrySize) {

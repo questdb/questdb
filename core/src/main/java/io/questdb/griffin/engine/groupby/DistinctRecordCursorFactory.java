@@ -73,12 +73,13 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows >= 0 && baseCursor.size() >= 0 && baseCursor.size() > maxInMemoryRows) {
+            if (maxInMemoryRows > baseCursor.size() || baseCursor.size() < 0) {
+                dataMap.setMaxSize(maxInMemoryRows);
+                cursor.of(baseCursor, dataMap, mapSink);
+                return cursor;
+            } else {
                 throw LimitOverflowException.instance(maxInMemoryRows);
             }
-            dataMap.setMaxSize(maxInMemoryRows);
-            cursor.of(baseCursor, dataMap, mapSink);
-            return cursor;
         } catch (CairoException e) {
             baseCursor.close();
             throw e;
