@@ -134,13 +134,11 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testMaxInMemoryRowsWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            // @formatter:off
             compiler.compile("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
-            // @formatter:on
             assertQuery(
                     "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
@@ -163,14 +161,12 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testMaxInMemoryRowsWithDistinct() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            // @formatter:off
             compiler.compile("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
-            // @formatter:on
             assertQuery(
                     "sym1\tsym2\nVTJW\tIBBT\nVTJW\tGPGW\n",
                     "select distinct sym1, sym2 from tb1 where d < 0.3",
@@ -193,20 +189,19 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testMaxInMemoryRowsWithInterpolatedSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            // @formatter:off
             compiler.compile("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
-            // @formatter:on
             try {
                 assertQuery(
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
                         true, readOnlyExecutionContext);
+                Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
             }
@@ -217,20 +212,47 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testMaxInMemoryRowsWithLatestBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
-            // @formatter:off
             compiler.compile("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
-            // @formatter:on
             try {
                 assertQuery(
                         "TOO MUCH",
                         "select ts, d from tb1 LATEST BY d",
                         "ts",
                         true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithImplicitGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(2,2,2,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(1000)) timestamp(ts)", sqlExecutionContext);
+            assertQuery(
+                    "sym2\tcount\nGZ\t509\nRX\t491\n",
+                    "select sym2, count() from tb1",
+                    null,
+                    true, readOnlyExecutionContext);
+            try {
+                assertQuery(
+                        "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
+                        "select sym1, count() from tb1",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
             }

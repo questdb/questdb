@@ -24,16 +24,30 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
@@ -86,6 +100,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
+            dataMap.setMaxSize(executionContext.getCairoSecurityContext().getMaxInMemoryRows());
+
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
             while (baseCursor.hasNext()) {
