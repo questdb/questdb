@@ -51,6 +51,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     int columnIndex;
+    private boolean queryCacheable = false;
 
     public TextQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -59,12 +60,24 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         this.httpConnectionContext = httpConnectionContext;
     }
 
+    void setQueryCacheable(boolean queryCacheable) {
+        this.queryCacheable = queryCacheable;
+    }
+
     @Override
     public void clear() {
         metadata = null;
         cursor = Misc.free(cursor);
         record = null;
-        recordCursorFactory = null;
+        if (null != recordCursorFactory) {
+            if (queryCacheable) {
+                QueryCache.getInstance().push(query, recordCursorFactory);
+            } else {
+                recordCursorFactory.close();
+            }
+            recordCursorFactory = null;
+        }
+        queryCacheable = false;
         query.clear();
         queryState = JsonQueryProcessorState.QUERY_PREFIX;
         columnIndex = 0;

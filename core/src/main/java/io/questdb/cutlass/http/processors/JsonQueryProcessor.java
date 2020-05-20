@@ -35,7 +35,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -60,9 +59,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -70,7 +66,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final StringSink query = new StringSink();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final NanosecondClock nanosecondClock;
 
@@ -103,7 +98,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(query);
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -243,31 +237,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        boolean cacheable = false;
-        query.clear();
-        query.put(state.getQuery());
+        final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
-            final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-
-            final HttpConnectionContext context = state.getHttpConnectionContext();
-            if (state.of(factory, cursor)) {
+            if (state.of(factory, sqlExecutionContext)) {
                 header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
                 doResumeSend(state, context);
             } else {
                 readyForNextRequest(context);
             }
-
-            cacheable = true;
         } catch (CairoException ex) {
-            cacheable = ex.isCacheable();
+            state.setQueryCacheable(ex.isCacheable());
             throw ex;
-        } finally {
-            if (cacheable) {
-                QueryCache.getInstance().push(query, factory);
-            } else {
-                factory.close();
-            }
-            query.clear();
         }
     }
 
