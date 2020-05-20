@@ -120,9 +120,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     executeCachedSelect(
                             state,
                             factory,
-                            factory.getCursor(sqlExecutionContext),
-                            configuration.getKeepAliveHeader()
-                    );
+                            configuration.getKeepAliveHeader());
                 } catch (ReaderOutOfDateException e) {
                     Misc.free(factory);
                     compileQuery(state);
@@ -230,29 +228,46 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         throw SqlException.$(0, "copy from STDIN is not supported over REST");
     }
 
-    private static void executeCachedSelect(
+    private void executeCachedSelect(
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
-            RecordCursor cursor,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
-        executeSelect(state, factory, cursor, keepAliveHeader);
+        executeSelect(state, factory, keepAliveHeader);
     }
 
-    private static void executeSelect(
+    private void executeSelect(
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
-            RecordCursor cursor,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final HttpConnectionContext context = state.getHttpConnectionContext();
-        if (state.of(factory, cursor)) {
-            header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
-            doResumeSend(state, context);
-        } else {
-            readyForNextRequest(context);
+        boolean cacheable = false;
+        query.clear();
+        query.put(state.getQuery());
+        try {
+            final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+
+            final HttpConnectionContext context = state.getHttpConnectionContext();
+            if (state.of(factory, cursor)) {
+                header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
+                doResumeSend(state, context);
+            } else {
+                readyForNextRequest(context);
+            }
+
+            cacheable = true;
+        } catch (CairoException ex) {
+            cacheable = ex.isCacheable();
+            throw ex;
+        } finally {
+            if (cacheable) {
+                QueryCache.getInstance().push(query, factory);
+            } else {
+                factory.close();
+            }
+            query.clear();
         }
     }
 
@@ -352,28 +367,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        boolean cacheable = false;
-        query.clear();
-        query.put(state.getQuery());
-        try {
-            final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-            executeSelect(
-                    state,
-                    factory,
-                    cursor,
-                    keepAliveHeader);
-            cacheable = true;
-        } catch (CairoException ex) {
-            cacheable = ex.isCacheable();
-            throw ex;
-        } finally {
-            if (cacheable) {
-                QueryCache.getInstance().push(query, factory);
-            } else {
-                factory.close();
-            }
-            query.clear();
-        }
+        executeSelect(
+                state,
+                factory,
+                keepAliveHeader);
     }
 
     private void internalError(

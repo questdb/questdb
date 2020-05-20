@@ -64,7 +64,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         cursor = Misc.free(cursor);
         record = null;
-        QueryCache.getInstance().push(query, recordCursorFactory);
         recordCursorFactory = null;
         query.clear();
         queryState = JsonQueryProcessorState.QUERY_PREFIX;

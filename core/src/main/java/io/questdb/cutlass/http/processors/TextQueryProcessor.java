@@ -50,6 +50,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
@@ -67,6 +68,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
     private final int doubleScale;
+    private final StringSink query = new StringSink();
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -85,6 +87,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
+        Misc.free(query);
     }
 
     public void execute(
@@ -111,13 +114,27 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             }
 
             if (state.recordCursorFactory != null) {
+                boolean cacheable = false;
+                query.clear();
+                query.put(state.query);
                 try {
                     state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), 200);
                     resumeSend(context);
-                } catch (CairoError | CairoException e) {
+                    cacheable = true;
+                } catch (CairoException e) {
+                    cacheable = e.isCacheable();
                     internalError(context.getChunkedResponseSocket(), e, state);
+                } catch (CairoError e) {
+                    internalError(context.getChunkedResponseSocket(), e, state);
+                } finally {
+                    if (cacheable) {
+                        QueryCache.getInstance().push(query, state.recordCursorFactory);
+                    } else {
+                        state.recordCursorFactory.close();
+                    }
+                    query.clear();
                 }
             } else {
                 header(context.getChunkedResponseSocket(), 200);
