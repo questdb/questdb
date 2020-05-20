@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -53,6 +54,7 @@ public class FastMap implements Map {
     private int keyCapacity;
     private int size = 0;
     private int mask;
+    private long maxSize = -1;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
@@ -214,6 +216,11 @@ public class FastMap implements Map {
     }
 
     @Override
+    public void setMaxSize(long maxSize) {
+        this.maxSize = maxSize;
+    }
+
+    @Override
     public long size() {
         return size;
     }
@@ -230,6 +237,9 @@ public class FastMap implements Map {
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
+        if (maxSize >= 0 && size >= maxSize) {
+            throw LimitOverflowException.instance(maxSize);
+        }
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
@@ -358,6 +368,7 @@ public class FastMap implements Map {
         private int len;
         private long nextColOffset;
 
+        @Override
         public MapValue createValue() {
             commit();
             // calculate hash remembering "key" structure
@@ -374,6 +385,7 @@ public class FastMap implements Map {
             }
         }
 
+        @Override
         public MapValue findValue() {
             commit();
             int index = keyIndex();

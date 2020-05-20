@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -186,6 +187,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
         try {
+            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+            if (maxInMemoryRows >= 0 && baseCursor.size() >= 0 && baseCursor.size() > maxInMemoryRows) {
+                throw LimitOverflowException.instance(maxInMemoryRows);
+            }
+            dataMap.setMaxSize(maxInMemoryRows);
 
             // Collect map of unique key values.
             // using this values we will fill gaps in main
