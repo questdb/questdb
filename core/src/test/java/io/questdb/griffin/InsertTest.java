@@ -32,15 +32,23 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class InsertTest extends AbstractGriffinTest {
+
+    @Before
+    public void setUp3() {
+        SharedRandom.RANDOM.set(new Rnd());
+    }
+
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
@@ -308,6 +316,63 @@ public class InsertTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testInsertSingleCharacterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ww (id int, sym symbol)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("insert into ww VALUES ( 2, 'A')", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "id\tsym\n" +
+                    "2\tA\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
+        final String expected = "sym\tid\tts\n" +
+                "A\t315515118\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-948263339\t1970-01-03T00:12:00.000000Z\n" +
+                "CC\t592859671\t1970-01-03T00:18:00.000000Z\n" +
+                "CC\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
+                "A\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
+                "CC\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
+                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n" +
+                "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
+                "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
+
+        assertQuery(
+                "sym\tid\tts\n",
+                "x",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    id int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym, \n" +
+                        "        rnd_int() id, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+
 
     @Test
     public void testInsertNotEnoughFields() throws Exception {
