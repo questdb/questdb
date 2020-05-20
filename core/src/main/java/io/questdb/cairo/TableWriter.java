@@ -2748,6 +2748,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putSym(int index, char value) {
+            getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
+            notNull(index);
+        }
+
         public void putTimestamp(int index, long value) {
             putLong(index, value);
         }
