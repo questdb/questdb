@@ -24,17 +24,34 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
@@ -95,43 +112,53 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        map.clear();
+        try {
+            map.clear();
+            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+            if (maxInMemoryRows > baseCursor.size()) {
+                map.setMaxSize(maxInMemoryRows);
 
-        // This factory fills gaps in data. To do that we
-        // have to know all possible key values. Essentially, every time
-        // we sample we return same set of key values with different
-        // aggregation results and timestamp
+                // This factory fills gaps in data. To do that we
+                // have to know all possible key values. Essentially, every time
+                // we sample we return same set of key values with different
+                // aggregation results and timestamp
 
-        int n = groupByFunctions.size();
-        final Record baseCursorRecord = baseCursor.getRecord();
-        while (baseCursor.hasNext()) {
-            MapKey key = map.withKey();
-            mapSink.copy(baseCursorRecord, key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).setNull(value);
+                int n = groupByFunctions.size();
+                final Record baseCursorRecord = baseCursor.getRecord();
+                while (baseCursor.hasNext()) {
+                    MapKey key = map.withKey();
+                    mapSink.copy(baseCursorRecord, key);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        // timestamp is always stored in value field 0
+                        value.putLong(0, Numbers.LONG_NaN);
+                        // have functions reset their columns to "zero" state
+                        // this would set values for when keys are not found right away
+                        for (int i = 0; i < n; i++) {
+                            groupByFunctions.getQuick(i).setNull(value);
+                        }
+                    }
                 }
+
+                // empty map? this means that base cursor was empty
+                if (map.size() == 0) {
+                    baseCursor.close();
+                    return EmptyTableRecordCursor.INSTANCE;
+                }
+
+                // because we pass base cursor twice we have to go back to top
+                // for the second run
+                baseCursor.toTop();
+                boolean next = baseCursor.hasNext();
+                // we know base cursor has value
+                assert next;
+                return initFunctionsAndCursor(executionContext, baseCursor);
             }
-        }
-
-        // empty map? this means that base cursor was empty
-        if (map.size() == 0) {
+            throw LimitOverflowException.instance(maxInMemoryRows);
+        } catch (CairoException ex) {
             baseCursor.close();
-            return EmptyTableRecordCursor.INSTANCE;
+            throw ex;
         }
-
-        // because we pass base cursor twice we have to go back to top
-        // for the second run
-        baseCursor.toTop();
-        boolean next = baseCursor.hasNext();
-        // we know base cursor has value
-        assert next;
-        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override

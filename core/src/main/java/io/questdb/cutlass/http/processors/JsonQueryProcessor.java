@@ -24,12 +24,23 @@
 
 package io.questdb.cutlass.http.processors;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.http.*;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -41,12 +52,13 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -54,7 +66,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final Path path = new Path();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final NanosecondClock nanosecondClock;
 
@@ -87,7 +98,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(path);
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -104,9 +114,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     executeCachedSelect(
                             state,
                             factory,
-                            factory.getCursor(sqlExecutionContext),
-                            configuration.getKeepAliveHeader()
-                    );
+                            configuration.getKeepAliveHeader());
                 } catch (ReaderOutOfDateException e) {
                     Misc.free(factory);
                     compileQuery(state);
@@ -214,29 +222,32 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         throw SqlException.$(0, "copy from STDIN is not supported over REST");
     }
 
-    private static void executeCachedSelect(
+    private void executeCachedSelect(
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
-            RecordCursor cursor,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
-        executeSelect(state, factory, cursor, keepAliveHeader);
+        executeSelect(state, factory, keepAliveHeader);
     }
 
-    private static void executeSelect(
+    private void executeSelect(
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
-            RecordCursor cursor,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        if (state.of(factory, cursor)) {
-            header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
-            doResumeSend(state, context);
-        } else {
-            readyForNextRequest(context);
+        try {
+            if (state.of(factory, sqlExecutionContext)) {
+                header(context.getChunkedResponseSocket(), 200, keepAliveHeader);
+                doResumeSend(state, context);
+            } else {
+                readyForNextRequest(context);
+            }
+        } catch (CairoException ex) {
+            state.setQueryCacheable(ex.isCacheable());
+            throw ex;
         }
     }
 
@@ -336,13 +347,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
         executeSelect(
                 state,
                 factory,
-                cursor,
-                keepAliveHeader
-        );
+                keepAliveHeader);
     }
 
     private void internalError(

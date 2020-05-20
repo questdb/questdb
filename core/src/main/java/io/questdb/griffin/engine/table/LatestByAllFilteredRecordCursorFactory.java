@@ -24,17 +24,21 @@
 
 package io.questdb.griffin.engine.table;
 
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final Map map;
@@ -65,5 +69,18 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    protected AbstractDataFrameRecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
+        long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+        if (maxInMemoryRows > dataFrameCursor.size() || dataFrameCursor.size() < 0) {
+            map.setMaxSize(maxInMemoryRows);
+            return super.getCursorInstance(dataFrameCursor, executionContext);
+        }
+        throw LimitOverflowException.instance(maxInMemoryRows);
     }
 }

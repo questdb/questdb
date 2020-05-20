@@ -69,4 +69,6 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
     boolean allowDeflateBeforeSend();
 
     boolean readOnlySecurityContext();
+
+    long getMaxInMemoryRows();
 }
