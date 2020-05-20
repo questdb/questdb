@@ -186,7 +186,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithInterpolatedSampleBy() throws Exception {
+    public void testMaxInMemoryRowsWithSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -200,6 +200,98 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithSampleByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+            try {
+                assertQuery(
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithSampleByFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+            try {
+                assertQuery(
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithSampleByFillValue() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+            try {
+                assertQuery(
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithSampleByFillNull() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+            try {
+                assertQuery(
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
+                        null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
