@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 
 import java.io.Closeable;
 
@@ -47,7 +48,6 @@ public class SymbolMapWriter implements Closeable {
     private final CharSequenceIntHashMap cache;
     private final int maxHash;
     private boolean nullValue = false;
-    private final DirectCharSink singleCharSymbol = new DirectCharSink(1);
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         final int plen = path.length();
@@ -136,10 +136,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public int put(char c) {
-        singleCharSymbol.put(c);
-        int offset = put(singleCharSymbol);
-        singleCharSymbol.clear();
-        return offset;
+        return put(SingleCharCharSequence.get(c));
     }
 
     public int put(CharSequence symbol) {
@@ -171,7 +168,6 @@ public class SymbolMapWriter implements Closeable {
     public void close() {
         Misc.free(indexWriter);
         Misc.free(charMem);
-        Misc.free(singleCharSymbol);
         if (this.offsetMem != null) {
             long fd = this.offsetMem.getFd();
             Misc.free(offsetMem);
