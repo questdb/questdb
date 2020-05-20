@@ -1607,6 +1607,10 @@ public class SqlCodeGenerator implements Mutable {
                 throw e;
             }
 
+            if (model.getJoinType() == QueryModel.JOIN_ASOF || model.getJoinType() == QueryModel.JOIN_CROSS) {
+                executionContext.pushTimestampRequiredFlag(true);
+            }
+
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
             if (topDownColumnCount > 0) {
@@ -1649,6 +1653,10 @@ public class SqlCodeGenerator implements Mutable {
                 }
             } else {
                 framingSupported = false;
+            }
+
+            if (model.getJoinType() == QueryModel.JOIN_ASOF || model.getJoinType() == QueryModel.JOIN_CROSS) {
+                executionContext.popTimestampRequiredFlag();
             }
 
             // done with myMeta
