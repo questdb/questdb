@@ -24,12 +24,24 @@
 
 package io.questdb.cutlass.http.processors;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.http.*;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -41,12 +53,16 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
+import io.questdb.std.str.StringSink;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -54,7 +70,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final Path path = new Path();
+    private final StringSink query = new StringSink();
     private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final NanosecondClock nanosecondClock;
 
@@ -87,7 +103,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(path);
+        Misc.free(query);
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -336,18 +352,28 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        final RecordCursor cursor;
+        boolean cacheable = false;
+        query.clear();
+        query.put(state.getQuery());
         try {
-            cursor = factory.getCursor(sqlExecutionContext);
-        } catch (RuntimeException ex) {
-            factory.close();
+            final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+            executeSelect(
+                    state,
+                    factory,
+                    cursor,
+                    keepAliveHeader);
+            cacheable = true;
+        } catch (CairoException ex) {
+            cacheable = ex.isCacheable();
             throw ex;
+        } finally {
+            if (cacheable) {
+                QueryCache.getInstance().push(query, factory);
+            } else {
+                factory.close();
+            }
+            query.clear();
         }
-        executeSelect(
-                state,
-                factory,
-                cursor,
-                keepAliveHeader);
     }
 
     private void internalError(

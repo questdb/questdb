@@ -9,7 +9,7 @@ public class LimitOverflowException extends CairoException {
     public static LimitOverflowException instance(long limit) {
         LimitOverflowException ex = tlException.get();
         ex.message.clear();
-        ex.put("limit of ").put(limit).put(" exceeded");
+        ex.put("limit of ").put(limit).put(" exceeded").setCacheable(true);
         return ex;
     }
 

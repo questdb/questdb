@@ -33,11 +33,13 @@ public class CairoException extends RuntimeException implements Sinkable {
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     private int errno;
+    private boolean cacheable;
 
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         ex.message.clear();
         ex.errno = errno;
+        ex.cacheable = false;
         return ex;
     }
 
@@ -68,5 +70,14 @@ public class CairoException extends RuntimeException implements Sinkable {
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);
+    }
+
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
+    public boolean isCacheable() {
+        return cacheable;
     }
 }

@@ -28,7 +28,7 @@ public interface CairoSecurityContext {
 
     default void checkWritePermission() {
         if (!canWrite()) {
-            throw CairoException.instance(0).put("Write permission denied");
+            throw CairoException.instance(0).put("Write permission denied").setCacheable(true);
         }
     }
 

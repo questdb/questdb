@@ -148,7 +148,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
-        QueryCache.getInstance().push(query, recordCursorFactory);
         recordCursorFactory = null;
         query.clear();
         columnsQueryParameter.clear();
