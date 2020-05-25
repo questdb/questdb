@@ -1,5 +1,5 @@
 import "ace-builds"
-import "ace-builds/webpack-resolver"
+import "ace-builds/src-min-noconflict/theme-dracula"
 import "echarts/lib/chart/bar"
 import "echarts/lib/chart/line"
 import "echarts/lib/component/tooltip"
