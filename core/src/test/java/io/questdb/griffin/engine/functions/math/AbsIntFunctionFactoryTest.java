@@ -24,33 +24,26 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
+import org.junit.Test;
 
-public class AbsLongFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "abs(L)";
+public class AbsIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testPositive() throws SqlException {
+        call(1).andAssert(1, 0.0000000001);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-1).andAssert(1, 0.0000000001);
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new AbsFunction(position, args.getQuick(0));
-    }
-
-    private static class AbsFunction extends AbstractUnaryLongFunction {
-        public AbsFunction(int position, Function arg) {
-            super(position, arg);
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            long value = arg.getLong(rec);
-            return Math.abs(value);
-        }
+    protected FunctionFactory getFunctionFactory() {
+        return new AbsIntFunctionFactory();
     }
 }

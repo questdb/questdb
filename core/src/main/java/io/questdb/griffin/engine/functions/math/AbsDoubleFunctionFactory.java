@@ -28,13 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class AbsLongFunctionFactory implements FunctionFactory {
+public class AbsDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "abs(L)";
+        return "abs(D)";
     }
 
     @Override
@@ -42,14 +43,22 @@ public class AbsLongFunctionFactory implements FunctionFactory {
         return new AbsFunction(position, args.getQuick(0));
     }
 
-    private static class AbsFunction extends AbstractUnaryLongFunction {
-        public AbsFunction(int position, Function arg) {
-            super(position, arg);
+    private static class AbsFunction extends DoubleFunction implements UnaryFunction {
+        final Function function;
+
+        public AbsFunction(int position, Function function) {
+            super(position);
+            this.function = function;
         }
 
         @Override
-        public long getLong(Record rec) {
-            long value = arg.getLong(rec);
+        public Function getArg() {
+            return function;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = function.getDouble(rec);
             return Math.abs(value);
         }
     }
