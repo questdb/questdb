@@ -682,16 +682,18 @@ $.fn.grid = function (msgBus) {
 
   //noinspection JSUnusedLocalSymbols
   function update(x, m) {
-    clear()
-    query = m.query
-    data.push(m.dataset)
-    columns = m.columns
-    addColumns()
-    addRows(m.count)
-    computeColumnWidths()
-    viewport.scrollTop = 0
-    resize()
-    focusCell()
+    setTimeout(() => {
+      clear()
+      query = m.query
+      data.push(m.dataset)
+      columns = m.columns
+      addColumns()
+      addRows(m.count)
+      computeColumnWidths()
+      viewport.scrollTop = 0
+      resize()
+      focusCell()
+    }, 0)
   }
 
   function publishQuery() {
