@@ -214,4 +214,9 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public boolean readOnlySecurityContext() {
         return false;
     }
+
+    @Override
+    public long getMaxInMemoryRows() {
+        return Long.MAX_VALUE;
+    }
 }

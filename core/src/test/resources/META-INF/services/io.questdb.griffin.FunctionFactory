@@ -128,9 +128,11 @@ io.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.MulLongFunctionFactory
 io.questdb.griffin.engine.functions.math.MulIntFunctionFactory
 
+# 'abs'
 io.questdb.griffin.engine.functions.math.AbsIntFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
+io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory
 
 # '~='
 io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory

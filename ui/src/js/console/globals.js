@@ -34,7 +34,7 @@ export function setHeight(element, height) {
 export function createEditor(div) {
   const edit = ace.edit(div)
   edit.getSession().setMode("ace/mode/questdb")
-  edit.setTheme("ace/theme/merbivore_soft")
+  edit.setTheme("ace/theme/dracula")
   edit.setShowPrintMargin(false)
   edit.setDisplayIndentGuides(false)
   edit.setHighlightActiveLine(false)

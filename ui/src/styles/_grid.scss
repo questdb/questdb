@@ -23,23 +23,32 @@
  ******************************************************************************/
 
 #grid {
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  font-family: "Source Code Pro", monospace;
+  overflow: hidden;
 }
 
 .qg-header-row {
   overflow: hidden;
 }
 
-.qg-header-row, .qg-r {
+.qg-header-row,
+.qg-r {
   white-space: nowrap;
 }
 
 .qg-r {
-  border-bottom: 1px solid #e6e6e6;
+  display: flex;
+  border-bottom: 1px solid #44475a;
   position: absolute;
+  left: 0;
+  right: 0;
 }
 
 .qg-r:hover {
-  background-color: #f6f6f6;
+  background-color: #44475a;
 }
 
 .qg-r:focus {
@@ -47,20 +56,19 @@
 }
 
 .qg-r-active:hover {
-  background-color: #8ED0C2;
-  color: white;
+  background-color: #6272a4;
+  color: #f8f8f2;
 }
 
 .qg-r-active {
-  background-color: #6caea0;
-  color: white;
+  background-color: #6272a4;
 }
 
 .qg-header {
   display: inline-block;
   padding: 5px 3px 7px;
   font-weight: 700;
-  border-bottom: 1px solid #e6e6e6;
+  border-bottom: 1px solid #191a21;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
@@ -72,6 +80,8 @@
   user-select: none;
   /* Non-prefixed version, currently
                                    supported by Chrome, Opera and Firefox */
+  background: #21222c;
+  color: #f1fa8c !important;
 }
 
 .qg-header-l {
@@ -80,15 +90,16 @@
 
 .qg-viewport {
   overflow: auto;
+  height: calc(100% - 35px);
 }
 
 .qg-canvas {
   position: relative;
   overflow: hidden;
+  width: 100%;
 }
 
 .qg-c {
-  display: inline-block;
   padding: 4px 3px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -96,18 +107,22 @@
 }
 
 .qg-c:hover {
-  padding: 2px 1px;
-  border: 2px solid #afb7c7;
+  box-shadow: inset 0 0 0 2px #8d95a5;
+  border-bottom: 1px solid transparent;
 }
 
-.qg-r-active > .qg-c:hover, .qg-c-active {
-  padding: 2px 1px;
-  border: 2px solid #366a5c;
+.qg-r-active .qg-c:hover {
+  box-shadow: inset 0 0 0 2px #f8f8f2;
 }
 
-.qg-r-active > .qg-c:hover {
-  padding: 2px 1px;
-  border: 2px solid #8d95a5;
+.qg-c-active {
+  box-shadow: inset 0 0 0 2px #f8f8f2;
+  border-bottom: 1px solid transparent;
+}
+
+.qg-r-active:hover .qg-c-active,
+.qg-r-active:hover .qg-c-active:hover {
+  box-shadow: inset 0 0 0 2px #ffb86c;
 }
 
 #debug {

@@ -50,6 +50,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
@@ -93,6 +94,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            state.setQueryCacheable(true);
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -116,7 +118,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), 200);
                     resumeSend(context);
-                } catch (CairoError | CairoException e) {
+                } catch (CairoException e) {
+                    state.setQueryCacheable(e.isCacheable());
+                    internalError(context.getChunkedResponseSocket(), e, state);
+                } catch (CairoError e) {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {

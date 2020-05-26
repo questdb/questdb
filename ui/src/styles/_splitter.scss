@@ -28,9 +28,10 @@
 
 .splitter {
   width: 100%;
-  height: 5px;
+  flex: 0 0 6px;
+  margin: 3px 0;
   border: none;
-  background: #d6d5d5;
+  background: #585858;
 }
 
 .splitter.qs-dragging {

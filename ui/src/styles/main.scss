@@ -2,12 +2,32 @@ $fa-font-path: "~@fortawesome/fontawesome-free/webfonts";
 
 @import "@fortawesome/fontawesome-free/scss/fontawesome.scss";
 @import "@fortawesome/fontawesome-free/scss/solid.scss";
-@import "@fortawesome/fontawesome-free/scss/regular.scss";
+@import "@fortawesome/fontawesome-free/scss/brands.scss";
 
 $icon-font-path: "~bootstrap-sass/assets/fonts/bootstrap/";
 
 @import "bootstrap-sass/assets/stylesheets/_bootstrap.scss";
 @import "~animate.css/source/_base.css";
+
+$height: 3rem !default;
+$white: #44475a !default;
+$font-color: #f8f8f2 !default;
+$font-placeholder-color: #bbb !default;
+$font-disabled-color: #dedede !default;
+$primary-color: #8be9fd !default;
+$border-color: transparent !default;
+$search-highlight-color: #fffb8c !default;
+$border-radius: 0.25rem !default;
+$spacing-l: 8px !default;
+$spacing-m: 6px !default;
+$spacing-s: 4px !default;
+
+@import "slim-select/src/slim-select/slimselect.scss";
+
+.ss-content .ss-search input {
+    background: #fafafa;
+    color: #585858;
+}
 
 @import "variables";
 @import "typography";

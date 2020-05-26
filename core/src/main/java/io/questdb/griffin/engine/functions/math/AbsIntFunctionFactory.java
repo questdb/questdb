@@ -60,10 +60,11 @@ public class AbsIntFunctionFactory implements FunctionFactory {
             return arg;
         }
 
+
         @Override
         public int getInt(Record rec) {
             int value = arg.getInt(rec);
-            return value < 0 ? -value : value;
+            return Math.abs(value);
         }
     }
 }

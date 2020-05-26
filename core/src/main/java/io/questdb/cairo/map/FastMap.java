@@ -24,12 +24,25 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Hash;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 
 public class FastMap implements Map {
 
@@ -53,6 +66,7 @@ public class FastMap implements Map {
     private int keyCapacity;
     private int size = 0;
     private int mask;
+    private long maxSize = Long.MAX_VALUE;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
@@ -214,6 +228,11 @@ public class FastMap implements Map {
     }
 
     @Override
+    public void setMaxSize(long maxSize) {
+        this.maxSize = maxSize;
+    }
+
+    @Override
     public long size() {
         return size;
     }
@@ -230,13 +249,17 @@ public class FastMap implements Map {
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
-        kPos = keyWriter.appendAddress;
-        offsets.set(index, keyWriter.startAddress - kStart);
-        if (--free == 0) {
-            rehash();
+        if (size < maxSize) {
+            kPos = keyWriter.appendAddress;
+            offsets.set(index, keyWriter.startAddress - kStart);
+            if (--free == 0) {
+                rehash();
+            }
+            size++;
+            return value.of(keyWriter.startAddress, true);
+        } else {
+            throw LimitOverflowException.instance(maxSize);
         }
-        size++;
-        return value.of(keyWriter.startAddress, true);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -358,6 +381,7 @@ public class FastMap implements Map {
         private int len;
         private long nextColOffset;
 
+        @Override
         public MapValue createValue() {
             commit();
             // calculate hash remembering "key" structure
@@ -374,6 +398,7 @@ public class FastMap implements Map {
             }
         }
 
+        @Override
         public MapValue findValue() {
             commit();
             int index = keyIndex();

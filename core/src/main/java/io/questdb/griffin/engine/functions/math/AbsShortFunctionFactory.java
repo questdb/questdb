@@ -59,7 +59,7 @@ public class AbsShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             short value = function.getShort(rec);
-            return value < 0 ? (short) -value : value;
+            return (short) Math.abs(value);
         }
     }
 }

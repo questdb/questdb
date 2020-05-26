@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -88,6 +89,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private long compilerNanos;
     private boolean timigs;
+    private boolean queryCacheable = false;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -148,8 +150,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
-        QueryCache.getInstance().push(query, recordCursorFactory);
-        recordCursorFactory = null;
+        if (null != recordCursorFactory) {
+            if (queryCacheable) {
+                QueryCache.getInstance().push(query, recordCursorFactory);
+            } else {
+                recordCursorFactory.close();
+            }
+            recordCursorFactory = null;
+        }
         query.clear();
         columnsQueryParameter.clear();
         queryState = QUERY_PREFIX;
@@ -189,6 +197,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public CharSequence getQuery() {
         return query;
+    }
+
+    void setQueryCacheable(boolean queryCacheable) {
+        this.queryCacheable = queryCacheable;
     }
 
     public Rnd getRnd() {
@@ -489,9 +501,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return cursor == null;
     }
 
-    boolean of(RecordCursorFactory factory, RecordCursor cursor) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext) throws PeerDisconnectedException, PeerIsSlowToReadException {
         this.recordCursorFactory = factory;
-        this.cursor = cursor;
+        queryCacheable = true;
+        this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");
