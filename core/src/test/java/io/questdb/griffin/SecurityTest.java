@@ -158,8 +158,6 @@ public class SecurityTest extends AbstractGriffinTest {
         });
     }
 
-    // ASOF joins broke after the last rebase
-    @Ignore
     @Test
     public void testMaxInMemoryRowsWithoutRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
