@@ -5,12 +5,8 @@ import * as qdb from "./globals"
 
 const divSqlPanel = $(".js-sql-panel")
 const divExportUrl = $(".js-export-url")
-const editor = $("#editor")
 const sqlEditor = $("#sqlEditor")
 const consoleTop = $(".console-wrapper")
-const wrapper = $("#page-wrapper")
-const msgPanel = editor.find(".js-query-message-panel")
-const navbar = $("nav.navbar-default")
 const win = $(window)
 const grid = $("#grid")
 const quickVis = $("#quick-vis")
@@ -18,30 +14,10 @@ const toggleChartBtn = $("#js-toggle-chart")
 const toggleGridBtn = $("#js-toggle-grid")
 
 let topHeight = 350
-const bottomHeight = 350
 let visible = false
 
 function resize() {
   if (visible) {
-    const navbarHeight = navbar.height()
-    const wrapperHeight = wrapper.height()
-    let h
-
-    if (navbarHeight > wrapperHeight) {
-      h = navbarHeight
-    }
-
-    if (navbarHeight < wrapperHeight) {
-      h = win.height()
-    }
-
-    if (h) {
-      if (h < topHeight + bottomHeight) {
-        h = topHeight + bottomHeight
-      }
-      // qdb.setHeight(wrapper, h - 1);
-    }
-
     consoleTop.css("flex-basis", topHeight)
   }
 }
