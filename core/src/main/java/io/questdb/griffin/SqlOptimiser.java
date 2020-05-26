@@ -37,6 +37,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 class SqlOptimiser {
 
