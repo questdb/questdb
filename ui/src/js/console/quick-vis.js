@@ -98,19 +98,6 @@ $.fn.quickVis = function (msgBus) {
   })
 
   function resize() {
-    const wh = window.innerHeight - $(window).scrollTop()
-    const viewportHeight = Math.max(
-      Math.round(wh - viewport.getBoundingClientRect().top) -
-        defaults.bottomMargin,
-      defaults.minVpHeight,
-    )
-    viewport.style.height = viewportHeight + "px"
-    const containerHeight = Math.max(
-      Math.round(wh - div[0].getBoundingClientRect().top) -
-        defaults.bottomMargin,
-      defaults.minDivHeight,
-    )
-    div.css("height", containerHeight + "px")
     echart.resize()
   }
 
@@ -121,12 +108,12 @@ $.fn.quickVis = function (msgBus) {
   }
 
   function setDrawBtnToCancel() {
-    btnDraw.html('<i class="fa fa-stop"></i>Cancel')
+    btnDraw.html('<i class="fa fa-stop"></i><span>Cancel</span>')
     btnDraw.removeClass("js-chart-draw").addClass("js-chart-cancel")
   }
 
   function setDrawBtnToDraw() {
-    btnDraw.html('<i class="fa fa-play"></i>Draw')
+    btnDraw.html('<i class="fa fa-play"></i><span>Draw</span>')
     btnDraw.removeClass("js-chart-cancel").addClass("js-chart-draw")
   }
 
@@ -204,6 +191,7 @@ $.fn.quickVis = function (msgBus) {
         echart.setOption(option, true)
       }
     } finally {
+      resize()
       setDrawBtnToDraw()
     }
   }

@@ -941,15 +941,14 @@ public class SqlCodeGenerator implements Mutable {
                 if (metadata.getTimestampIndex() == -1) {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                 } else {
-                    int index = metadata.getColumnIndexQuiet(columnNames.getQuick(0));
+                    CharSequence column = columnNames.getQuick(0);
+                    int index = metadata.getColumnIndexQuiet(column);
                     if (index == metadata.getTimestampIndex()) {
 
-                        if (size == 1) {
+                        if (size == 1 && orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                             return recordCursorFactory;
                         }
-
-                        orderedMetadata = copyMetadata(metadata);
-
+                        orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                     } else {
                         orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                     }
@@ -1608,49 +1607,61 @@ public class SqlCodeGenerator implements Mutable {
                 throw e;
             }
 
+            boolean requiresTimestamp = model.getJoinType() == QueryModel.JOIN_ASOF || model.getJoinType() == QueryModel.JOIN_CROSS;
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
-            if (topDownColumnCount > 0) {
-                framingSupported = true;
-                for (int i = 0; i < topDownColumnCount; i++) {
-                    int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
-                    int type = readerMeta.getColumnType(columnIndex);
-                    int typeSize = ColumnType.sizeOf(type);
+            try {
+                if (requiresTimestamp) {
+                    executionContext.pushTimestampRequiredFlag(true);
+                }
 
-                    if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
-                        // we don't frame non-primitive types yet
-                        framingSupported = false;
+                if (topDownColumnCount > 0) {
+                    framingSupported = true;
+                    for (int i = 0; i < topDownColumnCount; i++) {
+                        int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                        int type = readerMeta.getColumnType(columnIndex);
+                        int typeSize = ColumnType.sizeOf(type);
+
+                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
+                            // we don't frame non-primitive types yet
+                            framingSupported = false;
+                        }
+                        columnIndexes.add(columnIndex);
+                        columnSizes.add((Numbers.msb(typeSize)));
+
+                        myMeta.add(new TableColumnMetadata(
+                                Chars.toString(topDownColumns.getQuick(i).getName()),
+                                type,
+                                readerMeta.isColumnIndexed(columnIndex),
+                                readerMeta.getIndexValueBlockCapacity(columnIndex),
+                                readerMeta.isSymbolTableStatic(columnIndex)
+                        ));
+
+                        if (columnIndex == readerTimestampIndex) {
+                            myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+                        }
                     }
-                    columnIndexes.add(columnIndex);
-                    columnSizes.add((Numbers.msb(typeSize)));
 
-                    myMeta.add(new TableColumnMetadata(
-                            Chars.toString(topDownColumns.getQuick(i).getName()),
-                            type,
-                            readerMeta.isColumnIndexed(columnIndex),
-                            readerMeta.getIndexValueBlockCapacity(columnIndex),
-                            readerMeta.isSymbolTableStatic(columnIndex)
-                    ));
-
-                    if (columnIndex == readerTimestampIndex) {
+                    // select timestamp when it is required but not already selected
+                    if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
+                        myMeta.add(new TableColumnMetadata(
+                                readerMeta.getColumnName(readerTimestampIndex),
+                                readerMeta.getColumnType(readerTimestampIndex)
+                        ));
                         myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+
+                        columnIndexes.add(readerTimestampIndex);
+                        columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
                     }
+                } else {
+                    framingSupported = false;
                 }
-
-                // select timestamp when it is required but not already selected
-                if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
-                    myMeta.add(new TableColumnMetadata(
-                            readerMeta.getColumnName(readerTimestampIndex),
-                            readerMeta.getColumnType(readerTimestampIndex)
-                    ));
-                    myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
-
-                    columnIndexes.add(readerTimestampIndex);
-                    columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
+            } finally {
+                if (requiresTimestamp) {
+                    executionContext.popTimestampRequiredFlag();
                 }
-            } else {
-                framingSupported = false;
             }
+
 
             // done with myMeta
 

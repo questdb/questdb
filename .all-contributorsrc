@@ -45,6 +45,16 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "igor-suhorukov",
+      "name": "igor-suhorukov",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/10332206?v=4",
+      "profile": "https://www.linkedin.com/in/suhorukov",
+      "contributions": [
+        "code",
+        "ideas"
+      ]
     }
   ],
   "contributorsPerLine": 7,

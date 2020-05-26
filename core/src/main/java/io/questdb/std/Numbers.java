@@ -41,7 +41,7 @@ public final class Numbers {
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final int MAX_SCALE = 19;
     private static final int EXP_BIAS = 1023;
-    private static final long SIGN_BIT_MASK = 0x8000000000000000L;
+    public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
     private static final long SIGNIF_BIT_MASK = 0x000FFFFFFFFFFFFFL;
     private static final int[] SMALL_5_POW = new int[]{1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125};
@@ -963,11 +963,17 @@ public final class Numbers {
     }
 
     public static double roundDownNegScale(double value, int scale) {
-        return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundDown00NegScale(absValue, scale)) | signMask);
     }
 
     public static double roundDownPosScale(double value, int scale) {
-        return value < 0 ? -roundDown00PosScale(-value, scale) : roundDown00PosScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundDown00PosScale(absValue, scale)) | signMask);
     }
 
     public static double roundHalfDown(double value, int scale) throws NumericException {
@@ -1024,17 +1030,26 @@ public final class Numbers {
 
     public static double roundHalfUp(double value, int scale) throws NumericException {
         if (scale + 2 < pow10max && scale > -pow10max) {
-            return value > 0 ? roundHalfUp0(value, scale) : -roundHalfUp0(-value, scale);
+            long valueBits = Double.doubleToRawLongBits(value);
+            long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+            double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+            return Double.longBitsToDouble(Double.doubleToRawLongBits(roundHalfUp0(absValue, scale)) | signMask);
         }
         throw NumericException.INSTANCE;
     }
 
     public static double roundHalfUpNegScale(double value, int scale) {
-        return value < 0 ? -roundHalfUp0NegScale(-value, scale) : roundHalfUp0NegScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundHalfUp0NegScale(absValue, scale)) | signMask);
     }
 
     public static double roundHalfUpPosScale(double value, int scale) {
-        return value < 0 ? -roundHalfUp0PosScale(-value, scale) : roundHalfUp0PosScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundHalfUp0PosScale(absValue, scale)) | signMask);
     }
 
     public static double roundUp(double value, int scale) throws NumericException {
@@ -1045,11 +1060,17 @@ public final class Numbers {
     }
 
     public static double roundUpNegScale(double value, int scale) {
-        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00NegScale(absValue, scale)) | signMask);
     }
 
     public static double roundUpPosScale(double value, int scale) {
-        return value < 0 ? -roundUp00PosScale(-value, scale) : roundUp00PosScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
     private static void appendLongHex4(CharSink sink, long value) {
@@ -1407,19 +1428,31 @@ public final class Numbers {
     }
 
     private static double roundDown0(double value, int scale) {
-        return value < 0 ? -roundDown00(-value, scale) : roundDown00(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundDown00(absValue, scale)) | signMask);
     }
 
     private static double roundUp0(double value, int scale) {
-        return value < 0 ? -roundUp00(-value, scale) : roundUp00(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00(absValue, scale)) | signMask);
     }
 
     private static double roundDown0NegScale(double value, int scale) {
-        return value < 0 ? -roundDown00NegScale(-value, scale) : roundDown00NegScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundDown00NegScale(absValue, scale)) | signMask);
     }
 
     private static double roundUp0NegScale(double value, int scale) {
-        return value < 0 ? -roundUp00NegScale(-value, scale) : roundUp00NegScale(value, scale);
+        long valueBits = Double.doubleToRawLongBits(value);
+        long signMask = valueBits & Numbers.SIGN_BIT_MASK;
+        double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
+        return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00NegScale(absValue, scale)) | signMask);
     }
 
     private static double roundUp00(double value, int scale) {

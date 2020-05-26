@@ -301,7 +301,6 @@ $.fn.grid = function (msgBus) {
       )
     }
     rules.push(".qg-r{width:" + totalWidth + "px;}")
-    rules.push(".qg-canvas{width:" + totalWidth + "px;}")
     stretched = 2
   }
 
@@ -523,23 +522,17 @@ $.fn.grid = function (msgBus) {
   }
 
   function resize() {
-    const wh = window.innerHeight - $(window).scrollTop()
-    vp =
-      Math.round(wh - viewport.getBoundingClientRect().top) -
-      defaults.bottomMargin
-    vp = Math.max(vp, defaults.minVpHeight)
-    rowsInView = Math.floor(vp / rh)
-    viewport.style.height = vp + "px"
-    div.css(
-      "height",
-      Math.max(
-        Math.round(wh - div[0].getBoundingClientRect().top) -
-          defaults.bottomMargin,
-        defaults.minDivHeight,
-      ) + "px",
-    )
-    createCss()
-    viewportScroll(true)
+    if ($("#grid").css("display") !== "none") {
+      const wh = window.innerHeight - $(window).scrollTop()
+      vp =
+        Math.round(wh - viewport.getBoundingClientRect().top) -
+        defaults.bottomMargin
+      vp = Math.max(vp, defaults.minVpHeight)
+      rowsInView = Math.floor(vp / rh)
+      // viewport.style.height = vp + "px"
+      createCss()
+      viewportScroll(true)
+    }
   }
 
   function rowClick() {
@@ -710,6 +703,8 @@ $.fn.grid = function (msgBus) {
   function refreshQuery() {
     if (query) {
       bus.trigger(qdb.MSG_QUERY_EXEC, { q: query })
+    } else {
+      $(".js-query-refresh .fa").removeClass("fa-spin")
     }
   }
 
