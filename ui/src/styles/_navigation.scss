@@ -31,15 +31,15 @@
   height: 44px;
 }
 
-.nav a {
+.nav li a {
   opacity: 0.5;
-}
 
-.nav a.selected {
-  opacity: 1;
-  color: white;
-  border-left: 2px solid #ff79c6;
-  background: #21222c !important;
+  &.selected {
+    opacity: 1;
+    color: white;
+    border-left: 2px solid #ff79c6;
+    background: #21222c !important;
+  }
 }
 
 .nav > li > a:hover {
@@ -350,14 +350,21 @@ body.mini-navbar .navbar-default .nav > li > .nav-second-level li a {
   position: relative;
   display: flex;
   height: 41px;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   font-size: 18px;
   font-weight: 600;
   color: white;
   background: #1d1d1d;
   box-shadow: -8px 0px 6px -1px #191a21;
   z-index: 1;
+
+  a {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .pace-done .navbar-static-side,

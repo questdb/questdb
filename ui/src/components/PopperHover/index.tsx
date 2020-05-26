@@ -52,7 +52,7 @@ export const PopperHover = ({
 
   useEffect(() => {
     const css = Object.entries(styles.popper).reduce(
-      (acc, [prop, value]) => `${acc} ${prop}: ${value};`,
+      (acc, [prop, value]: [string, string]) => `${acc} ${prop}: ${value};`,
       "z-index: 100;",
     )
     container.setAttribute("style", css)

@@ -1,10 +1,10 @@
 const path = require("path")
-const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin")
-const HtmlWebpackPlugin = require("html-webpack-plugin")
 const { CleanWebpackPlugin } = require("clean-webpack-plugin")
 const CopyWebpackPlugin = require("copy-webpack-plugin")
-const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
+const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin")
+const HtmlWebpackPlugin = require("html-webpack-plugin")
 const MiniCssExtractPlugin = require("mini-css-extract-plugin")
+const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 
 const PORT = 9999
 const BACKEND_PORT = 9000
@@ -13,11 +13,6 @@ const runBundleAnalyzer = process.env.ANALYZE
 
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development"
-}
-
-const PATHS = {
-  assets: `${__dirname}/assets`,
-  src: `${__dirname}/src`,
 }
 
 const basePlugins = [
@@ -57,7 +52,7 @@ const devLoaders = [
 ]
 
 const prodPlugins = [
-  new CopyWebpackPlugin([{ from: "./assets/", to: "assets/" }]),
+  new CopyWebpackPlugin({ patterns: [{ from: "./assets/", to: "assets/" }] }),
 ]
 
 module.exports = {

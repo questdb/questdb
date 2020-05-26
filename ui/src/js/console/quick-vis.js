@@ -278,7 +278,7 @@ $.fn.quickVis = function (msgBus) {
     var x = []
     const columns = data.columns
     for (var i = 0; i < columns.length; i++) {
-      x[i] = { text: columns[i].name }
+      x[i] = { text: columns[i].name, value: columns[i].name }
     }
     xAxisPicker.setData(x)
     yAxisPicker.setData(x)
