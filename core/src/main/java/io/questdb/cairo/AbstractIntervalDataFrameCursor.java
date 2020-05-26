@@ -158,7 +158,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         } else {
             intervalLo = reader.floorToPartitionTimestamp(lo);
         }
-        this.initialPartitionLo = reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo);
+        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
     }
