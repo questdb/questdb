@@ -1,4 +1,4 @@
-<h4 align="center">
+<h4 align="left">
   <img src="https://raw.githubusercontent.com/questdb/questdb/master/ui/assets/images/logo-readme.jpg"/>
 </h4>
 
