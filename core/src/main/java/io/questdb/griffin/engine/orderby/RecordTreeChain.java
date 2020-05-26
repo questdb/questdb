@@ -24,19 +24,18 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import java.io.Closeable;
-
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+
+import java.io.Closeable;
 
 public class RecordTreeChain implements Closeable, Mutable {
     // P(8) + L + R + C(1) + REF + TOP
@@ -55,8 +54,6 @@ public class RecordTreeChain implements Closeable, Mutable {
     private final RecordComparator comparator;
     private final TreeCursor cursor = new TreeCursor();
     private long root = -1;
-    private long size = 0;
-    private long maxSize = Long.MAX_VALUE;
 
     public RecordTreeChain(
             ColumnTypes columnTypes,
@@ -146,7 +143,6 @@ public class RecordTreeChain implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        size = 0;
         root = -1;
         this.mem.clear();
         recordChain.clear();
@@ -164,48 +160,43 @@ public class RecordTreeChain implements Closeable, Mutable {
     }
 
     public void put(Record record) {
-        if (size < maxSize) {
-            size++;
-            if (root == -1) {
-                putParent(record);
+        if (root == -1) {
+            putParent(record);
+            return;
+        }
+
+        comparator.setLeft(record);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            recordChain.recordAt(recordChainRecord, r);
+            cmp = comparator.compare(recordChainRecord);
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, recordChain.put(record, r));
                 return;
             }
+        } while (p > -1);
 
-            comparator.setLeft(record);
+        p = allocateBlock();
+        setParent(p, parent);
+        long r = recordChain.put(record, -1L);
+        setTop(p, r);
+        setRef(p, r);
 
-            long p = root;
-            long parent;
-            int cmp;
-            do {
-                parent = p;
-                long r = refOf(p);
-                recordChain.recordAt(recordChainRecord, r);
-                cmp = comparator.compare(recordChainRecord);
-                if (cmp < 0) {
-                    p = leftOf(p);
-                } else if (cmp > 0) {
-                    p = rightOf(p);
-                } else {
-                    setRef(p, recordChain.put(record, r));
-                    return;
-                }
-            } while (p > -1);
-
-            p = allocateBlock();
-            setParent(p, parent);
-            long r = recordChain.put(record, -1L);
-            setTop(p, r);
-            setRef(p, r);
-
-            if (cmp < 0) {
-                setLeft(parent, p);
-            } else {
-                setRight(parent, p);
-            }
-            fix(p);
+        if (cmp < 0) {
+            setLeft(parent, p);
         } else {
-            throw LimitOverflowException.instance(maxSize);
+            setRight(parent, p);
         }
+        fix(p);
     }
 
     private long allocateBlock() {
@@ -305,10 +296,6 @@ public class RecordTreeChain implements Closeable, Mutable {
             setRight(l, p);
             setParent(p, l);
         }
-    }
-
-    public void setMaxSize(long maxSize) {
-        this.maxSize = maxSize;
     }
 
     public class TreeCursor implements RecordCursor {
