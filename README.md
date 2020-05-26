@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/questdb/questdb/master/ui/assets/images/logo-readme.jpg"/>
 </h4>
 
-<p align="center">
+<p align="left">
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
     <img src="https://img.shields.io/github/license/questdb/questdb" />
   </a>
