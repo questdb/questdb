@@ -4863,6 +4863,45 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testFilterPostJoin() throws SqlException {
+        assertQuery(
+                "select-choose a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where b.seq < a.seq)",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
+                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+    @Test
+    public void testFilterPostJoinSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag)) _xQdbA1)",
+                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
+                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testEmptyWhere() throws Exception {
+        assertFailure(
+                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
+                "create table tab (\n" +
+                        "    tag string,\n" +
+                        "    seq long\n" +
+                        ")  partition by NONE",
+                71,
+                "empty where clause"
+        );
+    }
+
+    @Test
+    public void testFilterPostJoinSubQueryWithLatestBy() throws SqlException {
+        assertQuery(
+                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag)) _xQdbA1 latest by tag)",
+                "select * from (select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) latest by tag where hi > lo + 1",
+                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

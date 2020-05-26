@@ -678,6 +678,12 @@ public final class SqlParser {
                 model.setTimestamp(timestamp);
                 tok = optTok(lexer);
             }
+
+            // expect [latest by]
+            if (tok != null && isLatestKeyword(tok)) {
+                parseLatestBy(lexer, model);
+                tok = optTok(lexer);
+            }
         } else {
 
             lexer.unparse();
@@ -717,8 +723,13 @@ public final class SqlParser {
         // expect [where]
 
         if (tok != null && isWhereKeyword(tok)) {
-            model.setWhereClause(expr(lexer, model));
-            tok = optTok(lexer);
+            ExpressionNode expr = expr(lexer, model);
+            if (expr != null) {
+                model.setWhereClause(expr);
+                tok = optTok(lexer);
+            } else {
+                throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
+            }
         }
 
         // expect [group by]

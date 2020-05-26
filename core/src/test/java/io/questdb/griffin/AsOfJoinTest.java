@@ -37,7 +37,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinFOrSelectWithoutTimestamp() throws Exception {
+    public void testAsofJoinForSelectWithoutTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +
                 "AA\t315515118\t315515118\n" +
                 "BB\t-727724771\t-727724771\n" +
@@ -93,6 +93,58 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    @Test
+    public void testAsofJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
+        final String expected = "tag\thi\tlo\n" +
+                "AA\t315515118\t315515118\n" +
+                "BB\t-727724771\t-727724771\n" +
+                "CC\t-948263339\t-948263339\n" +
+                "CC\t592859671\t592859671\n" +
+                "AA\t-847531048\t-847531048\n" +
+                "BB\t-2041844972\t-2041844972\n" +
+                "BB\t-1575378703\t-1575378703\n" +
+                "BB\t1545253512\t1545253512\n" +
+                "AA\t1573662097\t1573662097\n" +
+                "AA\t339631474\t339631474\n";
+        assertQuery(
+                "tag\thi\tlo\n",
+                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    @Test
+    public void testAsofJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
+        final String expected = "tag\thi\tlo\n";
+        assertQuery(
+                "tag\thi\tlo\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
                 "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
                         "        rnd_int() seq, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +

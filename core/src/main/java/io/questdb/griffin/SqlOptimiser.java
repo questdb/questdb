@@ -1425,11 +1425,22 @@ class SqlOptimiser {
                 literalCollector.resetNullCount();
                 traversalAlgo.traverse(node, literalCollector.lhs());
 
+
+                //todo: do not create new object ... make it zero GC
+                SortedSet<Integer> literalCollectorsSet = new TreeSet<>();
+                for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
+                    literalCollectorsSet.add(literalCollectorAIndexes.getQuick(j));
+                }
+
                 // at this point we must not have constant conditions in where clause
                 // this could be either referencing constant of a sub-query
                 if (literalCollectorAIndexes.size() == 0) {
                     // keep condition with this model
                     addWhereNode(model, node);
+                    continue;
+                } else if (literalCollectorsSet.size() > 1) {
+                    int greatest = literalCollectorsSet.last();
+                    model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), nodes.getQuick(greatest)));
                     continue;
                 }
 
