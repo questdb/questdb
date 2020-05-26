@@ -24,13 +24,23 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -78,7 +88,13 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            buildMapOfSlaveRecords(slaveCursor);
+            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+            if (maxInMemoryRows > slaveCursor.size()) {
+                joinKeyMap.setMaxSize(maxInMemoryRows);
+                buildMapOfSlaveRecords(slaveCursor);
+            } else {
+                throw LimitOverflowException.instance(maxInMemoryRows);
+            }
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;

@@ -131,7 +131,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithOrderBy() throws Exception {
+    public void testMaxInMemoryRowsWithRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -148,6 +148,38 @@ public class SecurityTest extends AbstractGriffinTest {
                 assertQuery(
                         "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\nPEHN\t0.3288176907679504\n",
                         "select sym, d from tb1 where d < 0.34 ORDER BY d",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithoutRandomAccessOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000001000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            assertQuery(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
+                    null,
+                    true, readOnlyExecutionContext);
+            try {
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\nPEHN\tRQQ\n",
+                        "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.34 ORDER BY d1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
@@ -347,6 +379,176 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(10000000000, 1000000000) ts2" +
+                    " from long_sequence(1)) timestamp(ts2)", sqlExecutionContext);
+            assertQuery(
+                    "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
+                    "select * from tb1 where d1 < 0.2 union tb2",
+                    "ts1",
+                    false, readOnlyExecutionContext);
+            try {
+                assertQuery(
+                        "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nVTJW\t0.21583224269349388\t1970-01-01T01:40:00.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
+                        "select * from tb1 where d1 < 0.3 union tb2",
+                        "ts1",
+                        false, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            assertQuery(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    null,
+                    false, sqlExecutionContext);
+            try {
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        null,
+                        false, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            assertQuery(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    null,
+                    false, sqlExecutionContext);
+            try {
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        null,
+                        false, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithFullFatInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            try {
+                compiler.setFullSatJoins(true);
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        null,
+                        false, sqlExecutionContext);
+                try {
+                    assertQuery(
+                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                            "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                            null,
+                            false, readOnlyExecutionContext);
+                    Assert.fail();
+                } catch (Exception ex) {
+                    Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                }
+            } finally {
+                compiler.setFullSatJoins(false);
+            }
+        });
+    }
+
+    @Test
+    public void testMaxInMemoryRowsWithFullFatOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            try {
+                compiler.setFullSatJoins(true);
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        null,
+                        false, sqlExecutionContext);
+                try {
+                    assertQuery(
+                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                            "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                            null,
+                            false, readOnlyExecutionContext);
+                    Assert.fail();
+                } catch (Exception ex) {
+                    Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                }
+            } finally {
+                compiler.setFullSatJoins(false);
             }
         });
     }

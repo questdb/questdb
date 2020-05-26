@@ -56,7 +56,6 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         this.slaveCursor = slaveCursor;
         this.masterRecord = masterCursor.getRecord();
         this.slaveRecord = slaveCursor.getRecord();
-        map.clear();
         toTop();
     }
 
