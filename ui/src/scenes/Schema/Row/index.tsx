@@ -17,6 +17,7 @@ type Props = Readonly<{
 }>
 
 const Type = styled(Text)`
+  margin-right: 1rem;
   flex: 0;
   transition: all 0.2s;
 `
@@ -24,7 +25,7 @@ const Type = styled(Text)`
 const PlusButton = styled(SecondaryButton)`
   position: absolute;
   right: ${({ tooltip }: Pick<Props, "tooltip">) =>
-    tooltip ? "2.5rem" : "1rem"};
+    tooltip ? "3rem" : "1rem"};
   margin-left: 1rem;
   opacity: 0;
   transition: all 0.2s;
@@ -34,7 +35,8 @@ const Wrapper = styled.div<Pick<Props, "expanded">>`
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0;
+  padding-left: 1rem;
   transition: all 0.2s;
 
   &:hover ${/* sc-selector */ PlusButton} {
@@ -63,14 +65,14 @@ const Spacer = styled.span`
 `
 
 const InfoIcon = styled(Info)`
-  height: 100%;
-  width: 100%;
-  padding-left: 1rem;
   color: ${color("draculaPurple")};
+`
 
-  &:hover {
-    cursor: default;
-  }
+const InfoIconWrapper = styled.div`
+  display: flex;
+  padding: 0 1rem;
+  align-items: center;
+  justify-content: center;
 `
 
 const Row = ({
@@ -113,12 +115,16 @@ const Row = ({
               {
                 name: "offset",
                 options: {
-                  offset: [15, 0],
+                  offset: [-15, 0],
                 },
               },
             ]}
-            placement="top-start"
-            trigger={<InfoIcon onClick={handleClick} size="10px" />}
+            placement="right"
+            trigger={
+              <InfoIconWrapper>
+                <InfoIcon size="10px" />
+              </InfoIconWrapper>
+            }
           >
             <Tooltip>{description}</Tooltip>
           </PopperHover>
