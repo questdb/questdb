@@ -6,7 +6,6 @@ import "echarts/lib/component/tooltip"
 import "echarts/lib/component/title"
 import "docsearch.js/dist/cdn/docsearch.min.css"
 import $ from "jquery"
-import "metismenu"
 
 import { setupConsoleController } from "./console-controller"
 import { setupImportController } from "./import-controller"
@@ -35,7 +34,7 @@ window.addEventListener("popstate", function () {
 let messageBus
 
 function switchTo(name, index) {
-  const menuItems = $("#side-menu").find("a")
+  const menuItems = $("#side-menu li").find("a")
   messageBus.trigger(qdb.MSG_ACTIVE_PANEL, name)
   const n = menuItems.length
   for (let i = 0; i < n; i++) {
@@ -159,7 +158,6 @@ $(document).ready(function () {
 
   window.bus = messageBus
 
-  $("#side-menu").metisMenu()
   $("a#nav-console").click(switchToConsole)
   $("a#nav-import").click(switchToImport)
   $("a#nav-visualisation").click(switchToVis)
@@ -169,7 +167,6 @@ $(document).ready(function () {
   setupConsoleController(messageBus)
   setupImportController(messageBus)
   setupVisualisationController(messageBus)
-  switchToConsole()
 
   messageBus.trigger("preferences.load")
 
