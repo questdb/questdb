@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.LimitOverflowException;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -80,17 +82,36 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base) {
-        this.chainCursor = chain.getCursor(base);
-        final Record record = base.getRecord();
+        of(base, Long.MAX_VALUE);
+    }
 
-        chain.clear();
-        while (base.hasNext()) {
-            // Tree chain is liable to re-position record to
-            // other rows to do record comparison. We must use our
-            // own record instance in case base cursor keeps
-            // state in the record it returns.
-            chain.put(record);
+    public void of(RecordCursor base, long maxSize) {
+        try {
+            if (maxSize > base.size()) {
+                this.chainCursor = chain.getCursor(base);
+                final Record record = base.getRecord();
+
+                long nRows = 0;
+                chain.clear();
+                while (base.hasNext()) {
+                    if (nRows < maxSize) {
+                        nRows++;
+                        // Tree chain is liable to re-position record to
+                        // other rows to do record comparison. We must use our
+                        // own record instance in case base cursor keeps
+                        // state in the record it returns.
+                        chain.put(record);
+                    } else {
+                        throw LimitOverflowException.instance(maxSize);
+                    }
+                }
+                chainCursor.toTop();
+            } else {
+                throw LimitOverflowException.instance(maxSize);
+            }
+        } catch (CairoException ex) {
+            base.close();
+            throw ex;
         }
-        chainCursor.toTop();
     }
 }
