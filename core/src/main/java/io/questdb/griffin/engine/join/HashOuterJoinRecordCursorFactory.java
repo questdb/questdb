@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -101,7 +102,13 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            buildMapOfSlaveRecords(slaveCursor);
+            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
+            if (maxInMemoryRows > slaveCursor.size()) {
+                joinKeyMap.setMaxSize(maxInMemoryRows);
+                buildMapOfSlaveRecords(slaveCursor);
+            } else {
+                throw LimitOverflowException.instance(maxInMemoryRows);
+            }
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
