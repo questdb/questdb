@@ -4893,15 +4893,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testFilterPostJoinSubQueryWithLatestBy() throws SqlException {
-        assertQuery(
-                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag)) _xQdbA1 latest by tag)",
-                "select * from (select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) latest by tag where hi > lo + 1",
-                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
-        );
-    }
-
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

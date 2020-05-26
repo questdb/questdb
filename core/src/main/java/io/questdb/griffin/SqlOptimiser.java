@@ -37,8 +37,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
-import java.util.SortedSet;
-import java.util.TreeSet;
 
 class SqlOptimiser {
 
@@ -67,6 +65,7 @@ class SqlOptimiser {
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final IntList tempCrosses = new IntList();
+    private final IntList tempList = new IntList();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -1427,12 +1426,16 @@ class SqlOptimiser {
                 literalCollector.resetNullCount();
                 traversalAlgo.traverse(node, literalCollector.lhs());
 
-
-                //todo: do not create new object ... make it zero GC
-                SortedSet<Integer> literalCollectorsSet = new TreeSet<>();
+                tempList.clear();
                 for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
-                    literalCollectorsSet.add(literalCollectorAIndexes.getQuick(j));
+                    int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
+                    int position = tempList.binarySearch(tableExpressionReference);
+                    if (position < 0) {
+                        tempList.add(-(position + 1), tableExpressionReference);
+                    }
                 }
+
+                int distinctIndexes = tempList.size();
 
                 // at this point we must not have constant conditions in where clause
                 // this could be either referencing constant of a sub-query
@@ -1440,8 +1443,8 @@ class SqlOptimiser {
                     // keep condition with this model
                     addWhereNode(model, node);
                     continue;
-                } else if (literalCollectorsSet.size() > 1) {
-                    int greatest = literalCollectorsSet.last();
+                } else if (distinctIndexes > 1) {
+                    int greatest = tempList.get(distinctIndexes - 1);
                     model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), nodes.getQuick(greatest)));
                     continue;
                 }

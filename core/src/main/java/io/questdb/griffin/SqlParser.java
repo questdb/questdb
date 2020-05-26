@@ -678,12 +678,6 @@ public final class SqlParser {
                 model.setTimestamp(timestamp);
                 tok = optTok(lexer);
             }
-
-            // expect [latest by]
-            if (tok != null && isLatestKeyword(tok)) {
-                parseLatestBy(lexer, model);
-                tok = optTok(lexer);
-            }
         } else {
 
             lexer.unparse();
