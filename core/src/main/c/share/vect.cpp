@@ -28,7 +28,6 @@
 
 #define MAX_VECTOR_SIZE 512
 
-// Define function name depending on which instruction set we compile for
 #if INSTRSET >= 10
 
 #define SUM_DOUBLE F_AVX512(sumDouble)

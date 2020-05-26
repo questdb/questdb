@@ -74,4 +74,6 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
+
+    public static native long matchGroup(long intAddr, long doubleAddr, long count);
 }

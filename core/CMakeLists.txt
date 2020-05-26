@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.3)
+cmake_minimum_required(VERSION 3.5)
 project(questdb)
 
 # deal with windows slashes in JAVA_HOME
@@ -9,14 +9,18 @@ endif ($ENV{JAVA_HOME})
 set(
         VCL_FILES
         src/main/c/share/vect.cpp
+#        src/main/c/share/vectkeysum.cpp
 )
 
 set(
-        VCL_FILES2
+        VCL_FILES_SSE2
         src/main/c/share/vect_vanilla.h
         src/main/c/share/vect_vanilla.cpp
         src/main/c/share/vect.cpp
         src/main/c/share/vcl/instrset_detect.cpp
+#        src/main/c/share/vectkeysum.cpp
+        src/main/c/share/vectkeysum_vanilla.h
+        src/main/c/share/vectkeysum_vanilla.cpp
 )
 
 set(
@@ -48,11 +52,11 @@ elseif (UNIX)
         include_directories($ENV{JAVA_HOME}/include/freebsd/)
         set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
         set(
-            SOURCE_FILES ${SOURCE_FILES}
-            src/main/c/freebsd/kqueue.c
-            src/main/c/share/net.c
-            src/main/c/freebsd/affinity.c
-            src/main/c/freebsd/accept.c
+                SOURCE_FILES ${SOURCE_FILES}
+                src/main/c/freebsd/kqueue.c
+                src/main/c/share/net.c
+                src/main/c/freebsd/affinity.c
+                src/main/c/freebsd/accept.c
         )
     else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for GNU/Linux")
@@ -65,13 +69,13 @@ elseif (UNIX)
             set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
         endif ()
         set(
-            SOURCE_FILES ${SOURCE_FILES}
-            src/main/c/share/net.c
-            src/main/c/linux/epoll.c
-            src/main/c/linux/recvmmsg.c
-            src/main/c/linux/affinity.c
-            src/main/c/linux/accept.c
-            )
+                SOURCE_FILES ${SOURCE_FILES}
+                src/main/c/share/net.c
+                src/main/c/linux/epoll.c
+                src/main/c/linux/recvmmsg.c
+                src/main/c/linux/affinity.c
+                src/main/c/linux/accept.c
+        )
 
     endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
 endif (APPLE)
@@ -156,7 +160,7 @@ else ()
     )
 
     # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES})
+    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/vectkeysum.cpp)
     set_target_properties(
             questdb-avx2 PROPERTIES
             COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"
@@ -170,7 +174,7 @@ else ()
     )
 
     #SSE2 lib
-    add_library(questdb-sse2 OBJECT ${VCL_FILES2})
+    add_library(questdb-sse2 OBJECT ${VCL_FILES_SSE2})
     target_link_libraries(
             questdb-sse2
             questdb-sse4
@@ -194,6 +198,8 @@ else ()
             questdb PROPERTIES
             COMPILE_FLAGS "-m64 -O3 "
     )
+
+    include_directories(src/main/c/share/abseil-cpp)
 
     target_link_libraries(
             questdb

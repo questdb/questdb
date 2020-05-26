@@ -55,22 +55,11 @@ public class ReadWriteMemory extends VirtualMemory {
         }
     }
 
-    @Override
-    protected long allocateNextPage(int page) {
-        long address;
-        long offset = pageOffset(page);
-        final long pageSize = getMapPageSize();
-
-        if (ff.length(fd) < offset + pageSize) {
-            ff.truncate(fd, offset + pageSize);
+    public void sync(int pageIndex, boolean async) {
+        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) == 0) {
+            return;
         }
-
-        address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
-
-        if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
-        }
-        return address;
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -119,9 +108,19 @@ public class ReadWriteMemory extends VirtualMemory {
         }
     }
 
-    public void sync(int pageIndex, boolean async) {
-        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) != 0) {
-            LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    @Override
+    protected long allocateNextPage(int page) {
+        final long offset = pageOffset(page);
+        final long pageSize = getMapPageSize();
+
+        if (ff.length(fd) < offset + pageSize) {
+            ff.truncate(fd, offset + pageSize);
         }
+
+        final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
+        if (address != -1) {
+            return address;
+        }
+        throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
     }
 }

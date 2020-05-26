@@ -136,9 +136,10 @@ public class AppendMemory extends VirtualMemory {
 
     public void sync(boolean async) {
         if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getMapPageSize(), async) != 0) {
-                LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+            if (ff.msync(pageAddress, getMapPageSize(), async) == 0) {
+                return;
             }
+            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
     }
 
@@ -156,9 +157,9 @@ public class AppendMemory extends VirtualMemory {
         }
         long offset = pageOffset(page);
         long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
-        if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
+        if (address != -1) {
+            return address;
         }
-        return address;
+        throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 }

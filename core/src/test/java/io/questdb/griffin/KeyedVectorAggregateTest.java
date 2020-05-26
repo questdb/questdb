@@ -27,22 +27,36 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Vect;
 import org.junit.Ignore;
 import org.junit.Test;
 
 public class KeyedVectorAggregateTest extends AbstractGriffinTest {
     @Test
     @Ignore
+
     public void testSimple() throws SqlException {
-        compiler.compile("create table x as (select rnd_symbol('aa', 'bb', 'cc', 'dd', 'ee', 'zz') sym, rnd_double(2) val from long_sequence(1000000))", sqlExecutionContext);
+        compiler.compile("create table x as (select abs(rnd_int()) % 1024 sym, rnd_double(2) val from long_sequence(100000000))", sqlExecutionContext);
         CompiledQuery cc = compiler.compile("x", sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         PageFrameCursor pfc = factory.getPageFrameCursor(sqlExecutionContext);
         PageFrame frame;
+        long t = System.nanoTime();
         while ((frame = pfc.next()) != null) {
             long symPageAddress = frame.getPageAddress(0);
             long valPageAddress = frame.getPageAddress(1);
-//            Vect.matchGroup(symPageAddress, valPageAddress, frame.getPageValueCount(0));
+            Vect.matchGroup(symPageAddress, valPageAddress, frame.getPageValueCount(0));
         }
+        System.out.println(System.nanoTime() - t);
+        pfc.close();
+
+        pfc = factory.getPageFrameCursor(sqlExecutionContext);
+        t = System.nanoTime();
+        while ((frame = pfc.next()) != null) {
+            long symPageAddress = frame.getPageAddress(0);
+            long valPageAddress = frame.getPageAddress(1);
+            Vect.matchGroup(symPageAddress, valPageAddress, frame.getPageValueCount(0));
+        }
+        System.out.println(System.nanoTime() - t);
     }
 }

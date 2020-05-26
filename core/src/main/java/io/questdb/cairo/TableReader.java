@@ -465,14 +465,14 @@ public class TableReader implements Closeable {
         if (rowCount > 0) {
             // subtract column top
             switch (type) {
+                default:
+                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
+                    break;
                 case ColumnType.BINARY:
                     growBin(mem1, mem2, rowCount);
                     break;
                 case ColumnType.STRING:
                     growStr(mem1, mem2, rowCount);
-                    break;
-                default:
-                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
                     break;
             }
         }
@@ -927,6 +927,11 @@ public class TableReader implements Closeable {
     }
 
     private boolean readTxn() {
+        // fast path
+        return this.txn != txMem.getLong(TableUtils.TX_OFFSET_TXN) && readTxnSlow();
+    }
+
+    private boolean readTxnSlow() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
@@ -1169,11 +1174,11 @@ public class TableReader implements Closeable {
         // calling readTxn will set "rowCount" member variable
         if (readTxn()) {
             reloadStruct();
-            if (getPartitionRowCount(0) == -1) {
+            if (getPartitionRowCount(0) > -1) {
+                reloadPartition(0, rowCount);
+            } else {
                 openPartition0(0);
                 reloadSymbolMapCounts();
-            } else {
-                reloadPartition(0, rowCount);
             }
             return true;
         }
@@ -1200,9 +1205,10 @@ public class TableReader implements Closeable {
 
             // reload symbol map
             SymbolMapReader reader = symbolMapReaders.getQuick(i);
-            if (reader != null) {
-                reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+            if (reader == null) {
+                continue;
             }
+            reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
         }
         partitionRowCounts.setQuick(partitionIndex, rowCount);
     }
@@ -1258,6 +1264,14 @@ public class TableReader implements Closeable {
     }
 
     private void reloadStruct() {
+        // fast path
+        if (this.prevStructVersion == this.structVersion && this.prevPartitionTableVersion == this.partitionTableVersion) {
+            return;
+        }
+        reloadStructSlow();
+    }
+
+    private void reloadStructSlow() {
         if (this.prevStructVersion != this.structVersion) {
             reloadColumnChanges();
             this.prevStructVersion = this.structVersion;
@@ -1272,9 +1286,10 @@ public class TableReader implements Closeable {
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
-                symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+            if (metadata.getColumnType(i) != ColumnType.SYMBOL) {
+                continue;
             }
+            symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
         }
     }
 
