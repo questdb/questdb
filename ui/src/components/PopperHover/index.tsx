@@ -2,17 +2,11 @@ import type { Placement, Options } from "@popperjs/core"
 import React, { useCallback, useEffect, useState } from "react"
 import ReactDOM from "react-dom"
 import { usePopper } from "react-popper"
-import styled from "styled-components"
-
-const Wrapper = styled.div`
-  display: flex;
-  align-items: center;
-`
 
 type Props = Readonly<{
   children: React.ReactNode
   placement: Placement
-  modifiers?: Options["modifiers"]
+  modifiers: Options["modifiers"]
   trigger: React.ReactNode
 }>
 
@@ -22,11 +16,10 @@ export const PopperHover = ({
   placement,
   trigger,
 }: Props) => {
-  const [container] = useState<Element>(document.createElement("div"))
+  const [container] = useState<HTMLElement>(document.createElement("div"))
   const [active, setActive] = React.useState(false)
   const [triggerElement, setTriggerElement] = useState<HTMLElement | null>(null)
-  const [popperElement, setPopperElement] = useState<HTMLElement | null>(null)
-  const { attributes, styles } = usePopper(triggerElement, popperElement, {
+  const { attributes, styles } = usePopper(triggerElement, container, {
     modifiers: [
       ...modifiers,
       {
@@ -57,30 +50,35 @@ export const PopperHover = ({
     }
   }, [])
 
+  useEffect(() => {
+    const css = Object.entries(styles.popper).reduce(
+      (acc, [prop, value]) => `${acc} ${prop}: ${value};`,
+      "z-index: 100;",
+    )
+    container.setAttribute("style", css)
+  }, [styles.popper])
+
   return (
     <>
-      <Wrapper
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        ref={setTriggerElement}
-      >
-        {trigger}
-      </Wrapper>
+      {React.isValidElement(trigger) &&
+        React.cloneElement(trigger, {
+          onMouseEnter: handleMouseEnter,
+          onMouseLeave: handleMouseLeave,
+          ref: setTriggerElement,
+        })}
 
-      {ReactDOM.createPortal(
-        <div
-          ref={setPopperElement}
-          style={{ ...styles.popper, zIndex: 100 }}
-          {...attributes.popper}
-        >
-          {children}
-        </div>,
-        container,
-      )}
+      {React.isValidElement(children) &&
+        ReactDOM.createPortal(
+          React.cloneElement(children, {
+            ...attributes.popper,
+          }),
+          container,
+        )}
     </>
   )
 }
 
 PopperHover.defaultProps = {
+  modifiers: [],
   placement: "auto",
 }
