@@ -77,4 +77,49 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             printSqlResult(expected, query, "timestamp", null, null, true, true);
         });
     }
+
+    @Test
+    public void testEqualityTimestampFormatYearAndMonthPositiveTest() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            String expected = "symbol\tme_seq_num\ttimestamp\n";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test where ts ='2020-12'
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testEqualityTimestampFormatYearAndMonthNegativeTest() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            String expected = "symbol\tme_seq_num\ttimestamp\n";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test where ts ='2021-01'
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021-01'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test where ts ='2020-11'
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
 }
