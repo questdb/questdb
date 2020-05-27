@@ -24,32 +24,16 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
+import org.junit.Test;
 
-public interface CompiledQuery {
-    int SELECT = 0;
-    int INSERT = 1;
-    int TRUNCATE = 2;
-    int ALTER = 3;
-    int REPAIR = 4;
-    int SET = 5;
-    int DROP = 6;
-    int COPY_LOCAL = 7;
-    int CREATE_TABLE = 8;
-    int INSERT_AS_SELECT = 9;
-    int COPY_REMOTE = 10;
-    int RENAME_TABLE = 11;
-    int BACKUP_TABLE = 12;
-    int SHOW_TABLES = 13;
-    int SHOW_COLUMNS = 14;
+public class ShowTablesTest extends AbstractGriffinTest {
 
-    RecordCursorFactory getRecordCursorFactory();
+    @Test
+    public void testShowTablesWithSingleTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            assertQuery("tableName\nbalances\n", "show tables", null, true, sqlExecutionContext, false);
+        });
+    }
 
-    InsertStatement getInsertStatement();
-
-    TextLoader getTextLoader();
-
-    int getType();
 }
