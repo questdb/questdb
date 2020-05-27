@@ -167,6 +167,7 @@ $(document).ready(function () {
   setupConsoleController(messageBus)
   setupImportController(messageBus)
   setupVisualisationController(messageBus)
+  switchToConsole()
 
   messageBus.trigger("preferences.load")
 
