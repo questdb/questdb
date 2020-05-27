@@ -341,7 +341,11 @@ public class TimestampFormatUtils {
     }
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        return UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        if (lim - lo == 27) {
+            return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        } else {
+            return UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        }
     }
 
 }
