@@ -95,4 +95,12 @@ public class ShowTablesTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testShowTablesWithFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            assertQuery("tableName\nbalances\n", "select * from all_tables()", null, false, sqlExecutionContext, false);
+        });
+    }
+
 }
