@@ -52,7 +52,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -64,7 +64,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByMonth() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -81,7 +81,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
