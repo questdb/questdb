@@ -428,7 +428,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
-            io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory
+            io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
+            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
             ;
 
 }
