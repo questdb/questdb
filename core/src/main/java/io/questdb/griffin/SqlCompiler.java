@@ -1726,7 +1726,7 @@ public class SqlCompiler implements Closeable {
                 if (status != TableUtils.TABLE_EXISTS) {
                     throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
                 }
-                return compiledQuery.ofShowTables(new ShowColumnsRecordCursorFactory(engine, tableName));
+                return compiledQuery.ofShowTables(new ShowColumnsRecordCursorFactory(tableName));
             }
         }
 

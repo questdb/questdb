@@ -23,8 +23,6 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -47,17 +45,15 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     }
 
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
-    private final CairoEngine engine;
     private final CharSequence tableName;
 
-    public ShowColumnsRecordCursorFactory(CairoEngine engine, CharSequence tableName) {
-        this.engine = engine;
+    public ShowColumnsRecordCursorFactory(CharSequence tableName) {
         this.tableName = tableName.toString();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext.getCairoSecurityContext());
+        return cursor.of(executionContext);
     }
 
     @Override
@@ -118,8 +114,8 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
             return -1;
         }
 
-        private ShowColumnsCursor of(CairoSecurityContext securityContext) {
-            reader = engine.getReader(securityContext, tableName);
+        private ShowColumnsCursor of(SqlExecutionContext executionContext) {
+            reader = executionContext.getCairoEngine().getReader(executionContext.getCairoSecurityContext(), tableName);
             toTop();
             return this;
         }
