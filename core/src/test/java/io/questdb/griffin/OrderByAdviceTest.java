@@ -109,7 +109,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by 1 desc",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1 desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -218,7 +218,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by 1",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -307,7 +307,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -396,7 +396,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -485,7 +485,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -537,7 +537,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -712,7 +712,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts",
+                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -801,7 +801,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by sym",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by sym",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +

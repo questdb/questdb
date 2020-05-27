@@ -513,13 +513,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalGreater1() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp > '2014-01-01T15:30:00.000Z'");
-        TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
     }
 
     @Test
     public void testIntervalGreater2() throws Exception {
         IntrinsicModel m = modelOf("timestamp > '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
     }
 
     @Test

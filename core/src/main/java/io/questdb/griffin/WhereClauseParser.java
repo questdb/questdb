@@ -175,7 +175,7 @@ final class WhereClauseParser implements Mutable {
             }
 
             try {
-                long lo = equalsTo ? IntrinsicModel.parseFloorPartialDate(node.rhs.token, 1, node.rhs.token.length() - 1) : IntrinsicModel.parseCeilingPartialDate(node.rhs.token, 1, node.rhs.token.length() - 1);
+                long lo = parseFullOrPartialDate(equalsTo, node.rhs, true);
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -191,7 +191,7 @@ final class WhereClauseParser implements Mutable {
             }
 
             try {
-                long hi = equalsTo ? IntrinsicModel.parseCeilingPartialDate(node.lhs.token, 1, node.lhs.token.length() - 1) : IntrinsicModel.parseFloorPartialDate(node.lhs.token, 1, node.lhs.token.length() - 1);
+                long hi = parseFullOrPartialDate(equalsTo, node.lhs, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -200,6 +200,21 @@ final class WhereClauseParser implements Mutable {
             }
         }
         return false;
+    }
+
+    private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
+        long ts;
+        if (node.token.length() - 2 < 20) {
+            if (equalsTo ^ isLo) {
+                ts = IntrinsicModel.parseCeilingPartialDate(node.token, 1, node.token.length() - 1);
+            } else {
+                ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, node.token.length() - 1);
+            }
+        } else {
+            long inc = equalsTo ? 0 : isLo ? 1 : -1;
+            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+        }
+        return ts;
     }
 
     private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
@@ -318,8 +333,7 @@ final class WhereClauseParser implements Mutable {
                 if (node.rhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
-
-                long hi = equalsTo ? IntrinsicModel.parseCeilingPartialDate(node.rhs.token, 1, node.rhs.token.length() - 1) : IntrinsicModel.parseFloorPartialDate(node.rhs.token, 1, node.rhs.token.length() - 1);
+                long hi = parseFullOrPartialDate(equalsTo, node.rhs, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -333,8 +347,7 @@ final class WhereClauseParser implements Mutable {
                 if (node.lhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
-
-                long lo = equalsTo ? IntrinsicModel.parseFloorPartialDate(node.lhs.token, 1, node.lhs.token.length() - 1) : IntrinsicModel.parseCeilingPartialDate(node.lhs.token, 1, node.lhs.token.length() - 1);
+                long lo = parseFullOrPartialDate(equalsTo, node.lhs, true);
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
