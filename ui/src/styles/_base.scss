@@ -31,6 +31,15 @@ body {
   overflow-x: hidden;
 }
 
+#root {
+  position: absolute;
+  display: flex;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 11px;

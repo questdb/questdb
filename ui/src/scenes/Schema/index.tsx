@@ -1,22 +1,22 @@
 import React, { useCallback, useState } from "react"
 import styled from "styled-components"
+import { Database } from "@styled-icons/entypo"
 
+import { Pane, PaneTitle, Text } from "components"
 import data from "mocks/schema.json"
 import { theme } from "theme"
 import type { TableShape } from "types"
-import { color } from "utils"
-import Header from "./Header"
+
 import Table from "./Table"
 
 const schema = data as TableShape[]
 
-const Columns = styled.div`
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  background: ${color("draculaBackground")};
+const Columns = styled(Pane)`
   font-family: ${theme.fontMonospace};
-  overflow: auto;
+`
+
+const DatabaseIcon = styled(Database)`
+  margin-right: 1rem;
 `
 
 const Schema = () => {
@@ -27,7 +27,12 @@ const Schema = () => {
 
   return (
     <>
-      <Header />
+      <PaneTitle>
+        <Text color="draculaForeground">
+          <DatabaseIcon size="18px" />
+          Tables
+        </Text>
+      </PaneTitle>
       <Columns>
         {schema.map((table) => (
           <Table

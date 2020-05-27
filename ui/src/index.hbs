@@ -1,45 +1,37 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-145747842-2"></script>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-
-        function gtag() {
-            dataLayer.push(arguments);
-        }
-
-        gtag('js', new Date());
-        gtag('config', 'UA-145747842-2');
-    </script>
+  <head>
     <meta charset="utf-8">
+    <script async src="https://www.googletagmanager.com/gtag/js?id=GTM-PVR7M2G"></script>
+    <script>
+      window.dataLayer = window.dataLayer || []
+      window.dataLayer.push({
+        'gtm.start': new Date().getTime(),
+        event: "gtm.js"
+      })
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QuestDB - Console</title>
+    <title>QuestDB · Console</title>
 </head>
 
 <body class="mini-navbar pace-done">
-    <div id="wrapper">
+    <div id="root"></div>
 
-        {{> partials/nav}}
+    <div id="page-wrapper" class="gray-bg">
 
-        <div id="page-wrapper" class="gray-bg">
+        {{> partials/console}}
+        {{> partials/import}}
 
-            {{> partials/console}}
-            {{> partials/vis-container}}
-            {{> partials/import}}
-
-            <div class="footer">
-                <div class="footer-title">
-                    Copyright &copy; 2014-2020 QuestDB Ltd.
-                </div>
-                <div class="footer-icons">
-                  <a href="https://github.com/questdb/questdb" target="_blank">
-                      <i class="fab fa-github"></i>
-                  </a>
-                </div>
+        <div class="footer">
+            <div class="footer-title">
+                Copyright &copy; 2014-2020 QuestDB Ltd.
+            </div>
+            <div class="footer-icons">
+              <a href="https://github.com/questdb/questdb" target="_blank">
+                  <i class="fab fa-github"></i>
+              </a>
             </div>
         </div>
     </div>
-    <div id="root" />
 </body>
 </html>

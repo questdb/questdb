@@ -9,10 +9,8 @@ import $ from "jquery"
 
 import { setupConsoleController } from "./console-controller"
 import { setupImportController } from "./import-controller"
-import { setupVisualisationController } from "./vis-controller"
 
 import "../../styles/main.scss"
-import "./docsearch"
 import * as qdb from "./globals"
 import "./grid"
 import "./import"
@@ -21,9 +19,6 @@ import "./list-manager"
 import "./query"
 import "./quick-vis"
 import "./splitter"
-import "./vis-query-form"
-import "./vis-series-form"
-import "./vis-axis-form"
 
 // Disable "back" button.
 history.pushState(null, null, "index.html")
@@ -31,7 +26,8 @@ window.addEventListener("popstate", function () {
   history.pushState(null, null, "index.html")
 })
 
-let messageBus
+let messageBus = $({})
+window.bus = messageBus
 
 function switchTo(name, index) {
   const menuItems = $("#side-menu li").find("a")
@@ -154,10 +150,6 @@ ace.define(
 )
 
 $(document).ready(function () {
-  messageBus = $({})
-
-  window.bus = messageBus
-
   $("a#nav-console").click(switchToConsole)
   $("a#nav-import").click(switchToImport)
   $("a#nav-visualisation").click(switchToVis)
@@ -166,7 +158,6 @@ $(document).ready(function () {
 
   setupConsoleController(messageBus)
   setupImportController(messageBus)
-  setupVisualisationController(messageBus)
   switchToConsole()
 
   messageBus.trigger("preferences.load")
