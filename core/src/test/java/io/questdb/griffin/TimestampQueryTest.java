@@ -41,11 +41,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            String expected = "symbol\tme_seq_num\ttimestamp\n";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", null, null, true, true);
@@ -63,11 +62,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            String expected = "symbol\tme_seq_num\ttimestamp\n";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", null, null, true, true);
@@ -83,11 +81,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            String expected = "symbol\tme_seq_num\ttimestamp\n";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", null, null, true, true);
@@ -104,11 +101,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            String expected = "symbol\tme_seq_num\ttimestamp\n";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
             executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", null, null, true, true);
@@ -119,6 +115,400 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test where ts ='2020-11'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp <'2021'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2019' <  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp <'2020'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2021' <  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2020'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2020' <=  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2019'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2021' <=  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+
+    @Test
+    public void testLMoreThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp > '2019'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2021' >  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp > '2020'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2020' > timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testLMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2020'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2020' >=  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n";
+            query = "SELECT * FROM ob_mem_snapshot where '2019' >=  timestamp";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testEqualsToTimestampFormatYearMonthDay() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+
+    @Test
+    public void testEqualsToTimestampFormatYearMonthDayHour() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testEqualsToTimestampFormatYearMonthDayHourMinute() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+        });
+    }
+
+    @Test
+    public void testEqualsToTimestampFormatYearMonthDayHourMinuteSecond() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000001Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true);
+            // test
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000001Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59'";
             printSqlResult(expected, query, "timestamp", null, null, true, true);
         });
     }
