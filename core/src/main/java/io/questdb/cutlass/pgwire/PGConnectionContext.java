@@ -120,7 +120,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private Rnd rnd;
 
     public PGConnectionContext(
-            CairoConfiguration cairoConfiguration,
+            CairoEngine engine,
             PGWireConfiguration configuration,
             @Nullable MessageBus messageBus,
             int workerCount
@@ -145,7 +145,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.dateLocale = configuration.getDefaultDateLocale();
         this.timestampLocale = configuration.getDefaultTimestampLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(cairoConfiguration, messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
         populateAppender();
     }
 

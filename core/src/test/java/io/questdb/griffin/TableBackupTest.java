@@ -124,7 +124,7 @@ public class TableBackupTest {
         MessageBus mainMessageBus = new MessageBusImpl();
         mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainConfiguration, mainMessageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainMessageBus, 1, mainEngine).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null);
     }
 
     @After
@@ -504,8 +504,10 @@ public class TableBackupTest {
             if (backup) {
                 CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
                 MessageBus backupMessageBus = new MessageBusImpl();
-                sqlExecutionContext = new SqlExecutionContextImpl(backupConfiguration, backupMessageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null);
                 engine = new CairoEngine(backupConfiguration, backupMessageBus);
+                sqlExecutionContext = new SqlExecutionContextImpl(backupMessageBus, 1, engine).with(AllowAllCairoSecurityContext.INSTANCE,
+                        new BindVariableService(),
+                        null);
                 compiler = new SqlCompiler(engine);
             } else {
                 engine = mainEngine;

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -38,17 +39,23 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private final CairoConfiguration cairoConfiguration;
+    private final CairoEngine cairoEngine;
     @Nullable
     private final MessageBus messageBus;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
 
-    public SqlExecutionContextImpl(CairoConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
-        this.cairoConfiguration = configuration;
+    public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
+        this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
+    }
+
+    public SqlExecutionContextImpl(CairoConfiguration cairoConfiguration, @Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
+        this.cairoConfiguration = cairoConfiguration;
         this.messageBus = messageBus;
         this.workerCount = workerCount;
         assert workerCount > 0;
+        this.cairoEngine = cairoEngine;
     }
 
     @Override
@@ -95,6 +102,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
+    }
+
+    @Override
+    public CairoEngine getCairoEngine() {
+        return cairoEngine;
     }
 
     public SqlExecutionContextImpl with(

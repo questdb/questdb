@@ -24,22 +24,29 @@
 
 package io.questdb.cutlass.pgwire;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
@@ -52,7 +59,7 @@ public class PGWireServer implements Closeable {
             WorkerPool workerPool,
             MessageBus messageBus
     ) {
-        this.contextFactory = new PGConnectionContextFactory(engine.getConfiguration(), configuration, messageBus, workerPool.getWorkerCount());
+        this.contextFactory = new PGConnectionContextFactory(engine, configuration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -119,9 +126,9 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(CairoConfiguration cairoConfiguration, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
+        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(cairoConfiguration, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
+            new PGConnectionContext(engine, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

@@ -24,13 +24,19 @@
 
 package io.questdb.cutlass.http.processors;
 
+import java.io.Closeable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
@@ -50,10 +56,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
-
-import java.io.Closeable;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Factory cache is thread local due to possibility of factory being
@@ -79,7 +82,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
         this.doubleScale = configuration.getDoubleScale();
     }
 

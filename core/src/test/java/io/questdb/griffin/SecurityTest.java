@@ -1,6 +1,7 @@
 package io.questdb.griffin;
 
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.security.CairoSecurityContextImpl;
@@ -8,15 +9,20 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 
 public class SecurityTest extends AbstractGriffinTest {
-    protected static final SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(
-            configuration,
-            messageBus,
-            1)
-                    .with(
-                            new CairoSecurityContextImpl(false,
-                                    2),
-                            bindVariableService,
-                            null);
+    protected static SqlExecutionContext readOnlyExecutionContext;
+
+    @BeforeClass
+    public static void setUpReadOnlyExecutionContext() {
+        readOnlyExecutionContext = new SqlExecutionContextImpl(
+                messageBus,
+                1,
+                engine)
+                        .with(
+                                new CairoSecurityContextImpl(false,
+                                        2),
+                                bindVariableService,
+                                null);
+    }
 
     @Test
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
