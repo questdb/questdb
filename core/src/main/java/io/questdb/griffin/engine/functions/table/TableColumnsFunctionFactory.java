@@ -12,7 +12,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "table_columns(S)";
+        return "table_columns(s)";
     }
 
     @Override

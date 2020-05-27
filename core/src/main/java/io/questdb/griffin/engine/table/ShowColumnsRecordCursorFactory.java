@@ -23,8 +23,6 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
