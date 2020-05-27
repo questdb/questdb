@@ -25,11 +25,12 @@
 package io.questdb.griffin;
 
 import static io.questdb.griffin.SqlKeywords.isCapacityKeyword;
+import static io.questdb.griffin.SqlKeywords.isColumnsKeyword;
 import static io.questdb.griffin.SqlKeywords.isDatabaseKeyword;
+import static io.questdb.griffin.SqlKeywords.isFromKeyword;
 import static io.questdb.griffin.SqlKeywords.isOnlyKeyword;
 import static io.questdb.griffin.SqlKeywords.isTableKeyword;
 import static io.questdb.griffin.SqlKeywords.isTablesKeyword;
-import static io.questdb.griffin.SqlKeywords.isColumnsKeyword;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -69,6 +70,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.ColumnCastModel;
 import io.questdb.griffin.model.CopyModel;
@@ -167,8 +169,7 @@ public class SqlCompiler implements Closeable {
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
-                configuration.getSqlCharacterStoreSequencePoolCapacity()
-        );
+                configuration.getSqlCharacterStoreSequencePoolCapacity());
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
@@ -233,16 +234,14 @@ public class SqlCompiler implements Closeable {
 
     public static boolean isAssignableFrom(int to, int from) {
         return to == from
-                || (
-                from >= ColumnType.BYTE
+                || (from >= ColumnType.BYTE
                         && to >= ColumnType.BYTE
                         && to <= ColumnType.DOUBLE
                         && from < to)
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING)
-                ;
+                || (from == ColumnType.CHAR && to == ColumnType.STRING);
     }
 
     @Override
@@ -1706,23 +1705,32 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    @SuppressWarnings("resource")
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             if (isTablesKeyword(tok)) {
                 return compiledQuery.ofShowTables(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
             }
             if (isColumnsKeyword(tok)) {
-                return sqlShowColumns(executionContext);
+                tok = SqlUtil.fetchNext(lexer);
+                if (null == tok || !isFromKeyword(tok)) {
+                    throw SqlException.position(lexer.getPosition()).put("expected 'from'");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (null == tok) {
+                    throw SqlException.position(lexer.getPosition()).put("expected a table name");
+                }
+                final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+                int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
+                if (status != TableUtils.TABLE_EXISTS) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+                }
+                return compiledQuery.ofShowTables(new ShowColumnsRecordCursorFactory(engine, tableName));
             }
         }
 
         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables' or 'columns'");
-    }
-
-    private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
-        // TODO
-        throw new RuntimeException("TODO");
     }
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {

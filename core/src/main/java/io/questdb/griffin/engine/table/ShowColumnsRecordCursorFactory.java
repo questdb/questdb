@@ -23,41 +23,41 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.NativeLPSZ;
-import io.questdb.std.str.Path;
 
-public class TableListRecordCursorFactory implements RecordCursorFactory {
+public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final RecordMetadata METADATA;
-
+    private static final int N_NAME_COL = 0;
+    private static final int N_TYPE_COL = 1;
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("tableName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("columnName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("columnType", ColumnType.STRING));
         METADATA = metadata;
     }
 
-    private final FilesFacade ff;
-    private Path path;
-    private final TableListRecordCursor cursor;
+    private final ShowColumnsCursor cursor = new ShowColumnsCursor();
+    private final CairoEngine engine;
+    private final CharSequence tableName;
 
-    public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
-        this.ff = ff;
-        path = new Path().of(dbRoot).$();
-        cursor = new TableListRecordCursor();
+    public ShowColumnsRecordCursorFactory(CairoEngine engine, CharSequence tableName) {
+        this.engine = engine;
+        this.tableName = tableName.toString();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of();
+        return cursor.of(executionContext.getCairoSecurityContext());
     }
 
     @Override
@@ -70,24 +70,16 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
         return false;
     }
 
-    @Override
-    public void close() {
-        if (null != path) {
-            path.close();
-            path = null;
-        }
-    }
-
-    private class TableListRecordCursor implements RecordCursor {
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
-        private final TableListRecord record = new TableListRecord();
-        private long findPtr = 0;
+    private class ShowColumnsCursor implements RecordCursor {
+        private final ShowColumnsRecord record = new ShowColumnsRecord();
+        private TableReader reader;
+        private int columnIndex;
 
         @Override
         public void close() {
-            if (findPtr > 0) {
-                ff.findClose(findPtr);
-                findPtr = 0;
+            if (null != reader) {
+                reader.close();
+                reader = null;
             }
         }
 
@@ -98,23 +90,12 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (true) {
-                if (findPtr == 0) {
-                    findPtr = ff.findFirst(path);
-                    if (findPtr <= 0) {
-                        return false;
-                    }
-                } else {
-                    if (ff.findNext(findPtr) <= 0) {
-                        return false;
-                    }
-                }
-                nativeLPSZ.of(ff.findName(findPtr));
-                int type = ff.findType(findPtr);
-                if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-                    return true;
-                }
+            columnIndex++;
+            if (columnIndex < reader.getMetadata().getColumnCount()) {
+                return true;
             }
+            columnIndex--;
+            return false;
         }
 
         @Override
@@ -129,7 +110,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void toTop() {
-            close();
+            columnIndex = -1;
         }
 
         @Override
@@ -137,16 +118,20 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             return -1;
         }
 
-        private TableListRecordCursor of() {
+        private ShowColumnsCursor of(CairoSecurityContext securityContext) {
+            reader = engine.getReader(securityContext, tableName);
             toTop();
             return this;
         }
 
-        public class TableListRecord implements Record {
+        public class ShowColumnsRecord implements Record {
             @Override
             public CharSequence getStr(int col) {
-                if (col == 0) {
-                    return nativeLPSZ;
+                if (col == N_NAME_COL) {
+                    return reader.getMetadata().getColumnName(columnIndex);
+                }
+                if (col == N_TYPE_COL) {
+                    return ColumnType.nameOf(reader.getMetadata().getColumnType(columnIndex));
                 }
                 return null;
             }

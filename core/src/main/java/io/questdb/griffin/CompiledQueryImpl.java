@@ -127,4 +127,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.recordCursorFactory = recordCursorFactory;
         return this;
     }
+
+    CompiledQuery ofShowColumns(RecordCursorFactory recordCursorFactory) {
+        this.type = SHOW_COLUMNS;
+        this.recordCursorFactory = recordCursorFactory;
+        return this;
+    }
 }
