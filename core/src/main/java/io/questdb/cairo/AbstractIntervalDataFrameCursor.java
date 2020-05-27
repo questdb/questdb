@@ -138,6 +138,12 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialIntervalsLo = intervalsLo / 2;
 
         int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp());
+        if (reader.getMaxTimestamp() == intervals.getQuick(intervals.size() - 1)) {
+            this.initialIntervalsHi = intervals.size() - 1;
+        }
+        if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
+            this.initialIntervalsHi = 1;
+        }
         if (intervalsHi < 0) {
             intervalsHi = -intervalsHi - 1;
             // when interval index is "even" we scored just between two interval
