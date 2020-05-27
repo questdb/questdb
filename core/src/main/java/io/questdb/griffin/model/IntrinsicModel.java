@@ -318,6 +318,173 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
+    public static long parseFloorPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+        long ts;
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < lim) {
+                                throw NumericException.INSTANCE;
+                            } else {
+                                // seconds
+                                ts = (Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS);
+                            }
+                        } else {
+                            // minute
+                            ts = (Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS);
+
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = (Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS);
+
+                    }
+                } else {
+                    // year + month + day
+                    ts = (Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS);
+                }
+            } else {
+                // year + month
+                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+
+            }
+        } else {
+            // year
+            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+        }
+        return ts;
+    }
+
+    public static long parseCeilingPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+        long ts;
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < lim) {
+                                throw NumericException.INSTANCE;
+                            } else {
+                                // seconds
+                                ts = (Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + 999999);
+                            }
+                        } else {
+                            // minute
+                            ts = (Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS
+                                    + 59 * Timestamps.SECOND_MICROS
+                                    + 999999);
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = (Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS
+                                + 59 * Timestamps.MINUTE_MICROS
+                                + 59 * Timestamps.SECOND_MICROS
+                                + 999999);
+                    }
+                } else {
+                    // year + month + day
+                    ts = (Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + +(day - 1) * Timestamps.DAY_MICROS
+                            + 23 * Timestamps.HOUR_MICROS
+                            + 59 * Timestamps.MINUTE_MICROS
+                            + 59 * Timestamps.SECOND_MICROS
+                            + 999999);
+                }
+            } else {
+                // year + month
+                ts = (Timestamps.yearMicros(year, l)
+                        + Timestamps.monthOfYearMicros(month, l)
+                        + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
+                        + 23 * Timestamps.HOUR_MICROS
+                        + 59 * Timestamps.MINUTE_MICROS
+                        + 59 * Timestamps.SECOND_MICROS
+                        + 999999);
+            }
+        } else {
+            // year
+            ts = (Timestamps.yearMicros(year, l)
+                    + Timestamps.monthOfYearMicros(12, l)
+                    + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
+                    + 23 * Timestamps.HOUR_MICROS
+                    + 59 * Timestamps.MINUTE_MICROS
+                    + 59 * Timestamps.SECOND_MICROS
+                    + 999999);
+        }
+        return ts;
+    }
+
     static void append(LongList list, long lo, long hi) {
         int n = list.size();
         if (n > 0) {
