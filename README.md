@@ -1,8 +1,8 @@
-<h4 align="left">
+<h4 align="center">
   <img src="https://raw.githubusercontent.com/questdb/questdb/master/ui/assets/images/logo-readme.jpg"/>
 </h4>
 
-<p align="left">
+<p align="center">
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
     <img src="https://img.shields.io/github/license/questdb/questdb" />
   </a>
@@ -21,14 +21,14 @@
   <a href="https://serieux-saucisson-79115.herokuapp.com/">
     <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
   </a>
-</p>
-
-<div align="left">
+  <p align="center"><p>
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
 [![All Contributors](https://img.shields.io/badge/all_contributors-5-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
-</div>
+  </p></p>
+</p>
+
 
 ## What is QuestDB
 
