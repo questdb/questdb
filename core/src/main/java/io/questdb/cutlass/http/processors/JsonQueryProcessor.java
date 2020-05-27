@@ -91,6 +91,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.SHOW_TABLES, this::executeNewSelect);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
     }

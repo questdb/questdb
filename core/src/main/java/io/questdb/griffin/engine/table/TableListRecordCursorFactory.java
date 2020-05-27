@@ -33,11 +33,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
     private static final RecordMetadata METADATA;
@@ -70,7 +67,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        return false;
     }
 
     @Override
@@ -84,17 +81,14 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     private class TableListRecordCursor implements RecordCursor {
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final TableListRecord record = new TableListRecord();
-        private final TableListRecord recordB = new TableListRecord();
-        private final ObjList<StringSink> tableNames = new ObjList<>();
-        private int at;
-        private int size;
+        private long findPtr = 0;
 
         @Override
         public void close() {
-            for (int n = 0; n < size; n++) {
-                tableNames.get(n).clear();
+            if (findPtr > 0) {
+                ff.findClose(findPtr);
+                findPtr = 0;
             }
-            size = 0;
         }
 
         @Override
@@ -104,63 +98,55 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (at < size) {
-                record.jumpTo(at);
-                recordB.jumpTo(at);
-                at++;
-                return true;
+            while (true) {
+                if (findPtr == 0) {
+                    findPtr = ff.findFirst(path);
+                    if (findPtr <= 0) {
+                        return false;
+                    }
+                } else {
+                    if (ff.findNext(findPtr) <= 0) {
+                        return false;
+                    }
+                }
+                nativeLPSZ.of(ff.findName(findPtr));
+                int type = ff.findType(findPtr);
+                if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+                    return true;
+                }
             }
-
-            return false;
         }
 
         @Override
         public Record getRecordB() {
-            return recordB;
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            if (atRowId < size) {
-                ((TableListRecord) record).jumpTo((int) atRowId);
-            }
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void toTop() {
-            at = 0;
+            close();
         }
 
         @Override
         public long size() {
-            return size;
+            return -1;
         }
 
-        private final FindVisitor dirIterCallback = (file, type) -> {
-            nativeLPSZ.of(file);
-            if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-                if (size >= tableNames.size()) {
-                    tableNames.add(new StringSink());
-                }
-                StringSink nm = tableNames.get(size++);
-                nm.put(nativeLPSZ);
-            }
-        };
-
         private TableListRecordCursor of() {
-            assert size == 0;
-            ff.iterateDir(path, dirIterCallback);
             toTop();
             return this;
         }
 
         public class TableListRecord implements Record {
-            private int rowId;
-
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return tableNames.get(rowId);
+                    return nativeLPSZ;
                 }
                 return null;
             }
@@ -177,11 +163,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public long getRowId() {
-                return rowId;
-            }
-
-            private void jumpTo(int rowId) {
-                this.rowId = rowId;
+                throw new UnsupportedOperationException();
             }
         }
     }

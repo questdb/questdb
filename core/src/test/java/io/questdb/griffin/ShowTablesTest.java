@@ -32,7 +32,18 @@ public class ShowTablesTest extends AbstractGriffinTest {
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("tableName\nbalances\n", "show tables", null, true, sqlExecutionContext, false);
+            assertQuery("tableName\nbalances\n", "show tables", null, false, sqlExecutionContext, false);
+        });
+    }
+
+    @Test
+    public void testShowTablesWithDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            assertQuery("tableName\nbalances\n", "show tables", null, false, sqlExecutionContext, false);
+            compiler.compile("create table balances2(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            compiler.compile("drop table balances", sqlExecutionContext);
+            assertQuery("tableName\nbalances2\n", "show tables", null, false, sqlExecutionContext, false);
         });
     }
 
