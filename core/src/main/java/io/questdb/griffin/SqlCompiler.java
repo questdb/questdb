@@ -1648,7 +1648,7 @@ public class SqlCompiler implements Closeable {
 
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
-            if (isTablesKeyword(tok)) {
+            if (isTableKeyword(tok)) {
                 return sqlTableBackup(executionContext);
             }
             if (isDatabaseKeyword(tok)) {
