@@ -1,4 +1,5 @@
 // eslint-disable-next-line no-var
 declare var bus: {
-  trigger: (event: string, payload: string) => void
+  on: (event: string, callback: () => void) => void
+  trigger: (event: string, payload?: string) => void
 }

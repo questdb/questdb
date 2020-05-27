@@ -3,15 +3,15 @@ import React, { MouseEvent, ReactNode } from "react"
 import styled, { css } from "styled-components"
 
 import { theme } from "theme"
-import { Color } from "types"
+import type { Color } from "types"
 import { color } from "utils"
 
-const defaultProps = {
+export const buttonDefaultProps = {
   size: "md",
   type: "button",
 }
 
-type Props = {
+export type ButtonProps = {
   children: ReactNode
   disabled?: boolean
   onClick?: (event: MouseEvent) => void
@@ -19,17 +19,18 @@ type Props = {
   type: "button" | "submit"
 }
 
-const getSize = ({ size }: Pick<Props, "size">) => {
-  if (size === "sm") {
-    return "2rem"
-  }
-
-  return "3rem"
+type ThemeShape = {
+  background: Color
+  border: Color
+  color: Color
 }
+
+export const getButtonSize = ({ size }: ButtonProps) =>
+  size === "sm" ? "2rem" : "3rem"
 
 const baseCss = css`
   display: flex;
-  height: ${getSize};
+  height: ${getButtonSize};
   padding: 0 1rem;
   align-items: center;
   background: transparent;
@@ -40,23 +41,17 @@ const baseCss = css`
   line-height: 1.15;
   transition: all 70ms cubic-bezier(0, 0, 0.38, 0.9);
 
-  svg {
-    margin-right: 0.5rem;
+  svg + span {
+    margin-left: 0.5rem;
   }
 `
 
-type ButtonThemeShape = {
-  background: Color
-  border: Color
-  color: Color
-}
-
 const getTheme = (
-  normal: ButtonThemeShape,
-  hover: ButtonThemeShape,
-  disabled: ButtonThemeShape,
-) => {
-  return css`
+  normal: ThemeShape,
+  hover: ThemeShape,
+  disabled: ThemeShape,
+) =>
+  css`
     background: ${color(normal.background)};
     color: ${color(normal.color)};
     border-color: ${color(normal.border)};
@@ -82,8 +77,8 @@ const getTheme = (
       border-color: ${color(disabled.border)};
     }
   `
-}
-const Primary = styled.button<Props>`
+
+const Primary = styled.button<ButtonProps>`
   ${baseCss};
   ${getTheme(
     {
@@ -104,13 +99,13 @@ const Primary = styled.button<Props>`
   )};
 `
 
-export const PrimaryButton = ({ children, ...rest }: Props) => {
-  return <Primary {...rest}>{children}</Primary>
-}
+export const PrimaryButton = ({ children, ...rest }: ButtonProps) => (
+  <Primary {...rest}>{children}</Primary>
+)
 
-PrimaryButton.defaultProps = defaultProps
+PrimaryButton.defaultProps = buttonDefaultProps
 
-const Secondary = styled.button<Props>`
+const Secondary = styled.button<ButtonProps>`
   ${baseCss};
   ${getTheme(
     {
@@ -131,8 +126,62 @@ const Secondary = styled.button<Props>`
   )};
 `
 
-export const SecondaryButton = ({ children, ...rest }: Props) => {
-  return <Secondary {...rest}>{children}</Secondary>
-}
+export const SecondaryButton = ({ children, ...rest }: ButtonProps) => (
+  <Secondary {...rest}>{children}</Secondary>
+)
 
-SecondaryButton.defaultProps = defaultProps
+SecondaryButton.defaultProps = buttonDefaultProps
+
+const Success = styled.button<ButtonProps>`
+  ${baseCss};
+  ${getTheme(
+    {
+      background: "draculaSelection",
+      border: "draculaSelection",
+      color: "draculaGreen",
+    },
+    {
+      background: "draculaComment",
+      border: "draculaSelection",
+      color: "draculaGreen",
+    },
+    {
+      background: "draculaSelection",
+      border: "gray1",
+      color: "gray1",
+    },
+  )};
+`
+
+export const SuccessButton = ({ children, ...rest }: ButtonProps) => (
+  <Success {...rest}>{children}</Success>
+)
+
+SuccessButton.defaultProps = buttonDefaultProps
+
+const Error = styled.button<ButtonProps>`
+  ${baseCss};
+  ${getTheme(
+    {
+      background: "draculaSelection",
+      border: "draculaSelection",
+      color: "draculaRed",
+    },
+    {
+      background: "draculaComment",
+      border: "draculaSelection",
+      color: "draculaRed",
+    },
+    {
+      background: "draculaSelection",
+      border: "gray1",
+      color: "gray1",
+    },
+  )};
+`
+
+export const ErrorButton = ({ children, ...rest }: ButtonProps) => (
+  <Error {...rest}>{children}</Error>
+)
+
+ErrorButton.defaultProps = buttonDefaultProps

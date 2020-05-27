@@ -22,10 +22,9 @@ const Type = styled(Text)`
   transition: all 0.2s;
 `
 
-const PlusButton = styled(SecondaryButton)`
+const PlusButton = styled(SecondaryButton)<Pick<Props, "tooltip">>`
   position: absolute;
-  right: ${({ tooltip }: Pick<Props, "tooltip">) =>
-    tooltip ? "3rem" : "1rem"};
+  right: ${({ tooltip }) => (tooltip ? "3rem" : "1rem")};
   margin-left: 1rem;
   opacity: 0;
   transition: all 0.2s;
@@ -106,7 +105,7 @@ const Row = ({
 
         <PlusButton onClick={handleClick} size="sm" tooltip={tooltip}>
           <Code size="16px" />
-          Add
+          <span>Add</span>
         </PlusButton>
 
         {tooltip && description && (

@@ -2,22 +2,7 @@
   <div class="console-wrapper">
     <div id="schema-content"></div>
     <div id="console-top">
-      <div class="menu-bar">
-        <button class="run js-query-run button-primary button-success">
-          <i class="fa fa-play"></i>
-          <span>Run</span>
-        </button>
-
-        <div class="flex-separator"></div>
-
-        <input
-          class="js-help-input"
-          id="help-input"
-          placeholder="Search documentation..."
-          title="Search..."
-          type="text"
-        />
-      </div>
+      <div id="editor-pane-title"></div>
 
       <div id="editor">
         <div id="sqlEditor" class="editor"></div>
@@ -60,6 +45,33 @@
         <div class="qg-canvas"></div>
       </div>
     </div>
-    {{> quick-vis}}
+
+    <div id="quick-vis">
+      <div class="quick-vis-controls">
+        <form class="v-fit" role="form">
+          <div class="form-group">
+            <label>Chart type</label>
+            <select id="_qvis_frm_chart_type">
+              <option>bar</option>
+              <option>line</option>
+              <option>area</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Labels</label>
+            <select id="_qvis_frm_axis_x"></select>
+          </div>
+          <div class="form-group">
+            <label>Series</label>
+            <select id="_qvis_frm_axis_y" multiple></select>
+          </div>
+          <button class="button-primary js-chart-draw" id="_qvis_frm_draw">
+            <i class="fa fa-play"></i>
+            <span>Draw</span>
+          </button>
+        </form>
+      </div>
+      <div class="quick-vis-canvas"></div>
+    </div>
   </div>
 </div>
