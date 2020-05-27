@@ -46,7 +46,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             sum(mapValue, value, 0, 0);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
@@ -59,7 +59,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
             mapValue.addLong(valueIndex + 2, 1);
         }

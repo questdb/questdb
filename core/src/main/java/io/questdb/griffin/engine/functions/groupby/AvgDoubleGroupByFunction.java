@@ -46,7 +46,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
-        if (d == d) {
+        if (d == d && Double.isFinite(d)) {
             mapValue.putDouble(valueIndex, d);
             mapValue.putLong(valueIndex + 1, 1L);
         } else {
@@ -58,7 +58,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
-        if (d == d) {
+        if (d == d && Double.isFinite(d)) {
             mapValue.addDouble(valueIndex, d);
             mapValue.addLong(valueIndex + 1, 1L);
         }

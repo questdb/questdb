@@ -46,7 +46,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             mapValue.putDouble(valueIndex, value);
             mapValue.putLong(valueIndex + 1, 1);
         } else {
@@ -58,7 +58,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             mapValue.addDouble(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }

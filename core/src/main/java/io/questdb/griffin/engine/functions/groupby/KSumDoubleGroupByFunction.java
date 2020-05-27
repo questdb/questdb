@@ -46,7 +46,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             mapValue.putDouble(valueIndex, value);
             mapValue.putDouble(valueIndex + 1, value - value);
             mapValue.putLong(valueIndex + 2, 1);
@@ -60,7 +60,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value) {
+        if (value == value && Double.isFinite(value)) {
             double sum = mapValue.getDouble(valueIndex);
             double c = mapValue.getDouble(valueIndex + 1);
             double y = value - c;
