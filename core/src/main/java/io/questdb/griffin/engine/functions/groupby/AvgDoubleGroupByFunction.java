@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -46,7 +47,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
-        if (d == d && Double.isFinite(d)) {
+        if (Numbers.isFinite(d)) {
             mapValue.putDouble(valueIndex, d);
             mapValue.putLong(valueIndex + 1, 1L);
         } else {
@@ -58,7 +59,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double d = arg.getDouble(record);
-        if (d == d && Double.isFinite(d)) {
+        if (Numbers.isFinite(d)) {
             mapValue.addDouble(valueIndex, d);
             mapValue.addLong(valueIndex + 1, 1L);
         }

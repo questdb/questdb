@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -46,7 +47,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value && Double.isFinite(value)) {
+        if (Numbers.isFinite(value)) {
             mapValue.putDouble(valueIndex, value);
             mapValue.putDouble(valueIndex + 1, value - value);
             mapValue.putLong(valueIndex + 2, 1);
@@ -60,7 +61,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final double value = arg.getDouble(record);
-        if (value == value && Double.isFinite(value)) {
+        if (Numbers.isFinite(value)) {
             double sum = mapValue.getDouble(valueIndex);
             double c = mapValue.getDouble(valueIndex + 1);
             double y = value - c;
