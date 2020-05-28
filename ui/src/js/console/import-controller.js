@@ -7,7 +7,7 @@ const importTopPanel = $("#import-top")
 const importDetail = $("#import-detail")
 const importMenu = $("#import-menu")[0]
 
-const footer = $(".footer")[0]
+const footer = $("#footer")[0]
 const canvasPanel = importTopPanel.find(".ud-canvas")
 const w = $(window)
 let visible = false

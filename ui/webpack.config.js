@@ -70,6 +70,7 @@ module.exports = {
       target: `http://localhost:${BACKEND_PORT}/`,
     },
   },
+  devtool: isProdBuild ? false : "eval-source-map",
   mode: isProdBuild ? "production" : "development",
   entry: "./src/index",
   output: {

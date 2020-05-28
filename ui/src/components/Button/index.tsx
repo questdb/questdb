@@ -99,9 +99,7 @@ const Primary = styled.button<ButtonProps>`
   )};
 `
 
-export const PrimaryButton = ({ children, ...rest }: ButtonProps) => (
-  <Primary {...rest}>{children}</Primary>
-)
+export const PrimaryButton = (props: ButtonProps) => <Primary {...props} />
 
 PrimaryButton.defaultProps = buttonDefaultProps
 
@@ -126,9 +124,7 @@ const Secondary = styled.button<ButtonProps>`
   )};
 `
 
-export const SecondaryButton = ({ children, ...rest }: ButtonProps) => (
-  <Secondary {...rest}>{children}</Secondary>
-)
+export const SecondaryButton = (props: ButtonProps) => <Secondary {...props} />
 
 SecondaryButton.defaultProps = buttonDefaultProps
 
@@ -153,9 +149,7 @@ const Success = styled.button<ButtonProps>`
   )};
 `
 
-export const SuccessButton = ({ children, ...rest }: ButtonProps) => (
-  <Success {...rest}>{children}</Success>
-)
+export const SuccessButton = (props: ButtonProps) => <Success {...props} />
 
 SuccessButton.defaultProps = buttonDefaultProps
 
@@ -180,8 +174,6 @@ const Error = styled.button<ButtonProps>`
   )};
 `
 
-export const ErrorButton = ({ children, ...rest }: ButtonProps) => (
-  <Error {...rest}>{children}</Error>
-)
+export const ErrorButton = (props: ButtonProps) => <Error {...props} />
 
 ErrorButton.defaultProps = buttonDefaultProps

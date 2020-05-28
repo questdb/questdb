@@ -15,7 +15,7 @@ $.fn.importEditor = function (ebus) {
   const divRejectedCount = $(this).find(".js-rejected-row-count")
   const divImportedCount = $(this).find(".js-imported-row-count")
   const divCanvas = $(this).find(".ud-canvas")
-  const footerHeight = $(".footer")[0].offsetHeight
+  const footerHeight = $("#footer")[0].offsetHeight
   const lineHeight = 35
   let select
   let location
