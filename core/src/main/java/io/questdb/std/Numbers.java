@@ -1073,6 +1073,10 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
+    public static boolean isFinite(double d) {
+        return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
+    }
+
     private static void appendLongHex4(CharSink sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
     }
