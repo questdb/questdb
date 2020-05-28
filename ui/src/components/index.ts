@@ -1,5 +1,6 @@
 export * from "./Button"
 export * from "./Input"
+export * from "./Link"
 export * from "./Pane"
 export * from "./PaneTitle"
 export * from "./PopperHover"

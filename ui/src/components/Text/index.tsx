@@ -1,5 +1,5 @@
 import React, { ReactNode } from "react"
-import styled from "styled-components"
+import styled, { css } from "styled-components"
 
 import { fontSize } from "theme"
 import type { Color, FontSize } from "types"
@@ -7,7 +7,7 @@ import { color } from "utils"
 
 type FontStyle = "normal" | "italic"
 
-type Props = Readonly<{
+export type TextProps = Readonly<{
   _style?: FontStyle
   className?: string
   color?: Color
@@ -28,15 +28,17 @@ const defaultProps: Readonly<{
   weight: 400,
 }
 
-const Wrapper = styled.span<Props>`
+export const textCss = css<TextProps>`
   color: ${(props) => color(props.color ? props.color : defaultProps.color)};
   font-size: ${({ size }) => fontSize[size || defaultProps.size]};
   font-style: ${({ _style }) => _style};
   font-weight: ${({ weight }) => weight};
 `
 
-export const Text = ({ children, ...rest }: Props) => (
-  <Wrapper {...rest}>{children}</Wrapper>
-)
+const Wrapper = styled.span<TextProps>`
+  ${textCss};
+`
+
+export const Text = (props: TextProps) => <Wrapper {...props} />
 
 Text.defaultProps = defaultProps

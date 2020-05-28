@@ -75,8 +75,6 @@ const Primary = styled.button<Props>`
   )};
 `
 
-export const PrimaryToggleButton = ({ children, ...rest }: Props) => (
-  <Primary {...rest}>{children}</Primary>
-)
+export const PrimaryToggleButton = (props: Props) => <Primary {...props} />
 
 PrimaryToggleButton.defaultProps = defaultProps

@@ -269,37 +269,15 @@ ol.unstyled {
 
 /* FOOTER */
 
-.footer {
+#footer {
   display: flex;
   background: #21222c;
   bottom: 0;
-  left: 0;
+  left: 45px;
   height: 40px;
   position: absolute;
   right: 0;
   color: #f8f8f2;
-}
-
-.footer-title {
-  display: flex;
-  padding-left: 1rem;
-  align-items: center;
-  flex: 1;
-}
-
-.footer-icons {
-  display: flex;
-  padding-right: 1rem;
-  align-items: center;
-  font-size: 2rem;
-
-  a {
-    color: #f8f8f2;
-  }
-
-  a:hover {
-    color: #8be9fd;
-  }
 }
 
 .footer.fixed_full {
