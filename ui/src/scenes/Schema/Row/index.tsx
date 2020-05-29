@@ -6,12 +6,13 @@ import { PopperHover, SecondaryButton, Text, Tooltip } from "components"
 import { color } from "utils"
 
 type Props = Readonly<{
-  children?: ReactNode
   className?: string
   description?: string
   expanded?: boolean
   name: string
   onClick?: (event: MouseEvent) => void
+  prefix?: ReactNode
+  suffix?: ReactNode
   tooltip?: boolean
   type?: string
 }>
@@ -53,6 +54,7 @@ const Wrapper = styled.div<Pick<Props, "expanded">>`
 
 const FlexRow = styled.div`
   display: flex;
+  align-items: center;
 `
 
 const Name = styled(Text)`
@@ -75,12 +77,13 @@ const InfoIconWrapper = styled.div`
 `
 
 const Row = ({
-  children,
   className,
   description,
   expanded,
   name,
   onClick,
+  prefix,
+  suffix,
   tooltip,
   type,
 }: Props) => {
@@ -92,13 +95,14 @@ const Row = ({
   return (
     <Wrapper className={className} expanded={expanded} onClick={onClick}>
       <FlexRow>
-        {children}
+        {prefix}
         <Name color="draculaForeground">{name}</Name>
+        {suffix}
 
         <Spacer />
 
         {type && (
-          <Type _style="italic" color="draculaPink">
+          <Type _style="italic" color="draculaPink" transform="lowercase">
             {type}
           </Type>
         )}

@@ -1,23 +1,26 @@
 import { darken } from "polished"
-import React, { MouseEvent, ReactNode } from "react"
+import React, { forwardRef, MouseEvent, ReactNode, Ref } from "react"
 import styled, { css } from "styled-components"
 
 import { theme } from "theme"
 import type { Color } from "types"
 import { color } from "utils"
 
-export const buttonDefaultProps = {
+type Size = "sm" | "md"
+type Type = "button" | "submit"
+
+const defaultProps: Readonly<{
+  children?: ReactNode
+  disabled?: boolean
+  onClick?: (event: MouseEvent) => void
+  size: Size
+  type: Type
+}> = {
   size: "md",
   type: "button",
 }
 
-export type ButtonProps = {
-  children: ReactNode
-  disabled?: boolean
-  onClick?: (event: MouseEvent) => void
-  size: "sm" | "md"
-  type: "button" | "submit"
-}
+export type ButtonProps = Partial<typeof defaultProps>
 
 type ThemeShape = {
   background: Color
@@ -28,7 +31,7 @@ type ThemeShape = {
 export const getButtonSize = ({ size }: ButtonProps) =>
   size === "sm" ? "2rem" : "3rem"
 
-const baseCss = css`
+const baseCss = css<ButtonProps>`
   display: flex;
   height: ${getButtonSize};
   padding: 0 1rem;
@@ -51,7 +54,7 @@ const getTheme = (
   hover: ThemeShape,
   disabled: ThemeShape,
 ) =>
-  css`
+  css<ButtonProps>`
     background: ${color(normal.background)};
     color: ${color(normal.color)};
     border-color: ${color(normal.border)};
@@ -99,9 +102,14 @@ const Primary = styled.button<ButtonProps>`
   )};
 `
 
-export const PrimaryButton = (props: ButtonProps) => <Primary {...props} />
+const PrimaryButtonWithRef = (
+  props: ButtonProps,
+  ref: Ref<HTMLButtonElement>,
+) => <Primary {...props} ref={ref} />
 
-PrimaryButton.defaultProps = buttonDefaultProps
+export const PrimaryButton = forwardRef(PrimaryButtonWithRef)
+
+PrimaryButton.defaultProps = defaultProps
 
 const Secondary = styled.button<ButtonProps>`
   ${baseCss};
@@ -124,9 +132,14 @@ const Secondary = styled.button<ButtonProps>`
   )};
 `
 
-export const SecondaryButton = (props: ButtonProps) => <Secondary {...props} />
+const SecondaryButtonWithRef = (
+  props: ButtonProps,
+  ref: Ref<HTMLButtonElement>,
+) => <Secondary {...props} ref={ref} />
 
-SecondaryButton.defaultProps = buttonDefaultProps
+export const SecondaryButton = forwardRef(SecondaryButtonWithRef)
+
+SecondaryButton.defaultProps = defaultProps
 
 const Success = styled.button<ButtonProps>`
   ${baseCss};
@@ -149,9 +162,14 @@ const Success = styled.button<ButtonProps>`
   )};
 `
 
-export const SuccessButton = (props: ButtonProps) => <Success {...props} />
+const SuccessButtonWithRef = (
+  props: ButtonProps,
+  ref: Ref<HTMLButtonElement>,
+) => <Success {...props} ref={ref} />
 
-SuccessButton.defaultProps = buttonDefaultProps
+export const SuccessButton = forwardRef(SuccessButtonWithRef)
+
+SuccessButton.defaultProps = defaultProps
 
 const Error = styled.button<ButtonProps>`
   ${baseCss};
@@ -174,6 +192,11 @@ const Error = styled.button<ButtonProps>`
   )};
 `
 
-export const ErrorButton = (props: ButtonProps) => <Error {...props} />
+const ErrorButtonWithRef = (
+  props: ButtonProps,
+  ref: Ref<HTMLButtonElement>,
+) => <Error {...props} ref={ref} />
 
-ErrorButton.defaultProps = buttonDefaultProps
+export const ErrorButton = forwardRef(ErrorButtonWithRef)
+
+ErrorButton.defaultProps = defaultProps

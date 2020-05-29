@@ -43,6 +43,7 @@ body {
 ::-webkit-scrollbar {
   width: 8px;
   height: 11px;
+  background: #21222c;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -51,6 +52,11 @@ body {
 
 ::-webkit-scrollbar-corner {
   background: rgba(0, 0, 0, 0);
+}
+
+* {
+  scrollbar-color: #44475a #21222c;
+  scrollbar-width: thin;
 }
 
 .ace_scrollbar-v {
@@ -272,11 +278,7 @@ ol.unstyled {
 #footer {
   display: flex;
   background: #21222c;
-  bottom: 0;
-  left: 45px;
-  height: 40px;
-  position: absolute;
-  right: 0;
+  flex: 0 0 40px;
   color: #f8f8f2;
 }
 
