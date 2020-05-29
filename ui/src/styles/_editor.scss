@@ -29,6 +29,7 @@
 
 #console-top {
   display: flex;
+  width: 100%;
   min-height: 140px;
   flex-direction: column;
   flex: 1;
@@ -242,7 +243,8 @@
 .js-sql-panel {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 40px);
+  flex: 1;
+  overflow: hidden;
   font-size: 1.4rem;
   background: #21222c;
 
@@ -253,6 +255,7 @@
 
 .result-wrapper {
   display: flex;
+  min-height: 200px;
   flex-direction: column;
   flex: 1;
   overflow: hidden;

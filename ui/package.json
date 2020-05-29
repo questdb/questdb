@@ -25,6 +25,7 @@
     "@popperjs/core": "2.4.0",
     "@types/react": "16.9.35",
     "@types/react-dom": "16.9.8",
+    "@types/react-transition-group": "4.4.0",
     "@types/styled-components": "5.1.0",
     "ace-builds": "1.4.11",
     "animate.css": "3.7.2",
@@ -39,6 +40,8 @@
     "react": "16.13.1",
     "react-dom": "16.13.1",
     "react-popper": "2.2.3",
+    "react-transition-group": "4.4.1",
+    "rxjs": "6.5.5",
     "slim-select": "1.26.0",
     "styled-components": "5.1.1",
     "styled-icons": "10.2.1"

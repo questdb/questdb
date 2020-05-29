@@ -1,24 +1,24 @@
 import { darken } from "polished"
-import React from "react"
+import React, { forwardRef, Ref } from "react"
 import styled, { css } from "styled-components"
 
 import { theme } from "theme"
 import type { Color } from "types"
 import { color } from "utils"
 
-import { ButtonProps, buttonDefaultProps, getButtonSize } from "../Button"
+import { ButtonProps, getButtonSize, PrimaryButton } from "../Button"
 
-const defaultProps = {
-  ...buttonDefaultProps,
+const defaultProps: ButtonProps &
+  Readonly<{
+    direction: "top" | "right" | "bottom" | "left"
+    selected: boolean
+  }> = {
+  ...PrimaryButton.defaultProps,
   direction: "bottom",
   selected: false,
 }
 
-type Props = ButtonProps &
-  Readonly<{
-    direction: "top" | "right" | "bottom" | "left"
-    selected: boolean
-  }>
+type Props = typeof defaultProps
 
 type ThemeShape = {
   background: Color
@@ -75,6 +75,11 @@ const Primary = styled.button<Props>`
   )};
 `
 
-export const PrimaryToggleButton = (props: Props) => <Primary {...props} />
+const PrimaryToggleButtonWithRef = (
+  props: Props,
+  ref: Ref<HTMLButtonElement>,
+) => <Primary {...props} ref={ref} />
+
+export const PrimaryToggleButton = forwardRef(PrimaryToggleButtonWithRef)
 
 PrimaryToggleButton.defaultProps = defaultProps

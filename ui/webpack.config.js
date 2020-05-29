@@ -4,6 +4,7 @@ const CopyWebpackPlugin = require("copy-webpack-plugin")
 const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin")
 const HtmlWebpackPlugin = require("html-webpack-plugin")
 const MiniCssExtractPlugin = require("mini-css-extract-plugin")
+const Webpack = require("webpack")
 const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 
 const PORT = 9999
@@ -33,6 +34,12 @@ const basePlugins = [
   }),
   new MiniCssExtractPlugin({
     filename: "qdb.css",
+  }),
+  new Webpack.DefinePlugin({
+    BACKEND_PORT: JSON.stringify(isProdBuild ? BACKEND_PORT : PORT),
+    "process.env": {
+      NODE_ENV: JSON.stringify(process.env.NODE_ENV),
+    },
   }),
 ]
 

@@ -6,6 +6,7 @@ import type { Color, FontSize } from "types"
 import { color } from "utils"
 
 type FontStyle = "normal" | "italic"
+type Transform = "capitalize" | "lowercase" | "uppercase"
 
 export type TextProps = Readonly<{
   _style?: FontStyle
@@ -13,6 +14,7 @@ export type TextProps = Readonly<{
   color?: Color
   children?: ReactNode
   size?: FontSize
+  transform?: Transform
   weight?: number
 }>
 
@@ -33,6 +35,7 @@ export const textCss = css<TextProps>`
   font-size: ${({ size }) => fontSize[size || defaultProps.size]};
   font-style: ${({ _style }) => _style};
   font-weight: ${({ weight }) => weight};
+  text-transform: ${({ transform }) => transform};
 `
 
 const Wrapper = styled.span<TextProps>`

@@ -91,6 +91,7 @@ module.exports = {
     "quote-props": ["error", "as-needed"],
     "object-shorthand": ["error", "always"],
     "no-var": ["error"],
+    "no-void": ["off"],
     "no-console": [
       "warn",
       {

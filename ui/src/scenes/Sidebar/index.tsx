@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import styled from "styled-components"
 import { Code, Upload } from "@styled-icons/entypo"
 
-import { PrimaryToggleButton } from "components"
+import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
 import { color } from "utils"
 
 const Wrapper = styled.div`
@@ -73,21 +73,37 @@ const Sidebar = () => {
         </a>
       </Logo>
 
-      <Navigation
-        direction="left"
-        onClick={handleConsoleClick}
-        selected={selected === "console"}
+      <PopperHover
+        delay={350}
+        placement="right"
+        trigger={
+          <Navigation
+            direction="left"
+            onClick={handleConsoleClick}
+            selected={selected === "console"}
+          >
+            <Code size="18px" />
+          </Navigation>
+        }
       >
-        <Code size="18px" />
-      </Navigation>
+        <Tooltip>Console</Tooltip>
+      </PopperHover>
 
-      <Navigation
-        direction="left"
-        onClick={handleImportClick}
-        selected={selected === "import"}
+      <PopperHover
+        delay={350}
+        placement="right"
+        trigger={
+          <Navigation
+            direction="left"
+            onClick={handleImportClick}
+            selected={selected === "import"}
+          >
+            <Upload size="16px" />
+          </Navigation>
+        }
       >
-        <Upload size="16px" />
-      </Navigation>
+        <Tooltip>Import</Tooltip>
+      </PopperHover>
     </Wrapper>
   )
 }
