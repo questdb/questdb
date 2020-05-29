@@ -1,5 +1,5 @@
 <h4 align="center">
-  <img src="https://raw.githubusercontent.com/questdb/questdb/master/ui/assets/images/logo-readme.jpg"/>
+  <img height="180px" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"/>
 </h4>
 
 <p align="center">
@@ -21,14 +21,16 @@
   <a href="https://serieux-saucisson-79115.herokuapp.com/">
     <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
   </a>
-  <p align="center"><p>
-
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-5-orange.svg?style=flat-square)](#contributors-)
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
-  </p></p>
 </p>
 
+<div align="center">
+
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
+[![All Contributors](https://img.shields.io/badge/all_contributors-5-orange.svg)](#contributors-)
+
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
+</div>
 
 ## What is QuestDB
 
@@ -161,6 +163,7 @@ Thanks goes to these wonderful people
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
