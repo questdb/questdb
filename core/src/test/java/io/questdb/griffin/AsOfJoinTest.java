@@ -153,4 +153,36 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 false
         );
     }
+
+    @Test
+    public void testLtJoin() throws Exception {
+        final String expected = "tag\thi\tlo\tts\tts1\n" +
+                "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
+                "BB\t-727724771\t315515118\t1970-01-03T00:06:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
+                "CC\t-948263339\t-727724771\t1970-01-03T00:12:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
+                "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
+                "AA\t-847531048\t592859671\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:18:00.000000Z\n" +
+                "BB\t-2041844972\t-847531048\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
+                "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000Z\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1573662097\t1545253512\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
+
+        assertQuery(
+                "tag\thi\tlo\tts\tts1\n",
+                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
 }

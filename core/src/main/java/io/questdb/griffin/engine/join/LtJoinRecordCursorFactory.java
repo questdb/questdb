@@ -35,16 +35,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
-public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Map joinKeyMap;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final AsOfJoinRecordCursor cursor;
+    private final LtJoinRecordCursor cursor;
     private final IntList columnIndex;
 
-    public AsOfJoinRecordCursorFactory(
+    public LtJoinRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
@@ -64,7 +64,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.cursor = new AsOfJoinRecordCursor(
+        this.cursor = new LtJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 NullRecordFactory.getInstance(slaveColumnTypes),
@@ -97,7 +97,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private class AsOfJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private class LtJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final Map joinKeyMap;
         private final int columnSplit;
@@ -111,14 +111,13 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private long slaveTimestamp = Long.MIN_VALUE;
         private boolean danglingSlaveRecord = false;
 
-        public AsOfJoinRecordCursor(
+        public LtJoinRecordCursor(
                 int columnSplit,
                 Map joinKeyMap,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                RecordValueSink valueSink
-        ) {
+                RecordValueSink valueSink) {
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.columnSplit = columnSplit;
@@ -159,7 +158,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
-                if (slaveTimestamp <= masterTimestamp) {
+                if (slaveTimestamp < masterTimestamp) {
 
                     if (danglingSlaveRecord) {
                         key = joinKeyMap.withKey();
@@ -171,7 +170,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     while (slaveCursor.hasNext()) {
                         slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
-                        if (slaveTimestamp <= masterTimestamp) {
+                        if (slaveTimestamp < masterTimestamp) {
                             key = joinKeyMap.withKey();
                             key.put(masterRecord, masterKeySink);
                             value = key.createValue();
