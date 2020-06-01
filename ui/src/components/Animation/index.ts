@@ -10,6 +10,6 @@ const spin = keyframes`
   }
 `
 
-export const spinCss = css`
-  animation: ${spin} 1.5s ease-in-out infinite;
+export const spinAnimation = css`
+  animation: ${spin} 1.5s cubic-bezier(0.62, 0.28, 0.23, 0.99) infinite;
 `

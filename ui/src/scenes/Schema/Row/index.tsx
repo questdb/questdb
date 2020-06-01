@@ -1,8 +1,15 @@
 import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
-import { Code, Info } from "@styled-icons/entypo"
+import { Code } from "@styled-icons/entypo/Code"
+import { Info } from "@styled-icons/entypo/Info"
 
-import { PopperHover, SecondaryButton, Text, Tooltip } from "components"
+import {
+  PopperHover,
+  SecondaryButton,
+  Text,
+  Tooltip,
+  TransitionDuration,
+} from "components"
 import { color } from "utils"
 
 type Props = Readonly<{
@@ -20,7 +27,7 @@ type Props = Readonly<{
 const Type = styled(Text)`
   margin-right: 1rem;
   flex: 0;
-  transition: all 0.2s;
+  transition: opacity ${TransitionDuration.REG}ms;
 `
 
 const PlusButton = styled(SecondaryButton)<Pick<Props, "tooltip">>`
@@ -28,7 +35,6 @@ const PlusButton = styled(SecondaryButton)<Pick<Props, "tooltip">>`
   right: ${({ tooltip }) => (tooltip ? "3rem" : "1rem")};
   margin-left: 1rem;
   opacity: 0;
-  transition: all 0.2s;
 `
 
 const Wrapper = styled.div<Pick<Props, "expanded">>`
@@ -37,7 +43,7 @@ const Wrapper = styled.div<Pick<Props, "expanded">>`
   flex-direction: column;
   padding: 0.5rem 0;
   padding-left: 1rem;
-  transition: all 0.2s;
+  transition: background ${TransitionDuration.REG}ms;
 
   &:hover ${/* sc-selector */ PlusButton} {
     opacity: 1;
@@ -87,10 +93,13 @@ const Row = ({
   tooltip,
   type,
 }: Props) => {
-  const handleClick = useCallback((event: MouseEvent) => {
-    event.stopPropagation()
-    window.bus.trigger("editor.insert.column", name)
-  }, [])
+  const handleClick = useCallback(
+    (event: MouseEvent) => {
+      event.stopPropagation()
+      window.bus.trigger("editor.insert.column", name)
+    },
+    [name],
+  )
 
   return (
     <Wrapper className={className} expanded={expanded} onClick={onClick}>

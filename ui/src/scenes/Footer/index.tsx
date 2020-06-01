@@ -1,6 +1,6 @@
 import React from "react"
 import styled from "styled-components"
-import { Github } from "@styled-icons/remix-fill"
+import { Github } from "@styled-icons/remix-fill/Github"
 
 import { Link } from "components"
 

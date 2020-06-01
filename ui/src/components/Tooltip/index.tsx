@@ -12,24 +12,24 @@ type Props = Readonly<{
   children: ReactNode
 }>
 
-const tooltipCss = css`
+const baseCss = css`
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 `
 
 export const TooltipArrow = styled.div`
-  ${tooltipCss};
+  ${baseCss};
 
   &::before {
-    ${tooltipCss};
+    ${baseCss};
     top: 0;
     left: 0;
     content: "";
     transform: rotate(45deg);
     background: ${color("draculaForeground")};
     border: 1px solid ${color("draculaBackgroundDarker")};
-    border-radius: 0.25rem;
+    border-radius: 1px;
   }
 `
 
@@ -39,10 +39,10 @@ export const Wrapper = styled.div`
   padding: 0.25rem 1rem;
   background: ${color("draculaForeground")};
   border: 1px solid ${color("draculaBackgroundDarker")};
-  border-radius: 0.25rem;
+  border-radius: 1px;
 
   &[data-popper-placement^="right"] ${TooltipArrow} {
-    left: -5px;
+    left: -4px;
 
     &::before {
       border-right: none;
@@ -51,7 +51,7 @@ export const Wrapper = styled.div`
   }
 
   &[data-popper-placement^="left"] ${TooltipArrow} {
-    right: -5px;
+    right: -4px;
 
     &::before {
       border-left: none;
@@ -60,7 +60,7 @@ export const Wrapper = styled.div`
   }
 
   &[data-popper-placement^="top"] ${TooltipArrow} {
-    bottom: -5px;
+    bottom: -4px;
 
     &::before {
       border-left: none;
@@ -69,7 +69,7 @@ export const Wrapper = styled.div`
   }
 
   &[data-popper-placement^="bottom"] ${TooltipArrow} {
-    top: -5px;
+    top: -4px;
 
     &::before {
       border-right: none;

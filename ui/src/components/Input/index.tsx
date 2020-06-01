@@ -21,7 +21,7 @@ const Wrapper = styled.input`
   line-height: 1.5;
   outline: none;
   background: ${color("draculaSelection")};
-  border-radius: 0.25rem;
+  border-radius: 4px;
   color: ${color("draculaForeground")};
 
   &:focus {

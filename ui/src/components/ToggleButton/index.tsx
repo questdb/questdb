@@ -2,11 +2,11 @@ import { darken } from "polished"
 import React, { forwardRef, Ref } from "react"
 import styled, { css } from "styled-components"
 
-import { theme } from "theme"
 import type { Color } from "types"
 import { color } from "utils"
 
 import { ButtonProps, getButtonSize, PrimaryButton } from "../Button"
+import { buttonTransition } from "../Transition"
 
 const defaultProps: ButtonProps &
   Readonly<{
@@ -35,15 +35,15 @@ const baseCss = css<Props>`
   font-weight: 400;
   outline: 0;
   line-height: 1.15;
-  transition: all 70ms cubic-bezier(0, 0, 0.38, 0.9);
   opacity: ${({ selected }) => (selected ? "1" : "0.5")};
+  ${buttonTransition};
 `
 
 const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
   css<Props>`
     background: ${color(normal.background)};
     color: ${color(normal.color)};
-    ${({ direction, selected }) =>
+    ${({ direction, selected, theme }) =>
       selected && `border-${direction}: 2px solid ${theme.color.draculaPink};`};
 
     &:focus {
@@ -57,7 +57,7 @@ const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
     }
 
     &:active:not([disabled]) {
-      background: ${darken(0.1, theme.color[hover.background])};
+      background: ${({ theme }) => darken(0.1, theme.color[hover.background])};
     }
   `
 

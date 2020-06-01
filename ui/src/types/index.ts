@@ -1,2 +1,3 @@
-export type * from "./styled.d"
-export type * from "../theme"
+export * from "../store/types"
+export * from "../theme"
+export * from "./styled.d"

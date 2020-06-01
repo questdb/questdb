@@ -17,6 +17,7 @@ const Wrapper = styled.div`
   background: ${color("draculaBackgroundDarker")};
   box-shadow: 0 6px 6px -6px ${color("black")};
   border-bottom: 1px solid ${color("black")};
+  border-top: 1px solid transparent;
   z-index: 5;
 `
 
