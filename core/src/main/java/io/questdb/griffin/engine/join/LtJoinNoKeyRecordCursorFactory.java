@@ -114,15 +114,11 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
-
         @Override
         public boolean hasNext() {
             if (masterCursor.hasNext()) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp < slaveTimestamp) {
-                    return true;
-                }
                 nextSlave(masterTimestamp);
                 return true;
             }
@@ -130,18 +126,11 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private void nextSlave(long masterTimestamp) {
-            if (slaveCursor.hasNext()) {
-                // check where this record falls
-                long slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp < masterTimestamp) {
-                    positionSlaveRecB();
-                    latestSlaveRowID = slaveRecA.getRowId();
-                    this.slaveTimestamp = slaveTimestamp;
-                } else {
-                    overScrollSlave(masterTimestamp, slaveTimestamp);
-                }
-            } else {
-                slaveIsDone();
+            long slaveTimestamp = this.slaveTimestamp;
+            positionSlaveRecB();
+            // check where this record falls
+            if (slaveTimestamp < masterTimestamp) {
+                overScrollSlave(masterTimestamp, slaveTimestamp);
             }
         }
 
@@ -170,10 +159,10 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
                         slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
                         latestSlaveRowID = slaveRecA.getRowId();
                         this.slaveTimestamp = slaveTimestamp;
-                        break;
                     } else {
                         latestSlaveRowID = slaveRecA.getRowId();
                         this.slaveTimestamp = slaveTimestamp;
+                        break;
                     }
                 } else {
                     record.hasSlave(true);

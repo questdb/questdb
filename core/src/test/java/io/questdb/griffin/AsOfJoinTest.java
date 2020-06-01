@@ -224,9 +224,11 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
         final String expected = "tag\thi\tlo\n" +
-                "CC\t592859671\t339631474\n" +
-                "BB\t1545253512\t339631474\n" +
-                "AA\t1573662097\t339631474\n";
+                "AA\t315515118\tNaN\n" +
+                "CC\t592859671\t-948263339\n" +
+                "BB\t-1575378703\t-2041844972\n" +
+                "BB\t1545253512\t-1575378703\n" +
+                "AA\t1573662097\t1545253512\n";
 
         assertQuery(
                 "tag\thi\tlo\n",
@@ -341,7 +343,9 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             String query = "tab";
             printSqlResult(ex, query, "ts", null, null, true, true);
             // test
-            ex = "tag\thi\tlo\n";
+            ex = "tag\thi\tlo\n" +
+                    "AA\t1\tNaN\n" +
+                    "CC\t24\t20\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
             printSqlResult(ex, query, null, null, null, false, true);
         });
