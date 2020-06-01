@@ -133,7 +133,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             if (slaveCursor.hasNext()) {
                 // check where this record falls
                 long slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp > masterTimestamp) {
+                if (slaveTimestamp < masterTimestamp) {
                     positionSlaveRecB();
                     latestSlaveRowID = slaveRecA.getRowId();
                     this.slaveTimestamp = slaveTimestamp;
@@ -165,7 +165,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             while (true) {
                 if (slaveCursor.hasNext()) {
                     slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                    if (slaveTimestamp >= masterTimestamp) {
+                    if (slaveTimestamp < masterTimestamp) {
                         record.hasSlave(true);
                         slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
                         latestSlaveRowID = slaveRecA.getRowId();
