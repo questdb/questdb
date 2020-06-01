@@ -264,7 +264,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
+        LOG.info().$("Request complete, ").$(context.getTotalBytesSent()).$(" bytes sent [fd=").$(context.getFd()).$(']').$();
         context.clear();
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }

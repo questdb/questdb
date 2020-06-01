@@ -91,6 +91,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
     private final boolean dumpNetworkTraffic;
+    private long totalBytesSent = 0;
 
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -117,6 +118,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this._wPtr = outPtr;
         this.zpos = this.zlimit = 0;
         header = true;
+        totalBytesSent = 0;
         resetZip();
     }
 
@@ -345,6 +347,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 sent += n;
             }
         }
+        totalBytesSent += sent;
     }
 
     private void dumpBuffer(char direction, long buffer, int size) {
@@ -352,6 +355,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             StdoutSink.INSTANCE.put(direction);
             Net.dump(buffer, size);
         }
+    }
+
+    long getTotalBytesSent() {
+        return totalBytesSent;
     }
 
     public class HttpResponseHeaderImpl extends AbstractCharSink implements Closeable, Mutable, HttpResponseHeader {
