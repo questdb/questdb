@@ -1,5 +1,5 @@
 <h4 align="center">
-  <img style="max-width: 505px;" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"/>
+  <img src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png" width="505px"/>
 </h4>
 
 <p align="center">
@@ -40,7 +40,7 @@ stack is engineered from scratch, zero-GC Java and dependency-free.
 
 QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or
 directly from Java. Reading data is done using SQL via HTTP, PostgreSQL wire
-protocol or via Java API. The whole database and console fits in a 3.5Mb
+protocol or via Java API. The whole database and console fits in a < 4 MB
 package.
 
 ## Project goals
@@ -70,22 +70,32 @@ import and query data using an intuitive interface.
 
 You may also take a look at our
 [storage model](https://www.questdb.io/docs/storageModel). In short, we are a
-column-oriented database, which partitions data by time intervals.
+column-oriented database, which partitions data by time intervals. Additionally,
+you can find our documentation
+[here](https://www.questdb.io/docs/documentationOverview).
 
-You can find our documentation
-[here](https://www.questdb.io/docs/documentationOverview)
+There are various ways of installing QuestDB.
 
-## Support / Contact
+### Binaries
 
-- [Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+You can find our compiled binaries available for download on the
+[release page](https://github.com/questdb/questdb/releases). The archive
+contains both the \*nix and Windows version.
 
-## Roadmap
+### Docker
 
-[Our roadmap is here](https://github.com/questdb/questdb/projects/3)
+Docker images are available on
+[Docker Hub](https://hub.docker.com/r/questdb/questdb).
 
-## Building from source
+You can launch a QuestDB container with:
 
-### Prerequisites
+    $ docker run -p 9000:9000 questdb/questdb
+
+QuestDB will now be reachable at [localhost:9000](http://localhost:9000).
+
+### Building from source
+
+#### Prerequisites
 
 - Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
   (AArch64/A64)**: Linux
@@ -99,7 +109,7 @@ You can find our documentation
   [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
   OPTIONAL
 
-### Building & Running
+#### Building & Running
 
 ```bash
 git clone git@github.com:questdb/questdb.git
@@ -136,6 +146,14 @@ QuestDB will start an HTTP server with the web console available at
 be started and available on port 8812, the default login credentials are
 `admin`/`quest`. Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
+
+## Support / Contact
+
+[Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+
+## Roadmap
+
+[Our roadmap is here](https://github.com/questdb/questdb/projects/3)
 
 ## Contribution
 
