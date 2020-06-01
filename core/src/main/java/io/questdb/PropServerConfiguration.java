@@ -217,6 +217,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpFrozenClock;
     private boolean readOnlySecurityContext;
     private long maxInMemoryRows;
+    private long maxHttpQueryResponseRowLimit;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -291,6 +292,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
             this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
             this.maxInMemoryRows = getLong(properties, "http.security.max.in.memory.rows", Long.MAX_VALUE);
+            this.maxHttpQueryResponseRowLimit = getLong(properties, "http.security.max.response.rows", Long.MAX_VALUE);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -1312,6 +1314,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getKeepAliveHeader() {
             return keepAliveHeader;
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return maxHttpQueryResponseRowLimit;
         }
     }
 

@@ -96,6 +96,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public CharSequence getKeepAliveHeader() {
             return "Keep-Alive: timeout=5, max=10000\r\n";
         }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return Long.MAX_VALUE;
+        }
     };
 
     public DefaultHttpServerConfiguration() {

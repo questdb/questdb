@@ -39,6 +39,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -66,6 +67,8 @@ public class IODispatcherTest {
         byte[] b = {-1, -2, -3, -2, -1, -4, -8};
         System.out.println(new String(b));
     }
+
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     @Test
     public void testBiasWrite() throws Exception {
@@ -4155,6 +4158,67 @@ public class IODispatcherTest {
         });
     }
 
+    @Test
+    public void testJsonQueryResponseLimit() throws Exception {
+        configuredMaxQueryResponseRowLimit = 2;
+        testJsonQuery(
+                20,
+                "GET /query?query=x&limit=10,14 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "02a6\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]]],\"count\":11}\r\n" +
+                        "00\r\n" +
+                        "\r\n");
+    }
+
+    @Test
+    public void testTextQueryResponseLimit() throws Exception {
+        configuredMaxQueryResponseRowLimit = 3;
+        testJsonQuery(
+                20,
+                "GET /exp?query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+from+long_sequence(10%2C+33%2C+55)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "16\r\n" +
+                        "\"sym\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n");
+    }
+
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
@@ -4255,6 +4319,43 @@ public class IODispatcherTest {
                 }
             };
 
+            private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+                @Override
+                public MillisecondClock getClock() {
+                    return () -> 0;
+                }
+
+                @Override
+                public int getConnectionCheckFrequency() {
+                    return 1_000_000;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return FilesFacadeImpl.INSTANCE;
+                }
+
+                @Override
+                public int getFloatScale() {
+                    return 10;
+                }
+
+                @Override
+                public int getDoubleScale() {
+                    return Numbers.MAX_SCALE;
+                }
+
+                @Override
+                public CharSequence getKeepAliveHeader() {
+                    return "Keep-Alive: timeout=5, max=10000\r\n";
+                }
+
+                @Override
+                public long getMaxQueryResponseRowLimit() {
+                    return configuredMaxQueryResponseRowLimit;
+                }
+            };
+
             @Override
             public MillisecondClock getClock() {
                 return () -> 0;
@@ -4283,6 +4384,11 @@ public class IODispatcherTest {
             @Override
             public boolean allowDeflateBeforeSend() {
                 return allowDeflateBeforeSend;
+            }
+
+            @Override
+            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+                return jsonQueryProcessorConfiguration;
             }
         };
     }
@@ -4332,7 +4438,7 @@ public class IODispatcherTest {
                         while (received < expectedToReceive) {
                             int n = nf.recv(fd, ptr + received, len - received);
                             if (n > 0) {
-//                                dump(ptr + received, n);
+                                // dump(ptr + received, n);
                                 // compare bytes
                                 for (int i = 0; i < n; i++) {
                                     if (print) {
