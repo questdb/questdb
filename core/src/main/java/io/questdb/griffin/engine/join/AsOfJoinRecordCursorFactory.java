@@ -163,7 +163,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     if (danglingSlaveRecord) {
                         key = joinKeyMap.withKey();
-                        key.put(masterRecord, masterKeySink);
+                        key.put(slaveRecord, slaveKeySink);
                         value = key.createValue();
                         valueSink.copy(slaveRecord, value);
                         danglingSlaveRecord = false;
@@ -173,7 +173,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp <= masterTimestamp) {
                             key = joinKeyMap.withKey();
-                            key.put(masterRecord, masterKeySink);
+                            key.put(slaveRecord, slaveKeySink);
                             value = key.createValue();
                             valueSink.copy(slaveRecord, value);
                         } else {

@@ -157,7 +157,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                     if (lastSlaveRowID != Numbers.LONG_NaN) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
                         key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
+                        key.put(masterRecord, masterKeySink);
                         value = key.createValue();
                         value.putLong(0, lastSlaveRowID);
                     }
@@ -167,7 +167,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp < masterTimestamp) {
                             key = joinKeyMap.withKey();
-                            key.put(rec, slaveKeySink);
+                            key.put(masterRecord, masterKeySink);
                             value = key.createValue();
                             value.putLong(0, rec.getRowId());
                         } else {
