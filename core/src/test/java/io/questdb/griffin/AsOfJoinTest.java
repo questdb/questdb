@@ -222,22 +222,15 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLtJoinGaps() throws Exception {
+    public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
         final String expected = "tag\thi\tlo\n" +
-                "AA\t315515118\tNaN\n" +
-                "BB\t-727724771\t315515118\n" +
-                "CC\t-948263339\t-727724771\n" +
-                "CC\t592859671\t-948263339\n" +
-                "AA\t-847531048\t592859671\n" +
-                "BB\t-2041844972\t-847531048\n" +
-                "BB\t-1575378703\t-2041844972\n" +
-                "BB\t1545253512\t-1575378703\n" +
-                "AA\t1573662097\t1545253512\n" +
-                "AA\t339631474\t1573662097\n";
+                "CC\t592859671\t339631474\n" +
+                "BB\t1545253512\t339631474\n" +
+                "AA\t1573662097\t339631474\n";
 
         assertQuery(
                 "tag\thi\tlo\n",
-                "select a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
+                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
                 "create table tab (\n" +
                         "    tag symbol index,\n" +
                         "    seq int,\n" +
@@ -297,7 +290,9 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             String query = "tab";
             printSqlResult(ex, query, "ts", null, null, true, true);
             // test
-            ex = "tag\thi\tlo\n";
+            ex = "tag\thi\tlo\n" +
+                    "AA\t1\tNaN\n" +
+                    "CC\t24\t20\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, null, null, false, true);
         });
