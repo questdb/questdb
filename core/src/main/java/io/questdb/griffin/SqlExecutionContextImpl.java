@@ -45,6 +45,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
+    private long requestFd = -1;
 
     public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
         this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
@@ -107,6 +108,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public CairoEngine getCairoEngine() {
         return cairoEngine;
+    }
+
+    @Override
+    public long getRequestFd() {
+        return requestFd;
+    }
+
+    public void setRequestFd(long requestFd) {
+        this.requestFd = requestFd;
     }
 
     public SqlExecutionContextImpl with(

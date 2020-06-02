@@ -52,4 +52,6 @@ public interface SqlExecutionContext {
     void setRandom(Rnd rnd);
 
     CairoEngine getCairoEngine();
+
+    long getRequestFd();
 }

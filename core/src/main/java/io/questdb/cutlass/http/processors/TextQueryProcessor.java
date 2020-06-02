@@ -99,6 +99,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
+            sqlExecutionContext.setRequestFd(context.getFd());
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -179,7 +180,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         // copy random during query resume
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd);
-
+        sqlExecutionContext.setRequestFd(context.getFd());
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
