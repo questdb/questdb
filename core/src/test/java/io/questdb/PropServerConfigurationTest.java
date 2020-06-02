@@ -115,6 +115,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
+        Assert.assertEquals(false, configuration.getHttpServerConfiguration().readOnlySecurityContext());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
+        Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
+
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
@@ -324,6 +328,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
+
+            Assert.assertEquals(true, configuration.getHttpServerConfiguration().readOnlySecurityContext());
+            Assert.assertEquals(10000, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
+            Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
