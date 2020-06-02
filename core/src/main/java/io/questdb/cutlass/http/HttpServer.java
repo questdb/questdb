@@ -275,10 +275,6 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class RetryProcessorContext {
-
-    }
-
     private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
