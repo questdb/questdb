@@ -361,7 +361,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             skip = 0;
         }
 
-        if (configuration.getMaxQueryResponseRowLimit() != Long.MAX_VALUE && (stop - skip) > configuration.getMaxQueryResponseRowLimit()) {
+        if ((stop - skip) > configuration.getMaxQueryResponseRowLimit()) {
             stop = skip + configuration.getMaxQueryResponseRowLimit();
         }
 
