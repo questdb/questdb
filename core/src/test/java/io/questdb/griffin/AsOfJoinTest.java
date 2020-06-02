@@ -24,11 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -161,14 +158,14 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     public void testLtJoin() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
-                "BB\t-727724771\t315515118\t1970-01-03T00:06:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
-                "CC\t-948263339\t-727724771\t1970-01-03T00:12:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-727724771\tNaN\t1970-01-03T00:06:00.000000Z\t\n" +
+                "CC\t-948263339\tNaN\t1970-01-03T00:12:00.000000Z\t\n" +
                 "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
-                "AA\t-847531048\t592859671\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:18:00.000000Z\n" +
-                "BB\t-2041844972\t-847531048\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
+                "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
                 "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
                 "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000Z\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t1573662097\t1545253512\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
                 "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
 
         assertQuery(
@@ -193,14 +190,14 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     public void testLtJoinNoTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +
                 "AA\t315515118\tNaN\n" +
-                "BB\t-727724771\t315515118\n" +
-                "CC\t-948263339\t-727724771\n" +
+                "BB\t-727724771\tNaN\n" +
+                "CC\t-948263339\tNaN\n" +
                 "CC\t592859671\t-948263339\n" +
-                "AA\t-847531048\t592859671\n" +
-                "BB\t-2041844972\t-847531048\n" +
+                "AA\t-847531048\t315515118\n" +
+                "BB\t-2041844972\t-727724771\n" +
                 "BB\t-1575378703\t-2041844972\n" +
                 "BB\t1545253512\t-1575378703\n" +
-                "AA\t1573662097\t1545253512\n" +
+                "AA\t1573662097\t-847531048\n" +
                 "AA\t339631474\t1573662097\n";
 
         assertQuery(
@@ -294,7 +291,15 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             // test
             ex = "tag\thi\tlo\n" +
                     "AA\t1\tNaN\n" +
-                    "CC\t24\t20\n";
+                    "BB\t3\tNaN\n" +
+                    "AA\t7\t2\n" +
+                    "BB\t8\t6\n" +
+                    "AA\t9\t7\n" +
+                    "BB\t14\t8\n" +
+                    "AA\t16\t13\n" +
+                    "BB\t18\t15\n" +
+                    "AA\t20\t17\n" +
+                    "CC\t24\tNaN\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, null, null, false, true);
         });
@@ -347,6 +352,88 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "AA\t1\tNaN\n" +
                     "CC\t24\t20\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinOneTableKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            //tabY
+            compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 30000)");
+            executeInsert("insert into tabY values ('B', 2, 40000)");
+            executeInsert("insert into tabY values ('B', 3, 50000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabY", "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\t1\n" +
+                    "A\t3\t2\n" +
+                    "B\t1\tNaN\n" +
+                    "B\t2\t1\n" +
+                    "B\t3\t2\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoin2TablesKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            //tabY
+            compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 30000)");
+            executeInsert("insert into tabY values ('B', 2, 40000)");
+            executeInsert("insert into tabY values ('B', 3, 50000)");
+            //tabZ
+            compiler.compile("create table tabZ (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabZ values ('B', 1, 10000)");
+            executeInsert("insert into tabZ values ('B', 2, 20000)");
+            executeInsert("insert into tabZ values ('B', 3, 30000)");
+            executeInsert("insert into tabZ values ('A', 3, 30000)");
+            executeInsert("insert into tabZ values ('A', 6, 40000)");
+            executeInsert("insert into tabZ values ('A', 7, 50000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabY", "ts", null, null, true, true);
+            ex = "tag\tx\tts\n" +
+                    "B\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "A\t6\t1970-01-01T00:00:00.040000Z\n" +
+                    "A\t7\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabZ", "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\tNaN\n" +
+                    "A\t3\tNaN\n" +
+                    "B\t1\t2\n" +
+                    "B\t2\t3\n" +
+                    "B\t3\t3\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabZ b on (tag) ";
             printSqlResult(ex, query, null, null, null, false, true);
         });
     }
