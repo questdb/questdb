@@ -15,7 +15,6 @@ const Icons = styled.div`
   display: flex;
   padding-right: 1rem;
   align-items: center;
-  font-size: 2rem;
 `
 
 const Footer = () => (
