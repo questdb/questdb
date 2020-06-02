@@ -181,17 +181,28 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
+        // todo: pick largest map to be the lead one
+
         LOG.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
         doneLatch.await(queuedCount);
+        long pRosti0 = pRosti[0];
+
         if (pRosti.length > 1) {
-            final long pRosti0 = pRosti[0];
-            LOG.info().$("merging").$();
-            for (int i = 1, n = pRosti.length; i < n; i++) {
-                for (int j = 0; j < vafCount; j++) {
-                    vafList.getQuick(j).merge(pRosti0, pRosti[i]);
+            LOG.debug().$("merging").$();
+
+            for (int j = 0; j < vafCount; j++) {
+                final VectorAggregateFunction vaf = vafList.getQuick(j);
+                for (int i = 1, n = pRosti.length; i < n; i++) {
+                    vaf.merge(pRosti0, pRosti[i]);
                 }
+                vaf.setNull(pRosti0);
+            }
+        } else {
+            for (int j = 0; j < vafCount; j++) {
+                vafList.getQuick(j).setNull(pRosti0);
             }
         }
+
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
 
         return this.cursor.of(cursor);

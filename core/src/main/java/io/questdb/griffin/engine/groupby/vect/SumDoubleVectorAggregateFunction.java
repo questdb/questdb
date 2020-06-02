@@ -82,13 +82,17 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        // subtract 1 from valueOffset because 0 = value offset of 1-st value or key
         Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
     }
 
     @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void setNull(long pRosti) {
+        Rosti.keyedIntSumDoubleSetNull(pRosti, valueOffset);
     }
 
     @Override

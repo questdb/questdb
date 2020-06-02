@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
@@ -34,6 +37,7 @@ import java.util.function.DoubleBinaryOperator;
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;
+    private int valueOffset;
 
     private final DoubleAccumulator min = new DoubleAccumulator(
             MIN, Double.POSITIVE_INFINITY
@@ -73,5 +77,26 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
             return Double.NaN;
         }
         return min;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntMinDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void setNull(long pRosti) {
+        Rosti.keyedIntMinDoubleSetNull(pRosti, valueOffset);
     }
 }

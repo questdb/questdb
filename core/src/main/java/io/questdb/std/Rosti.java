@@ -59,9 +59,28 @@ public final class Rosti {
 
     public static native void clear(long pRosti);
 
+    // sum double
     public static native void keyedIntSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntSumDoubleSetNull(long pRosti, int valueOffset);
+
+    // max double
+    public static native void keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMinDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntMinDoubleSetNull(long pRosti, int valueOffset);
+
+    // min double
+    public static native void keyedIntMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMaxDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntMaxDoubleSetNull(long pRosti, int valueOffset);
+
+    public static native long getOffset(long pRosti, int valueOffset);
 
     public static long getCtrl(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti);
@@ -95,7 +114,7 @@ public final class Rosti {
                 long p = slots + ((ctrl - start) << shift);
 
 //                System.out.println("offset = " + (((ctrl - start) << shift)));
-                System.out.println(Unsafe.getUnsafe().getInt(p) + " -> " + Unsafe.getUnsafe().getDouble(p + 4));
+                System.out.println(Unsafe.getUnsafe().getInt(p) + " -> " + Unsafe.getUnsafe().getDouble(p + 12));
 //                System.out.println(b + " at " + (ctrl-start));
                 count--;
             }
