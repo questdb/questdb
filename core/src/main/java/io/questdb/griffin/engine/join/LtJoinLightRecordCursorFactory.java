@@ -167,7 +167,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                         slaveTimestamp = rec.getTimestamp(slaveTimestampIndex);
                         if (slaveTimestamp < masterTimestamp) {
                             key = joinKeyMap.withKey();
-                            key.put(slaveRecord, slaveKeySink);
+                            key.put(rec, slaveKeySink);
                             value = key.createValue();
                             value.putLong(0, rec.getRowId());
                         } else {
