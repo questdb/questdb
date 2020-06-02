@@ -24,19 +24,23 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Vect;
-import org.junit.Ignore;
+import io.questdb.std.Rosti;
 import org.junit.Test;
 
 public class KeyedVectorAggregateTest extends AbstractGriffinTest {
     @Test
-    @Ignore
-
     public void testSimple() throws SqlException {
-        compiler.compile("create table x as (select abs(rnd_int()) % 1024 sym, rnd_double(2) val from long_sequence(100000000))", sqlExecutionContext);
+        ArrayColumnTypes columnType = new ArrayColumnTypes();
+        columnType.add(ColumnType.INT);
+        columnType.add(ColumnType.DOUBLE);
+        long pRosti = Rosti.alloc(columnType, 2047);
+        long pRosti2 = Rosti.alloc(columnType, 2047);
+        compiler.compile("create table x as (select abs(rnd_int()) % 8 sym, rnd_double(2) val from long_sequence(1000000))", sqlExecutionContext);
         CompiledQuery cc = compiler.compile("x", sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         PageFrameCursor pfc = factory.getPageFrameCursor(sqlExecutionContext);
@@ -45,7 +49,7 @@ public class KeyedVectorAggregateTest extends AbstractGriffinTest {
         while ((frame = pfc.next()) != null) {
             long symPageAddress = frame.getPageAddress(0);
             long valPageAddress = frame.getPageAddress(1);
-            Vect.matchGroup(symPageAddress, valPageAddress, frame.getPageValueCount(0));
+            Rosti.keyedIntSumDouble(pRosti, symPageAddress, valPageAddress, frame.getPageValueCount(0), 1);
         }
         System.out.println(System.nanoTime() - t);
         pfc.close();
@@ -55,8 +59,23 @@ public class KeyedVectorAggregateTest extends AbstractGriffinTest {
         while ((frame = pfc.next()) != null) {
             long symPageAddress = frame.getPageAddress(0);
             long valPageAddress = frame.getPageAddress(1);
-            Vect.matchGroup(symPageAddress, valPageAddress, frame.getPageValueCount(0));
+            Rosti.keyedIntSumDouble(pRosti2, symPageAddress, valPageAddress, frame.getPageValueCount(0), 1);
         }
         System.out.println(System.nanoTime() - t);
+        pfc.close();
+
+        factory.close();
+
+        Rosti.printRosti(pRosti);
+        System.out.println("----------------------------");
+        Rosti.printRosti(pRosti2);
+
+        Rosti.keyedIntSumDoubleMerge(pRosti, pRosti2, 1);
+        System.out.println("++++++++++++++++++++++");
+        Rosti.printRosti(pRosti);
+
+        Rosti.free(pRosti);
+        Rosti.free(pRosti2);
     }
+
 }

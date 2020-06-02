@@ -445,7 +445,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -561,7 +561,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -628,7 +628,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsIntTypes().of(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)

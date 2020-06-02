@@ -33,6 +33,8 @@ public class TableColumnMetadata {
 
     public TableColumnMetadata(String name, int type) {
         this(name, type, false, 0, false);
+        // Do not allow using this constructor for symbol types.
+        // Use version where you specify symbol table parameters
         assert type != ColumnType.SYMBOL;
     }
 

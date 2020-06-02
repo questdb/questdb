@@ -146,7 +146,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @Override
     public void clear() {
         columnCount = 0;
-        columnTypes.reset();
+        columnTypes.clear();
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;

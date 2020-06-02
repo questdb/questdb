@@ -9,16 +9,19 @@ endif ($ENV{JAVA_HOME})
 set(
         VCL_FILES
         src/main/c/share/vect.cpp
-#        src/main/c/share/vectkeysum.cpp
+        src/main/c/share/rosti.h
 )
 
 set(
         VCL_FILES_SSE2
+        src/main/c/share/rosti.h
+        src/main/c/share/rosti_bitmask.h
+        src/main/c/share/rosti.cpp
         src/main/c/share/vect_vanilla.h
         src/main/c/share/vect_vanilla.cpp
         src/main/c/share/vect.cpp
         src/main/c/share/vcl/instrset_detect.cpp
-#        src/main/c/share/vectkeysum.cpp
+        src/main/c/share/vectkeysum.cpp
         src/main/c/share/vectkeysum_vanilla.h
         src/main/c/share/vectkeysum_vanilla.cpp
 )
@@ -160,7 +163,7 @@ else ()
     )
 
     # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/vectkeysum.cpp)
+    add_library(questdb-avx2 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx2 PROPERTIES
             COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"

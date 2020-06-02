@@ -73,7 +73,7 @@
         <!--
             JMH version to use with this project.
           -->
-        <jmh.version>1.23</jmh.version>
+        <jmh.version>1.22</jmh.version>
 
         <!--
             Java source/target to use for compilation.

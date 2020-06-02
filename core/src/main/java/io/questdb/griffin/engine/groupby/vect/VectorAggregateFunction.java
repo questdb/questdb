@@ -24,15 +24,29 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
+
     void aggregate(long address, long count, int workerId);
 
+    default void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void pushValueTypes(ArrayColumnTypes types) {
+        throw new UnsupportedOperationException();
+    }
+
     int getColumnIndex();
+
+    default void merge(long pRostiA, long pRostiB) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
