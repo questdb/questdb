@@ -63,6 +63,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
+    private int nCompletedRequests;
+    private long totalBytesSent;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -84,6 +86,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void clear() {
         LOG.debug().$("clear").$();
+        totalBytesSent += responseSink.getTotalBytesSent();
+        nCompletedRequests++;
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -95,6 +99,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
+        nCompletedRequests = 0;
+        totalBytesSent = 0;
         csPool.clear();
         multipartContentParser.close();
         multipartContentHeaderParser.close();
@@ -386,7 +392,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
+    }
+
     public long getTotalBytesSent() {
+        return totalBytesSent;
+    }
+
+    public long getLastRequestBytesSent() {
         return responseSink.getTotalBytesSent();
     }
 
