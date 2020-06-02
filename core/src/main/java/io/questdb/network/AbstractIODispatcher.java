@@ -133,7 +133,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public boolean processIOQueue(IORequestProcessor<C> processor) {
+    public boolean processIOQueue(IORequestHandler<C> processor) {
         long cursor = ioEventSubSeq.next();
         while (cursor == -2) {
             cursor = ioEventSubSeq.next();

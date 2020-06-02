@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
@@ -38,17 +39,20 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.IORequestProcessor;
+import io.questdb.network.IORequestHandler;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.LinkedList;
+import java.util.Queue;
 
 public class HttpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
     private static final WorkerPoolAwareConfiguration.ServerFactory<HttpServer, HttpServerConfiguration> CREATE0 = HttpServer::create0;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
+    private final Queue<Retry> retries;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
@@ -57,6 +61,7 @@ public class HttpServer implements Closeable {
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
+        this.retries = new LinkedList<>();
         QueryCache.configure(configuration);
 
         if (localPool) {
@@ -73,19 +78,40 @@ public class HttpServer implements Closeable {
                 configuration.getDispatcherConfiguration(),
                 httpContextFactory
         );
-
         pool.assign(dispatcher);
 
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+        RescheduleContext rescheduleContext = new RescheduleContext() {
+            @Override
+            public void reschedule(Retry retry) {
+                retries.add(retry);
+            }
+        };
+
+        for (int i = 0; i < workerCount; i++) {
             final int index = i;
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
-                private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context) -> context.handleClientOperation(operation, selector);
+                private final IORequestHandler<HttpConnectionContext> handler =
+                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
                 public boolean run() {
-                    return dispatcher.processIOQueue(processor);
+                    boolean useful = dispatcher.processIOQueue(handler);
+
+                    // Run retries
+                    int retriesDepth = retries.size();
+                    for(int i = 0; i < retriesDepth; i++){
+                        Retry r = retries.poll();
+                        if (r != null) {
+                            boolean processed = r.run();
+                            if (!processed) {
+                                // Add to back of the queue if not done
+                                retries.add(r);
+                            }
+                            useful |= processed;
+                        }
+                    }
+                    return useful;
                 }
             });
 
@@ -247,6 +273,10 @@ public class HttpServer implements Closeable {
                 Misc.free(processorMap.get(processorKeys.getQuick(i)));
             }
         }
+    }
+
+    private static class RetryProcessorContext {
+
     }
 
     private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {

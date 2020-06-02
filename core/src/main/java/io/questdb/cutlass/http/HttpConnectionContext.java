@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -138,11 +139,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getHeader();
     }
 
-    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector) {
+    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         switch (operation) {
             case IOOperation.READ:
                 try {
-                    handleClientRecv(selector);
+                    handleClientRecv(selector, rescheduleContext);
                 } catch (PeerDisconnectedException ignore) {
                     LOG.debug().$("peer disconnected").$();
                     dispatcher.disconnect(this);
@@ -190,10 +191,23 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(HttpRequestProcessor processor) {
+    private void completeRequest(HttpRequestProcessor processor, RescheduleContext rescheduleContext) {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         try {
             processor.onRequestComplete(this);
+        } catch (EntryUnavailableException e) {
+            rescheduleContext.reschedule(() -> {
+                try {
+                    processor.onRequestComplete(this);
+                }  catch (EntryUnavailableException e2) {
+                    return false;
+                } catch (PeerDisconnectedException ignore) {
+                    dispatcher.disconnect(this);
+                } catch (PeerIsSlowToReadException e2) {
+                    dispatcher.registerChannel(this, IOOperation.WRITE);
+                }
+                return true;
+            });
         } catch (PeerDisconnectedException ignore) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException e) {
@@ -201,7 +215,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    private void handleClientRecv(HttpRequestProcessorSelector selector)
+    private void handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             final long fd = this.fd;
@@ -310,7 +324,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         if (buf > start) {
                             if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
                                 // request is complete
-                                completeRequest(processor);
+                                completeRequest(processor, rescheduleContext);
                                 break;
                             }
 
@@ -335,7 +349,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     if (bufRemaining == 0) {
                         if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
                             // request is complete
-                            completeRequest(processor);
+                            completeRequest(processor, rescheduleContext);
                             break;
                         }
 
@@ -360,6 +374,20 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     try {
                         processor.onRequestComplete(this);
                         resumeProcessor = null;
+                    } catch (EntryUnavailableException e) {
+                        HttpRequestProcessor finalProcessor = processor;
+                        rescheduleContext.reschedule(() -> {
+                            try {
+                                finalProcessor.onRequestComplete(this);
+                            }  catch (EntryUnavailableException e2) {
+                                return false;
+                            } catch (PeerDisconnectedException ignore) {
+                                dispatcher.disconnect(this);
+                            } catch (PeerIsSlowToReadException e2) {
+                                dispatcher.registerChannel(this, IOOperation.WRITE);
+                            }
+                            return true;
+                        });
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this);
                     } catch (PeerIsSlowToReadException ignore) {

@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -243,6 +244,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (SqlException e) {
             syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
+        } catch (EntryUnavailableException e) {
+            throw e;
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);
             readyForNextRequest(context);

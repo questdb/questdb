@@ -25,6 +25,6 @@
 package io.questdb.network;
 
 @FunctionalInterface
-public interface IORequestProcessor<C extends IOContext> {
+public interface IORequestHandler<C extends IOContext> {
     void onRequest(int operation, C context);
 }
