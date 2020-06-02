@@ -2,7 +2,7 @@ import type { DefaultTheme as DefaultThemeShape } from "styled-components"
 
 import type { ColorShape, FontSizeShape } from "types"
 
-export const color: ColorShape = {
+const color: ColorShape = {
   black: "#191a21",
   gray1: "#585858",
   gray2: "#bbbbbb",
@@ -21,15 +21,17 @@ export const color: ColorShape = {
   white: "#fafafa",
 }
 
-export const fontSize: FontSizeShape = {
-  lg: "1.15rem",
+const fontSize: FontSizeShape = {
+  lg: "1.5rem",
   md: "1.4rem",
-  sm: "0.75rem",
-  xl: "1.125rem",
+  sm: "1.3rem",
+  xl: "1.7rem",
+  xs: "1.2rem",
+  ms: "1rem",
 }
 
 export const theme: DefaultThemeShape = {
-  baseFontSize: "16px",
+  baseFontSize: "10px",
   color,
   font:
     '"Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto, sans-serif',

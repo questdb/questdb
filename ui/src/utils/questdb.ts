@@ -15,11 +15,20 @@ type HostConfig = Readonly<{
   port: number
 }>
 
-export type Result<T extends Record<string, any>> = {
-  columns: ColumnDefinition[]
-  count: number
-  data: T[]
-}
+export type Result<T extends Record<string, any>> =
+  | {
+      columns: ColumnDefinition[]
+      count: number
+      data: T[]
+      error: false
+    }
+  | {
+      error: true
+      errorDetails: {
+        message: string
+        statusCode: number
+      }
+    }
 
 type ExecResult = {
   columns: ColumnDefinition[]
@@ -71,6 +80,16 @@ export class QuestDB {
       `${this._config.host}:${this._config.port}/exec?${encodeParams(payload)}`,
     )
 
+    if (!response.ok) {
+      return {
+        error: true,
+        errorDetails: {
+          message: response.statusText,
+          statusCode: response.status,
+        },
+      }
+    }
+
     const data = (await response.json()) as ExecResult
 
     const parsed = (data.dataset.map(
@@ -88,6 +107,7 @@ export class QuestDB {
       columns: data.columns,
       count: data.count,
       data: parsed,
+      error: false,
     }
   }
 
@@ -107,20 +127,24 @@ export class QuestDB {
   async showTables(): Promise<Result<QuestDBTable>> {
     const response = await this.query<QuestDBTable>("SHOW TABLES;")
 
-    return {
-      ...response,
-      data: response.data.slice().sort((a, b) => {
-        if (a.tableName > b.tableName) {
-          return 1
-        }
+    if (!response.error) {
+      return {
+        ...response,
+        data: response.data.slice().sort((a, b) => {
+          if (a.tableName > b.tableName) {
+            return 1
+          }
 
-        if (a.tableName < b.tableName) {
-          return -1
-        }
+          if (a.tableName < b.tableName) {
+            return -1
+          }
 
-        return 0
-      }),
+          return 0
+        }),
+      }
     }
+
+    return response
   }
 
   async showColumns(table: string): Promise<Result<QuestDBColumn>> {

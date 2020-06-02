@@ -1,7 +1,6 @@
-import React, { ReactNode } from "react"
+import { ReactNode } from "react"
 import styled, { css } from "styled-components"
 
-import { fontSize } from "theme"
 import type { Color, FontSize } from "types"
 import { color } from "utils"
 
@@ -11,6 +10,7 @@ type Transform = "capitalize" | "lowercase" | "uppercase"
 export type TextProps = Readonly<{
   _style?: FontStyle
   className?: string
+  code?: boolean
   color?: Color
   children?: ReactNode
   size?: FontSize
@@ -19,29 +19,22 @@ export type TextProps = Readonly<{
 }>
 
 const defaultProps: Readonly<{
-  _style: FontStyle
   color: Color
-  size: FontSize
-  weight: number
 }> = {
-  _style: "normal",
   color: "black",
-  size: "md",
-  weight: 400,
 }
 
 export const textCss = css<TextProps>`
-  color: ${(props) => color(props.color ? props.color : defaultProps.color)};
-  font-size: ${({ size }) => fontSize[size || defaultProps.size]};
-  font-style: ${({ _style }) => _style};
+  color: ${(props) => (props.color ? color(props.color) : "inherit")};
+  font-family: ${({ code, theme }) => code && theme.fontMonospace};
+  font-size: ${({ size, theme }) => (size ? theme.fontSize[size] : "inherit")};
+  font-style: ${({ _style }) => _style || "inherit"};
   font-weight: ${({ weight }) => weight};
   text-transform: ${({ transform }) => transform};
 `
 
-const Wrapper = styled.span<TextProps>`
+export const Text = styled.span<TextProps>`
   ${textCss};
 `
-
-export const Text = (props: TextProps) => <Wrapper {...props} />
 
 Text.defaultProps = defaultProps

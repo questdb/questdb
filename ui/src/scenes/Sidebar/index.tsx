@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import styled from "styled-components"
-import { Code, Upload } from "@styled-icons/entypo"
+import { Code } from "@styled-icons/entypo/Code"
+import { Upload } from "@styled-icons/entypo/Upload"
 
 import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
 import { color } from "utils"

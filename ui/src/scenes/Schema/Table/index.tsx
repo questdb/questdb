@@ -2,10 +2,11 @@ import React, { useCallback, useState } from "react"
 import { CSSTransition } from "react-transition-group"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
-import styled, { css } from "styled-components"
-import { Table as Inbox, Loader4 } from "@styled-icons/remix-line"
+import styled from "styled-components"
+import { Loader4 } from "@styled-icons/remix-line/Loader4"
+import { Table as TableIcon } from "@styled-icons/remix-line/Table"
 
-import { spinCss } from "components"
+import { spinAnimation, slideTransition, TransitionDuration } from "components"
 import { color, QuestDB, QuestDBColumn, QuestDBTable } from "utils"
 import Row from "../Row"
 
@@ -18,36 +19,14 @@ type Props = QuestDBTable &
 
 type TitleProps = Readonly<{ expanded: boolean }>
 
-const TRANSITION_MS = 120
-
-const slideCss = css<{ _height: number }>`
-  .slide-enter {
-    max-height: 0;
-  }
-
-  .slide-enter-active {
-    max-height: ${({ _height }) => _height}px;
-    transition: all ${TRANSITION_MS}ms;
-  }
-
-  .slide-exit {
-    max-height: ${({ _height }) => _height}px;
-  }
-
-  .slide-exit-active {
-    max-height: 0;
-    transition: all ${TRANSITION_MS}ms;
-  }
-`
-
 const Wrapper = styled.div`
   display: flex;
-  margin-top: 6px;
+  margin-top: 0.5rem;
   align-items: stretch;
   flex-direction: column;
   overflow: hidden;
 
-  ${slideCss};
+  ${slideTransition};
 `
 
 const Title = styled(Row)`
@@ -70,14 +49,14 @@ const Columns = styled.div`
     position: absolute;
     height: 100%;
     width: 2px;
-    left: -12px;
+    left: -1rem;
     top: 0;
     content: "";
     background: ${color("gray1")};
   }
 `
 
-const TitleIcon = styled(Inbox)`
+const TitleIcon = styled(TableIcon)`
   margin-right: 1rem;
   color: ${color("draculaCyan")};
 `
@@ -85,7 +64,7 @@ const TitleIcon = styled(Inbox)`
 const Loader = styled(Loader4)`
   margin-left: 1rem;
   color: ${color("draculaOrange")};
-  ${spinCss};
+  ${spinAnimation};
 `
 
 const Table = ({ description, expanded, onChange, tableName }: Props) => {
@@ -104,7 +83,7 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
         from(quest.showColumns(tableName)).pipe(startWith(null)),
         of(true).pipe(delay(1000), startWith(false)),
       ).subscribe(([response, loading]) => {
-        if (response) {
+        if (response && !response.error) {
           setColumns(response.data)
           setLoading(false)
         } else {
@@ -112,7 +91,7 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
         }
       })
     }
-  }, [expanded])
+  }, [expanded, onChange, quest, tableName])
 
   return (
     <Wrapper _height={columns ? columns.length * 30 : 0}>
@@ -129,7 +108,7 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
       <CSSTransition
         classNames="slide"
         in={expanded}
-        timeout={TRANSITION_MS}
+        timeout={TransitionDuration.REG}
         unmountOnExit
       >
         <Columns>

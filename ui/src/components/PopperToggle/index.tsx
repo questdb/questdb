@@ -14,74 +14,88 @@ import { usePopperStyles, useTransition } from "../Hooks"
 import { createGlobalFadeTransition, TransitionDuration } from "../Transition"
 
 type Props = Readonly<{
+  active?: boolean
   children: ReactNode
-  delay?: number
   placement: Placement
   modifiers: Options["modifiers"]
+  onToggle?: (_active: boolean) => void
   trigger: ReactNode
 }>
 
 const GlobalTransitionCss = createGlobalFadeTransition(TransitionDuration.REG)
 
-export const PopperHover = ({
+export const PopperToggle = ({
+  active,
   children,
-  delay,
   modifiers,
+  onToggle,
   placement,
   trigger,
 }: Props) => {
   const [container] = useState<HTMLElement>(document.createElement("div"))
-  const delayTimeoutId = useRef<number | undefined>()
   const transitionTimeoutId = useRef<number | undefined>()
-  const [active, setActive] = useState(false)
+  const [_active, setActive] = useState(false)
   const [triggerElement, setTriggerElement] = useState<HTMLElement | null>(null)
-  const [arrowElement, setArrowElement] = useState<HTMLElement | null>(null)
   const { attributes, styles } = usePopper(triggerElement, container, {
     modifiers: [
       ...modifiers,
       {
-        name: "arrow",
-        options: { element: arrowElement },
-      },
-      {
-        name: "offset",
-        options: { offset: [0, 6] },
-      },
-      {
         name: "eventListeners",
-        enabled: active,
+        enabled: _active,
       },
     ],
     placement,
   })
 
-  const handleMouseEnter = useCallback(() => {
-    if (delay) {
-      delayTimeoutId.current = setTimeout(() => {
-        setActive(true)
-      }, delay)
-    } else {
-      setActive(true)
-    }
-  }, [delay])
+  const handleClick = useCallback(() => {
+    const state = !_active
+    setActive(state)
 
-  const handleMouseLeave = useCallback(() => {
-    clearTimeout(delayTimeoutId.current)
-    setActive(false)
-  }, [])
+    if (onToggle) {
+      onToggle(state)
+    }
+  }, [_active, onToggle])
+
+  const handleMouseDown = useCallback(
+    (event: TouchEvent | MouseEvent) => {
+      const target = event.target as Element
+
+      if (
+        container.contains(target) ||
+        (triggerElement && triggerElement.contains(target))
+      ) {
+        return
+      }
+
+      setActive(false)
+
+      if (onToggle) {
+        onToggle(false)
+      }
+    },
+    [container, onToggle, triggerElement],
+  )
 
   usePopperStyles(container, styles.popper)
 
-  useTransition(container, active, transitionTimeoutId)
+  useTransition(container, _active, transitionTimeoutId)
 
   useEffect(() => {
+    setActive(typeof active === "undefined" ? _active || false : active)
+  }, [active, _active])
+
+  useEffect(() => {
+    document.addEventListener("mousedown", handleMouseDown)
+    document.addEventListener("touchstart", handleMouseDown)
+
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       clearTimeout(transitionTimeoutId.current)
-      clearTimeout(delayTimeoutId.current)
+      document.removeEventListener("mousedown", handleMouseDown)
+      document.removeEventListener("touchstart", handleMouseDown)
       document.body.contains(container) && document.body.removeChild(container)
     }
-  }, [container])
+  }, [container, handleMouseDown])
 
   return (
     <>
@@ -89,15 +103,14 @@ export const PopperHover = ({
 
       {React.isValidElement(trigger) &&
         React.cloneElement(trigger, {
-          onMouseEnter: handleMouseEnter,
-          onMouseLeave: handleMouseLeave,
-          ref: active ? setTriggerElement : null,
+          onClick: handleClick,
+          ref: setTriggerElement,
         })}
 
       {React.isValidElement(children) && (
         <CSSTransition
           classNames="fade"
-          in={active}
+          in={_active}
           timeout={TransitionDuration.REG}
           unmountOnExit
         >
@@ -105,7 +118,6 @@ export const PopperHover = ({
             {ReactDOM.createPortal(
               React.cloneElement(children, {
                 ...attributes.popper,
-                arrow: { setArrowElement, styles: styles.arrow },
               }),
               container,
             )}
@@ -116,7 +128,7 @@ export const PopperHover = ({
   )
 }
 
-PopperHover.defaultProps = {
+PopperToggle.defaultProps = {
   modifiers: [],
   placement: "auto",
 }

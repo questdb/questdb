@@ -1,10 +1,24 @@
 import docsearch from "docsearch.js"
 import React, { useCallback, useEffect, useState } from "react"
+import { useSelector } from "react-redux"
 import styled from "styled-components"
-import { ControllerPlay, ControllerStop } from "@styled-icons/entypo"
+import { ControllerPlay } from "@styled-icons/entypo/ControllerPlay"
+import { ControllerStop } from "@styled-icons/entypo/ControllerStop"
+import { Plus } from "@styled-icons/entypo/Plus"
 
-import { ErrorButton, Input, PaneTitle, SuccessButton } from "components"
+import {
+  ErrorButton,
+  Input,
+  PaneTitle,
+  PopperToggle,
+  SecondaryButton,
+  SuccessButton,
+  useKeyPress,
+} from "components"
+import { selectors } from "store"
 import { BusEvent } from "utils"
+
+import QueryPicker from "./QueryPicker"
 
 const Separator = styled.div`
   flex: 1;
@@ -16,6 +30,7 @@ const DocsearchInput = styled(Input)`
 
 const Editor = () => {
   const [running, setRunning] = useState(false)
+  const [popperActive, setPopperActive] = useState<boolean>()
   const handleClick = useCallback(() => {
     if (running) {
       window.bus.trigger(BusEvent.MSG_QUERY_CANCEL)
@@ -23,6 +38,18 @@ const Editor = () => {
       window.bus.trigger(BusEvent.MSG_EDITOR_EXECUTE)
     }
   }, [running])
+  const handleToggle = useCallback((active) => {
+    setPopperActive(active)
+  }, [])
+  const handleHidePicker = useCallback(() => {
+    setPopperActive(false)
+  }, [])
+  const escPress = useKeyPress("Escape")
+  const { savedQueries } = useSelector(selectors.console.getConfiguration)
+
+  useEffect(() => {
+    setPopperActive(false)
+  }, [escPress])
 
   useEffect(() => {
     docsearch({
@@ -66,6 +93,22 @@ const Editor = () => {
           <ControllerPlay size="18px" />
           <span>Run</span>
         </SuccessButton>
+      )}
+      <Separator />
+
+      {savedQueries.length > 0 && (
+        <PopperToggle
+          active={popperActive}
+          onToggle={handleToggle}
+          trigger={
+            <SecondaryButton onClick={handleClick}>
+              <Plus size="18px" />
+              <span>Saved queries</span>
+            </SecondaryButton>
+          }
+        >
+          <QueryPicker hidePicker={handleHidePicker} queries={savedQueries} />
+        </PopperToggle>
       )}
 
       <Separator />

@@ -90,30 +90,16 @@ $.fn.query = function () {
 $.fn.domController = function () {
   const div = $(".js-query-spinner")
   const divMsg = $(".js-query-message-panel")
-  let timer
   let runBtn
   let running = false
   const bus = $(this)
 
   function delayedStart() {
     div.addClass("query-progress-animated", 100)
-    divMsg.removeClass("query-message-ok")
-    divMsg.html("&nbsp;Running...")
-  }
-
-  function start() {
-    running = true
-    runBtn.html('<i class="fa fa-stop"></i><span>Cancel</span>')
-    runBtn.removeClass("js-query-run button-success").addClass("button-danger")
-    timer = setTimeout(delayedStart, 500)
   }
 
   function stop() {
-    runBtn.html('<i class="fa fa-play"></i><span>Run</span>')
-    runBtn.removeClass("button-danger").addClass("js-query-run button-success")
-    clearTimeout(timer)
     div.removeClass("query-progress-animated")
-    running = false
   }
 
   function toTextPosition(q, pos) {
@@ -241,14 +227,6 @@ $.fn.domController = function () {
     }
   }
 
-  function toggleRunBtn() {
-    if (running) {
-      bus.trigger(qdb.MSG_QUERY_CANCEL)
-    } else {
-      bus.trigger(qdb.MSG_EDITOR_EXECUTE)
-    }
-  }
-
   function exportClick(e) {
     e.preventDefault()
     bus.trigger("grid.publish.query")
@@ -262,16 +240,10 @@ $.fn.domController = function () {
   }
 
   function bind() {
-    runBtn = $(".js-query-run")
-    runBtn.click(toggleRunBtn)
     bus.on(qdb.MSG_QUERY_ERROR, error)
     bus.on(qdb.MSG_QUERY_OK, ok)
-    bus.on(qdb.MSG_QUERY_RUNNING, start)
     bus.on(qdb.MSG_QUERY_EXPORT, exportQuery)
 
-    $(".js-editor-toggle-invisible").click(function () {
-      bus.trigger("editor.toggle.invisibles")
-    })
     $(".js-query-export").click(exportClick)
   }
 
@@ -485,10 +457,6 @@ $.fn.editor = function (msgBus) {
     edit.focus()
   }
 
-  function toggleInvisibles() {
-    edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles())
-  }
-
   function focusGrid() {
     bus.trigger("grid.focus")
   }
@@ -522,11 +490,16 @@ $.fn.editor = function (msgBus) {
     edit.focus()
   }
 
+  function setQuery(e, q) {
+    if (q) {
+      edit.setValue(q)
+    }
+  }
+
   function bind() {
     bus.on(qdb.MSG_EDITOR_EXECUTE, submitQuery)
     bus.on(qdb.MSG_EDITOR_EXECUTE_ALT, submitQuery)
     bus.on("editor.show.error", showError)
-    bus.on("editor.toggle.invisibles", toggleInvisibles)
     bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery)
     bus.on("editor.insert.column", insertColumn)
     bus.on(qdb.MSG_EDITOR_FOCUS, function () {
@@ -562,6 +535,7 @@ $.fn.editor = function (msgBus) {
 
     bus.on("preferences.load", loadPreferences)
     bus.on("preferences.save", savePreferences)
+    bus.on("editor.set", setQuery)
   }
 
   setup()

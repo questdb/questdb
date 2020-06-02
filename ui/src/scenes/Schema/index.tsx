@@ -3,20 +3,19 @@ import { TransitionGroup } from "react-transition-group"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled from "styled-components"
-import { Database } from "@styled-icons/entypo"
-import { Loader3 } from "@styled-icons/remix-fill"
-import { Refresh } from "@styled-icons/remix-line"
+import { Database } from "@styled-icons/entypo/Database"
+import { Loader3 } from "@styled-icons/remix-fill/Loader3"
+import { Refresh } from "@styled-icons/remix-line/Refresh"
 
 import {
   Pane,
   PopperHover,
   PaneTitle,
   SecondaryButton,
-  spinCss,
+  spinAnimation,
   Text,
   Tooltip,
 } from "components"
-import { theme } from "theme"
 import { color, QuestDB, QuestDBTable } from "utils"
 
 import Table from "./Table"
@@ -26,7 +25,7 @@ const Title = styled(PaneTitle)`
 `
 
 const Wrapper = styled(Pane)`
-  font-family: ${theme.fontMonospace};
+  font-family: ${({ theme }) => theme.fontMonospace};
 `
 
 const DatabaseIcon = styled(Database)`
@@ -37,7 +36,7 @@ const Loader = styled(Loader3)`
   margin-left: 1rem;
   align-self: center;
   color: ${color("draculaForeground")};
-  ${spinCss};
+  ${spinAnimation};
 `
 
 const FlexSpacer = styled.div`
@@ -59,18 +58,18 @@ const Schema = () => {
       from(quest.showTables()).pipe(startWith(null)),
       of(true).pipe(delay(1000), startWith(false)),
     ).subscribe(([response, loading]) => {
-      if (response) {
+      if (response && !response.error) {
         setTables(response.data)
         setLoading(false)
       } else {
         setLoading(loading)
       }
     })
-  }, [])
+  }, [quest])
 
   useEffect(() => {
     void fetchTables()
-  }, [])
+  }, [fetchTables])
 
   return (
     <>

@@ -20,6 +20,8 @@ export type ColorShape = {
 }
 
 export type FontSizeShape = {
+  ms: string
+  xs: string
   sm: string
   md: string
   lg: string
