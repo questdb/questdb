@@ -41,6 +41,7 @@ import java.util.ArrayDeque;
 class SqlOptimiser {
 
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
+    private static final int[] joinsRequiringTimestamp = {QueryModel.JOIN_ASOF, QueryModel.JOIN_SPLICE, QueryModel.JOIN_LT};
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_OR = 3;
@@ -609,7 +610,7 @@ class SqlOptimiser {
         JoinContext jc;
         for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel m = models.getQuick(i);
-            if (m.getJoinType() == QueryModel.JOIN_ASOF || m.getJoinType() == QueryModel.JOIN_SPLICE || m.getJoinType() == QueryModel.JOIN_LT) {
+            if (requiresTimestamp(m.getJoinType())) {
                 linkDependencies(parent, 0, i);
                 if (m.getContext() == null) {
                     m.setContext(jc = contextPool.next());
@@ -618,6 +619,15 @@ class SqlOptimiser {
                 }
             }
         }
+    }
+
+    private boolean requiresTimestamp(int joinType) {
+        for (int i = 0; i < joinsRequiringTimestamp.length; i++) {
+            if (joinType == joinsRequiringTimestamp[i]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // order hash is used to determine redundant order when parsing analytic function definition

@@ -54,6 +54,8 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class SqlCodeGenerator implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -68,6 +70,7 @@ public class SqlCodeGenerator implements Mutable {
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjList<CharSequence> symbolValueList = new ObjList<>();
+    private final static int[] joinsRequiringTimestamp = {QueryModel.JOIN_LT, QueryModel.JOIN_CROSS, QueryModel.JOIN_ASOF};
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -635,7 +638,7 @@ public class SqlCodeGenerator implements Mutable {
                                         slaveMetadata,
                                         slaveModel.getName(),
                                         slaveModel.getJoinKeywordPosition(),
-                                        SqlCodeGenerator::createFullFatAsOfJoin
+                                        CREATE_FULL_FAT_AS_OF_JOIN
                                 );
                             }
                             masterAlias = null;
@@ -680,7 +683,7 @@ public class SqlCodeGenerator implements Mutable {
                                         slaveMetadata,
                                         slaveModel.getName(),
                                         slaveModel.getJoinKeywordPosition(),
-                                        SqlCodeGenerator::createFullFatLtJoin
+                                        CREATE_FULL_FAT_LT_JOIN
                                 );
                             }
                             masterAlias = null;
@@ -1679,7 +1682,7 @@ public class SqlCodeGenerator implements Mutable {
                 throw e;
             }
 
-            boolean requiresTimestamp = model.getJoinType() == QueryModel.JOIN_ASOF || model.getJoinType() == QueryModel.JOIN_CROSS || model.getJoinType() == QueryModel.JOIN_LT;
+            boolean requiresTimestamp = requiresTimestamp(model.getJoinType());
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
             try {
@@ -2023,6 +2026,15 @@ public class SqlCodeGenerator implements Mutable {
                     null
             );
         }
+    }
+
+    private boolean requiresTimestamp(int joinType) {
+        for (int i = 0; i < joinsRequiringTimestamp.length; i++) {
+            if (joinType == joinsRequiringTimestamp[i]) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
