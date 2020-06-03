@@ -159,7 +159,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
-    return (jboolean) (recv((int) fd, &c, 1, 0) < 1);
+    int flags = MSG_PEEK;
+    return (jboolean) (recv((int) fd, &c, 1, flags) < 0);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
