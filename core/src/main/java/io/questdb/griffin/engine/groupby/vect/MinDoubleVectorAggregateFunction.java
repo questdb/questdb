@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
@@ -37,13 +38,11 @@ import java.util.function.DoubleBinaryOperator;
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;
-    private int valueOffset;
-
     private final DoubleAccumulator min = new DoubleAccumulator(
             MIN, Double.POSITIVE_INFINITY
     );
-
     private final int columnIndex;
+    private int valueOffset;
 
     public MinDoubleVectorAggregateFunction(int position, int columnIndex) {
         super(position);
@@ -83,6 +82,11 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MAX_VALUE);
     }
 
     @Override

@@ -26,20 +26,13 @@ Java_io_questdb_std_Rosti_keyedIntSumDouble(JNIEnv *env, jclass cl, jlong pRosti
         auto dest = map->slots_ + (res.first << shift);
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(dest) = v;
-            if (d == d) {
-                *reinterpret_cast<jdouble *>(dest + value_offset) = d;
-                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
-            }
-        } else if (d == d) {
-            *reinterpret_cast<jdouble *>(dest + value_offset) += d;
-            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
+            *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
+        } else {
+            *reinterpret_cast<jdouble *>(dest + value_offset) += std::isnan(d) ? 0 : d;
+            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
         }
     }
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Rosti_getOffset(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset) {
-    return (reinterpret_cast<rosti_t *>(pRosti))->value_offsets_[valueOffset];
 }
 
 JNIEXPORT void JNICALL
@@ -59,7 +52,7 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleMerge(JNIEnv *env, jclass cl, jlong p
         if (c > -1) {
             auto src = slots + (i << shift);
             auto key = *reinterpret_cast<int32_t *>(src);
-            auto value = *reinterpret_cast<jdouble *>(src + value_offset);
+            auto d = *reinterpret_cast<jdouble *>(src + value_offset);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find_or_prepare_insert(map_a, key);
@@ -67,12 +60,10 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleMerge(JNIEnv *env, jclass cl, jlong p
             auto dest = map_a->slots_ + (res.first << shift);
             if (PREDICT_FALSE(res.second)) {
                 *reinterpret_cast<int32_t *>(dest) = key;
-                if (value == value) {
-                    *reinterpret_cast<jdouble *>(dest + value_offset) = value;
-                    *reinterpret_cast<jlong *>(dest + count_offset) = count;
-                }
-            } else if (value == value) {
-                *reinterpret_cast<jdouble *>(dest + value_offset) += value;
+                *reinterpret_cast<jdouble *>(dest + value_offset) = d;
+                *reinterpret_cast<jlong *>(dest + count_offset) = count;
+            } else {
+                *reinterpret_cast<jdouble *>(dest + value_offset) += std::isnan(d) ? 0 : d;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             }
         }
@@ -88,7 +79,7 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleSetNull(JNIEnv *env, jclass cl, jlong
     const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
-    const jdouble nan = std::numeric_limits<jdouble>::quiet_NaN();
+    constexpr jdouble nan = std::numeric_limits<jdouble>::quiet_NaN();
 
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
@@ -102,8 +93,8 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleSetNull(JNIEnv *env, jclass cl, jlong
     }
 }
 
-#define D_MAX std::numeric_limits<jdouble>::max()
-#define D_MIN std::numeric_limits<jdouble>::min()
+#define D_MAX std::numeric_limits<jdouble>::infinity()
+constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
 
 // MIN double
 
@@ -117,7 +108,6 @@ Java_io_questdb_std_Rosti_keyedIntMinDouble(JNIEnv *env, jclass cl, jlong pRosti
     const auto *pd = reinterpret_cast<jdouble *>(pDouble);
     const auto shift = map->slot_size_shift_;
     const auto value_offset = map->value_offsets_[valueOffset];
-    printf("value_offset=")
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pi + 16, _MM_HINT_T0);
         _mm_prefetch(pd + 8, _MM_HINT_T0);
@@ -129,6 +119,7 @@ Java_io_questdb_std_Rosti_keyedIntMinDouble(JNIEnv *env, jclass cl, jlong pRosti
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(pKey) = v;
             *reinterpret_cast<jdouble *>(pVal) = isnan(d) ? D_MAX : d;
+
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
             *reinterpret_cast<jdouble *>(pVal) = std::min((isnan(d) ? D_MAX : d), old);

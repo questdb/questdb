@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.Arrays;
@@ -78,6 +79,12 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.DOUBLE);
         types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
     }
 
     @Override

@@ -77,6 +77,7 @@ struct rosti_t {
     size_t slot_size_shift_ = 0;
     size_t growth_left_ = 0;
     int32_t *value_offsets_ = nullptr;
+    unsigned char *slot_initial_values_ = nullptr; // contains pointer to memory arena
 };
 
 #define ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSE2 true
@@ -160,11 +161,6 @@ static inline int32_t ceil_pow_2(int32_t v) {
 // We use 7/8th as maximum load factor.
 // For 16-wide groups, that gives an average of two empty slots per group.
 inline size_t CapacityToGrowth(size_t capacity) {
-    // `capacity*7/8`
-    if (sizeof(Group) == 8 && capacity == 7) {
-        // x-x/8 does not work when x==7.
-        return 6;
-    }
     return capacity - capacity / 8;
 }
 

@@ -42,6 +42,10 @@ public interface VectorAggregateFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    default void initRosti(long pRosti) {
+        throw new UnsupportedOperationException();
+    }
+
     int getColumnIndex();
 
     default void merge(long pRostiA, long pRostiB) {

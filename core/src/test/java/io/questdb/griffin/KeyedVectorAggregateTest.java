@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import org.junit.Test;
 
 public class KeyedVectorAggregateTest extends AbstractGriffinTest {
@@ -41,6 +42,10 @@ public class KeyedVectorAggregateTest extends AbstractGriffinTest {
         columnType.add(ColumnType.DOUBLE);
         long pRosti = Rosti.alloc(columnType, 2047);
         long pRosti2 = Rosti.alloc(columnType, 2047);
+
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, 1), Double.MIN_VALUE);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, 2), Double.MAX_VALUE);
+
         compiler.compile("create table x as (select abs(rnd_int()) % 8 sym, rnd_double(2) val from long_sequence(100))", sqlExecutionContext);
         CompiledQuery cc = compiler.compile("x", sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -56,27 +61,27 @@ public class KeyedVectorAggregateTest extends AbstractGriffinTest {
         System.out.println(System.nanoTime() - t);
         pfc.close();
 
-        pfc = factory.getPageFrameCursor(sqlExecutionContext);
-        t = System.nanoTime();
-        while ((frame = pfc.next()) != null) {
-            long symPageAddress = frame.getPageAddress(0);
-            long valPageAddress = frame.getPageAddress(1);
-            Rosti.keyedIntMinDouble(pRosti2, symPageAddress, valPageAddress, frame.getPageValueCount(0), 1);
-            Rosti.keyedIntMinDouble(pRosti2, symPageAddress, valPageAddress, frame.getPageValueCount(0), 2);
-        }
-        System.out.println(System.nanoTime() - t);
-        pfc.close();
+//        pfc = factory.getPageFrameCursor(sqlExecutionContext);
+//        t = System.nanoTime();
+//        while ((frame = pfc.next()) != null) {
+//            long symPageAddress = frame.getPageAddress(0);
+//            long valPageAddress = frame.getPageAddress(1);
+//            Rosti.keyedIntMinDouble(pRosti2, symPageAddress, valPageAddress, frame.getPageValueCount(0), 1);
+//            Rosti.keyedIntMinDouble(pRosti2, symPageAddress, valPageAddress, frame.getPageValueCount(0), 2);
+//        }
+//        System.out.println(System.nanoTime() - t);
+//        pfc.close();
 
         factory.close();
 
         Rosti.printRosti(pRosti);
         System.out.println("----------------------------");
-        Rosti.printRosti(pRosti2);
+//        Rosti.printRosti(pRosti2);
 
 //        Rosti.keyedIntMinDoubleMerge(pRosti, pRosti2, 1);
-        Rosti.keyedIntMinDoubleMerge(pRosti, pRosti2, 2);
-        System.out.println("++++++++++++++++++++++");
-        Rosti.printRosti(pRosti);
+//        Rosti.keyedIntMinDoubleMerge(pRosti, pRosti2, 2);
+//        System.out.println("++++++++++++++++++++++");
+//        Rosti.printRosti(pRosti);
 
         Rosti.free(pRosti);
         Rosti.free(pRosti2);

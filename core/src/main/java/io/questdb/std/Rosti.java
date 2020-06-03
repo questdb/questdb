@@ -80,8 +80,6 @@ public final class Rosti {
 
     public static native void keyedIntMaxDoubleSetNull(long pRosti, int valueOffset);
 
-    public static native long getOffset(long pRosti, int valueOffset);
-
     public static long getCtrl(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti);
     }
@@ -102,6 +100,10 @@ public final class Rosti {
         return Unsafe.getUnsafe().getLong(pRosti + 7 * Long.BYTES);
     }
 
+    public static long getInitialValuesSlot(long pRosti) {
+        return Unsafe.getUnsafe().getLong(pRosti + 8 * Long.BYTES);
+    }
+
     public static void printRosti(long pRosti) {
         final long slots = getSlots(pRosti);
         final long shift = getSlotShift(pRosti);
@@ -120,5 +122,9 @@ public final class Rosti {
             }
             ctrl++;
         }
+    }
+
+    public static long getInitialValueSlot(long pRosti, int columnIndex) {
+        return getInitialValuesSlot(pRosti) + Unsafe.getUnsafe().getInt(getValueOffsets(pRosti) + columnIndex * Integer.BYTES);
     }
 }

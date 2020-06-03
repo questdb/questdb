@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
@@ -58,6 +59,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
                 max.accumulate(value);
             }
         }
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MIN_VALUE);
     }
 
     @Override

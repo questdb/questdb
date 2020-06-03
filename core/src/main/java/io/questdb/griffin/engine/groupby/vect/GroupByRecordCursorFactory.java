@@ -75,10 +75,20 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         this.metadata = metadata;
         // first column is INT or SYMBOL
         this.pRosti = new long[workerCount];
+        this.vafList = new ObjList<>(vafList.size());
         for (int i = 0; i < workerCount; i++) {
             pRosti[i] = Rosti.alloc(columnTypes, 2047);
+
+            // configure map with default values
+            // when our execution order is sum(x) then min(y) over the same map
+            // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
+            // for aggregation function to continue, such slots have to be initialized to the
+            // appropriate value for the function.
+            for (int j = 0, n = vafList.size(); j < n; j++) {
+                vafList.getQuick(j).initRosti(pRosti[i]);
+            }
         }
-        this.vafList = vafList;
+        this.vafList.addAll(vafList);
         this.keyColumnIndex = keyColumnIndex;
         if (symbolTableSkewIndex.size() > 0) {
             final IntList skew = new IntList(symbolTableSkewIndex.size());

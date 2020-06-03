@@ -57,7 +57,8 @@ Java_io_questdb_std_Rosti_alloc(JNIEnv *env, jclass cl, jlong pKeyTypes, jint ke
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Rosti_free0(JNIEnv *env, jclass cl, jlong pRosti) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
-    free(map->ctrl_);
+    // initial values contains main arena pointer
+    free(map->slot_initial_values_);
     free(map->value_offsets_);
     free(map);
 }
@@ -79,9 +80,12 @@ inline void reset_ctrl(rosti_t *map) {
 void initialize_slots(rosti_t *map) {
     const size_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
     auto *mem = reinterpret_cast<unsigned char *>(malloc(
-            ctrl_capacity + map->slot_size_ * (map->capacity_ + 1)));
-    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem);
+            map->slot_size_ +
+            ctrl_capacity +
+            map->slot_size_ * (map->capacity_ + 1)));
+    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem) + map->slot_size_;
     map->slots_ = mem + ctrl_capacity;
+    map->slot_initial_values_ = mem;
     reset_ctrl(map);
     reset_growth_left(map);
 }
@@ -136,6 +140,7 @@ FindInfo find_first_non_full(rosti_t *map, size_t hash) {
 }
 
 void resize(rosti_t *map, size_t new_capacity) {
+    auto *old_init = map->slot_initial_values_;
     auto *old_ctrl = map->ctrl_;
     auto *old_slots = map->slots_;
     const size_t old_capacity = map->capacity_;
@@ -155,7 +160,7 @@ void resize(rosti_t *map, size_t new_capacity) {
         }
     }
     if (old_capacity) {
-        free(old_ctrl);
+        free(old_init);
     }
 }
 
@@ -172,5 +177,8 @@ __declspec(noinline) size_t prepare_insert(rosti_t *map, size_t hash) {
     ++map->size_;
     map->growth_left_ -= IsEmpty(map->ctrl_[target.offset]);
     set_ctrl(map, target.offset, H2(hash));
+
+    // initialize slot
+    memcpy(map->slots_ + (target.offset << map->slot_size_shift_), map->slot_initial_values_, map->slot_size_);
     return target.offset;
 }
