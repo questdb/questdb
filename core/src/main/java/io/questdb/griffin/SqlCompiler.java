@@ -1106,6 +1106,7 @@ public class SqlCompiler implements Closeable {
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
+                LOG.info().$("compiled ").$((QueryModel) executionModel).$(" [fd=").$(executionContext.getRequestFd()).$(']').$();
                 return compiledQuery.of(generate((QueryModel) executionModel, executionContext));
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);

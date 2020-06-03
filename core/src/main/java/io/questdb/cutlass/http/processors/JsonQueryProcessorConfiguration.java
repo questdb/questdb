@@ -40,4 +40,6 @@ public interface JsonQueryProcessorConfiguration {
     int getDoubleScale();
 
     CharSequence getKeepAliveHeader();
+
+    long getMaxQueryResponseRowLimit();
 }

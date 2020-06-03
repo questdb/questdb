@@ -99,6 +99,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
+            sqlExecutionContext.setRequestFd(context.getFd());
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -179,7 +180,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         // copy random during query resume
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd);
-
+        sqlExecutionContext.setRequestFd(context.getFd());
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -361,6 +362,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             skip = 0;
         }
 
+        if ((stop - skip) > configuration.getMaxQueryResponseRowLimit()) {
+            stop = skip + configuration.getMaxQueryResponseRowLimit();
+        }
+
         state.query.clear();
         try {
             TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
@@ -447,7 +452,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void readyForNextRequest(HttpConnectionContext context) {
-        LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
         context.clear();
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }

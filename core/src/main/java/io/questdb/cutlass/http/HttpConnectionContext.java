@@ -25,11 +25,17 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectPool;
@@ -57,6 +63,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
+    private int nCompletedRequests;
+    private long totalBytesSent;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -78,6 +86,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void clear() {
         LOG.debug().$("clear").$();
+        totalBytesSent += responseSink.getTotalBytesSent();
+        nCompletedRequests++;
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -89,6 +99,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
+        nCompletedRequests = 0;
+        totalBytesSent = 0;
         csPool.clear();
         multipartContentParser.close();
         multipartContentHeaderParser.close();
@@ -379,4 +391,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             dispatcher.disconnect(this);
         }
     }
+
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
+    }
+
+    public long getTotalBytesSent() {
+        return totalBytesSent;
+    }
+
+    public long getLastRequestBytesSent() {
+        return responseSink.getTotalBytesSent();
+    }
+
 }

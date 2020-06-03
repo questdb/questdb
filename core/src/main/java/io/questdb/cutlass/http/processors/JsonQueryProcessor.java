@@ -108,6 +108,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         // do not set random for new request to avoid copying random from previous request into next one
         // the only time we need to copy random from state is when we resume request execution
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
+        sqlExecutionContext.setRequestFd(context.getFd());
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
@@ -171,6 +172,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd());
+            sqlExecutionContext.setRequestFd(context.getFd());
             doResumeSend(state, context);
         }
     }
@@ -264,7 +266,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
         context.clear();
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
@@ -403,6 +406,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
         if (skip < 0) {
             skip = 0;
+        }
+
+        if ((stop - skip) > configuration.getMaxQueryResponseRowLimit()) {
+            stop = skip + configuration.getMaxQueryResponseRowLimit();
         }
 
         try {

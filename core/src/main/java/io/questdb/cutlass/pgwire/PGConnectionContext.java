@@ -218,6 +218,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void close() {
         clear();
         this.fd = -1;
+        sqlExecutionContext.setRequestFd(-1);
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
@@ -327,6 +328,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
         this.fd = clientFd;
+        sqlExecutionContext.setRequestFd(clientFd);
         this.dispatcher = dispatcher;
         clear();
         return this;
