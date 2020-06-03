@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react"
+import { useSelector } from "react-redux"
 import styled from "styled-components"
 import { Code } from "@styled-icons/entypo/Code"
 import { Upload } from "@styled-icons/entypo/Upload"
 
 import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
+import { selectors } from "store"
 import { color } from "utils"
 
 const Wrapper = styled.div`
@@ -38,6 +40,16 @@ const Navigation = styled(PrimaryToggleButton)<NavigationProps>`
   justify-content: center;
 `
 
+const DisabledNavigation = styled.div`
+  display: flex;
+  position: relative;
+  height: 100%;
+  width: 100%;
+  flex: 0 0 5rem;
+  align-items: center;
+  justify-content: center;
+`
+
 type Tab = "console" | "import"
 
 const Sidebar = () => {
@@ -48,6 +60,7 @@ const Sidebar = () => {
   const handleImportClick = useCallback(() => {
     setSelected("import")
   }, [])
+  const { readOnly } = useSelector(selectors.console.getConfiguration)
 
   useEffect(() => {
     const consolePanel = document.querySelector<HTMLElement>(".js-sql-panel")
@@ -91,19 +104,43 @@ const Sidebar = () => {
       </PopperHover>
 
       <PopperHover
-        delay={350}
+        delay={readOnly ? 0 : 350}
         placement="right"
         trigger={
-          <Navigation
-            direction="left"
-            onClick={handleImportClick}
-            selected={selected === "import"}
-          >
-            <Upload size="16px" />
-          </Navigation>
+          readOnly ? (
+            <DisabledNavigation>
+              <Navigation
+                direction="left"
+                disabled
+                onClick={handleImportClick}
+                selected={selected === "import"}
+              >
+                <Upload size="16px" />
+              </Navigation>
+            </DisabledNavigation>
+          ) : (
+            <Navigation
+              direction="left"
+              onClick={handleImportClick}
+              selected={selected === "import"}
+            >
+              <Upload size="16px" />
+            </Navigation>
+          )
         }
       >
-        <Tooltip>Import</Tooltip>
+        <Tooltip>
+          {readOnly ? (
+            <>
+              <b>Import</b> is currently disabled.
+              <br />
+              To use this feature, turn <b>read-only</b> mode to <i>false</i> in
+              the configuration file
+            </>
+          ) : (
+            <>Import</>
+          )}
+        </Tooltip>
       </PopperHover>
     </Wrapper>
   )

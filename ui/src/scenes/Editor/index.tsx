@@ -20,12 +20,26 @@ import { BusEvent } from "utils"
 
 import QueryPicker from "./QueryPicker"
 
+const Title = styled(PaneTitle)`
+  .algolia-autocomplete {
+    flex: 0 1 168px;
+  }
+`
+
 const Separator = styled.div`
   flex: 1;
 `
 
 const DocsearchInput = styled(Input)`
-  width: 180px;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+const QueryPickerButton = styled(SecondaryButton)`
+  margin: 0 1rem;
+  flex: 0 0 auto;
 `
 
 const Editor = () => {
@@ -80,7 +94,7 @@ const Editor = () => {
   }, [])
 
   return (
-    <PaneTitle>
+    <Title>
       {running && (
         <ErrorButton onClick={handleClick}>
           <ControllerStop size="18px" />
@@ -101,10 +115,10 @@ const Editor = () => {
           active={popperActive}
           onToggle={handleToggle}
           trigger={
-            <SecondaryButton onClick={handleClick}>
+            <QueryPickerButton onClick={handleClick}>
               <Plus size="18px" />
               <span>Saved queries</span>
-            </SecondaryButton>
+            </QueryPickerButton>
           }
         >
           <QueryPicker hidePicker={handleHidePicker} queries={savedQueries} />
@@ -115,10 +129,10 @@ const Editor = () => {
 
       <DocsearchInput
         id="docsearch-input"
-        placeholder="Search documentation..."
+        placeholder="Search documentation"
         title="Search..."
       />
-    </PaneTitle>
+    </Title>
   )
 }
 
