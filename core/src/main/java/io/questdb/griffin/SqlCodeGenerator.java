@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -141,15 +142,15 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     @NotNull
-    private RecordCursorFactory createFullFatAsOfJoin(
+    private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
             RecordMetadata masterMetadata,
             CharSequence masterAlias,
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
-            int joinPosition
-    ) throws SqlException {
+            int joinPosition,
+            FullFatJoinGenerator generator) throws SqlException {
 
         // create hash set of key columns to easily find them
         intHashSet.clear();
@@ -245,7 +246,7 @@ public class SqlCodeGenerator implements Mutable {
             metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
         }
 
-        master = new AsOfJoinRecordCursorFactory(
+        return generator.create(
                 configuration,
                 metadata,
                 master,
@@ -264,133 +265,6 @@ public class SqlCodeGenerator implements Mutable {
                 RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
                 columnIndex
         );
-        return master;
-    }
-
-    @NotNull
-    private RecordCursorFactory createFullFatLtJoin(
-            RecordCursorFactory master,
-            RecordMetadata masterMetadata,
-            CharSequence masterAlias,
-            RecordCursorFactory slave,
-            RecordMetadata slaveMetadata,
-            CharSequence slaveAlias,
-            int joinPosition) throws SqlException {
-
-        // create hash set of key columns to easily find them
-        intHashSet.clear();
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            intHashSet.add(listColumnFilterA.getColumnIndex(i));
-        }
-
-
-        // map doesn't support variable length types in map value, which is ok
-        // when we join tables on strings - technically string is the key
-        // and we do not need to store it in value, but we will still reject
-        //
-        // never mind, this is a stop-gap measure until I understand the problem
-        // fully
-
-        for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
-            if (intHashSet.excludes(k)) {
-                int type = slaveMetadata.getColumnType(k);
-                if (type == ColumnType.STRING || type == ColumnType.BINARY) {
-                    throw SqlException
-                            .position(joinPosition).put("right side column '")
-                            .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
-                }
-            }
-        }
-
-        RecordSink masterSink = RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilterB,
-                true
-        );
-
-        JoinRecordMetadata metadata = new JoinRecordMetadata(
-                configuration,
-                masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
-        );
-
-        // metadata will have master record verbatim
-        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
-
-        // slave record is split across key and value of map
-        // the rationale is not to store columns twice
-        // especially when map value does not support variable
-        // length types
-
-
-        final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
-        // In map record value columns go first, so at this stage
-        // we add to metadata all slave columns that are not keys.
-        // Add same columns to filter while we are in this loop.
-        listColumnFilterB.clear();
-        valueTypes.reset();
-        ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
-        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            if (intHashSet.excludes(i)) {
-                int type = slaveMetadata.getColumnType(i);
-                metadata.add(
-                        slaveAlias,
-                        slaveMetadata.getColumnName(i),
-                        type,
-                        slaveMetadata.isColumnIndexed(i),
-                        slaveMetadata.getIndexValueBlockCapacity(i),
-                        slaveMetadata.isSymbolTableStatic(i)
-                );
-                listColumnFilterB.add(i);
-                columnIndex.add(i);
-                valueTypes.add(type);
-                slaveTypes.add(type);
-            }
-        }
-
-        // now add key columns to metadata
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int index = listColumnFilterA.getColumnIndex(i);
-            int type = slaveMetadata.getColumnType(index);
-            if (type == ColumnType.SYMBOL) {
-                type = ColumnType.STRING;
-            }
-            metadata.add(
-                    slaveAlias,
-                    slaveMetadata.getColumnName(index),
-                    type,
-                    slaveMetadata.isColumnIndexed(i),
-                    slaveMetadata.getIndexValueBlockCapacity(i),
-                    slaveMetadata.isSymbolTableStatic(i)
-            );
-            columnIndex.add(index);
-            slaveTypes.add(type);
-        }
-
-        if (masterMetadata.getTimestampIndex() != -1) {
-            metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
-        }
-
-        master = new LtJoinRecordCursorFactory(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                slaveTypes,
-                masterSink,
-                RecordSinkFactory.getInstance(
-                        asm,
-                        slaveMetadata,
-                        listColumnFilterA,
-                        true
-                ),
-                masterMetadata.getColumnCount(),
-                RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
-                columnIndex
-        );
-        return master;
     }
 
 
@@ -753,14 +627,15 @@ public class SqlCodeGenerator implements Mutable {
                                     );
                                 }
                             } else {
-                                master = createFullFatAsOfJoin(
+                                master = createFullFatJoin(
                                         master,
                                         masterMetadata,
                                         masterAlias,
                                         slave,
                                         slaveMetadata,
                                         slaveModel.getName(),
-                                        slaveModel.getJoinKeywordPosition()
+                                        slaveModel.getJoinKeywordPosition(),
+                                        SqlCodeGenerator::createFullFatAsOfJoin
                                 );
                             }
                             masterAlias = null;
@@ -797,14 +672,15 @@ public class SqlCodeGenerator implements Mutable {
                                     );
                                 }
                             } else {
-                                master = createFullFatLtJoin(
+                                master = createFullFatJoin(
                                         master,
                                         masterMetadata,
                                         masterAlias,
                                         slave,
                                         slaveMetadata,
                                         slaveModel.getName(),
-                                        slaveModel.getJoinKeywordPosition()
+                                        slaveModel.getJoinKeywordPosition(),
+                                        SqlCodeGenerator::createFullFatLtJoin
                                 );
                             }
                             masterAlias = null;
@@ -2318,5 +2194,51 @@ public class SqlCodeGenerator implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    @FunctionalInterface
+    public interface FullFatJoinGenerator {
+        RecordCursorFactory create(CairoConfiguration configuration,
+                                   RecordMetadata metadata,
+                                   RecordCursorFactory masterFactory,
+                                   RecordCursorFactory slaveFactory,
+                                   @Transient ColumnTypes mapKeyTypes,
+                                   @Transient ColumnTypes mapValueTypes,
+                                   @Transient ColumnTypes slaveColumnTypes,
+                                   RecordSink masterKeySink,
+                                   RecordSink slaveKeySink,
+                                   int columnSplit,
+                                   RecordValueSink slaveValueSink,
+                                   IntList columnIndex);
+    }
+
+    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
+                                                             RecordMetadata metadata,
+                                                             RecordCursorFactory masterFactory,
+                                                             RecordCursorFactory slaveFactory,
+                                                             @Transient ColumnTypes mapKeyTypes,
+                                                             @Transient ColumnTypes mapValueTypes,
+                                                             @Transient ColumnTypes slaveColumnTypes,
+                                                             RecordSink masterKeySink,
+                                                             RecordSink slaveKeySink,
+                                                             int columnSplit,
+                                                             RecordValueSink slaveValueSink,
+                                                             IntList columnIndex) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+    }
+
+    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
+                                                           RecordMetadata metadata,
+                                                           RecordCursorFactory masterFactory,
+                                                           RecordCursorFactory slaveFactory,
+                                                           @Transient ColumnTypes mapKeyTypes,
+                                                           @Transient ColumnTypes mapValueTypes,
+                                                           @Transient ColumnTypes slaveColumnTypes,
+                                                           RecordSink masterKeySink,
+                                                           RecordSink slaveKeySink,
+                                                           int columnSplit,
+                                                           RecordValueSink slaveValueSink,
+                                                           IntList columnIndex) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 }
