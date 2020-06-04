@@ -31,12 +31,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatUtils;
 
 import java.io.Closeable;
 
@@ -63,7 +60,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
-    private final TimestampFormatFactory timestampFormatFactory;
+    private final DateToTimestampAdapter dateToTimestampAdapter = new DateToTimestampAdapter();
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -76,7 +73,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.path = path;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = typeManager;
-        this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
     }
 
     @Override
@@ -261,7 +257,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                         break;
                     case ColumnType.TIMESTAMP:
                         if (detectedType == ColumnType.DATE) {
-                            this.types.setQuick(i, typeManager.nextTimestampAdapter(false, timestampFormatFactory.get(DateFormatUtils.UTC_PATTERN), engine.getConfiguration().getTextConfiguration().getDefaultTimestampLocale()));
+                            this.types.setQuick(i, dateToTimestampAdapter.of((DateAdapter) this.types.getQuick(i)));
                         } else {
                             logTypeError(i);
                             this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
