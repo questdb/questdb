@@ -1,4 +1,4 @@
-import React, { ReactNode } from "react"
+import { ReactNode } from "react"
 import styled from "styled-components"
 
 import { color } from "utils"
@@ -8,15 +8,10 @@ type Props = Readonly<{
   className?: string
 }>
 
-const Wrapper = styled.div`
+export const PaneContent = styled.div<Props>`
   display: flex;
   flex-direction: column;
   flex: 1;
-  justify-content: space-around;
   background: ${color("draculaBackground")};
   overflow: auto;
 `
-
-export const Pane = ({ children, className }: Props) => (
-  <Wrapper className={className}>{children}</Wrapper>
-)

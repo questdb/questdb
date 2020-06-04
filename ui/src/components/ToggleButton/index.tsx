@@ -6,7 +6,7 @@ import type { Color } from "types"
 import { color } from "utils"
 
 import { ButtonProps, getButtonSize, PrimaryButton } from "../Button"
-import { buttonTransition } from "../Transition"
+import { bezierTransition } from "../Transition"
 
 const defaultProps: ButtonProps &
   Readonly<{
@@ -36,7 +36,7 @@ const baseCss = css<Props>`
   outline: 0;
   line-height: 1.15;
   opacity: ${({ selected }) => (selected ? "1" : "0.5")};
-  ${buttonTransition};
+  ${bezierTransition};
 `
 
 const getTheme = (normal: ThemeShape, hover: ThemeShape) =>

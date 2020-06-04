@@ -5,8 +5,6 @@ import * as qdb from "./globals"
 
 const divSqlPanel = $(".js-sql-panel")
 const divExportUrl = $(".js-export-url")
-const sqlEditor = $("#sqlEditor")
-const consoleTop = $(".console-wrapper")
 const win = $(window)
 const grid = $("#grid")
 const quickVis = $("#quick-vis")
@@ -14,12 +12,9 @@ const toggleChartBtn = $("#js-toggle-chart")
 const toggleGridBtn = $("#js-toggle-grid")
 
 let topHeight = 350
-let visible = false
 
 function resize() {
-  if (visible) {
-    consoleTop.css("flex-basis", topHeight)
-  }
+  $("#editor").css("flex-basis", topHeight)
 }
 
 function loadSplitterPosition() {
@@ -92,14 +87,10 @@ export function setupConsoleController(bus) {
   bus.on("preferences.load", loadSplitterPosition)
   bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility)
 
-  bus.query()
-  bus.domController()
-
-  sqlEditor.editor(bus)
   grid.grid(bus)
   quickVis.quickVis(bus)
 
-  $("#console-splitter").splitter(bus, "console", 200, 0)
+  $("#console-splitter").splitter(bus, "console", 200, 200)
 
   // wire query publish
   toggleChartBtn.click(toggleChart)

@@ -5,12 +5,16 @@ import { delay, startWith } from "rxjs/operators"
 import styled from "styled-components"
 import { Loader4 } from "@styled-icons/remix-line/Loader4"
 import { Table as TableIcon } from "@styled-icons/remix-line/Table"
-
-import { spinAnimation, slideTransition, TransitionDuration } from "components"
-import { color, QuestDB, QuestDBColumn, QuestDBTable } from "utils"
+import {
+  collapseTransition,
+  spinAnimation,
+  TransitionDuration,
+} from "components"
+import { color } from "utils"
+import * as QuestDB from "utils/questdb"
 import Row from "../Row"
 
-type Props = QuestDBTable &
+type Props = QuestDB.Table &
   Readonly<{
     expanded: boolean
     description?: string
@@ -26,7 +30,7 @@ const Wrapper = styled.div`
   flex-direction: column;
   overflow: hidden;
 
-  ${slideTransition};
+  ${collapseTransition};
 `
 
 const Title = styled(Row)`
@@ -49,7 +53,7 @@ const Columns = styled.div`
     position: absolute;
     height: 100%;
     width: 2px;
-    left: -1rem;
+    left: -1.2rem;
     top: 0;
     content: "";
     background: ${color("gray1")};
@@ -57,6 +61,8 @@ const Columns = styled.div`
 `
 
 const TitleIcon = styled(TableIcon)`
+  min-height: 18px;
+  min-width: 18px;
   margin-right: 1rem;
   color: ${color("draculaCyan")};
 `
@@ -68,9 +74,9 @@ const Loader = styled(Loader4)`
 `
 
 const Table = ({ description, expanded, onChange, tableName }: Props) => {
-  const [quest] = useState(new QuestDB({ port: BACKEND_PORT }))
+  const [quest] = useState(new QuestDB.Client({ port: BACKEND_PORT }))
   const [loading, setLoading] = useState(false)
-  const [columns, setColumns] = useState<QuestDBColumn[]>()
+  const [columns, setColumns] = useState<QuestDB.Column[]>()
 
   const handleClick = useCallback(() => {
     if (expanded) {
@@ -83,7 +89,7 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
         from(quest.showColumns(tableName)).pipe(startWith(null)),
         of(true).pipe(delay(1000), startWith(false)),
       ).subscribe(([response, loading]) => {
-        if (response && !response.error) {
+        if (response && response.type === QuestDB.Type.DQL) {
           setColumns(response.data)
           setLoading(false)
         } else {
@@ -106,7 +112,7 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
       />
 
       <CSSTransition
-        classNames="slide"
+        classNames="collapse"
         in={expanded}
         timeout={TransitionDuration.REG}
         unmountOnExit

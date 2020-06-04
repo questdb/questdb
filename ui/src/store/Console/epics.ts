@@ -5,13 +5,14 @@ import { actions } from "store"
 import {
   BootstrapAction,
   ConfigurationShape,
+  ConsoleAction,
   ConsoleAT,
   StoreAction,
   StoreShape,
 } from "types"
 import { fromFetch } from "utils"
 
-export const getConfiguration: Epic<StoreAction, StoreAction, StoreShape> = (
+export const getConfiguration: Epic<StoreAction, ConsoleAction, StoreShape> = (
   action$,
 ) =>
   action$.pipe(
@@ -23,7 +24,7 @@ export const getConfiguration: Epic<StoreAction, StoreAction, StoreShape> = (
             return actions.console.setConfiguration(response.data)
           }
         }),
-        filter((a): a is StoreAction => !!a),
+        filter((a): a is ConsoleAction => !!a),
       ),
     ),
   )

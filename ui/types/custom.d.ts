@@ -25,6 +25,34 @@ declare var BACKEND_PORT: number // eslint-disable-line no-var
 
 // eslint-disable-next-line no-var
 declare var bus: {
-  on: (event: string, callback: () => void) => void
-  trigger: (event: string, payload?: string) => void
+  on: (event: string, callback: (event: null, payload: any) => void) => void
+  trigger: (event: string, payload?: any) => void
+}
+
+interface ResizeObserverObserveOptions {
+  box?: "content-box" | "border-box"
+}
+
+type ResizeObserverCallback = (
+  entries: ResizeObserverEntry[],
+  observer: ResizeObserver,
+) => void
+
+interface ResizeObserverEntry {
+  readonly borderBoxSize: ResizeObserverEntryBoxSize
+  readonly contentBoxSize: ResizeObserverEntryBoxSize
+  readonly contentRect: DOMRectReadOnly
+  readonly target: Element
+}
+
+interface ResizeObserverEntryBoxSize {
+  blockSize: number
+  inlineSize: number
+}
+
+declare class ResizeObserver {
+  constructor(callback: ResizeObserverCallback)
+  disconnect: () => void
+  observe: (target: Element, options?: ResizeObserverObserveOptions) => void
+  unobserve: (target: Element) => void
 }

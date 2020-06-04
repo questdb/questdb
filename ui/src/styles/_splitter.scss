@@ -22,28 +22,34 @@
  *
  ******************************************************************************/
 
-.splitter, .qs-ghost {
+.splitter,
+.qs-ghost {
   cursor: row-resize;
 }
 
 .splitter {
+  display: flex;
   width: 100%;
-  flex: 0 0 6px;
-  margin: 3px 0;
-  border: none;
-  background: #585858;
+  height: 8px;
+  max-height: 8px;
+  flex: 0 0 8px;
+  align-items: center;
+  justify-content: center;
+  background: #21222c;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-left: none;
+  border-right: none;
 }
 
-.splitter.qs-dragging {
-  opacity: 0;
+.splitter svg {
+  transform: rotate(90deg);
 }
 
 .splitter:hover {
-  background: #6a6a6a;
+  background: #44475a;
 }
 
 .qs-ghost {
-  background: #6a6a6a;
-  opacity: 0.4;
-  z-index: 10;
+  background: #bd93f9;
+  z-index: 20;
 }

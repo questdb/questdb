@@ -1,4 +1,4 @@
-import React, { ReactNode } from "react"
+import { ReactNode } from "react"
 import styled from "styled-components"
 
 import { color } from "utils"
@@ -8,7 +8,7 @@ type Props = Readonly<{
   className?: string
 }>
 
-const Wrapper = styled.div`
+export const PaneMenu = styled.div`
   position: relative;
   display: flex;
   height: 41px;
@@ -20,7 +20,3 @@ const Wrapper = styled.div`
   border-top: 1px solid transparent;
   z-index: 5;
 `
-
-export const PaneTitle = ({ children, className }: Props) => (
-  <Wrapper className={className}>{children}</Wrapper>
-)

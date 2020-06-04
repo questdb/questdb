@@ -682,6 +682,7 @@ $.fn.grid = function (msgBus) {
 
   //noinspection JSUnusedLocalSymbols
   function update(x, m) {
+    $(".js-query-refresh .fa").removeClass("fa-spin")
     setTimeout(() => {
       clear()
       query = m.query
