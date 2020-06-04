@@ -153,4 +153,417 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 false
         );
     }
+
+    @Test
+    public void testLtJoin() throws Exception {
+        final String expected = "tag\thi\tlo\tts\tts1\n" +
+                "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
+                "BB\t-727724771\tNaN\t1970-01-03T00:06:00.000000Z\t\n" +
+                "CC\t-948263339\tNaN\t1970-01-03T00:12:00.000000Z\t\n" +
+                "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
+                "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000Z\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
+                "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
+
+        assertQuery(
+                "tag\thi\tlo\tts\tts1\n",
+                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    @Test
+    public void testLtJoinNoTimestamp() throws Exception {
+        final String expected = "tag\thi\tlo\n" +
+                "AA\t315515118\tNaN\n" +
+                "BB\t-727724771\tNaN\n" +
+                "CC\t-948263339\tNaN\n" +
+                "CC\t592859671\t-948263339\n" +
+                "AA\t-847531048\t315515118\n" +
+                "BB\t-2041844972\t-727724771\n" +
+                "BB\t-1575378703\t-2041844972\n" +
+                "BB\t1545253512\t-1575378703\n" +
+                "AA\t1573662097\t-847531048\n" +
+                "AA\t339631474\t1573662097\n";
+
+        assertQuery(
+                "tag\thi\tlo\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    @Test
+    public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
+        final String expected = "tag\thi\tlo\n" +
+                "AA\t315515118\tNaN\n" +
+                "CC\t592859671\t-948263339\n" +
+                "BB\t-1575378703\t-2041844972\n" +
+                "BB\t1545253512\t-1575378703\n" +
+                "AA\t1573662097\t1545253512\n";
+
+        assertQuery(
+                "tag\thi\tlo\n",
+                "select a.tag, a.seq hi, b.seq lo from tab a lt join tab b where a.seq > b.seq + 1",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
+
+    @Test
+    public void testLtJoinSequenceGapOnKey() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            compiler.compile("create table tab as " +
+                    "(" +
+                    "select " +
+                    "rnd_symbol('AA', 'BB') tag," +
+                    " x, " +
+                    " timestamp_sequence(0, 10000) ts" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+            //insert
+            executeInsert("insert into tab values ('CC', 24, 210000)");
+            executeInsert("insert into tab values ('CC', 25, 220000)");
+            String ex = "tag\tx\tts\n" +
+                    "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
+                    "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
+                    "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
+                    "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
+                    "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
+                    "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
+                    "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
+                    "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
+                    "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
+                    "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
+                    "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
+                    "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
+                    "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
+                    "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
+                    "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
+                    "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
+                    "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
+                    "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
+                    "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
+                    "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
+                    "CC\t25\t1970-01-01T00:00:00.220000Z\n";
+            String query = "tab";
+            printSqlResult(ex, query, "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "AA\t1\tNaN\n" +
+                    "BB\t3\tNaN\n" +
+                    "AA\t7\t2\n" +
+                    "BB\t8\t6\n" +
+                    "AA\t9\t7\n" +
+                    "BB\t14\t8\n" +
+                    "AA\t16\t13\n" +
+                    "BB\t18\t15\n" +
+                    "AA\t20\t17\n" +
+                    "CC\t24\tNaN\n";
+            query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+
+    @Test
+    public void testLtJoinSequenceGap() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            compiler.compile("create table tab as " +
+                    "(" +
+                    "select " +
+                    "rnd_symbol('AA', 'BB') tag," +
+                    " x, " +
+                    " timestamp_sequence(0, 10000) ts" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+            //insert
+            executeInsert("insert into tab values ('CC', 24, 210000)");
+            executeInsert("insert into tab values ('CC', 25, 220000)");
+            String ex = "tag\tx\tts\n" +
+                    "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
+                    "BB\t3\t1970-01-01T00:00:00.020000Z\n" +
+                    "BB\t4\t1970-01-01T00:00:00.030000Z\n" +
+                    "BB\t5\t1970-01-01T00:00:00.040000Z\n" +
+                    "BB\t6\t1970-01-01T00:00:00.050000Z\n" +
+                    "AA\t7\t1970-01-01T00:00:00.060000Z\n" +
+                    "BB\t8\t1970-01-01T00:00:00.070000Z\n" +
+                    "AA\t9\t1970-01-01T00:00:00.080000Z\n" +
+                    "AA\t10\t1970-01-01T00:00:00.090000Z\n" +
+                    "AA\t11\t1970-01-01T00:00:00.100000Z\n" +
+                    "AA\t12\t1970-01-01T00:00:00.110000Z\n" +
+                    "AA\t13\t1970-01-01T00:00:00.120000Z\n" +
+                    "BB\t14\t1970-01-01T00:00:00.130000Z\n" +
+                    "BB\t15\t1970-01-01T00:00:00.140000Z\n" +
+                    "AA\t16\t1970-01-01T00:00:00.150000Z\n" +
+                    "AA\t17\t1970-01-01T00:00:00.160000Z\n" +
+                    "BB\t18\t1970-01-01T00:00:00.170000Z\n" +
+                    "BB\t19\t1970-01-01T00:00:00.180000Z\n" +
+                    "AA\t20\t1970-01-01T00:00:00.190000Z\n" +
+                    "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
+                    "CC\t25\t1970-01-01T00:00:00.220000Z\n";
+            String query = "tab";
+            printSqlResult(ex, query, "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "AA\t1\tNaN\n" +
+                    "CC\t24\t20\n";
+            query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinOneTableKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            //tabY
+            compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 30000)");
+            executeInsert("insert into tabY values ('B', 2, 40000)");
+            executeInsert("insert into tabY values ('B', 3, 50000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabY", "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\t1\n" +
+                    "A\t3\t2\n" +
+                    "B\t1\tNaN\n" +
+                    "B\t2\t1\n" +
+                    "B\t3\t2\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinOneTableKeyedV2() throws Exception {
+        assertMemoryLeak(() -> {
+            //tabY
+            compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 40000)");
+            executeInsert("insert into tabY values ('B', 2, 50000)");
+            executeInsert("insert into tabY values ('B', 3, 60000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.050000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.060000Z\n";
+            printSqlResult(ex, "tabY", "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\t1\n" +
+                    "A\t3\t2\n" +
+                    "B\t1\tNaN\n" +
+                    "B\t2\t1\n" +
+                    "B\t3\t2\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+
+    @Test
+    public void testLtJoin2TablesKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            //tabY
+            compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabY values ('A', 1, 10000)");
+            executeInsert("insert into tabY values ('A', 2, 20000)");
+            executeInsert("insert into tabY values ('A', 3, 30000)");
+            executeInsert("insert into tabY values ('B', 1, 30000)");
+            executeInsert("insert into tabY values ('B', 2, 40000)");
+            executeInsert("insert into tabY values ('B', 3, 50000)");
+            //tabZ
+            compiler.compile("create table tabZ (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tabZ values ('B', 1, 10000)");
+            executeInsert("insert into tabZ values ('B', 2, 20000)");
+            executeInsert("insert into tabZ values ('B', 3, 30000)");
+            executeInsert("insert into tabZ values ('A', 3, 30000)");
+            executeInsert("insert into tabZ values ('A', 6, 40000)");
+            executeInsert("insert into tabZ values ('A', 7, 50000)");
+            //check tables
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabY", "ts", null, null, true, true);
+            ex = "tag\tx\tts\n" +
+                    "B\t1\t1970-01-01T00:00:00.010000Z\n" +
+                    "B\t2\t1970-01-01T00:00:00.020000Z\n" +
+                    "B\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000Z\n" +
+                    "A\t6\t1970-01-01T00:00:00.040000Z\n" +
+                    "A\t7\t1970-01-01T00:00:00.050000Z\n";
+            printSqlResult(ex, "tabZ", "ts", null, null, true, true);
+            // test
+            ex = "tag\thi\tlo\n" +
+                    "A\t1\tNaN\n" +
+                    "A\t2\tNaN\n" +
+                    "A\t3\tNaN\n" +
+                    "B\t1\t2\n" +
+                    "B\t2\t3\n" +
+                    "B\t3\t3\n";
+            String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabZ b on (tag) ";
+            printSqlResult(ex, query, null, null, null, false, true);
+        });
+    }
+
+
+    @Test
+    public void testLtJoinFullFat() throws Exception {
+        compiler.setFullSatJoins(true);
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
+
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                    "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:32:00.000000Z\n" +
+                    "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                    "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "6\tibm\t76.11\t0.9540000000000001\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "7\tmsft\t55.992000000000004\t0.545\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                    "8\tibm\t23.905\t0.9540000000000001\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                    "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                    "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (" +
+                            "select cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, "timestamp");
+
+            compiler.compile(
+                    "insert into x select * from (" +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
+                            " from long_sequence(10)" +
+                            ") timestamp(timestamp)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "insert into y select * from (" +
+                            "select" +
+                            " cast(x + 30 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym2," +
+                            " round(rnd_double(0), 3) price," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
+                            " from long_sequence(30)" +
+                            ") timestamp(timestamp)",
+                    sqlExecutionContext
+            );
+
+            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                            "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
+                            "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:32:00.000000Z\n" +
+                            "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                            "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                            "6\tibm\t76.11\t0.427\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:10:00.000000Z\n" +
+                            "7\tmsft\t55.992000000000004\t0.226\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                            "8\tibm\t23.905\t0.029\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                            "9\tgoogl\t67.786\t0.076\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:46:00.000000Z\n" +
+                            "10\tgoogl\t38.54\t0.339\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
+                            "11\tmsft\t68.069\t0.051000000000000004\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "12\tmsft\t24.008\t0.051000000000000004\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "13\tgoogl\t94.559\t0.6900000000000001\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "14\tibm\t62.474000000000004\t0.068\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                            "15\tmsft\t39.017\t0.051000000000000004\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "16\tgoogl\t10.643\t0.6900000000000001\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                            "17\tmsft\t7.246\t0.051000000000000004\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                            "20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                    query,
+                    "timestamp");
+        });
+    }
 }
+

@@ -41,6 +41,7 @@ import java.util.ArrayDeque;
 class SqlOptimiser {
 
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
+    private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_OR = 3;
@@ -609,7 +610,7 @@ class SqlOptimiser {
         JoinContext jc;
         for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel m = models.getQuick(i);
-            if (m.getJoinType() == QueryModel.JOIN_ASOF || m.getJoinType() == QueryModel.JOIN_SPLICE) {
+            if (joinsRequiringTimestamp[m.getJoinType()]) {
                 linkDependencies(parent, 0, i);
                 if (m.getContext() == null) {
                     m.setContext(jc = contextPool.next());
@@ -2919,6 +2920,7 @@ class SqlOptimiser {
         joinBarriers.add(QueryModel.JOIN_OUTER);
         joinBarriers.add(QueryModel.JOIN_ASOF);
         joinBarriers.add(QueryModel.JOIN_SPLICE);
+        joinBarriers.add(QueryModel.JOIN_LT);
 
         nullConstants.add("null");
         nullConstants.add("NaN");

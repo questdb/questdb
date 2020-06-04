@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -53,6 +54,9 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class SqlCodeGenerator implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
+    private static final boolean[] joinsRequiringTimestamp = {false, false, false, true, true, false, true};
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -115,16 +119,41 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
+    private RecordCursorFactory createLtJoin(
+            RecordMetadata metadata,
+            RecordCursorFactory master,
+            RecordSink masterKeySink,
+            RecordCursorFactory slave,
+            RecordSink slaveKeySink,
+            int columnSplit
+    ) {
+        valueTypes.reset();
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG);
+
+        return new LtJoinLightRecordCursorFactory(
+                configuration,
+                metadata,
+                master,
+                slave,
+                keyTypes,
+                valueTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit
+        );
+    }
+
     @NotNull
-    private RecordCursorFactory createFullFatAsOfJoin(
+    private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
             RecordMetadata masterMetadata,
             CharSequence masterAlias,
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
-            int joinPosition
-    ) throws SqlException {
+            int joinPosition,
+            FullFatJoinGenerator generator) throws SqlException {
 
         // create hash set of key columns to easily find them
         intHashSet.clear();
@@ -220,7 +249,7 @@ public class SqlCodeGenerator implements Mutable {
             metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
         }
 
-        master = new AsOfJoinRecordCursorFactory(
+        return generator.create(
                 configuration,
                 metadata,
                 master,
@@ -239,8 +268,8 @@ public class SqlCodeGenerator implements Mutable {
                 RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
                 columnIndex
         );
-        return master;
     }
+
 
     private RecordCursorFactory createHashJoin(
             RecordMetadata metadata,
@@ -601,14 +630,60 @@ public class SqlCodeGenerator implements Mutable {
                                     );
                                 }
                             } else {
-                                master = createFullFatAsOfJoin(
+                                master = createFullFatJoin(
                                         master,
                                         masterMetadata,
                                         masterAlias,
                                         slave,
                                         slaveMetadata,
                                         slaveModel.getName(),
-                                        slaveModel.getJoinKeywordPosition()
+                                        slaveModel.getJoinKeywordPosition(),
+                                        CREATE_FULL_FAT_AS_OF_JOIN
+                                );
+                            }
+                            masterAlias = null;
+                            break;
+                        case QueryModel.JOIN_LT:
+                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                            if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+                                if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                    master = createLtJoin(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            RecordSinkFactory.getInstance(
+                                                    asm,
+                                                    masterMetadata,
+                                                    listColumnFilterB,
+                                                    true
+                                            ),
+                                            slave,
+                                            RecordSinkFactory.getInstance(
+                                                    asm,
+                                                    slaveMetadata,
+                                                    listColumnFilterA,
+                                                    true
+                                            ),
+                                            masterMetadata.getColumnCount()
+                                    );
+                                } else {
+                                    master = new LtJoinNoKeyRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
+                            } else {
+                                master = createFullFatJoin(
+                                        master,
+                                        masterMetadata,
+                                        masterAlias,
+                                        slave,
+                                        slaveMetadata,
+                                        slaveModel.getName(),
+                                        slaveModel.getJoinKeywordPosition(),
+                                        CREATE_FULL_FAT_LT_JOIN
                                 );
                             }
                             masterAlias = null;
@@ -1607,7 +1682,7 @@ public class SqlCodeGenerator implements Mutable {
                 throw e;
             }
 
-            boolean requiresTimestamp = model.getJoinType() == QueryModel.JOIN_ASOF || model.getJoinType() == QueryModel.JOIN_CROSS;
+            boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
             try {
@@ -2122,5 +2197,51 @@ public class SqlCodeGenerator implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    @FunctionalInterface
+    public interface FullFatJoinGenerator {
+        RecordCursorFactory create(CairoConfiguration configuration,
+                                   RecordMetadata metadata,
+                                   RecordCursorFactory masterFactory,
+                                   RecordCursorFactory slaveFactory,
+                                   @Transient ColumnTypes mapKeyTypes,
+                                   @Transient ColumnTypes mapValueTypes,
+                                   @Transient ColumnTypes slaveColumnTypes,
+                                   RecordSink masterKeySink,
+                                   RecordSink slaveKeySink,
+                                   int columnSplit,
+                                   RecordValueSink slaveValueSink,
+                                   IntList columnIndex);
+    }
+
+    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
+                                                             RecordMetadata metadata,
+                                                             RecordCursorFactory masterFactory,
+                                                             RecordCursorFactory slaveFactory,
+                                                             @Transient ColumnTypes mapKeyTypes,
+                                                             @Transient ColumnTypes mapValueTypes,
+                                                             @Transient ColumnTypes slaveColumnTypes,
+                                                             RecordSink masterKeySink,
+                                                             RecordSink slaveKeySink,
+                                                             int columnSplit,
+                                                             RecordValueSink slaveValueSink,
+                                                             IntList columnIndex) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+    }
+
+    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
+                                                           RecordMetadata metadata,
+                                                           RecordCursorFactory masterFactory,
+                                                           RecordCursorFactory slaveFactory,
+                                                           @Transient ColumnTypes mapKeyTypes,
+                                                           @Transient ColumnTypes mapValueTypes,
+                                                           @Transient ColumnTypes slaveColumnTypes,
+                                                           RecordSink masterKeySink,
+                                                           RecordSink slaveKeySink,
+                                                           int columnSplit,
+                                                           RecordValueSink slaveValueSink,
+                                                           IntList columnIndex) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 }
