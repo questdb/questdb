@@ -60,7 +60,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
-    private final DateToTimestampAdapter dateToTimestampAdapter = new DateToTimestampAdapter();
+    private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -257,7 +257,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                         break;
                     case ColumnType.TIMESTAMP:
                         if (detectedType == ColumnType.DATE) {
-                            this.types.setQuick(i, dateToTimestampAdapter.of((DateAdapter) this.types.getQuick(i)));
+                            this.types.setQuick(i, dateToTimestampAdapterPool.next().of((DateAdapter) this.types.getQuick(i)));
                         } else {
                             logTypeError(i);
                             this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
