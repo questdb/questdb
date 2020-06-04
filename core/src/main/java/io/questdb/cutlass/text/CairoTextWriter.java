@@ -31,9 +31,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.time.DateFormatUtils;
 
 import java.io.Closeable;
 
@@ -60,6 +63,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private final TimestampFormatFactory timestampFormatFactory;
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -72,6 +76,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.path = path;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = typeManager;
+        this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
     }
 
     @Override
@@ -244,7 +249,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         // now overwrite detected types with actual table column types
         for (int i = 0, n = this.types.size(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
-            if (this.types.getQuick(i).getType() != columnType) {
+            int detectedType = this.types.getQuick(i).getType();
+            if (detectedType != columnType) {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
                 // use when populating this field
@@ -254,8 +260,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        logTypeError(i);
-                        this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        if (detectedType == ColumnType.DATE) {
+                            this.types.setQuick(i, typeManager.nextTimestampAdapter(false, timestampFormatFactory.get(DateFormatUtils.UTC_PATTERN), engine.getConfiguration().getTextConfiguration().getDefaultTimestampLocale()));
+                        } else {
+                            logTypeError(i);
+                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.BINARY:
                         writer.close();
@@ -293,6 +303,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getWriter(cairoSecurityContext, tableName);
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
+                    tableStructureAdapter.of(names, detectedTypes);
                 }
                 break;
             default:
