@@ -1,9 +1,6 @@
 <div align="center">
   <img alt="QuestDB Logo" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png" width="305px"/>
 </div>
-<div align="center">
-  <kbd><img src="https://raw.githubusercontent.com/questdb/questdb/master/.github/watch.gif" alt="Watch this repo" width="400px"/></kbd>
-</div>
 <p>&nbsp;</p>
 
 <p align="center">
