@@ -2403,6 +2403,107 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWriteToExistingTableDateToTimestampColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t1\ts\tt2\tt3\tv\n" +
+                    "2019-11-11T00:00:00.000000Z\tGOOG\t2019-11-11T00:00:00.000000Z\t2019-11-11T00:00:00.010000Z\t10.0\n" +
+                    "2019-11-12T00:00:00.000000Z\tGOOG\t2019-11-12T00:00:00.000000Z\t2019-11-12T00:00:00.000000Z\t15.0\n" +
+                    "2019-11-13T00:00:00.000000Z\tGOOG\t2019-11-13T00:00:00.000000Z\t2019-11-13T00:00:00.000000Z\t20.0\n";
+
+            String csv = "t,s,t2,t3,v\n" +
+                    "2019-11-11T00:00:00.000Z,GOOG,2019-11-11T00:00:00.000Z,2019-11-11T00:00:00.010Z,10\n" +
+                    "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
+                    "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
+
+            compiler.compile(
+                    "create table test" +
+                            "(t1 timestamp" +
+                            ", s symbol" +
+                            ", t2 timestamp" +
+                            ", t3 timestamp" +
+                            ", v double)",
+                    sqlExecutionContext
+            );
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableBadTimestampColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t\ts\tv\n" +
+                    "\tGOOG\t10.0\n" +
+                    "\tGOOG\t15.0\n" +
+                    "\tGOOG\t20.0\n";
+
+            String csv = "t,s,v\n" +
+                    "bad_data,GOOG,10\n" +
+                    "bad_data,GOOG,15\n" +
+                    "bad_data,GOOG,20\n";
+
+            compiler.compile(
+                    "create table test" +
+                            "(t timestamp" +
+                            ", s symbol" +
+                            ", v double)",
+                    sqlExecutionContext
+            );
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableBadDateColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t\ts\tv\n" +
+                    "\tGOOG\t10.0\n" +
+                    "\tGOOG\t15.0\n" +
+                    "\tGOOG\t20.0\n";
+
+            String csv = "t,s,v\n" +
+                    "bad_data,GOOG,10\n" +
+                    "bad_data,GOOG,15\n" +
+                    "bad_data,GOOG,20\n";
+
+            compiler.compile(
+                    "create table test" +
+                            "(t date" +
+                            ", s symbol" +
+                            ", v double)",
+                    sqlExecutionContext
+            );
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"DATE\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
     public void testWriteToTableWithBlob() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +

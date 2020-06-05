@@ -29,47 +29,36 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateLocale;
 
-public class DateAdapter extends AbstractTypeAdapter implements Mutable {
-    private DateLocale locale;
-    private DateFormat format;
+public class DateToTimestampAdapter extends AbstractTypeAdapter implements Mutable {
+    private DateAdapter dateAdapter;
 
     @Override
     public void clear() {
-        this.format = null;
-        this.locale = null;
+        this.dateAdapter = null;
     }
 
     @Override
     public int getType() {
-        return ColumnType.DATE;
+        return ColumnType.TIMESTAMP;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        try {
-            format.parse(text, locale);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
+        return dateAdapter.probe(text);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, format.parse(value, locale));
+        row.putDate(column, getTimestamp(value));
     }
 
-
-    public long getDate(DirectByteCharSequence value) throws NumericException {
-        return format.parse(value, locale);
+    public long getTimestamp(DirectByteCharSequence value) throws NumericException {
+        return dateAdapter.getDate(value) * 1000 ;
     }
 
-    public DateAdapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
+    public DateToTimestampAdapter of(DateAdapter dateAdapter) {
+        this.dateAdapter = dateAdapter;
         return this;
     }
 }
