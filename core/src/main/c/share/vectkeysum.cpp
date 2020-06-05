@@ -116,9 +116,6 @@ Java_io_questdb_std_Rosti_keyedIntKSumDouble(JNIEnv *env, jclass cl, jlong pRost
     const auto c_offset = map->value_offsets_[valueOffset + 1];
     const auto count_offset = map->value_offsets_[valueOffset + 2];
 
-    printf("slot size %lu\n", map->slot_size_);
-
-
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pi + 16, _MM_HINT_T0);
         _mm_prefetch(pd + 8, _MM_HINT_T0);
@@ -208,6 +205,114 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleSetNull(JNIEnv *env, jclass cl, jlon
     }
 }
 
+// NSUM double
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntNSumDouble(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pDouble,
+                                             jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<int32_t *>(pKeys);
+    const auto *pd = reinterpret_cast<jdouble *>(pDouble);
+    const auto shift = map->slot_size_shift_;
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto c_offset = map->value_offsets_[valueOffset + 1];
+    const auto count_offset = map->value_offsets_[valueOffset + 2];
+
+    for (int i = 0; i < count; i++) {
+        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        const int32_t v = pi[i];
+        const jdouble d = pd[i];
+        auto res = find_or_prepare_insert(map, v);
+        auto dest = map->slots_ + (res.first << shift);
+        if (PREDICT_FALSE(res.second)) {
+            *reinterpret_cast<int32_t *>(dest) = v;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
+            *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
+            *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
+        } else {
+            const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
+            const jdouble x = std::isnan(d) ? 0 : d;
+            const jdouble t = sum + x;
+            if (std::abs(sum) >= x) {
+                *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + x;
+            } else {
+                *reinterpret_cast<jdouble *>(dest + c_offset) += (x - t) + sum;
+            }
+            *reinterpret_cast<jdouble *>(dest + value_offset) = t;
+            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
+        }
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong pRostiA, jlong pRostiB,
+                                                  jint valueOffset) {
+    auto map_a = reinterpret_cast<rosti_t *>(pRostiA);
+    auto map_b = reinterpret_cast<rosti_t *>(pRostiB);
+    const auto value_offset = map_b->value_offsets_[valueOffset];
+    const auto c_offset = map_b->value_offsets_[valueOffset + 1];
+    const auto count_offset = map_b->value_offsets_[valueOffset + 2];
+    const auto capacity = map_b->capacity_;
+    const auto ctrl = map_b->ctrl_;
+    const auto shift = map_b->slot_size_shift_;
+    const auto slots = map_b->slots_;
+
+    for (size_t i = 0; i < capacity; i++) {
+        if (ctrl[i] > -1) {
+            auto src = slots + (i << shift);
+            auto key = *reinterpret_cast<int32_t *>(src);
+            auto d = *reinterpret_cast<jdouble *>(src + value_offset);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+
+            auto res = find_or_prepare_insert(map_a, key);
+            // maps must have identical structure to use "shift" from map B on map A
+            auto dest = map_a->slots_ + (res.first << shift);
+            if (PREDICT_FALSE(res.second)) {
+                *reinterpret_cast<int32_t *>(dest) = key;
+                *reinterpret_cast<jdouble *>(dest + value_offset) = d;
+                *reinterpret_cast<jdouble *>(dest + c_offset) = *reinterpret_cast<jdouble *>(src + c_offset);
+                *reinterpret_cast<jlong *>(dest + count_offset) = count;
+            } else {
+                // do not check for nans in merge, because we can't have them in map
+                const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
+                const jdouble t = sum + d;
+                if (std::abs(sum) >= d) {
+                    *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + d;
+                } else {
+                    *reinterpret_cast<jdouble *>(dest + c_offset) += (d - t) + sum;
+                }
+                *reinterpret_cast<jdouble *>(dest + value_offset) = t;
+                *reinterpret_cast<jlong *>(dest + count_offset) += count;
+            }
+        }
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntNSumDoubleSetNull(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto c_offset = map->value_offsets_[valueOffset + 1];
+    const auto count_offset = map->value_offsets_[valueOffset + 2];
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
+            } else {
+                *reinterpret_cast<jdouble *>(src + value_offset) += *reinterpret_cast<jdouble *>(src + c_offset);
+            }
+        }
+    }
+}
 
 // MIN double
 

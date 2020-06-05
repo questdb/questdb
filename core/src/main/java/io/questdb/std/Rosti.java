@@ -75,6 +75,13 @@ public final class Rosti {
 
     public static native void keyedIntKSumDoubleSetNull(long pRosti, int valueOffset);
 
+    // nsum double
+    public static native void keyedIntNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntNSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntNSumDoubleSetNull(long pRosti, int valueOffset);
+
     // max double
     public static native void keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
