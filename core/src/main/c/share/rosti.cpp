@@ -168,7 +168,7 @@ void rehash_and_grow_if_necessary(rosti_t *map) {
     resize(map, map->capacity_ * 2 + 1);
 }
 
-__declspec(noinline) size_t prepare_insert(rosti_t *map, size_t hash) {
+ATTRIBUTE_NEVER_INLINE size_t prepare_insert(rosti_t *map, size_t hash) {
     auto target = find_first_non_full(map, hash);
     if (PREDICT_FALSE(map->growth_left_ == 0 && !IsDeleted(map->ctrl_[target.offset]))) {
         rehash_and_grow_if_necessary(map);

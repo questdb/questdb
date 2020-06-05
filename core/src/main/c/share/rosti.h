@@ -30,6 +30,14 @@
 #include <cstdio>
 #include "vect.h"
 
+#if (defined(__GNUC__) && !defined(__clang__))
+#define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define ATTRIBUTE_NEVER_INLINE __declspec(noinline)
+#else
+#define ATTRIBUTE_NEVER_INLINE
+#endif
+
 using ctrl_t = signed char;
 using h2_t = uint8_t;
 
