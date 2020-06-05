@@ -6,6 +6,7 @@
 #define ROSTI_BITMASK_H
 
 #define VCL_NAMESPACE vcl
+
 #include "vect.h"
 
 // An abstraction over a bitmask. It provides an easy way to iterate through the
@@ -21,11 +22,6 @@ template<class T>
 class BitMask {
 
 public:
-    // These are useful for unit tests (gunit).
-    using value_type = int;
-    using iterator = BitMask;
-    using const_iterator = BitMask;
-
     explicit BitMask(T mask) : mask_(mask) {}
 
     inline BitMask &operator++() {
@@ -42,12 +38,10 @@ public:
     BitMask end() const { return BitMask(0); }
 
     int TrailingZeros() const {
-        return __builtin_ctzll(mask_);
+        return vcl::bit_scan_forward(mask_);
     }
+
 private:
-    friend bool operator==(const BitMask &a, const BitMask &b) {
-        return a.mask_ == b.mask_;
-    }
 
     friend bool operator!=(const BitMask &a, const BitMask &b) {
         return a.mask_ != b.mask_;

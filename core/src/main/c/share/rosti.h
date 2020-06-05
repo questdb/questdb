@@ -26,7 +26,6 @@
 #define ROSTI_H
 
 #include <utility>
-#include <cstdio>
 #include "rosti_bitmask.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
@@ -38,6 +37,7 @@
 #endif
 
 using ctrl_t = signed char;
+using size_t = uint64_t;
 using h2_t = uint8_t;
 
 enum Ctrl : ctrl_t {
@@ -45,6 +45,7 @@ enum Ctrl : ctrl_t {
     kDeleted = -2,   // 0b11111110
     kSentinel = -1,  // 0b11111111
 };
+
 static_assert(
         kEmpty & kDeleted & kSentinel & 0x80,
         "Special markers need to have the MSB to make checking for them efficient");
@@ -65,18 +66,8 @@ static_assert(kDeleted == -2,
               "kDeleted must be -2 to make the implementation of "
               "ConvertSpecialToEmptyAndFullToDeleted efficient");
 
-// A single block of empty control bytes for tables without any slots allocated.
-// This enables removing a branch in the hot path of find().
-inline ctrl_t *EmptyGroup() {
-    alignas(16) static constexpr ctrl_t empty_group[] = {
-            kSentinel, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty,
-            kEmpty, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty, kEmpty};
-    return const_cast<ctrl_t *>(empty_group);
-}
-
-
 struct rosti_t {
-    ctrl_t *ctrl_ = EmptyGroup();      // [(capacity + 1) * ctrl_t]+
+    ctrl_t *ctrl_ = nullptr;      // [(capacity + 1) * ctrl_t]+
     unsigned char *slots_ = nullptr;   // [capacity * types]
     size_t size_ = 0;                  // number of full slots
     size_t capacity_ = 0;              // total number of slots
@@ -87,69 +78,35 @@ struct rosti_t {
     unsigned char *slot_initial_values_ = nullptr; // contains pointer to memory arena
 };
 
-#define ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSE2 true
-#define ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSSE3 true
-
-#if ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSE2
-
-// https://github.com/abseil/abseil-cpp/issues/209
-// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=87853
-// _mm_cmpgt_epi8 is broken under GCC with -funsigned-char
-// Work around this by using the portable implementation of Group
-// when using -funsigned-char under GCC.
-inline __m128i _mm_cmpgt_epi8_fixed(__m128i a, __m128i b) {
-#if defined(__GNUC__) && !defined(__clang__)
-    if (std::is_unsigned<char>::value) {
-        const __m128i mask = _mm_set1_epi8(0x80);
-        const __m128i diff = _mm_subs_epi8(b, a);
-        return _mm_cmpeq_epi8(_mm_and_si128(diff, mask), mask);
-    }
-#endif
-    return _mm_cmpgt_epi8(a, b);
-}
-
 struct GroupSse2Impl {
-    static constexpr size_t kWidth = 16;  // the number of slots per group
 
     explicit GroupSse2Impl(const ctrl_t *pos) {
-        ctrl = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pos));
+        ctrl.load(pos);
     }
 
     // Returns a bitmask representing the positions of slots that match hash.
     inline BitMask<uint32_t> Match(h2_t hash) const {
-        auto match = _mm_set1_epi8(hash);
-        return BitMask<uint32_t>(
-                _mm_movemask_epi8(_mm_cmpeq_epi8(match, ctrl)));
+        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(hash) == ctrl));
     }
 
     // Returns a bitmask representing the positions of empty slots.
     inline BitMask<uint32_t> MatchEmpty() const {
-#if ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSSE3
-        // This only works because kEmpty is -128.
-        return BitMask<uint32_t>(
-                _mm_movemask_epi8(_mm_sign_epi8(ctrl, ctrl)));
-#else
-        return Match(static_cast<h2_t>(kEmpty));
-#endif
+        return Match(kEmpty);
     }
 
     // Returns a bitmask representing the positions of empty or deleted slots.
     BitMask<uint32_t> MatchEmptyOrDeleted() const {
-        auto special = _mm_set1_epi8(kSentinel);
-        return BitMask<uint32_t>(
-                _mm_movemask_epi8(_mm_cmpgt_epi8_fixed(special, ctrl)));
+        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(kSentinel) > ctrl));
     }
 
-    __m128i ctrl;
+    vcl::Vec16c ctrl;
 };
-
-#endif  // ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSE2
 
 using Group = GroupSse2Impl;
 
 //-----------------------------------------
 
-rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const size_t map_capacity);
+rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, size_t map_capacity);
 
 static void initialize_slots(rosti_t *map);
 
@@ -224,7 +181,7 @@ private:
     size_t index_ = 0;
 };
 
-inline probe_seq<16> probe(const rosti_t *map, size_t hash) {
+inline probe_seq<sizeof(Group)> probe(const rosti_t *map, size_t hash) {
     return probe_seq<sizeof(Group)>(H1(hash, map->ctrl_), map->capacity_);
 }
 

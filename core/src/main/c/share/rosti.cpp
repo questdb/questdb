@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cstring>
 #include "rosti.h"
-#include "vect.h"
 #include <jni.h>
 
 rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const size_t map_capacity) {
