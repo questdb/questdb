@@ -6,7 +6,7 @@
 
 rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const size_t map_capacity) {
     size_t slot_key_size = 0;
-    auto value_offsets = reinterpret_cast<int32_t *>(malloc(sizeof(int32_t) * column_count));
+    auto value_offsets = reinterpret_cast<int32_t *>(malloc(sizeof(int32_t) * (column_count + 1)));
     value_offsets[0] = 0;
     for (int32_t i = 0; i < column_count; i++) {
         switch (column_types[i]) {
@@ -33,10 +33,10 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
             case 12: // LONG256
                 slot_key_size += 64;
                 break;
+
         }
         value_offsets[i + 1] = slot_key_size;
     }
-
     auto map = reinterpret_cast<rosti_t *>(malloc(sizeof(rosti_t)));
     map->slot_size_ = ceil_pow_2(slot_key_size);
     map->slot_size_shift_ = bit_scan_forward(map->slot_size_);

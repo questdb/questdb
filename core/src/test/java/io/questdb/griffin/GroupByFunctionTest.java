@@ -76,8 +76,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
         assertQuery("s\tksum\n" +
-                        "aa\t37.816973659638755\n" +
-                        "bb\t50.90642211368272\n",
+                        "aa\t416262.4729439181\n" +
+                        "bb\t416933.3416598129\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
@@ -85,7 +85,45 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " rnd_symbol('aa','bb') s," +
                         " rnd_double(2) d" +
                         " from" +
-                        " long_sequence(200)" +
+                        " long_sequence(2000000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
+        assertQuery("s\tksum\tksum1\n" +
+                        "aa\t416262.4729439181\t416262.4729439181\n" +
+                        "bb\t416933.3416598129\t416933.3416598129\n",
+                "select s, ksum(d), ksum(d) from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_double(2) d" +
+                        " from" +
+                        " long_sequence(2000000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
+        assertQuery("s\tksum\tsum\n" +
+                        "aa\t416262.4729439181\t416262.4729439233\n" +
+                        "bb\t416933.3416598129\t416933.34165981587\n",
+                "select s, ksum(d), sum(d) from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_double(2) d" +
+                        " from" +
+                        " long_sequence(2000000)" +
                         ")",
                 null,
                 true

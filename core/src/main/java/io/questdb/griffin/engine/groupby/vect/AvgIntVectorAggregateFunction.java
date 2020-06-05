@@ -60,7 +60,6 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
         // we will have to replace them with doubles
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
-        System.out.println("init");
     }
 
     @Override

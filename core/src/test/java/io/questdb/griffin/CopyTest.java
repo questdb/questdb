@@ -434,7 +434,6 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleCopy() throws Exception {
-        System.out.println("in test");
         assertMemoryLeak(() -> {
 
             compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'", sqlExecutionContext);

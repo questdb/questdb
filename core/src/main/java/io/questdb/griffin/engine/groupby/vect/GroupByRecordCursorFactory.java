@@ -96,29 +96,13 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final long pRosti = this.pRosti[0];
         final long columnOffsets = Rosti.getValueOffsets(pRosti);
         final IntList columnSkewIndex = new IntList();
-        if (keyColumnIndexInThisCursor == 0) {
-            // when key is at position 0, we have straight mapping
-            // lets pull offsets for each column into a list
+        // key is in the middle, shift aggregates before the key one position left
+        addOffsets(columnSkewIndex, vafList, 0, keyColumnIndexInThisCursor, columnOffsets);
+        // this is offset of the key column
+        columnSkewIndex.add(0);
 
-            // offset of key
-            columnSkewIndex.add(0);
-
-            for (int i = 0; i < vafCount; i++) {
-                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
-            }
-        } else {
-            // key is in the middle, shift aggregates before the key one position left
-            for (int i = 0; i < keyColumnIndexInThisCursor; i++) {
-                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
-            }
-            // this is offset of the key column
-            columnSkewIndex.add(0);
-
-            // add remaining aggregate columns as is
-            for (int i = keyColumnIndexInThisCursor; i < vafCount; i++) {
-                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
-            }
-        }
+        // add remaining aggregate columns as is
+        addOffsets(columnSkewIndex, vafList, keyColumnIndexInThisCursor, vafCount, columnOffsets);
 
         this.vafList.addAll(vafList);
         this.keyColumnIndex = keyColumnIndexInBase;
@@ -128,6 +112,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
         } else {
             this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
+        }
+    }
+
+    private static void addOffsets(IntList columnSkewIndex, @Transient ObjList<VectorAggregateFunction> vafList, int start, int end, long columnOffsets) {
+        for (int i = start; i < end; i++) {
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
         }
     }
 
@@ -201,6 +191,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                     if (keyColumnSize == 0) {
                         entry.of(queuedCount++, vaf, null, 0, valueAddress, valueCount, doneLatch);
                     } else {
+                        assert keyAddress != 0;
+                        assert valueAddress != 0;
                         entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueCount, doneLatch);
                     }
                     activeEntries.add(entry);
@@ -261,7 +253,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class RostiRecordCursor implements RecordCursor {
-        private final long columnOffsets;
         private final RostiRecord record;
         private final long pRosti;
         private final IntList symbolTableSkewIndex;
@@ -277,7 +268,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
             this.pRosti = pRosti;
-            this.columnOffsets = Rosti.getValueOffsets(pRosti);
             this.record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
