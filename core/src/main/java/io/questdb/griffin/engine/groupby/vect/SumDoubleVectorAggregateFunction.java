@@ -82,6 +82,11 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
@@ -98,7 +103,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void setNull(long pRosti) {
+    public void wrapUp(long pRosti) {
         Rosti.keyedIntSumDoubleSetNull(pRosti, valueOffset);
     }
 

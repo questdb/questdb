@@ -37,6 +37,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
+    private int valueOffset;
 
     public KSumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
@@ -44,6 +45,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
     }
 
     @Override

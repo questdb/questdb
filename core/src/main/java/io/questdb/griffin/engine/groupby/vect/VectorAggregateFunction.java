@@ -54,9 +54,12 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     // sets null as result of aggregation of all nulls
     // this typically checks non-null count and replaces 0 with null if all values were null
-    default void setNull(long pRosti) {
+    default void wrapUp(long pRosti) {
         throw new UnsupportedOperationException();
     }
+
+    // value offset in map
+    int getValueOffset();
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {

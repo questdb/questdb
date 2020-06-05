@@ -85,6 +85,11 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MAX_VALUE);
     }
@@ -100,7 +105,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void setNull(long pRosti) {
+    public void wrapUp(long pRosti) {
         Rosti.keyedIntMinDoubleSetNull(pRosti, valueOffset);
     }
 }

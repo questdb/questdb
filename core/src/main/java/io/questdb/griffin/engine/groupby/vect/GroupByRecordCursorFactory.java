@@ -60,7 +60,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             @Transient ColumnTypes columnTypes,
             int workerCount,
             @Transient ObjList<VectorAggregateFunction> vafList,
-            int keyColumnIndex,
+            int keyColumnIndexInBase,
+            int keyColumnIndexInThisCursor,
             @Transient IntList symbolTableSkewIndex
     ) {
 
@@ -75,7 +76,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         this.metadata = metadata;
         // first column is INT or SYMBOL
         this.pRosti = new long[workerCount];
-        this.vafList = new ObjList<>(vafList.size());
+        final int vafCount = vafList.size();
+        this.vafList = new ObjList<>(vafCount);
         for (int i = 0; i < workerCount; i++) {
             pRosti[i] = Rosti.alloc(columnTypes, 2047);
 
@@ -84,18 +86,48 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
             // for aggregation function to continue, such slots have to be initialized to the
             // appropriate value for the function.
-            for (int j = 0, n = vafList.size(); j < n; j++) {
+            for (int j = 0; j < vafCount; j++) {
                 vafList.getQuick(j).initRosti(pRosti[i]);
             }
         }
-        this.vafList.addAll(vafList);
-        this.keyColumnIndex = keyColumnIndex;
-        if (symbolTableSkewIndex.size() > 0) {
-            final IntList skew = new IntList(symbolTableSkewIndex.size());
-            skew.addAll(symbolTableSkewIndex);
-            this.cursor = new RostiRecordCursor(this.pRosti[0], skew);
+
+        // all maps are the same at this point
+        // check where our keys are and pull them to front
+        final long pRosti = this.pRosti[0];
+        final long columnOffsets = Rosti.getValueOffsets(pRosti);
+        final IntList columnSkewIndex = new IntList();
+        if (keyColumnIndexInThisCursor == 0) {
+            // when key is at position 0, we have straight mapping
+            // lets pull offsets for each column into a list
+
+            // offset of key
+            columnSkewIndex.add(0);
+
+            for (int i = 0; i < vafCount; i++) {
+                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
+            }
         } else {
-            this.cursor = new RostiRecordCursor(this.pRosti[0], null);
+            // key is in the middle, shift aggregates before the key one position left
+            for (int i = 0; i < keyColumnIndexInThisCursor; i++) {
+                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
+            }
+            // this is offset of the key column
+            columnSkewIndex.add(0);
+
+            // add remaining aggregate columns as is
+            for (int i = keyColumnIndexInThisCursor; i < vafCount; i++) {
+                columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
+            }
+        }
+
+        this.vafList.addAll(vafList);
+        this.keyColumnIndex = keyColumnIndexInBase;
+        if (symbolTableSkewIndex.size() > 0) {
+            final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
+            symbolSkew.addAll(symbolTableSkewIndex);
+            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
+        } else {
+            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
         }
     }
 
@@ -205,11 +237,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 for (int i = 1, n = pRosti.length; i < n; i++) {
                     vaf.merge(pRosti0, pRosti[i]);
                 }
-                vaf.setNull(pRosti0);
+                vaf.wrapUp(pRosti0);
             }
         } else {
             for (int j = 0; j < vafCount; j++) {
-                vafList.getQuick(j).setNull(pRosti0);
+                vafList.getQuick(j).wrapUp(pRosti0);
             }
         }
 
@@ -233,6 +265,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         private final RostiRecord record;
         private final long pRosti;
         private final IntList symbolTableSkewIndex;
+        private final IntList columnSkewIndex;
         private RostiRecord recordB;
         private long ctrlStart;
         private long ctrl;
@@ -242,11 +275,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         private long count;
         private PageFrameCursor parent;
 
-        public RostiRecordCursor(long pRosti, IntList symbolTableSkewIndex) {
+        public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
             this.pRosti = pRosti;
             this.columnOffsets = Rosti.getValueOffsets(pRosti);
             this.record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
+            this.columnSkewIndex = columnSkewIndex;
         }
 
         public RostiRecordCursor of(PageFrameCursor parent) {
@@ -348,11 +382,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public long getDate(int col) {
-                throw new UnsupportedOperationException();
+                return getLong(col);
             }
 
             private long getValueOffset(int column) {
-                return pRow + Unsafe.getUnsafe().getInt(columnOffsets + column * Integer.BYTES);
+                return pRow + columnSkewIndex.getQuick(column);
             }
 
             @Override
@@ -372,7 +406,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public long getLong(int col) {
-                return 0;
+                return Unsafe.getUnsafe().getLong(getValueOffset(col));
             }
 
             @Override
@@ -427,7 +461,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public long getTimestamp(int col) {
-                return 0;
+                return getLong(col);
             }
         }
     }

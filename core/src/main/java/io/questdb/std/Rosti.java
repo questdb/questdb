@@ -66,6 +66,8 @@ public final class Rosti {
 
     public static native void keyedIntSumDoubleSetNull(long pRosti, int valueOffset);
 
+    public static native void keyedIntAvgDoubleSetNull(long pRosti, int valueOffset);
+
     // max double
     public static native void keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
@@ -79,6 +81,50 @@ public final class Rosti {
     public static native void keyedIntMaxDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native void keyedIntMaxDoubleSetNull(long pRosti, int valueOffset);
+
+    // sum int
+    public static native void keyedIntSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntSumIntMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntSumIntSetNull(long pRosti, int valueOffset);
+
+    // avg int
+    public static native void keyedIntAvgIntSetNull(long pRosti, int valueOffset);
+
+    // min int
+    public static native void keyedIntMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMinIntMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntMinIntSetNull(long pRosti, int valueOffset);
+
+    // max int
+    public static native void keyedIntMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMaxIntMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    // sum long
+    public static native void keyedIntSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntSumLongMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntSumLongSetNull(long pRosti, int valueOffset);
+
+    // avg long
+    public static native void keyedIntAvgLongSetNull(long pRosti, int valueOffset);
+
+    // min long
+    public static native void keyedIntMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMinLongMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntMinLongSetNull(long pRosti, int valueOffset);
+
+    // max long
+    public static native void keyedIntMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedIntMaxLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static long getCtrl(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti);

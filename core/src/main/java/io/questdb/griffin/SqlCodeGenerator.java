@@ -66,6 +66,13 @@ public class SqlCodeGenerator implements Mutable {
         limitTypes.add(ColumnType.INT);
     }
 
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
+    }
+
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -83,6 +90,9 @@ public class SqlCodeGenerator implements Mutable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
+    private final IntList tempKeyIndexesInBase = new IntList();
+    private final IntList tempSymbolSkewIndexes = new IntList();
+    private final IntList tempKeyIndex = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -96,6 +106,36 @@ public class SqlCodeGenerator implements Mutable {
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
     }
 
+    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
+                                                             RecordMetadata metadata,
+                                                             RecordCursorFactory masterFactory,
+                                                             RecordCursorFactory slaveFactory,
+                                                             @Transient ColumnTypes mapKeyTypes,
+                                                             @Transient ColumnTypes mapValueTypes,
+                                                             @Transient ColumnTypes slaveColumnTypes,
+                                                             RecordSink masterKeySink,
+                                                             RecordSink slaveKeySink,
+                                                             int columnSplit,
+                                                             RecordValueSink slaveValueSink,
+                                                             IntList columnIndex) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+    }
+
+    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
+                                                           RecordMetadata metadata,
+                                                           RecordCursorFactory masterFactory,
+                                                           RecordCursorFactory slaveFactory,
+                                                           @Transient ColumnTypes mapKeyTypes,
+                                                           @Transient ColumnTypes mapValueTypes,
+                                                           @Transient ColumnTypes slaveColumnTypes,
+                                                           RecordSink masterKeySink,
+                                                           RecordSink slaveKeySink,
+                                                           int columnSplit,
+                                                           RecordValueSink slaveValueSink,
+                                                           IntList columnIndex) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+    }
+
     @Override
     public void clear() {
         whereClauseParser.clear();
@@ -105,9 +145,6 @@ public class SqlCodeGenerator implements Mutable {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
     }
-
-    private final IntList tempKeyIndexes = new IntList();
-    private final IntList tempSymbolSkewIndexes = new IntList();
 
     private RecordCursorFactory createAsOfJoin(
             RecordMetadata metadata,
@@ -142,7 +179,7 @@ public class SqlCodeGenerator implements Mutable {
             RecordSink slaveKeySink,
             int columnSplit
     ) {
-        valueTypes.reset();
+        valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
 
@@ -324,7 +361,6 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
-
     private RecordCursorFactory createHashJoin(
             RecordMetadata metadata,
             RecordCursorFactory master,
@@ -466,8 +502,9 @@ public class SqlCodeGenerator implements Mutable {
     ) {
         tempVaf.clear();
         tempMetadata.clear();
-        tempKeyIndexes.clear();
+        tempKeyIndexesInBase.clear();
         tempSymbolSkewIndexes.clear();
+        tempKeyIndex.clear();
 
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -476,14 +513,15 @@ public class SqlCodeGenerator implements Mutable {
                 final int columnIndex = metadata.getColumnIndex(ast.token);
                 final int type = metadata.getColumnType(columnIndex);
                 if (type == ColumnType.INT) {
-                    tempKeyIndexes.add(columnIndex);
+                    tempKeyIndexesInBase.add(columnIndex);
                     tempMetadata.add(new TableColumnMetadata(
                             Chars.toString(qc.getName()),
                             type
                     ));
                     continue;
                 } else if (type == ColumnType.SYMBOL) {
-                    tempKeyIndexes.add(columnIndex);
+                    tempKeyIndexesInBase.add(columnIndex);
+                    tempKeyIndex.add(i);
                     tempMetadata.add(new TableColumnMetadata(Chars.toString(qc.getName()), type, false, 0, metadata.isSymbolTableStatic(columnIndex)));
                     tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
                     continue;
@@ -1528,7 +1566,7 @@ public class SqlCodeGenerator implements Mutable {
             // inspect model for possibility of vector aggregate intrinsics
             if (factory.supportPageFrameCursor()) {
                 if (createVectorAggregateFunctions(columns, metadata, executionContext.getWorkerCount())) {
-                    if (tempKeyIndexes.size() == 0) {
+                    if (tempKeyIndexesInBase.size() == 0) {
                         return new GroupByNotKeyedVectorRecordCursorFactory(
                                 factory,
                                 GenericRecordMetadata.copyOf(tempMetadata),
@@ -1536,12 +1574,12 @@ public class SqlCodeGenerator implements Mutable {
                         );
                     }
 
-                    if (tempKeyIndexes.size() == 1) {
+                    if (tempKeyIndexesInBase.size() == 1) {
 
                         arrayColumnTypes.clear();
                         // this is overly generic, but we will catchup C code
-                        for (int i = 0, n = tempKeyIndexes.size(); i < n; i++) {
-                            arrayColumnTypes.add(tempMetadata.getColumnType(tempKeyIndexes.getQuick(i)));
+                        for (int i = 0, n = tempKeyIndexesInBase.size(); i < n; i++) {
+                            arrayColumnTypes.add(tempMetadata.getColumnType(tempKeyIndexesInBase.getQuick(i)));
                         }
 
                         for (int i = 0, n = tempVaf.size(); i < n; i++) {
@@ -1554,7 +1592,8 @@ public class SqlCodeGenerator implements Mutable {
                                 arrayColumnTypes,
                                 executionContext.getWorkerCount(),
                                 tempVaf,
-                                tempKeyIndexes.getQuick(0),
+                                tempKeyIndexesInBase.getQuick(0),
+                                tempKeyIndex.getQuick(0),
                                 tempSymbolSkewIndexes
                         );
                     }
@@ -2255,13 +2294,6 @@ public class SqlCodeGenerator implements Mutable {
         return zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
     }
 
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
-    }
-
     @FunctionalInterface
     public interface FullFatJoinGenerator {
         RecordCursorFactory create(CairoConfiguration configuration,
@@ -2276,35 +2308,5 @@ public class SqlCodeGenerator implements Mutable {
                                    int columnSplit,
                                    RecordValueSink slaveValueSink,
                                    IntList columnIndex);
-    }
-
-    private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
-                                                             RecordMetadata metadata,
-                                                             RecordCursorFactory masterFactory,
-                                                             RecordCursorFactory slaveFactory,
-                                                             @Transient ColumnTypes mapKeyTypes,
-                                                             @Transient ColumnTypes mapValueTypes,
-                                                             @Transient ColumnTypes slaveColumnTypes,
-                                                             RecordSink masterKeySink,
-                                                             RecordSink slaveKeySink,
-                                                             int columnSplit,
-                                                             RecordValueSink slaveValueSink,
-                                                             IntList columnIndex) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
-    }
-
-    private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
-                                                           RecordMetadata metadata,
-                                                           RecordCursorFactory masterFactory,
-                                                           RecordCursorFactory slaveFactory,
-                                                           @Transient ColumnTypes mapKeyTypes,
-                                                           @Transient ColumnTypes mapValueTypes,
-                                                           @Transient ColumnTypes slaveColumnTypes,
-                                                           RecordSink masterKeySink,
-                                                           RecordSink slaveKeySink,
-                                                           int columnSplit,
-                                                           RecordValueSink slaveValueSink,
-                                                           IntList columnIndex) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 }

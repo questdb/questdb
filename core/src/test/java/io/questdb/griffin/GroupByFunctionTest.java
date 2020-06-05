@@ -40,7 +40,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, avg(d) sum from x",
+                "select s, avg(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -59,7 +59,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tksum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, ksum(d) ksum from x",
+                "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -78,7 +78,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tksum\n" +
                         "aa\t37.816973659638755\n" +
                         "bb\t50.90642211368272\n",
-                "select s, ksum(d) ksum from x",
+                "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -97,7 +97,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t\n" +
                         "bb\t\n",
-                "select s, max(d) min from x",
+                "select s, max(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -116,7 +116,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\t1970-01-01T00:00:09.800Z\n" +
                         "bb\t1970-01-01T00:00:09.897Z\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -135,7 +135,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -154,7 +154,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -173,7 +173,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\t9910\n" +
                         "bb\t9947\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -192,7 +192,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -211,7 +211,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\t9800\n" +
                         "bb\t9897\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -230,7 +230,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\t\n" +
                         "bb\t\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -249,7 +249,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmax\n" +
                         "aa\t1970-01-01T00:00:00.009800Z\n" +
                         "bb\t1970-01-01T00:00:00.009897Z\n",
-                "select s, max(d) max from x",
+                "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -268,7 +268,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t\n" +
                         "bb\t\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -287,7 +287,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t1970-01-01T00:00:00.320Z\n" +
                         "bb\t1970-01-01T00:00:00.085Z\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -306,7 +306,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -325,7 +325,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -344,7 +344,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t13\n" +
                         "bb\t324\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -363,7 +363,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -382,7 +382,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t320\n" +
                         "bb\t85\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -401,7 +401,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tmin\n" +
                         "aa\t1970-01-01T00:00:00.000320Z\n" +
                         "bb\t1970-01-01T00:00:00.000085Z\n",
-                "select s, min(d) min from x",
+                "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -420,7 +420,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tnsum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, nsum(d) nsum from x",
+                "select s, nsum(d) nsum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -439,7 +439,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tnsum\n" +
                         "aa\t37.816973659638755\n" +
                         "bb\t50.90642211368272\n",
-                "select s, nsum(d) nsum from x",
+                "select s, nsum(d) nsum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -458,7 +458,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, sum(d) sum from x",
+                "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -477,7 +477,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tksum\n" +
                         "aa\t37.81697365963876\n" +
                         "bb\t50.906422113682694\n",
-                "select s, sum(d) ksum from x",
+                "select s, sum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -496,7 +496,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, sum(d) sum from x",
+                "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -515,7 +515,64 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\t371694\n" +
                         "bb\t336046\n",
-                "select s, sum(d) sum from x",
+                "select s, sum(d) sum from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_int(0, 10000, 1) d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedAvgIntSomeNaN() throws Exception {
+        assertQuery("s\tavg\tavg1\n" +
+                        "aa\t4765.307692307692\t4765.307692307692\n" +
+                        "bb\t4421.6578947368425\t4421.6578947368425\n",
+                "select s, avg(d) avg, avg(d) from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_int(0, 10000, 1) d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedAvgIntSomeNaNRandomOrder() throws Exception {
+        assertQuery("avg\ts\tavg1\n" +
+                        "4765.307692307692\taa\t4765.307692307692\n" +
+                        "4421.6578947368425\tbb\t4421.6578947368425\n",
+                "select avg(d) avg, s, avg(d) from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_int(0, 10000, 1) d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedAvgIntSomeNaNKeyLast() throws Exception {
+        assertQuery("avg\tavg1\ts\n" +
+                        "4765.307692307692\t4765.307692307692\taa\n" +
+                        "4421.6578947368425\t4421.6578947368425\tbb\n",
+                "select avg(d) avg, avg(d), s from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -534,7 +591,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\tNaN\n" +
                         "bb\tNaN\n",
-                "select s, sum(d) sum from x",
+                "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -553,7 +610,26 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
         assertQuery("s\tsum\n" +
                         "aa\t396218\n" +
                         "bb\t483241\n",
-                "select s, sum(d) sum from x",
+                "select s, sum(d) sum from x order by s",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('aa','bb') s," +
+                        " rnd_long(0, 10000, 2) d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedAvgLongSomeNaN() throws Exception {
+        assertQuery("s\tavg\n" +
+                        "aa\t4952.725\n" +
+                        "bb\t5429.6741573033705\n",
+                "select s, avg(d) avg from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +

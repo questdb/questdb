@@ -89,6 +89,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
         Rosti.keyedIntMaxDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
     }
@@ -99,7 +104,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void setNull(long pRosti) {
+    public void wrapUp(long pRosti) {
         Rosti.keyedIntMaxDoubleSetNull(pRosti, valueOffset);
     }
 }

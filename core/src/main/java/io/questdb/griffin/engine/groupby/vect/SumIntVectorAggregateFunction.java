@@ -24,9 +24,13 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -34,12 +38,46 @@ import java.util.concurrent.atomic.LongAdder;
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final LongAdder sum = new LongAdder();
     private final LongAdder count = new LongAdder();
-
     private final int columnIndex;
+
+    private int valueOffset;
 
     public SumIntVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntSumInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntSumIntSetNull(pRosti, valueOffset);
     }
 
     @Override
