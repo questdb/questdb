@@ -38,19 +38,23 @@ import io.questdb.std.ObjList;
 public class TimestampSequenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "timestamp_sequence(nL)";
+        return "timestamp_sequence(NL)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        final long start = args.getQuick(0).getTimestamp(null);
-        if (start == Numbers.LONG_NaN) {
-            return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
+        if (args.getQuick(0).isConstant()) {
+            final long start = args.getQuick(0).getTimestamp(null);
+            if (start == Numbers.LONG_NaN) {
+                return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
+            }
+            return new TimestampSequenceFunction(position, start, args.getQuick(1));
+        } else {
+            return new TimestampSequenceVariableFunction(position, args.getQuick(0), args.getQuick(1));
         }
-        return new TimestampSequenceFunction(position, start, args.getQuick(1));
     }
 
-    private static final class TimestampSequenceFunction extends TimestampFunction {
+    private static class TimestampSequenceFunction extends TimestampFunction {
         private final Function longIncrement;
         private final long start;
         private long next;
@@ -76,6 +80,40 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             next = start;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            longIncrement.init(symbolTableSource, executionContext);
+        }
+    }
+
+    private static final class TimestampSequenceVariableFunction extends TimestampFunction {
+        private final Function longIncrement;
+        private final Function start;
+        private long next;
+
+        public TimestampSequenceVariableFunction(int position, Function start, Function longIncrement) {
+            super(position);
+            this.start = start;
+            this.next = 0;
+            this.longIncrement = longIncrement;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long result = next;
+            next += longIncrement.getLong(rec);
+            return result + start.getLong(rec);
+        }
+
+        @Override
+        public void toTop() {
+            next = 0;
         }
 
         @Override

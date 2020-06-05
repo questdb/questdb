@@ -24,88 +24,28 @@
 
 package io.questdb.griffin;
 
-import static io.questdb.griffin.SqlKeywords.isCapacityKeyword;
-import static io.questdb.griffin.SqlKeywords.isColumnsKeyword;
-import static io.questdb.griffin.SqlKeywords.isDatabaseKeyword;
-import static io.questdb.griffin.SqlKeywords.isFromKeyword;
-import static io.questdb.griffin.SqlKeywords.isOnlyKeyword;
-import static io.questdb.griffin.SqlKeywords.isTableKeyword;
-import static io.questdb.griffin.SqlKeywords.isTablesKeyword;
-
-import java.io.Closeable;
-import java.util.ServiceLoader;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.MessageBus;
-import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnFilter;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.DefaultLifecycleManager;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.SymbolMapWriter;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
-import io.questdb.griffin.model.ColumnCastModel;
-import io.questdb.griffin.model.CopyModel;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
-import io.questdb.std.GenericLexer;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Os;
-import io.questdb.std.Sinkable;
-import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+import java.util.ServiceLoader;
+
+import static io.questdb.griffin.SqlKeywords.*;
 
 
 public class SqlCompiler implements Closeable {
@@ -1464,7 +1404,7 @@ public class SqlCompiler implements Closeable {
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
 
             // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1 && cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP) {
                 throw SqlException.$(name.position, "select clause must provide timestamp column");
             }
 
@@ -1537,7 +1477,7 @@ public class SqlCompiler implements Closeable {
                     if (writerTimestampIndex == -1) {
                         copyUnordered(cursor, writer, copier);
                     } else {
-                        copyOrdered(writer, cursor, copier, cursorTimestampIndex);
+                        copyOrdered(writer, cursor, copier, writerTimestampIndex);
                     }
                 } catch (CairoException e) {
                     // rollback data when system error occurs

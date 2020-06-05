@@ -425,6 +425,32 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    //TODO test systimestamp as a variable but with testeable results
+//    @Test
+//    public void testInsertWithoutNominatedTimestamp() throws Exception {
+//        final String expected = "seq\tts\n" +
+//                "1\t1970-01-01T00:00:00.000000Z\n" +
+//                "2\t1970-01-01T00:00:00.000001Z\n" +
+//                "3\t1970-01-01T00:00:00.000003Z\n" +
+//                "4\t1970-01-01T00:00:00.000006Z\n" +
+//                "5\t1970-01-01T00:00:00.000010Z\n" +
+//                "6\t1970-01-01T00:00:00.000015Z\n" +
+//                "7\t1970-01-01T00:00:00.000021Z\n" +
+//                "8\t1970-01-01T00:00:00.000028Z\n" +
+//                "9\t1970-01-01T00:00:00.000036Z\n" +
+//                "10\t1970-01-01T00:00:00.000045Z\n";
+//
+//        assertQuery(
+//                "seq\tts\n",
+//                "tab",
+//                "create table tab(seq long, ts timestamp) timestamp(ts);",
+//                "ts",
+//                    "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
+//                expected,
+//                true
+//        );
+//    }
+
     @Test
     public void testSimpleCannedInsert() {
     }

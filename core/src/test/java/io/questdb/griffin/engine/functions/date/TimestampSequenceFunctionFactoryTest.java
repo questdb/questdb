@@ -75,8 +75,31 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
     }
 
     @Test
-    public void testNaN() throws SqlException {
-        call(Numbers.LONG_NaN, 1000L).andAssertTimestamp(Numbers.LONG_NaN);
+    public void testTimestampSequenceWithSystimestampCall() throws Exception {
+        final String expected = "ac\tts\n" +
+                "1\t2020-06-05T13:27:54.334742Z\n" +
+                "2\t2020-06-05T13:27:54.334795Z\n" +
+                "3\t2020-06-05T13:27:54.334803Z\n" +
+                "4\t2020-06-05T13:27:54.334810Z\n" +
+                "5\t2020-06-05T13:27:54.334817Z\n" +
+                "6\t2020-06-05T13:27:54.334823Z\n" +
+                "7\t2020-06-05T13:27:54.334830Z\n" +
+                "8\t2020-06-05T13:27:54.334836Z\n" +
+                "9\t2020-06-05T13:27:54.334843Z\n" +
+                "10\t2020-06-05T13:27:54.334859Z\n";
+
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select x ac, timestamp_sequence(systimestamp(), 0) ts from long_sequence(10)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 
     @Override
