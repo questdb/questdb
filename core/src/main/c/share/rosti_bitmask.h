@@ -5,6 +5,7 @@
 #ifndef ROSTI_BITMASK_H
 #define ROSTI_BITMASK_H
 
+#define VCL_NAMESPACE vcl
 #include "vect.h"
 
 // An abstraction over a bitmask. It provides an easy way to iterate through the

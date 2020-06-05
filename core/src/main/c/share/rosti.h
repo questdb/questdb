@@ -26,9 +26,8 @@
 #define ROSTI_H
 
 #include <utility>
-#include "rosti_bitmask.h"
 #include <cstdio>
-#include "vect.h"
+#include "rosti_bitmask.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
 #define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
