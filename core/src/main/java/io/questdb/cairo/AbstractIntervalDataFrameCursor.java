@@ -72,7 +72,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                     prevVal = column.getLong((mid + offset) * 8);
                     offset += increment;
                 }
-                while (prevVal == midVal && (mid + offset) > 0);
+                while (prevVal == midVal && (mid + offset) > 0 && (mid + offset) < high);
                 return mid + offset + 1;
             }
             else
