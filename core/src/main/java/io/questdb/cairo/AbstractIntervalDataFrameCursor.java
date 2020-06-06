@@ -66,14 +66,14 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             else if (mid > 0) {
                 // In case of multiple equal values, find the first
                 int increment = scanUp ? -1 : 1;
-                int offset = increment;
+                int offset = 0;
                 long prevVal;
                 do {
-                    prevVal = column.getLong((mid + offset) * 8);
                     offset += increment;
+                    prevVal = column.getLong((mid + offset) * 8);
                 }
                 while (prevVal == midVal && (mid + offset) > 0 && (mid + offset) < high);
-                return mid + offset + 1;
+                return mid + offset - increment;
             }
             else
                 return mid;
