@@ -76,12 +76,12 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 // calculate intersection
 
-                long lo = search(column, intervalLo, 0, partitionLimit == -1 ? rowCount : partitionLimit);
+                long lo = search(column, intervalLo, 0, partitionLimit == -1 ? rowCount : partitionLimit, true);
                 if (lo < 0) {
                     lo = -lo - 1;
                 }
 
-                long hi = search(column, intervalHi, lo, rowCount);
+                long hi = search(column, intervalHi, lo, rowCount, false);
 
                 if (hi < 0) {
                     hi = -hi - 1;

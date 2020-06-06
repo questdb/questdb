@@ -54,7 +54,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.timestampIndex = timestampIndex;
     }
 
-    protected static long search(ReadOnlyColumn column, long value, long low, long high) {
+    protected static long search(ReadOnlyColumn column, long value, long low, long high, boolean scanUp) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -65,12 +65,14 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 high = mid;
             else if (mid > 0) {
                 // In case of multiple equal values, find the first
-                int offset = 0;
+                int increment = scanUp ? -1 : 1;
+                int offset = increment;
                 long prevVal;
                 do {
-                    prevVal = column.getLong((mid + --offset) * 8);
+                    prevVal = column.getLong((mid + offset) * 8);
+                    offset += increment;
                 }
-                while (prevVal == midVal);
+                while (prevVal == midVal && (mid + offset) > 0);
                 return mid + offset + 1;
             }
             else
