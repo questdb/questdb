@@ -1576,7 +1576,10 @@ public class SqlCodeGenerator implements Mutable {
 
                     if (tempKeyIndexesInBase.size() == 1) {
 
+                        // the types are transient, they are used to
+                        // initialize map and reference to type list is not stored
                         arrayColumnTypes.clear();
+
                         // this is overly generic, but we will catchup C code
                         for (int i = 0, n = tempKeyIndexesInBase.size(); i < n; i++) {
                             arrayColumnTypes.add(tempMetadata.getColumnType(tempKeyIndexesInBase.getQuick(i)));
@@ -1587,6 +1590,7 @@ public class SqlCodeGenerator implements Mutable {
                         }
 
                         return new GroupByRecordCursorFactory(
+                                configuration,
                                 factory,
                                 GenericRecordMetadata.copyOf(tempMetadata),
                                 arrayColumnTypes,

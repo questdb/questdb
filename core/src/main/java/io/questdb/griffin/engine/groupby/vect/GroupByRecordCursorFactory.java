@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,9 +45,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final ObjList<VectorAggregateFunction> vafList;
-    // todo: config the constants
-    private final ObjectPool<VectorAggregateEntry> entryPool = new ObjectPool<>(VectorAggregateEntry::new, 1024);
-    private final ObjList<VectorAggregateEntry> activeEntries = new ObjList<>(1024);
+    private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final ObjList<VectorAggregateEntry> activeEntries;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final RecordMetadata metadata;
 
@@ -55,6 +55,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     private final RostiRecordCursor cursor;
 
     public GroupByRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
             @Transient ColumnTypes columnTypes,
@@ -65,6 +66,8 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
 
+        this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
+        this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
         // columnTypes[0] is the type of key, for now single key is supported
         // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
@@ -79,7 +82,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
         for (int i = 0; i < workerCount; i++) {
-            pRosti[i] = Rosti.alloc(columnTypes, 2047);
+            pRosti[i] = Rosti.alloc(columnTypes, configuration.getGroupByMapCapacity());
 
             // configure map with default values
             // when our execution order is sum(x) then min(y) over the same map

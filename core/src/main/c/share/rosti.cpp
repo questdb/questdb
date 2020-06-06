@@ -179,6 +179,7 @@ ATTRIBUTE_NEVER_INLINE size_t prepare_insert(rosti_t *map, size_t hash) {
     set_ctrl(map, target.offset, H2(hash));
 
     // initialize slot
-    memcpy(map->slots_ + (target.offset << map->slot_size_shift_), map->slot_initial_values_, map->slot_size_);
-    return target.offset;
+    const size_t offset = target.offset << map->slot_size_shift_;
+    memcpy(map->slots_ + offset, map->slot_initial_values_, map->slot_size_);
+    return offset;
 }

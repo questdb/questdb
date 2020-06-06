@@ -204,9 +204,10 @@ inline std::pair<size_t, bool> find_or_prepare_insert(rosti_t *map, const int32_
     while (true) {
         Group g{map->ctrl_ + seq.offset()};
         for (int i : g.Match(H2(hh))) {
-            int32_t p = *reinterpret_cast<int32_t *>(map->slots_ + (seq.offset(i) << map->slot_size_shift_));
+            const size_t offset = seq.offset(i) << map->slot_size_shift_;
+            int32_t p = *reinterpret_cast<int32_t *>(map->slots_ + offset);
             if (PREDICT_TRUE(p == key)) {
-                return {seq.offset(i), false};
+                return {offset, false};
             }
         }
         if (PREDICT_TRUE(g.MatchEmpty())) {

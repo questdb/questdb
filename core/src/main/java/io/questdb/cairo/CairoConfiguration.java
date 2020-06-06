@@ -157,4 +157,8 @@ public interface CairoConfiguration {
     DateLocale getDefaultDateLocale();
 
     TimestampLocale getDefaultTimestampLocale();
+
+    int getGroupByPoolCapacity();
+
+    int getGroupByMapCapacity();
 }
