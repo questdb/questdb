@@ -4,8 +4,8 @@
 #include "rosti.h"
 #include <jni.h>
 
-rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const size_t map_capacity) {
-    size_t slot_key_size = 0;
+rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const uint64_t map_capacity) {
+    uint64_t slot_key_size = 0;
     auto value_offsets = reinterpret_cast<int32_t *>(malloc(sizeof(int32_t) * (column_count + 1)));
     value_offsets[0] = 0;
     for (int32_t i = 0; i < column_count; i++) {
@@ -78,7 +78,7 @@ inline void reset_ctrl(rosti_t *map) {
 }
 
 void initialize_slots(rosti_t *map) {
-    const size_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
+    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
     auto *mem = reinterpret_cast<unsigned char *>(malloc(
             map->slot_size_ +
             ctrl_capacity +
@@ -105,7 +105,7 @@ inline bool IsDeleted(ctrl_t c) { return c == kDeleted; }
 
 inline bool IsEmptyOrDeleted(ctrl_t c) { return c < kSentinel; }
 
-void set_ctrl(rosti_t *map, size_t i, ctrl_t h) {
+void set_ctrl(rosti_t *map, uint64_t i, ctrl_t h) {
     constexpr uint32_t group_size = sizeof(Group);
     const int32_t p = ((i - group_size) & map->capacity_) + 1 + ((group_size - 1) & map->capacity_);
     map->ctrl_[i] = h;
@@ -123,11 +123,11 @@ void set_ctrl(rosti_t *map, size_t i, ctrl_t h) {
 // - there are enough slots
 // - the element with the hash is not in the table
 struct FindInfo {
-    size_t offset;
-    size_t probe_length;
+    uint64_t offset;
+    uint64_t probe_length;
 };
 
-FindInfo find_first_non_full(rosti_t *map, size_t hash) {
+FindInfo find_first_non_full(rosti_t *map, uint64_t hash) {
     auto seq = probe(map, hash);
     while (true) {
         Group g{map->ctrl_ + seq.offset()};
@@ -139,21 +139,21 @@ FindInfo find_first_non_full(rosti_t *map, size_t hash) {
     }
 }
 
-void resize(rosti_t *map, size_t new_capacity) {
+void resize(rosti_t *map, uint64_t new_capacity) {
     auto *old_init = map->slot_initial_values_;
     auto *old_ctrl = map->ctrl_;
     auto *old_slots = map->slots_;
-    const size_t old_capacity = map->capacity_;
+    const uint64_t old_capacity = map->capacity_;
     map->capacity_ = new_capacity;
     initialize_slots(map);
 
-    size_t total_probe_length = 0;
-    for (size_t i = 0; i != old_capacity; ++i) {
+    uint64_t total_probe_length = 0;
+    for (uint64_t i = 0; i != old_capacity; ++i) {
         if (IsFull(old_ctrl[i])) {
             auto p = old_slots + (i << map->slot_size_shift_);
-            const size_t hh = hash(*(reinterpret_cast<int32_t *>(p)));
+            const uint64_t hh = hash(*(reinterpret_cast<int32_t *>(p)));
             auto target = find_first_non_full(map, hh);
-            size_t new_i = target.offset;
+            uint64_t new_i = target.offset;
             total_probe_length += target.probe_length;
             set_ctrl(map, new_i, H2(hh));
             *(reinterpret_cast<int32_t *>(map->slots_ + (new_i << map->slot_size_shift_))) = *p;
@@ -168,7 +168,7 @@ void rehash_and_grow_if_necessary(rosti_t *map) {
     resize(map, map->capacity_ * 2 + 1);
 }
 
-ATTRIBUTE_NEVER_INLINE size_t prepare_insert(rosti_t *map, size_t hash) {
+ATTRIBUTE_NEVER_INLINE uint64_t prepare_insert(rosti_t *map, uint64_t hash) {
     auto target = find_first_non_full(map, hash);
     if (PREDICT_FALSE(map->growth_left_ == 0 && !IsDeleted(map->ctrl_[target.offset]))) {
         rehash_and_grow_if_necessary(map);
@@ -179,7 +179,7 @@ ATTRIBUTE_NEVER_INLINE size_t prepare_insert(rosti_t *map, size_t hash) {
     set_ctrl(map, target.offset, H2(hash));
 
     // initialize slot
-    const size_t offset = target.offset << map->slot_size_shift_;
+    const uint64_t offset = target.offset << map->slot_size_shift_;
     memcpy(map->slots_ + offset, map->slot_initial_values_, map->slot_size_);
     return offset;
 }

@@ -37,7 +37,6 @@
 #endif
 
 using ctrl_t = signed char;
-using size_t = uint64_t;
 using h2_t = uint8_t;
 
 enum Ctrl : ctrl_t {
@@ -69,11 +68,11 @@ static_assert(kDeleted == -2,
 struct rosti_t {
     ctrl_t *ctrl_ = nullptr;      // [(capacity + 1) * ctrl_t]+
     unsigned char *slots_ = nullptr;   // [capacity * types]
-    size_t size_ = 0;                  // number of full slots
-    size_t capacity_ = 0;              // total number of slots
-    size_t slot_size_ = 0;             // size of key in each slot
-    size_t slot_size_shift_ = 0;
-    size_t growth_left_ = 0;
+    uint64_t size_ = 0;                  // number of full slots
+    uint64_t capacity_ = 0;              // total number of slots
+    uint64_t slot_size_ = 0;             // size of key in each slot
+    uint64_t slot_size_shift_ = 0;
+    uint64_t growth_left_ = 0;
     int32_t *value_offsets_ = nullptr;
     unsigned char *slot_initial_values_ = nullptr; // contains pointer to memory arena
 };
@@ -106,7 +105,7 @@ using Group = GroupSse2Impl;
 
 //-----------------------------------------
 
-rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, size_t map_capacity);
+rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, uint64_t map_capacity);
 
 static void initialize_slots(rosti_t *map);
 
@@ -124,7 +123,7 @@ static inline int32_t ceil_pow_2(int32_t v) {
 
 // We use 7/8th as maximum load factor.
 // For 16-wide groups, that gives an average of two empty slots per group.
-inline size_t CapacityToGrowth(size_t capacity) {
+inline uint64_t CapacityToGrowth(uint64_t capacity) {
     return capacity - capacity / 8;
 }
 
@@ -136,31 +135,31 @@ inline void reset_growth_left(rosti_t *map) {
 //
 // The seed consists of the ctrl_ pointer, which adds enough entropy to ensure
 // non-determinism of iteration order in most cases.
-inline size_t HashSeed(const ctrl_t *ctrl) {
+inline uint64_t HashSeed(const ctrl_t *ctrl) {
     // The low bits of the pointer have little or no entropy because of
     // alignment. We shift the pointer to try to use higher entropy bits. A
     // good number seems to be 12 bits, because that aligns with page size.
     return reinterpret_cast<uintptr_t>(ctrl) >> 12;
 }
 
-inline size_t H1(size_t hash, const ctrl_t *ctrl) {
+inline uint64_t H1(uint64_t hash, const ctrl_t *ctrl) {
     return (hash >> 7) ^ HashSeed(ctrl);
 }
 
-inline ctrl_t H2(size_t hash) { return hash & 0x7F; }
+inline ctrl_t H2(uint64_t hash) { return hash & 0x7F; }
 
-template<size_t Width>
+template<uint64_t Width>
 class probe_seq {
 public:
-    probe_seq(size_t hash, size_t mask) {
+    probe_seq(uint64_t hash, uint64_t mask) {
         offset_ = hash & mask;
         mask_ = mask;
     }
 
 
-    inline size_t offset() const { return offset_; }
+    inline uint64_t offset() const { return offset_; }
 
-    inline size_t offset(size_t i) const { return (offset_ + i) & mask_; }
+    inline uint64_t offset(uint64_t i) const { return (offset_ + i) & mask_; }
 
     void next() {
         index_ += Width;
@@ -168,43 +167,43 @@ public:
         offset_ &= mask_;
     }
 
-    size_t mask() {
+    uint64_t mask() {
         return mask_;
     }
 
     // 0-based probe index. The i-th probe in the probe sequence.
-    size_t index() const { return index_; }
+    uint64_t index() const { return index_; }
 
 private:
-    size_t mask_;
-    size_t offset_;
-    size_t index_ = 0;
+    uint64_t mask_;
+    uint64_t offset_;
+    uint64_t index_ = 0;
 };
 
-inline probe_seq<sizeof(Group)> probe(const rosti_t *map, size_t hash) {
+inline probe_seq<sizeof(Group)> probe(const rosti_t *map, uint64_t hash) {
     return probe_seq<sizeof(Group)>(H1(hash, map->ctrl_), map->capacity_);
 }
 
-inline size_t hash(int32_t v) {
-    size_t h = v;
+inline uint64_t hash(int32_t v) {
+    uint64_t h = v;
     h = (h << 5) - h + ((unsigned char) (v >> 8));
     h = (h << 5) - h + ((unsigned char) (v >> 16));
     h = (h << 5) - h + ((unsigned char) (v >> 24));
     return h;
 }
 
-size_t prepare_insert(rosti_t *map, size_t hash);
+uint64_t prepare_insert(rosti_t *map, uint64_t hash);
 
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 
-inline std::pair<size_t, bool> find_or_prepare_insert(rosti_t *map, const int32_t key) {
+inline std::pair<uint64_t, bool> find_or_prepare_insert(rosti_t *map, const int32_t key) {
     auto hh = hash(key);
     auto seq = probe(map, hh);
     while (true) {
         Group g{map->ctrl_ + seq.offset()};
         for (int i : g.Match(H2(hh))) {
-            const size_t offset = seq.offset(i) << map->slot_size_shift_;
+            const uint64_t offset = seq.offset(i) << map->slot_size_shift_;
             int32_t p = *reinterpret_cast<int32_t *>(map->slots_ + offset);
             if (PREDICT_TRUE(p == key)) {
                 return {offset, false};
