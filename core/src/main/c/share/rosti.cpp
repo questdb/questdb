@@ -40,7 +40,7 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
                 slot_key_size += 2;
                 break;
             case 4: // INT
-            case 8: // FLOATó
+            case 8: // FLOAT
             case 11: // SYMBOL - store as INT
                 slot_key_size += 4;
                 break;
