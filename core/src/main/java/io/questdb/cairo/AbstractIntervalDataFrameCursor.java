@@ -48,13 +48,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
+    static final int SCAN_UP = -1;
+    static final int SCAN_DOWN = 1;
+
     public AbstractIntervalDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervals = new LongList(intervals);
         this.timestampIndex = timestampIndex;
     }
 
-    protected static long search(ReadOnlyColumn column, long value, long low, long high, boolean scanUp) {
+    protected static long search(ReadOnlyColumn column, long value, long low, long high, int increment) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -65,10 +68,12 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 high = mid;
             else {
                 // In case of multiple equal values, find the first
-                int increment = scanUp ? -1 : 1;
-                for (long offset = 0; (mid + offset) > 0 && (mid + offset) < high; offset += increment) {
-                    if (midVal != column.getLong((mid + offset) * 8))
-                        return mid + offset - increment;
+                while (mid > 0 && mid < high) {
+                    if (midVal != column.getLong(mid * 8)) {
+                        mid -= increment;
+                        break;
+                    }
+                    mid += increment;
                 }
                 return mid;
             }
