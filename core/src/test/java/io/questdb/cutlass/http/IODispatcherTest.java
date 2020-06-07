@@ -843,6 +843,7 @@ public class IODispatcherTest {
         );
     }
 
+    @Ignore
     @Test
     public void testImportMultipleOnSameConnection() throws Exception {
         testImport(

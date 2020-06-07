@@ -94,6 +94,20 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateTimestamps() throws Exception {
+        int N = 10;
+
+        intervals.clear();
+        // Assume testIntervals will insert rows 3 years after 1980-01-01,
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-01T00:00:00.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-02T00:00:00.000Z"));
+
+        final String expected = "1983-01-01T00:00:00.000000Z\n".repeat(N);
+
+        testIntervals(PartitionBy.NONE, 0, N, expected, N);
+    }
+
+    @Test
     public void testAllIntervalsAfterTableByNone() throws Exception {
         // day partition
         // two hour interval between timestamps
