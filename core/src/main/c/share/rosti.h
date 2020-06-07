@@ -26,6 +26,7 @@
 #define ROSTI_H
 
 #include <utility>
+#include <cstring>
 #include "rosti_bitmask.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
@@ -35,6 +36,9 @@
 #else
 #define ATTRIBUTE_NEVER_INLINE
 #endif
+
+#define PREDICT_FALSE(x) (__builtin_expect(x, 0))
+#define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 
 using ctrl_t = signed char;
 using h2_t = uint8_t;
@@ -109,8 +113,6 @@ rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, uint64_t
 
 static void initialize_slots(rosti_t *map);
 
-void clear(rosti_t *map);
-
 static inline int32_t ceil_pow_2(int32_t v) {
     v--;
     v |= v >> 1;
@@ -184,28 +186,130 @@ inline probe_seq<sizeof(Group)> probe(const rosti_t *map, uint64_t hash) {
     return probe_seq<sizeof(Group)>(H1(hash, map->ctrl_), map->capacity_);
 }
 
-inline uint64_t hash(int32_t v) {
-    uint64_t h = v;
-    h = (h << 5) - h + ((unsigned char) (v >> 8));
-    h = (h << 5) - h + ((unsigned char) (v >> 16));
-    h = (h << 5) - h + ((unsigned char) (v >> 24));
-    return h;
+
+// Reset all ctrl bytes back to kEmpty, except the sentinel.
+inline void reset_ctrl(rosti_t *map) {
+    uint64_t l = (map->capacity_ + 1) * sizeof(Group);
+    memset(map->ctrl_, kEmpty, l);
+    map->ctrl_[map->capacity_] = kSentinel;
 }
 
-uint64_t prepare_insert(rosti_t *map, uint64_t hash);
+void initialize_slots(rosti_t *map) {
+    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
+    auto *mem = reinterpret_cast<unsigned char *>(malloc(
+            map->slot_size_ +
+            ctrl_capacity +
+            map->slot_size_ * (map->capacity_ + 1)));
+    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem) + map->slot_size_;
+    map->slots_ = mem + ctrl_capacity;
+    map->slot_initial_values_ = mem;
+    reset_ctrl(map);
+    reset_growth_left(map);
+}
 
-#define PREDICT_FALSE(x) (__builtin_expect(x, 0))
-#define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
+inline void clear(rosti_t *map) {
+    map->size_ = 0;
+    reset_ctrl(map);
+    reset_growth_left(map);
+    memset(map->slots_, 0, map->capacity_ << map->slot_size_shift_);
+}
 
-inline std::pair<uint64_t, bool> find_or_prepare_insert(rosti_t *map, const int32_t key) {
-    auto hh = hash(key);
-    auto seq = probe(map, hh);
+inline bool IsEmpty(ctrl_t c) { return c == kEmpty; }
+
+inline bool IsFull(ctrl_t c) { return c >= 0; }
+
+inline bool IsDeleted(ctrl_t c) { return c == kDeleted; }
+
+inline bool IsEmptyOrDeleted(ctrl_t c) { return c < kSentinel; }
+
+inline void set_ctrl(rosti_t *map, uint64_t i, ctrl_t h) {
+    constexpr uint32_t group_size = sizeof(Group);
+    const int32_t p = ((i - group_size) & map->capacity_) + 1 + ((group_size - 1) & map->capacity_);
+    map->ctrl_[i] = h;
+    map->ctrl_[p] = h;
+}
+
+
+// Probes the raw_hash_set with the probe sequence for hash and returns the
+// pointer to the first empty or deleted slot.
+// NOTE: this function must work with tables having both kEmpty and kDelete
+// in one group. Such tables appears during drop_deletes_without_resize.
+//
+// This function is very useful when insertions happen and:
+// - the input is already a set
+// - there are enough slots
+// - the element with the hash is not in the table
+struct FindInfo {
+    uint64_t offset;
+    uint64_t probe_length;
+};
+
+inline FindInfo find_first_non_full(rosti_t *map, uint64_t hash) {
+    auto seq = probe(map, hash);
     while (true) {
         Group g{map->ctrl_ + seq.offset()};
-        for (int i : g.Match(H2(hh))) {
+        auto mask = g.MatchEmptyOrDeleted();
+        if (mask) {
+            return {seq.offset(mask.TrailingZeros()), seq.index()};
+        }
+        seq.next();
+    }
+}
+
+template<typename HASH_M, typename CPY>
+void resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
+    auto *old_init = map->slot_initial_values_;
+    auto *old_ctrl = map->ctrl_;
+    auto *old_slots = map->slots_;
+    const uint64_t old_capacity = map->capacity_;
+    map->capacity_ = new_capacity;
+    initialize_slots(map);
+
+    uint64_t total_probe_length = 0;
+    for (uint64_t i = 0; i != old_capacity; ++i) {
+        if (IsFull(old_ctrl[i])) {
+            auto p = old_slots + (i << map->slot_size_shift_);
+            const uint64_t hash = hash_m(p);
+            auto target = find_first_non_full(map, hash);
+            uint64_t new_i = target.offset;
+            total_probe_length += target.probe_length;
+            set_ctrl(map, new_i, H2(hash));
+            cpy(map->slots_ + (new_i << map->slot_size_shift_), p, map->slot_size_);
+//            *(reinterpret_cast<int32_t *>(map->slots_ + (new_i << map->slot_size_shift_))) = *p;
+        }
+    }
+    if (old_capacity) {
+        free(old_init);
+    }
+}
+
+template<typename HASH_M_T, typename CPY_T>
+ATTRIBUTE_NEVER_INLINE uint64_t prepare_insert(rosti_t *map, uint64_t hash, HASH_M_T hash_f, CPY_T cpy_f) {
+    auto target = find_first_non_full(map, hash);
+    if (PREDICT_FALSE(map->growth_left_ == 0 && !IsDeleted(map->ctrl_[target.offset]))) {
+        resize(map, map->capacity_ * 2 + 1, hash_f, cpy_f);
+        target = find_first_non_full(map, hash);
+    }
+    ++map->size_;
+    map->growth_left_ -= IsEmpty(map->ctrl_[target.offset]);
+    set_ctrl(map, target.offset, H2(hash));
+
+    // initialize slot
+    const uint64_t offset = target.offset << map->slot_size_shift_;
+    memcpy(map->slots_ + offset, map->slot_initial_values_, map->slot_size_);
+    return offset;
+}
+
+template<typename T, typename HASH_T, typename EQ_T, typename HAS_M_T, typename CPY_T>
+inline std::pair<uint64_t, bool> find_or_prepare_insert(rosti_t *map, const T key, HASH_T hash_f, EQ_T eq_f,
+                                                        HAS_M_T hash_m_f, CPY_T cpy_f) {
+    auto hash = hash_f(key);
+    auto seq = probe(map, hash);
+    while (true) {
+        Group g{map->ctrl_ + seq.offset()};
+        for (int i : g.Match(H2(hash))) {
             const uint64_t offset = seq.offset(i) << map->slot_size_shift_;
-            int32_t p = *reinterpret_cast<int32_t *>(map->slots_ + offset);
-            if (PREDICT_TRUE(p == key)) {
+            if (PREDICT_TRUE(eq_f(map->slots_ + offset, key))) {
                 return {offset, false};
             }
         }
@@ -214,7 +318,7 @@ inline std::pair<uint64_t, bool> find_or_prepare_insert(rosti_t *map, const int3
         }
         seq.next();
     }
-    return {prepare_insert(map, hh), true};
+    return {prepare_insert(map, hash, hash_m_f, cpy_f), true};
 }
 
 #endif //ROSTI_H
