@@ -95,7 +95,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTimestamps() throws Exception {
-        int N = 1000;
+        int N = 10;
 
         intervals.clear();
         // Assume testIntervals will insert rows 3 years after 1980-01-01,
