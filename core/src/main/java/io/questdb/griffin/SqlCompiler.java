@@ -1402,9 +1402,10 @@ public class SqlCompiler implements Closeable {
             final RecordMetadata writerMetadata = writer.getMetadata();
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
+            final int cursorColumnCount = cursorMetadata.getColumnCount();
 
             // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1 && cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP) {
+            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1 && (cursorColumnCount <= writerTimestampIndex || cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP)) {
                 throw SqlException.$(name.position, "select clause must provide timestamp column");
             }
 
