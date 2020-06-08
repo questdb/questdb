@@ -451,6 +451,46 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertWithLessColumnsThanExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
+            }
+        });
+    }
+
+
+    @Test
+    public void testInsertWithoutNominatedTimestampAndTypeDoesNotMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select x ac, rnd_int() id from long_sequence(10)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected timestamp column");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWithWrongNominatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
+            }
+        });
+    }
+
+    @Test
     public void testSimpleCannedInsert() {
     }
 

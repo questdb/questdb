@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.test.tools;
 
 import io.questdb.std.microtime.MicrosecondClock;
 
