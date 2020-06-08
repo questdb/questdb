@@ -1405,8 +1405,16 @@ public class SqlCompiler implements Closeable {
             final int cursorColumnCount = cursorMetadata.getColumnCount();
 
             // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1 && (cursorColumnCount <= writerTimestampIndex || cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP)) {
-                throw SqlException.$(name.position, "select clause must provide timestamp column");
+            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                if (cursorColumnCount <= writerTimestampIndex) {
+                    throw SqlException.$(name.position, "select clause must provide timestamp column");
+                } else if (cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP) {
+                    throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(cursorMetadata.getColumnType(writerTimestampIndex)));
+                }
+            }
+
+            if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
+                throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
             }
 
             final RecordToRowCopier copier;

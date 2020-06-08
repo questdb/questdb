@@ -204,6 +204,42 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return ex;
     }
 
+    private static SqlException invalidArgument(CharSequence message, ExpressionNode node, ObjList<Function> args, CharSequence expected, int offset, int count) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put(message);
+        ex.put(node.token);
+        ex.put(". expected args: ");
+        ex.put('(');
+        if (expected != null) {
+            for (int i = 0, n = count; i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                char c = expected.charAt(offset + i);
+                ex.put(ColumnType.nameOf(getArgType(c)));
+                if (Character.isLowerCase(c)) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put("). actual args: ");
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                Function arg = args.getQuick(i);
+                ex.put(ColumnType.nameOf(arg.getType()));
+                if (arg.isConstant()) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
@@ -539,6 +575,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final char c = signature.charAt(sigArgOffset + k);
 
                     if (Character.isLowerCase(c) && !arg.isConstant()) {
+                        candidateSignature = signature;
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
@@ -588,6 +625,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                     } else {
                         // types mismatch
+                        candidateSignature = signature;
                         match = MATCH_NO_MATCH;
                         break;
                     }
@@ -629,7 +667,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         if (candidate == null) {
             // no signature match
-            throw invalidFunction("unknown function", node, args);
+            if (candidateSignature != null) {
+                final int sigArgOffset = candidateSignature.indexOf('(') + 1;
+                int sigArgCount = candidateSignature.length() - 1 - sigArgOffset;
+                throw invalidArgument("unexpected argument for function: ", node, args, candidateSignature, sigArgOffset, sigArgCount);
+            } else {
+                throw invalidArgument("unexpected argument for function: ", node, args, "", 0, 0);
+            }
         }
 
         if (candidateSigVarArgConst) {
@@ -804,8 +848,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                         break;
                 }
-            }
-            else if (factory.isGroupBy()) {
+            } else if (factory.isGroupBy()) {
                 groupByFunctionNames.add(name);
             }
         }
