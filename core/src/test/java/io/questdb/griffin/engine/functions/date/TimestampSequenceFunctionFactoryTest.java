@@ -24,23 +24,34 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.test.tools.StationaryMicrosClock;
+import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
 
-    @Test
-    public void testIncrement2() throws SqlException {
-        assertFunction(call(0L, 1000L).getFunction2());
+    @BeforeClass
+    public static void setUp2() {
+        engine = new CairoEngine(new StaticClockCairoConfiguration(root), messageBus);
+        compiler = new SqlCompiler(engine);
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                messageBus,
+                1, engine)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null);
+        bindVariableService.clear();
     }
 
     @Test
@@ -75,25 +86,69 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
     }
 
     @Test
-    public void testNaN() throws SqlException {
-        call(Numbers.LONG_NaN, 1000L).andAssertTimestamp(Numbers.LONG_NaN);
+    public void testTimestampSequenceWithSystimestampCall() throws Exception {
+        final String expected = "ac\tts\n" +
+                "1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\t1970-01-01T00:00:00.001000Z\n" +
+                "3\t1970-01-01T00:00:00.002000Z\n" +
+                "4\t1970-01-01T00:00:00.003000Z\n" +
+                "5\t1970-01-01T00:00:00.004000Z\n" +
+                "6\t1970-01-01T00:00:00.005000Z\n" +
+                "7\t1970-01-01T00:00:00.006000Z\n" +
+                "8\t1970-01-01T00:00:00.007000Z\n" +
+                "9\t1970-01-01T00:00:00.008000Z\n" +
+                "10\t1970-01-01T00:00:00.009000Z\n";
+
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 
-    @Override
-    protected void addExtraFunctions() {
-        functions.add(new NegIntFunctionFactory());
+    @Test
+    public void testTimestampSequenceWithZeroStartValue() throws Exception {
+        final String expected = "ac\tts\n" +
+                "1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\t1970-01-01T00:00:00.001000Z\n" +
+                "3\t1970-01-01T00:00:00.002000Z\n" +
+                "4\t1970-01-01T00:00:00.003000Z\n" +
+                "5\t1970-01-01T00:00:00.004000Z\n" +
+                "6\t1970-01-01T00:00:00.005000Z\n" +
+                "7\t1970-01-01T00:00:00.006000Z\n" +
+                "8\t1970-01-01T00:00:00.007000Z\n" +
+                "9\t1970-01-01T00:00:00.008000Z\n" +
+                "10\t1970-01-01T00:00:00.009000Z\n";
+
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new TimestampSequenceFunctionFactory();
-    }
+    private final static class StaticClockCairoConfiguration extends DefaultCairoConfiguration {
 
-    private void assertFunction(Function function) {
-        long next = 0;
-        for (int i = 0; i < 10; i++) {
-            Assert.assertEquals(next, function.getTimestamp(null));
-            next += 1000L;
+        public StaticClockCairoConfiguration(CharSequence root) {
+            super(root);
+        }
+
+        public MicrosecondClock getMicrosecondClock() {
+            return StationaryMicrosClock.INSTANCE;
         }
     }
 }
