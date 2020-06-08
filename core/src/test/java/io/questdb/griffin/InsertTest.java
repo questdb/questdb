@@ -130,6 +130,20 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertInvalidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(30, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
     public void testInsertExecutionAfterStructureChange() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);

@@ -1568,6 +1568,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (createVectorAggregateFunctions(columns, metadata, executionContext.getWorkerCount())) {
                     if (tempKeyIndexesInBase.size() == 0) {
                         return new GroupByNotKeyedVectorRecordCursorFactory(
+                                configuration,
                                 factory,
                                 GenericRecordMetadata.copyOf(tempMetadata),
                                 tempVaf
