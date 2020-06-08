@@ -333,4 +333,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getFloatToStrCastScale() {
         return 4;
     }
+
+    @Override
+    public int getGroupByPoolCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getGroupByMapCapacity() {
+        return 1024;
+    }
 }

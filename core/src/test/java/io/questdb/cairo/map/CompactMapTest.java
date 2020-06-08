@@ -198,7 +198,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -425,7 +425,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -490,7 +490,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
                         new SymbolAsIntTypes().of(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)

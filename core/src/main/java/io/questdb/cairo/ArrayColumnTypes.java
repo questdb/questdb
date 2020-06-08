@@ -25,8 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
 
-public class ArrayColumnTypes implements ColumnTypes {
+public class ArrayColumnTypes implements ColumnTypes, Mutable {
     private final IntList types = new IntList();
 
     public ArrayColumnTypes add(int type) {
@@ -44,8 +45,7 @@ public class ArrayColumnTypes implements ColumnTypes {
         return types.getQuick(columnIndex);
     }
 
-    public ArrayColumnTypes reset() {
+    public void clear() {
         types.clear();
-        return this;
     }
 }

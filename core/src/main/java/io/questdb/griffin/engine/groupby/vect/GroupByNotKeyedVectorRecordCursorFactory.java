@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -36,6 +37,7 @@ import io.questdb.mp.Worker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.tasks.VectorAggregateTask;
 
 public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFactory {
@@ -43,20 +45,24 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final ObjList<VectorAggregateFunction> vafList;
-    private final ObjectPool<VectorAggregateEntry> entryPool = new ObjectPool<>(VectorAggregateEntry::new, 1024);
-    private final ObjList<VectorAggregateEntry> activeEntries = new ObjList<>(1024);
+    private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final ObjList<VectorAggregateEntry> activeEntries;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final RecordMetadata metadata;
     private final GroupByNotKeyedVectorRecordCursor cursor;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
-            ObjList<VectorAggregateFunction> vafList
+            @Transient ObjList<VectorAggregateFunction> vafList
     ) {
+        this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
+        this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         this.base = base;
         this.metadata = metadata;
-        this.vafList = vafList;
+        this.vafList = new ObjList<>(vafList.size());
+        this.vafList.addAll(vafList);
         this.cursor = new GroupByNotKeyedVectorRecordCursor(vafList);
     }
 
@@ -110,13 +116,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                     ownCount++;
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
-                    entry.of(queuedCount++, vaf, pageAddress, pageValueCount, doneLatch);
+                    // null pRosti means that we do not need keyed aggregation
+                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageValueCount, doneLatch);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);
                 }
+                total++;
             }
-            total++;
         }
 
         // all done? great start consuming the queue we just published

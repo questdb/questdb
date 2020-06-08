@@ -39,7 +39,6 @@ public class InsertStatementImpl implements InsertStatement {
     private final String tableName;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final CairoEngine engine;
-    private SqlExecutionContext lastUsedContext;
 
     // todo: recycle these
     public InsertStatementImpl(
@@ -95,7 +94,6 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private void initContext(SqlExecutionContext executionContext) {
-        lastUsedContext = executionContext;
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).init(null, executionContext);

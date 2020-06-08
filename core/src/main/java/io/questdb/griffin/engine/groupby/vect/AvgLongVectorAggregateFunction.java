@@ -24,8 +24,12 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAdder;
@@ -36,10 +40,47 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     private final DoubleAdder sum = new DoubleAdder();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private int valueOffset;
 
     public AvgLongVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        // although the final values are double, avg() calculates sum and count for longs
+        // double is derived at the very end. The initial values need to be set
+        // correctly with long sum and count in mind.
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntSumLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumLongMerge(pRostiA, pRostiA, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntAvgLongSetNull(pRosti, valueOffset);
     }
 
     @Override

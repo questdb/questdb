@@ -111,7 +111,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public boolean hasNext() {
         if (nextRecordOffset != -1) {
-            long offset = nextRecordOffset;
+            final long offset = nextRecordOffset;
             nextRecordOffset = mem.getLong(nextRecordOffset);
             recordA.of(rowToDataOffset(offset));
             return true;
@@ -212,13 +212,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     public void putStr(CharSequence value) {
-        if (value == null) {
-            putNull();
-        } else {
+        if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             mem.putStr(varAppendOffset, value);
             varAppendOffset += value.length() * 2 + 4;
+        } else {
+            putNull();
         }
     }
 
@@ -339,11 +339,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public int getStrLen(int col) {
-            long offset = varWidthColumnOffset(col);
-            if (offset == -1) {
-                return TableUtils.NULL_LEN;
+            final long offset = varWidthColumnOffset(col);
+            if (offset > -1) {
+                return mem.getInt(offset);
             }
-            return mem.getInt(offset);
+            return TableUtils.NULL_LEN;
         }
 
         @Override

@@ -345,7 +345,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onHeadersReady(HttpConnectionContext context) {
-
     }
 
     @Override
@@ -362,6 +361,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         if (this.transientState == null) {
             LOG.debug().$("new text state").$();
             LV.set(context, this.transientState = new TextImportProcessorState(engine));
+            transientState.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));
         }
     }
 
@@ -425,11 +425,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     private void sendResponse(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        TextImportProcessorState state = LV.get(context);
-        // todo: may be set this up when headers are ready?
-        state.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));
-        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-
+        final TextImportProcessorState state = LV.get(context);
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (state.state == TextImportProcessorState.STATE_OK) {
             if (state.json) {
                 socket.status(200, CONTENT_TYPE_JSON);

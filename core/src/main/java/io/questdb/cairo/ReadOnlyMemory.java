@@ -69,20 +69,14 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    public int getPageCount() {
-        return pageIndex(userSize) + 1;
-    }
-
-    @Override
     public long getPageSize(int page) {
         // in some cases VirtualMemory.getPageSize() is called
         // before page is mapped, where lastPageIndex is set
         // if this is the case I need to test better
-        if (page == lastPageIndex) {
-            return lastPageSize;
-        } else {
+        if (page < lastPageIndex) {
             return super.getPageSize(page);
         }
+        return lastPageSize;
     }
 
     @Override
@@ -98,6 +92,24 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
                 lastPageSize = getMapPageSize();
             }
         }
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        close();
+        this.ff = ff;
+        boolean exists = ff.exists(name);
+        if (!exists) {
+            throw CairoException.instance(0).put("File not found: ").put(name);
+        }
+        fd = ff.openRO(name);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
+        }
+
+        this.pageSize = pageSize;
+        grow(size);
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(", size=").$(this.size).$(']').$();
     }
 
     @Override
@@ -123,21 +135,8 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        close();
-        this.ff = ff;
-        boolean exists = ff.exists(name);
-        if (!exists) {
-            throw CairoException.instance(0).put("File not found: ").put(name);
-        }
-        fd = ff.openRO(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
-        }
-
-        this.pageSize = pageSize;
-        grow(size);
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(", size=").$(this.size).$(']').$();
+    public int getPageCount() {
+        return pageIndex(userSize) + 1;
     }
 
     public long size() {

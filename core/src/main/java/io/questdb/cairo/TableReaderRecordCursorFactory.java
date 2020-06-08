@@ -103,11 +103,11 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         private final IntList pages = new IntList();
         private final int columnCount;
         private TableReader reader;
-        private IntList columnIndexes;
-        private IntList columnSizes;
+        private final IntList columnIndexes;
+        private final IntList columnSizes;
         private int partitionIndex;
         private int partitionCount;
-        private LongList pageSizes = new LongList();
+        private final LongList pageSizes = new LongList();
         private long pageValueCount;
         private long partitionRemaining = 0L;
 
@@ -124,7 +124,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return reader.getSymbolMapReader(columnIndex);
+            return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
         @Override

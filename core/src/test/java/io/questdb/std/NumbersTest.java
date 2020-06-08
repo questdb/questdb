@@ -161,7 +161,6 @@ public class NumbersTest {
     public void testFormatDoubleZero() {
         sink.clear();
         Numbers.append(sink, 0d);
-        System.out.println(0d);
         TestUtils.assertEquals("0.0", sink);
     }
 

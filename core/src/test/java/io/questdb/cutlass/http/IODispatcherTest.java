@@ -39,7 +39,6 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -61,12 +60,6 @@ public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
-
-    @Test
-    public void testBadUtf8() {
-        byte[] b = {-1, -2, -3, -2, -1, -4, -8};
-        System.out.println(new String(b));
-    }
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
@@ -161,7 +154,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -2828,7 +2821,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
@@ -3404,7 +3397,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -3573,7 +3566,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -3734,7 +3727,7 @@ public class IODispatcherTest {
                             return 500;
                         }
                     },
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();

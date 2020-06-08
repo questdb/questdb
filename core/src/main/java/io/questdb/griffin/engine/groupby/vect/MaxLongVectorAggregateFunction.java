@@ -24,8 +24,12 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAccumulator;
@@ -38,10 +42,41 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
             MAX, Long.MIN_VALUE
     );
     private final int columnIndex;
+    private int valueOffset;
 
     public MaxLongVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntMaxLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
     }
 
     @Override

@@ -24,9 +24,13 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.Arrays;
@@ -37,6 +41,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
+    private int valueOffset;
 
     public KSumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
@@ -44,6 +49,41 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE); // sum
+        types.add(ColumnType.DOUBLE); // c
+        types.add(ColumnType.LONG); // count
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntKSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntKSumDoubleSetNull(pRosti, valueOffset);
     }
 
     @Override

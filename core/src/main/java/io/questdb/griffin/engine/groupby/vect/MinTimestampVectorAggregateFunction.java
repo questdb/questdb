@@ -24,9 +24,13 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAccumulator;
@@ -39,10 +43,42 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
             MIN, Long.MAX_VALUE
     );
     private final int columnIndex;
+    private int valueOffset;
 
     public MinTimestampVectorAggregateFunction(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MAX_VALUE);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntMinLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMinLongSetNull(pRosti, valueOffset);
     }
 
     @Override

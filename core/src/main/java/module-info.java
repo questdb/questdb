@@ -52,6 +52,8 @@ open module io.questdb {
 
     exports io.questdb.griffin;
     exports io.questdb.griffin.engine;
+    exports io.questdb.griffin.model;
+    exports io.questdb.griffin.engine.functions;
     exports io.questdb.griffin.engine.functions.rnd;
     exports io.questdb.griffin.engine.functions.bind;
     exports io.questdb.griffin.engine.functions.bool;

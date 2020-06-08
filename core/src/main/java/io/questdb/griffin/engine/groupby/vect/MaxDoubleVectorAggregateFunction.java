@@ -24,8 +24,12 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
@@ -34,6 +38,7 @@ import java.util.function.DoubleBinaryOperator;
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MAX = Math::max;
+    private int valueOffset;
 
     private final DoubleAccumulator max = new DoubleAccumulator(
             MAX, Double.NEGATIVE_INFINITY
@@ -57,6 +62,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MIN_VALUE);
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
     }
@@ -70,5 +80,31 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     public double getDouble(Record rec) {
         final double value = max.get();
         return Double.isInfinite(value) ? Double.NaN : value;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        Rosti.keyedIntMaxDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMaxDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMaxDoubleSetNull(pRosti, valueOffset);
     }
 }
