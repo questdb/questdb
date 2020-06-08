@@ -42,8 +42,10 @@ class LatestByValuesFilteredRecordCursor extends AbstractRecordListCursor {
             int columnIndex,
             @NotNull DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
-            @NotNull Function filter) {
-        super(rows);
+            @NotNull Function filter,
+            @NotNull IntList columnIndexes
+    ) {
+        super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));

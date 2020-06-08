@@ -30,15 +30,17 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByAllRecordCursor extends AbstractRecordListCursor {
 
     private final Map map;
     private final RecordSink recordSink;
 
-    public LatestByAllRecordCursor(Map map, DirectLongList rows, RecordSink recordSink) {
-        super(rows);
+    public LatestByAllRecordCursor(Map map, DirectLongList rows, RecordSink recordSink, @NotNull IntList columnIndexes) {
+        super(rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
     }

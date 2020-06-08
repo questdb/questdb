@@ -741,7 +741,7 @@ public class TableReader implements Closeable {
         }
     }
 
-    ReadOnlyColumn getColumn(int absoluteIndex) {
+    public ReadOnlyColumn getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
     }
 
@@ -749,7 +749,7 @@ public class TableReader implements Closeable {
         return columnCount;
     }
 
-    long getColumnTop(int base, int columnIndex) {
+    public long getColumnTop(int base, int columnIndex) {
         return this.columnTops.getQuick(base / 2 + columnIndex);
     }
 
@@ -807,7 +807,7 @@ public class TableReader implements Closeable {
         }
     }
 
-    long openPartition(int partitionIndex) {
+    public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
             return size;

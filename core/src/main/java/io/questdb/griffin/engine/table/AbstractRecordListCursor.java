@@ -27,14 +27,17 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
 
     protected final DirectLongList rows;
     private long index;
 
-    public AbstractRecordListCursor(DirectLongList rows) {
+    public AbstractRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
+        super(columnIndexes);
         this.rows = rows;
     }
 

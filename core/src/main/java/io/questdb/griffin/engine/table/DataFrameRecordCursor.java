@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.BooleanSupplier;
@@ -43,8 +45,10 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
             // this cursor owns "toTop()" lifecycle of filter
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
     ) {
+        super(columnIndexes);
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;

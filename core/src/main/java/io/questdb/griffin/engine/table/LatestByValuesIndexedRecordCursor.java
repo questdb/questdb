@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
@@ -41,7 +43,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     private final DirectLongList rows;
     private long index = 0;
 
-    public LatestByValuesIndexedRecordCursor(int columnIndex, IntHashSet symbolKeys, DirectLongList rows) {
+    public LatestByValuesIndexedRecordCursor(
+            int columnIndex,
+            IntHashSet symbolKeys,
+            DirectLongList rows,
+            @NotNull IntList columnIndexes
+    ) {
+        super(columnIndexes);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
