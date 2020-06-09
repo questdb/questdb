@@ -98,6 +98,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int peek(long fd, long buffer, int bufferLen) {
+        return Net.peek(fd, buffer, bufferLen);
+    }
+
+    @Override
     public int send(long fd, long buffer, int bufferLen) {
         return Net.send(fd, buffer, bufferLen);
     }

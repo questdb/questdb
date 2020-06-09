@@ -24,13 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Test;
-
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -38,6 +31,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
+
+import org.junit.Assert;
+import org.junit.Ignore;
+import org.junit.Test;
+
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSequenceZ;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
 public class NetTest {
     @Test
@@ -118,7 +122,6 @@ public class NetTest {
             }
         }).start();
 
-
         barrier.await();
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
@@ -167,7 +170,6 @@ public class NetTest {
             }
         }).start();
 
-
         barrier.await();
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
@@ -194,6 +196,42 @@ public class NetTest {
 
         TestUtils.assertEquals("127.0.0.1", sink);
         Assert.assertFalse(threadFailed.get());
+    }
+
+    @Test
+    public void testSeek() {
+        int port = 9993;
+        NativeLPSZ lpsz = new NativeLPSZ();
+        String msg = "Test ABC";
+        CharSequenceZ charSink = new CharSequenceZ(msg);
+        int msgLen = charSink.length() + 1;
+
+        long acceptFd = Net.socketTcp(true);
+        Assert.assertTrue(acceptFd > 0);
+        Assert.assertTrue(Net.bindTcp(acceptFd, 0, port));
+        Net.listen(acceptFd, 1024);
+
+        long clientFd = Net.socketTcp(true);
+        long sockAddr = Net.sockaddr("127.0.0.1", port);
+        Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
+
+        Assert.assertEquals(msgLen, Net.send(clientFd, charSink.address(), msgLen));
+        Net.close(clientFd);
+        Net.freeSockAddr(sockAddr);
+
+        long serverFd = Net.accept(acceptFd);
+        long serverBuf = Unsafe.malloc(msgLen);
+        Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
+        lpsz.of(serverBuf);
+        Assert.assertEquals(msg, lpsz.toString());
+        Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
+        lpsz.of(serverBuf);
+        Assert.assertEquals(msg, lpsz.toString());
+        Unsafe.free(serverBuf, charSink.length());
+        Net.close(serverFd);
+
+        Net.close(acceptFd);
+        charSink.close();
     }
 
     @Test
