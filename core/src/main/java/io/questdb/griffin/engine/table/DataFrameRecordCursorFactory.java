@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.NullColumn;
 import io.questdb.cairo.ReadOnlyColumn;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
@@ -153,7 +154,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             DataFrame dataFrame;
             while ((dataFrame = dataFrameCursor.next()) != null) {
                 this.partitionIndex = dataFrame.getPartitionIndex();
-                reader.openPartition(partitionIndex);
+                long partitionSize = reader.openPartition(partitionIndex);
                 final long partitionLo = dataFrame.getRowLo();
                 final long partitionHi = dataFrame.getRowHi();
 
@@ -184,19 +185,24 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
                         if (loRemaining > 0) {
                             final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
-                            int page = pages.getQuick(i);
-                            while (true) {
-                                long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
-                                if (pageSize > loRemaining) {
-                                    long addr = col.getPageAddress(page);
-                                    addr += partitionLo << columnSizes.getQuick(i);
-                                    columnPageNextAddress.setQuick(i, addr);
-                                    pageSizes.setQuick(i, pageSize - partitionLo);
-                                    pages.setQuick(i, page);
-                                    break;
+                            if (col instanceof NullColumn) {
+                                columnPageNextAddress.setQuick(i, 0);
+                                pageSizes.setQuick(i, partitionSize - partitionLo);
+                            } else {
+                                int page = pages.getQuick(i);
+                                while (true) {
+                                    long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
+                                    if (pageSize > loRemaining) {
+                                        long addr = col.getPageAddress(page);
+                                        addr += partitionLo << columnSizes.getQuick(i);
+                                        columnPageNextAddress.setQuick(i, addr);
+                                        pageSizes.setQuick(i, pageSize - partitionLo);
+                                        pages.setQuick(i, page);
+                                        break;
+                                    }
+                                    loRemaining -= pageSize;
+                                    page++;
                                 }
-                                loRemaining -= pageSize;
-                                page++;
                             }
                         }
                     }
@@ -272,8 +278,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = col.getPageSize(page);
-                        final long m = Math.min(psz >> columnSizes.getQuick(i), partitionRemaining);
+                        psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSizes.getQuick(i) : partitionRemaining;
+                        final long m = Math.min(psz, partitionRemaining);
                         pageSizes.setQuick(i, m);
                         if (min > m) {
                             min = m;
