@@ -69,6 +69,26 @@ Java_io_questdb_std_Rosti_keyedIntSumDouble(JNIEnv *env, jclass cl, jlong pRosti
 }
 
 JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumZero(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys,
+                                            jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<int32_t *>(pKeys);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + 1];
+    for (int i = 0; i < count; i++) {
+        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        const int32_t v = pi[i];
+        auto res = find(map, v);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            *reinterpret_cast<int32_t *>(dest) = v;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = 0;
+            *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+        }
+    }
+}
+
+JNIEXPORT void JNICALL
 Java_io_questdb_std_Rosti_keyedIntSumDoubleMerge(JNIEnv *env, jclass cl, jlong pRostiA, jlong pRostiB,
                                                  jint valueOffset) {
     auto map_a = reinterpret_cast<rosti_t *>(pRostiA);
@@ -104,7 +124,8 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleMerge(JNIEnv *env, jclass cl, jlong p
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Rosti_keyedIntSumDoubleSetNull(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset) {
+Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(
+        JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset, jdouble valueAtNull, jlong valueAtNullCount) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
@@ -122,6 +143,20 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleSetNull(JNIEnv *env, jclass cl, jlong
                 *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
             }
         }
+    }
+
+    // populate null value
+    auto nullKey = reinterpret_cast<int32_t*>(map->slot_initial_values_)[0];
+    auto res = find(map, nullKey);
+    // maps must have identical structure to use "shift" from map B on map A
+    auto dest = map->slots_ + res.first;
+    if (PREDICT_FALSE(res.second)) {
+        *reinterpret_cast<int32_t *>(dest) = nullKey;
+        *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
+        *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
+    } else {
+        *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
+        *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
     }
 }
 

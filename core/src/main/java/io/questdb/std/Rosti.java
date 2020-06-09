@@ -62,9 +62,11 @@ public final class Rosti {
     // sum double
     public static native void keyedIntSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedIntSumZero(long pRosti, long pKeys, long count, int valueOffset);
+
     public static native void keyedIntSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
-    public static native void keyedIntSumDoubleSetNull(long pRosti, int valueOffset);
+    public static native void keyedIntSumDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
     public static native void keyedIntAvgDoubleSetNull(long pRosti, int valueOffset);
 

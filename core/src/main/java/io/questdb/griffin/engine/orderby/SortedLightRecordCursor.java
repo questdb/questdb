@@ -101,7 +101,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             // own record instance in case base cursor keeps
             // state in the record it returns.
             chain.put(
-                    baseRecord.getRowId(),
+                    baseRecord,
                     base,
                     placeHolderRecord,
                     comparator

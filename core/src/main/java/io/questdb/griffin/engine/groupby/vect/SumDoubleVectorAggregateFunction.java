@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -94,7 +95,13 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            Rosti.keyedIntSumZero(pRosti, keyAddress, count, valueOffset);
+        } else {
+            Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -104,11 +111,18 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumDoubleSetNull(pRosti, valueOffset);
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            final int offset = i * Misc.CACHE_LINE_SIZE;
+            sum += this.sum[offset];
+            count += this.count[offset];
+        }
+        Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public double getDouble(@Nullable Record rec) {
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {

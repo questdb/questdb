@@ -1584,6 +1584,8 @@ public class SqlCodeGenerator implements Mutable {
 
                         // this is overly generic, but we will catchup C code
                         for (int i = 0, n = tempKeyIndexesInBase.size(); i < n; i++) {
+                            // todo: when we have more key types we need to dispatch function references into
+                            //     vector aggregate functions. Right now they call functions for "int" keys.
                             arrayColumnTypes.add(tempMetadata.getColumnType(tempKeyIndexesInBase.getQuick(i)));
                         }
 
