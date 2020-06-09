@@ -13,6 +13,7 @@ export type TextProps = Readonly<{
   code?: boolean
   color?: Color
   children?: ReactNode
+  ellipsis?: boolean
   size?: FontSize
   transform?: Transform
   weight?: number
@@ -24,6 +25,12 @@ const defaultProps: Readonly<{
   color: "black",
 }
 
+const ellipsisStyles = css`
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
 export const textCss = css<TextProps>`
   color: ${(props) => (props.color ? color(props.color) : "inherit")};
   font-family: ${({ code, theme }) => code && theme.fontMonospace};
@@ -31,6 +38,7 @@ export const textCss = css<TextProps>`
   font-style: ${({ _style }) => _style || "inherit"};
   font-weight: ${({ weight }) => weight};
   text-transform: ${({ transform }) => transform};
+  ${({ ellipsis }) => ellipsis && ellipsisStyles};
 `
 
 export const Text = styled.span<TextProps>`

@@ -5,7 +5,7 @@ import styled, { css } from "styled-components"
 import type { Color } from "types"
 import { color } from "utils"
 
-import { buttonTransition } from "../Transition"
+import { bezierTransition } from "../Transition"
 
 type Size = "sm" | "md"
 type Type = "button" | "submit"
@@ -43,7 +43,7 @@ const baseCss = css<ButtonProps>`
   font-weight: 400;
   outline: 0;
   line-height: 1.15;
-  ${buttonTransition};
+  ${bezierTransition};
 
   svg + span {
     margin-left: 0.5rem;

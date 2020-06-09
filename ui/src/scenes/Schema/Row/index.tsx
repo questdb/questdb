@@ -63,10 +63,6 @@ const FlexRow = styled.div`
   align-items: center;
 `
 
-const Name = styled(Text)`
-  flex: 0;
-`
-
 const Spacer = styled.span`
   flex: 1;
 `
@@ -105,7 +101,9 @@ const Row = ({
     <Wrapper className={className} expanded={expanded} onClick={onClick}>
       <FlexRow>
         {prefix}
-        <Name color="draculaForeground">{name}</Name>
+        <Text color="draculaForeground" ellipsis>
+          {name}
+        </Text>
         {suffix}
 
         <Spacer />

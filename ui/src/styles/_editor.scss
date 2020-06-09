@@ -36,9 +36,8 @@
 }
 
 #editor {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  flex: 1;
 }
 
 #sqlEditor {
@@ -289,6 +288,6 @@
 }
 
 #quick-vis {
-    display: flex;
-    flex: 1;
+  display: flex;
+  flex: 1;
 }

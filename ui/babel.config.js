@@ -1,10 +1,12 @@
-const transformRuntimePlugin = [
-  "@babel/plugin-transform-runtime",
-  {
-    corejs: 3,
-    regenerator: true,
-    useESModules: true,
-  },
+const plugins = [
+  [
+    "@babel/plugin-transform-runtime",
+    {
+      corejs: 3,
+      regenerator: true,
+      useESModules: true,
+    },
+  ],
 ]
 
 module.exports = {
@@ -21,7 +23,7 @@ module.exports = {
           },
         ],
         "@babel/plugin-transform-react-jsx-source",
-        transformRuntimePlugin,
+        ...plugins,
       ],
     },
     production: {
@@ -35,7 +37,7 @@ module.exports = {
             ssr: false,
           },
         ],
-        transformRuntimePlugin,
+        ...plugins,
       ],
     },
     test: {
@@ -43,6 +45,7 @@ module.exports = {
         [
           "@babel/env",
           {
+            shippedProposals: true,
             targets: {
               node: "current",
             },
@@ -58,6 +61,7 @@ module.exports = {
       {
         corejs: 3,
         modules: false,
+        shippedProposals: true,
         useBuiltIns: "entry",
       },
     ],
