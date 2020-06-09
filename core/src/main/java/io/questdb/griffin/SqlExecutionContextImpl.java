@@ -132,7 +132,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        resourceLimiter.of(getCairoSecurityContext().getMaxInMemoryRows(), interruptor);
+        long maxInMemoryRows = null == cairoSecurityContext ? Long.MAX_VALUE : cairoSecurityContext.getMaxInMemoryRows();
+        resourceLimiter.of(maxInMemoryRows, interruptor);
         return this;
     }
 }
