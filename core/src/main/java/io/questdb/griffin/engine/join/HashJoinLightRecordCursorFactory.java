@@ -40,7 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -88,13 +88,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > slaveCursor.size()) {
-                joinKeyMap.setMaxSize(maxInMemoryRows);
-                buildMapOfSlaveRecords(slaveCursor);
-            } else {
-                throw LimitOverflowException.instance(maxInMemoryRows);
-            }
+            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
+            resourceLimiter.checkLimits(slaveCursor.size());
+            joinKeyMap.setResourceLimiter(resourceLimiter);
+            buildMapOfSlaveRecords(slaveCursor);
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;

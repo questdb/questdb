@@ -37,7 +37,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.std.Transient;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
@@ -76,11 +76,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows > dataFrameCursor.size() || dataFrameCursor.size() < 0) {
-            map.setMaxSize(maxInMemoryRows);
-            return super.getCursorInstance(dataFrameCursor, executionContext);
-        }
-        throw LimitOverflowException.instance(maxInMemoryRows);
+        SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
+        resourceLimiter.checkLimits(dataFrameCursor.size());
+        map.setResourceLimiter(resourceLimiter);
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

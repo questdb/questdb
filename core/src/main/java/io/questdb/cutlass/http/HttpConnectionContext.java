@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.griffin.HttpSqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
@@ -60,6 +62,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final CairoSecurityContext cairoSecurityContext;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
+    private final HttpSqlExecutionInterruptor execInterruptor;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
@@ -81,6 +84,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext(), configuration.getMaxInMemoryRows());
+        // TODO setup HttpSqlExecutionInterruptor from configuration
+        execInterruptor = new HttpSqlExecutionInterruptor(this.nf, 1_000, 64);
     }
 
     @Override
@@ -99,6 +104,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
+        execInterruptor.close();
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -170,6 +176,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
+        this.execInterruptor.of(fd);
         return this;
     }
 
@@ -404,4 +411,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getTotalBytesSent();
     }
 
+    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
+        return execInterruptor;
+    }
 }

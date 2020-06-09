@@ -50,7 +50,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null);
+                                null, -1, null);
         bindVariableService.clear();
     }
 
@@ -147,6 +147,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
             super(root);
         }
 
+        @Override
         public MicrosecondClock getMicrosecondClock() {
             return StationaryMicrosClock.INSTANCE;
         }

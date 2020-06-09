@@ -90,7 +90,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null);
 
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {

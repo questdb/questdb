@@ -39,8 +39,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -124,17 +124,19 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-        if (maxInMemoryRows > baseCursor.size()) {
-            map.setMaxSize(maxInMemoryRows);
+        try {
+            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
+            resourceLimiter.checkLimits(baseCursor.size());
+            map.setResourceLimiter(resourceLimiter);
             cursor.of(baseCursor);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             for (int i = 0, m = recordFunctions.size(); i < m; i++) {
                 recordFunctions.getQuick(i).init(cursor, executionContext);
             }
             return cursor;
+        } catch (CairoException ex) {
+            baseCursor.close();
+            throw ex;
         }
-        baseCursor.close();
-        throw LimitOverflowException.instance(maxInMemoryRows);
     }
 }

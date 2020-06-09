@@ -21,6 +21,8 @@ public class SecurityTest extends AbstractGriffinTest {
                                 new CairoSecurityContextImpl(false,
                                         2),
                                 bindVariableService,
+                                null,
+                                -1,
                                 null);
     }
 

@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -72,13 +73,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > baseCursor.size()) {
-                dataMap.setMaxSize(maxInMemoryRows);
-                cursor.of(baseCursor, dataMap, mapSink);
-                return cursor;
-            }
-            throw LimitOverflowException.instance(maxInMemoryRows);
+            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
+            resourceLimiter.checkLimits(baseCursor.size());
+            dataMap.setResourceLimiter(resourceLimiter);
+            cursor.of(baseCursor, dataMap, mapSink);
+            return cursor;
         } catch (CairoException e) {
             baseCursor.close();
             throw e;

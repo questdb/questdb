@@ -34,6 +34,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectLongList;
@@ -66,7 +67,7 @@ public class FastMap implements Map {
     private int keyCapacity;
     private int size = 0;
     private int mask;
-    private long maxSize = Long.MAX_VALUE;
+    private SqlResourceLimiter resourceLimiter = SqlResourceLimiter.NOP_LIMITER;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
@@ -228,8 +229,8 @@ public class FastMap implements Map {
     }
 
     @Override
-    public void setMaxSize(long maxSize) {
-        this.maxSize = maxSize;
+    public void setResourceLimiter(SqlResourceLimiter resourceLimiter) {
+        this.resourceLimiter = resourceLimiter;
     }
 
     @Override
@@ -249,17 +250,14 @@ public class FastMap implements Map {
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
-        if (size < maxSize) {
-            kPos = keyWriter.appendAddress;
-            offsets.set(index, keyWriter.startAddress - kStart);
-            if (--free == 0) {
-                rehash();
-            }
-            size++;
-            return value.of(keyWriter.startAddress, true);
-        } else {
-            throw LimitOverflowException.instance(maxSize);
+        resourceLimiter.checkLimits(size);
+        kPos = keyWriter.appendAddress;
+        offsets.set(index, keyWriter.startAddress - kStart);
+        if (--free == 0) {
+            rehash();
         }
+        size++;
+        return value.of(keyWriter.startAddress, true);
     }
 
     private boolean eq(Key keyWriter, long offset) {

@@ -100,7 +100,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
-            dataMap.setMaxSize(executionContext.getCairoSecurityContext().getMaxInMemoryRows());
+            dataMap.setResourceLimiter(executionContext.getResourceLimiter());
 
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();

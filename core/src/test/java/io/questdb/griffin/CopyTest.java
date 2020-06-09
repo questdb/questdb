@@ -101,7 +101,7 @@ public class CopyTest extends AbstractCairoTest {
                 .with(
                 AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService,
-                null);
+                        null, -1, null);
         bindVariableService.clear();
     }
 

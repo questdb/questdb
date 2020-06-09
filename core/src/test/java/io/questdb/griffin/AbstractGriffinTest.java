@@ -104,6 +104,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         .with(
                                 AllowAllCairoSecurityContext.INSTANCE,
                                 bindVariableService,
+                                null,
+                                -1,
                                 null);
         bindVariableService.clear();
     }
