@@ -307,7 +307,7 @@ const Ace = () => {
         value={value}
         width="100%"
       />
-      {request && <Loader />}
+      <Loader show={!!request} />
     </Content>
   )
 }
