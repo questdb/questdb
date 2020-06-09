@@ -130,4 +130,26 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testIntSymbolSumTimeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY", sqlExecutionContext);
+            try (
+                    RecordCursorFactory factory = compiler.compile("select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+
+                String expected = "s1\tsum\n" +
+                        "\t26636.385784265905\n" +
+                        "s1\t26427.49917110396\n" +
+                        "s2\t26891.053965922987\n" +
+                        "s3\t26459.102633238483\n";
+
+                sink.clear();
+                printer.print(cursor, factory.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
 }

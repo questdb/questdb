@@ -154,7 +154,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             while ((dataFrame = dataFrameCursor.next()) != null) {
                 this.partitionIndex = dataFrame.getPartitionIndex();
                 reader.openPartition(partitionIndex);
-                long partitionLo = dataFrame.getRowLo();
+                final long partitionLo = dataFrame.getRowLo();
                 final long partitionHi = dataFrame.getRowHi();
 
                 this.partitionRemaining = partitionHi - partitionLo;
