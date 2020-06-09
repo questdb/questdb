@@ -188,6 +188,8 @@ const Ace = () => {
       ro.observe(wrapper.current)
     }
 
+    editor.container.style.lineHeight = "1.5"
+    editor.renderer.updateFontSize()
     editor.getSession().setMode(questdbMode)
 
     editor.commands.addCommand({

@@ -67,7 +67,7 @@ const Out = styled.div<{ animationPlay: AnimationPlay }>`
   left: 0;
   width: 100%;
   height: 1px;
-  background: ${color("draculaComment")};
+  background: ${color("gray2")};
   animation: ${disappear} 15s linear 0s 1 normal forwards;
   animation-play-state: ${({ animationPlay }) => animationPlay};
 `

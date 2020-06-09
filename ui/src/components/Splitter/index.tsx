@@ -11,6 +11,7 @@ import { DragIndicator } from "@styled-icons/material/DragIndicator"
 import { color } from "utils"
 
 type Props = Readonly<{
+  max?: number
   min?: number
   onChange: (x: number) => void
 }>
@@ -54,7 +55,7 @@ type Position = Readonly<{
   x: number
 }>
 
-export const Splitter = ({ min, onChange }: Props) => {
+export const Splitter = ({ max, min, onChange }: Props) => {
   const [pressed, setPressed] = useState(false)
   const [left, setLeft] = useState<number>(0)
   const [xOffset, setXOffset] = useState<number>(0)
@@ -66,13 +67,21 @@ export const Splitter = ({ min, onChange }: Props) => {
       event.stopPropagation()
       event.preventDefault()
 
-      if (!min || min < event.clientX) {
+      if (
+        (min &&
+          max &&
+          event.clientX > min &&
+          event.clientX < window.outerWidth - max) ||
+        (!min && max && event.clientX < window.outerWidth - max) ||
+        (!max && min && event.clientX > min) ||
+        (!min && !max)
+      ) {
         setPosition({
           x: event.clientX,
         })
       }
     },
-    [min],
+    [max, min],
   )
 
   const handleMouseUp = useCallback(() => {

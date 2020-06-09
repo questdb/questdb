@@ -25,7 +25,7 @@ const Layout = () => {
         createPortal(
           <>
             <Schema widthOffset={schemaWidthOffset} />
-            <Splitter min={200} onChange={handleSplitterChange} />
+            <Splitter max={300} min={200} onChange={handleSplitterChange} />
             <Editor />
           </>,
           editorNode,
