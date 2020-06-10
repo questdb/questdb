@@ -49,6 +49,9 @@ extern "C" { \
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pDouble, jlong size) { \
     return func((double *) pDouble, size); \
 }\
+JNIEXPORT jdouble JNICALL JavaCritical_io_questdb_std_Vect_ ## func(jlong pDouble, jlong size) { \
+    return func((double *) pDouble, size); \
+}\
 \
 }
 

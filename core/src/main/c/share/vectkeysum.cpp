@@ -195,6 +195,56 @@ Java_io_questdb_std_Rosti_keyedIntDistinct(JNIEnv *env, jclass cl, jlong pRosti,
 }
 
 JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntCount(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong count,
+        jint valueOffset) {
+
+        auto map = reinterpret_cast<rosti_t *>(pRosti);
+        const auto *pi = reinterpret_cast<int32_t *>(pKeys);
+        const auto value_offset = map->value_offsets_[valueOffset];
+        for (int i = 0; i < count; i++) {
+            _mm_prefetch(pi + 16, _MM_HINT_T0);
+            const int32_t v = pi[i];
+            auto res = find(map, v);
+            auto dest = map->slots_ + res.first;
+            if (PREDICT_FALSE(res.second)) {
+                *reinterpret_cast<int32_t *>(dest) = v;
+                *reinterpret_cast<jlong *>(dest + value_offset) = 1;
+            } else {
+                (*reinterpret_cast<jlong *>(dest + value_offset))++;
+            }
+        }
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntCountMerge(JNIEnv *env, jclass cl, jlong pRostiA, jlong pRostiB,
+                                                  jint valueOffset) {
+    auto map_a = reinterpret_cast<rosti_t *>(pRostiA);
+    auto map_b = reinterpret_cast<rosti_t *>(pRostiB);
+    const auto value_offset = map_b->value_offsets_[valueOffset];
+    const auto capacity = map_b->capacity_;
+    const auto ctrl = map_b->ctrl_;
+    const auto shift = map_b->slot_size_shift_;
+    const auto slots = map_b->slots_;
+
+    for (size_t i = 0; i < capacity; i++) {
+        if (ctrl[i] > -1) {
+            auto src = slots + (i << shift);
+            auto key = *reinterpret_cast<int32_t *>(src);
+            auto count = *reinterpret_cast<jlong *>(src + value_offset);
+            auto res = find(map_a, key);
+            // maps must have identical structure to use "shift" from map B on map A
+            auto dest = map_a->slots_ + res.first;
+            if (PREDICT_FALSE(res.second)) {
+                *reinterpret_cast<int32_t *>(dest) = key;
+                *reinterpret_cast<jlong *>(dest + value_offset) = count;
+            } else {
+                (*reinterpret_cast<jlong *>(dest + value_offset)) += count;
+            }
+        }
+    }
+}
+
+JNIEXPORT void JNICALL
 Java_io_questdb_std_Rosti_keyedIntKSumDoubleMerge(JNIEnv *env, jclass cl, jlong pRostiA, jlong pRostiB,
                                                   jint valueOffset) {
     auto map_a = reinterpret_cast<rosti_t *>(pRostiA);

@@ -541,6 +541,9 @@ public class SqlCodeGenerator implements Mutable {
                         addVaf(new SumTimestampVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
                         continue;
                     }
+                } else if (ast.type == FUNCTION && ast.paramCount == 0 && Chars.equals(ast.token, "count")) {
+                    addVaf(new CountVectorAggregateFunction(ast.position), qc.getName());
+                    continue;
                 } else if (isSingleColumnFunction(ast, "ksum")) {
                     final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
                     final int type = metadata.getColumnType(columnIndex);
@@ -1546,7 +1549,6 @@ public class SqlCodeGenerator implements Mutable {
 
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
-
             // generate special case plan for "select count() from somewhere"
             ObjList<QueryColumn> columns = model.getBottomUpColumns();
             if (columns.size() == 1) {
