@@ -98,7 +98,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them
-            Rosti.keyedIntSumZero(pRosti, keyAddress, count, valueOffset);
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
         } else {
             Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
         }

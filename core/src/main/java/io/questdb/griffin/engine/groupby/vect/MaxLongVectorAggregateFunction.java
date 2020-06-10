@@ -67,7 +67,11 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMaxLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMaxLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -77,6 +81,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void wrapUp(long pRosti) {
+        Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
     }
 
     @Override

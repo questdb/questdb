@@ -64,7 +64,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntSumInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntSumInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -74,7 +78,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgIntSetNull(pRosti, valueOffset);
+        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

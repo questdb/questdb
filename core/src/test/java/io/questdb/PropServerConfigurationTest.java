@@ -115,7 +115,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
-        Assert.assertEquals(false, configuration.getHttpServerConfiguration().readOnlySecurityContext());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 
@@ -124,7 +124,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals("fast", configuration.getCairoConfiguration().getDefaultMapType());
-        Assert.assertFalse(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
+        Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
         Assert.assertEquals(300000, configuration.getCairoConfiguration().getIdleCheckInterval());
@@ -329,7 +329,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
-            Assert.assertEquals(true, configuration.getHttpServerConfiguration().readOnlySecurityContext());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().readOnlySecurityContext());
             Assert.assertEquals(10000, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 

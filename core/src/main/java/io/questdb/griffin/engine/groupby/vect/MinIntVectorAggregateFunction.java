@@ -78,7 +78,11 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMinInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMinInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -88,7 +92,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinIntSetNull(pRosti, valueOffset);
+        Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 
     @Override

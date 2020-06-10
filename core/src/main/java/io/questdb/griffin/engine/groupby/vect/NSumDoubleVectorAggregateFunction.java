@@ -42,6 +42,9 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final long[] count;
     private final int workerCount;
     private int valueOffset;
+    private double transientSum;
+    private double transientC;
+    private long transientCount;
 
     public NSumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
@@ -68,7 +71,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntNSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntNSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -78,7 +85,8 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntNSumDoubleSetNull(pRosti, valueOffset);
+        computeSum();
+        Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
     @Override
@@ -121,6 +129,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public double getDouble(Record rec) {
+        computeSum();
+        return transientCount > 0 ? transientSum + transientC : Double.NaN;
+    }
+
+    private void computeSum() {
         double sum = 0;
         long count = 0;
         double c = 0;
@@ -136,6 +149,8 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
             sum = t;
             count += this.count[offset];
         }
-        return count > 0 ? sum + c : Double.NaN;
+        this.transientSum = sum;
+        this.transientCount = count;
+        this.transientC = c;
     }
 }
