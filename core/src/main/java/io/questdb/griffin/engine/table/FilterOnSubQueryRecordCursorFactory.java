@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
+import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -51,7 +52,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
             @Nullable Function filter,
-            @NotNull Record.CharSequenceFunction func
+            @NotNull Record.CharSequenceFunction func,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         this.recordCursorFactory = recordCursorFactory;
@@ -59,7 +61,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.filter = filter;
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter);
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         this.func = func;
     }
 

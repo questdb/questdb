@@ -91,12 +91,18 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MAX_VALUE);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
     }
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMinDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMinDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -106,6 +112,6 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinDoubleSetNull(pRosti, valueOffset);
+        Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
 }

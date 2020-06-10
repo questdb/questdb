@@ -30,15 +30,17 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
 
-    public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows) {
-        super(rows);
+    public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
+        super(rows, columnIndexes);
         this.columnIndex = columnIndex;
     }
 

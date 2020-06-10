@@ -301,8 +301,10 @@ ATTRIBUTE_NEVER_INLINE uint64_t prepare_insert(rosti_t *map, uint64_t hash, HASH
 }
 
 template<typename T, typename HASH_T, typename EQ_T, typename HAS_M_T, typename CPY_T>
-inline std::pair<uint64_t, bool> find_or_prepare_insert(rosti_t *map, const T key, HASH_T hash_f, EQ_T eq_f,
-                                                        HAS_M_T hash_m_f, CPY_T cpy_f) {
+inline std::pair<uint64_t, bool> find_or_prepare_insert(
+        rosti_t *map, const T key, HASH_T hash_f, EQ_T eq_f,
+        HAS_M_T hash_m_f, CPY_T cpy_f
+) {
     auto hash = hash_f(key);
     auto seq = probe(map, hash);
     while (true) {

@@ -54,7 +54,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             int timestampIndex
     ) {
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        final RecordMetadata metadata = base.getMetadata();
         this.recordFunctions = recordFunctions;
 
         try {

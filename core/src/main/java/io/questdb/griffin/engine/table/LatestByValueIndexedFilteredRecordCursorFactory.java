@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -38,10 +39,11 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter
+            @NotNull Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter);
+        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
         this.filter = filter;
     }
 

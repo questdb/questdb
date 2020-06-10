@@ -38,13 +38,11 @@ import java.util.function.DoubleBinaryOperator;
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MAX = Math::max;
-    private int valueOffset;
-
     private final DoubleAccumulator max = new DoubleAccumulator(
             MAX, Double.NEGATIVE_INFINITY
     );
-
     private final int columnIndex;
+    private int valueOffset;
 
     public MaxDoubleVectorAggregateFunction(int position, int columnIndex) {
         super(position);
@@ -63,7 +61,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.MIN_VALUE);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
     }
 
     @Override
@@ -95,7 +93,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMaxDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMaxDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -105,6 +107,6 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxDoubleSetNull(pRosti, valueOffset);
+        Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -88,8 +89,12 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD);
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null);
-
+                // entity index
+                final IntList columnIndexes = new IntList();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnIndexes.add(i);
+                }
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null, false, columnIndexes, null);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();

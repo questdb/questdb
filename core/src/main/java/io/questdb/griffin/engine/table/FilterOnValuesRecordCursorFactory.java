@@ -29,10 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -52,7 +49,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             @Nullable Function filter,
             int orderByMnemonic,
             boolean followedOrderByAdvice,
-            int indexDirection
+            int indexDirection,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         final int nKeyValues = keyValues.size();
@@ -65,9 +63,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             addSymbolKey(symbolMapReader.keyOf(symbol), symbol, indexDirection);
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter);
+            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter);
+            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
     }

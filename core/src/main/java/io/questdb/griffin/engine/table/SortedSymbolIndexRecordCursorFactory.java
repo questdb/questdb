@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -39,7 +40,8 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             boolean columnOrderAsc,
-            int indexDirection
+            int indexDirection,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         this.cursor = new DataFrameRecordCursor(
@@ -49,7 +51,8 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
                         indexDirection
                 ),
                 true,
-                null
+                null,
+                columnIndexes
         );
     }
 

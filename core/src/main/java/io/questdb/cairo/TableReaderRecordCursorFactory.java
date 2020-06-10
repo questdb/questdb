@@ -220,8 +220,8 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = col.getPageSize(page);
-                        final long m = Math.min(psz >> columnSizes.getQuick(i), partitionRemaining);
+                        psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSizes.getQuick(i) : partitionRemaining;
+                        final long m = Math.min(psz, partitionRemaining);
                         pageSizes.setQuick(i, m);
                         if (min > m) {
                             min = m;

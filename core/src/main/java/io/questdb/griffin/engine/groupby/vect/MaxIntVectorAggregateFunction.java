@@ -67,7 +67,11 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMaxInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMaxInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -77,7 +81,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void wrapUp(long pRosti) {
-        // do nothing here, our default value is Integer.MIN_VALUE, which coincides with how we represent Null
+        Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
     }
 
     @Override
