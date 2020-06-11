@@ -1,5 +1,4 @@
 import { darken } from "polished"
-import React, { forwardRef, Ref } from "react"
 import styled, { css } from "styled-components"
 
 import type { Color } from "types"
@@ -8,17 +7,21 @@ import { color } from "utils"
 import { ButtonProps, getButtonSize, PrimaryButton } from "../Button"
 import { bezierTransition } from "../Transition"
 
-const defaultProps: ButtonProps &
-  Readonly<{
-    direction: "top" | "right" | "bottom" | "left"
-    selected: boolean
-  }> = {
+type Direction = "top" | "right" | "bottom" | "left"
+
+const direction: Direction = "bottom"
+
+const defaultProps = {
   ...PrimaryButton.defaultProps,
-  direction: "bottom",
+  direction,
   selected: false,
 }
 
-type Props = typeof defaultProps
+type Props = Readonly<{
+  direction?: Direction
+  selected?: boolean
+}> &
+  ButtonProps
 
 type ThemeShape = {
   background: Color
@@ -30,13 +33,20 @@ const baseCss = css<Props>`
   height: ${getButtonSize};
   padding: 0 1rem;
   align-items: center;
+  justify-content: center;
   background: transparent;
-  border: none;
   font-weight: 400;
   outline: 0;
   line-height: 1.15;
   opacity: ${({ selected }) => (selected ? "1" : "0.5")};
+  border: none;
+  ${({ direction }) =>
+    `border-${direction || defaultProps.direction}: 2px solid transparent;`};
   ${bezierTransition};
+
+  svg + span {
+    margin-left: 1rem;
+  }
 `
 
 const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
@@ -44,7 +54,10 @@ const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
     background: ${color(normal.background)};
     color: ${color(normal.color)};
     ${({ direction, selected, theme }) =>
-      selected && `border-${direction}: 2px solid ${theme.color.draculaPink};`};
+      selected &&
+      `border-${direction || defaultProps.direction}-color: ${
+        theme.color.draculaPink
+      };`};
 
     &:focus {
       box-shadow: inset 0 0 0 1px ${color("draculaForeground")};
@@ -61,7 +74,7 @@ const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
     }
   `
 
-const Primary = styled.button<Props>`
+export const PrimaryToggleButton = styled.button<Props>`
   ${baseCss};
   ${getTheme(
     {
@@ -74,12 +87,5 @@ const Primary = styled.button<Props>`
     },
   )};
 `
-
-const PrimaryToggleButtonWithRef = (
-  props: Props,
-  ref: Ref<HTMLButtonElement>,
-) => <Primary {...props} ref={ref} />
-
-export const PrimaryToggleButton = forwardRef(PrimaryToggleButtonWithRef)
 
 PrimaryToggleButton.defaultProps = defaultProps

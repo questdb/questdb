@@ -29,7 +29,7 @@ const Footer = () => (
         rel="noreferrer"
         target="_blank"
       >
-        <Github size="22px" />
+        <Github size="18px" />
       </Link>
     </Icons>
   </>

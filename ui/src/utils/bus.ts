@@ -12,4 +12,5 @@ export enum BusEvent {
   MSG_QUERY_FIND_N_EXEC = "query.build.execute",
   MSG_QUERY_OK = "query.out.ok",
   MSG_QUERY_RUNNING = "query.out.running",
+  REACT_READY = "react.ready",
 }

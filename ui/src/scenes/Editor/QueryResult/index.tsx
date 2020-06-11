@@ -81,7 +81,7 @@ const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
     <Wrapper _height={95} duration={TransitionDuration.FAST}>
       <div>
         <Text color="draculaForeground">
-          {rowCount} rows in&nbsp;
+          {rowCount} row{rowCount > 1 ? "s" : ""} in&nbsp;
           {formatTiming(fetch)}&nbsp;
         </Text>
         (

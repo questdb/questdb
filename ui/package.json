@@ -50,7 +50,8 @@
     "rxjs": "6.5.5",
     "slim-select": "1.26.0",
     "styled-components": "5.1.1",
-    "styled-icons": "10.2.1"
+    "styled-icons": "10.2.1",
+    "use-media": "1.4.0"
   },
   "devDependencies": {
     "@babel/cli": "7.10.1",

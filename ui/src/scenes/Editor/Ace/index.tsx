@@ -96,6 +96,7 @@ const Ace = () => {
           .then((result) => {
             setRequest(undefined)
             dispatch(actions.query.stopRunning())
+            dispatch(actions.query.setResult(result))
 
             if (result.type === QuestDB.Type.DDL) {
               dispatch(

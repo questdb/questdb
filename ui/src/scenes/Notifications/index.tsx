@@ -12,7 +12,7 @@ const NotificationsStyles = createGlobalStyle`
   .notifications{
     position: fixed;
     top: 4rem;
-    right: 1.5rem;
+    right: 1rem;
     display: flex;
     flex-direction: column;
     z-index: 10;

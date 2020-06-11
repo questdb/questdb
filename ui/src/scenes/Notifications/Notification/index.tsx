@@ -138,12 +138,12 @@ const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
           />
         )}
 
-        <CloseIcon onClick={handleCloseClick} size="16px" />
+        <CloseIcon onClick={handleCloseClick} size="18px" />
 
         {pinned ? (
-          <Unpin onClick={handlePinClick} size="14px" />
+          <Unpin onClick={handlePinClick} size="16px" />
         ) : (
-          <Pin onClick={handlePinClick} size="14px" />
+          <Pin onClick={handlePinClick} size="16px" />
         )}
       </Wrapper>
     </CSSTransition>

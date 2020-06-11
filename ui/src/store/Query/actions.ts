@@ -1,5 +1,7 @@
 import type { ReactNode } from "react"
 
+import type { QueryRawResult } from "utils/questdb"
+
 import {
   NotificationShape,
   NotificationType,
@@ -27,6 +29,11 @@ const removeNotification = (payload: Date): QueryAction => ({
   type: QueryAT.REMOVE_NOTIFICATION,
 })
 
+const setResult = (payload: QueryRawResult): QueryAction => ({
+  payload,
+  type: QueryAT.SET_RESULT,
+})
+
 const stopRunning = (): QueryAction => ({
   type: QueryAT.STOP_RUNNING,
 })
@@ -39,6 +46,7 @@ export default {
   addNotification,
   cleanupNotifications,
   removeNotification,
+  setResult,
   stopRunning,
   toggleRunning,
 }

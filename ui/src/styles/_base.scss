@@ -280,6 +280,7 @@ ol.unstyled {
   background: #21222c;
   flex: 0 0 40px;
   color: #f8f8f2;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .footer.fixed_full {
@@ -328,7 +329,7 @@ body.body-small .footer.fixed {
 .page-heading {
   border-top: 0;
   padding: 0 10px 0 10px;
-  height: 41px;
+  height: 4rem;
   display: flex;
   align-items: center;
   padding: 0 15px;
