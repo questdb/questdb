@@ -10,63 +10,68 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.ObjList;
 
 public class TestLatchedCounterFunctionFactory implements FunctionFactory {
-    private static final SOUnboundedCountDownLatch START_LATCH = new SOUnboundedCountDownLatch();
-    private static final SOUnboundedCountDownLatch CLOSED_LATCH = new SOUnboundedCountDownLatch();
-    private static final AtomicInteger COUNTER = new AtomicInteger();
+	private static final AtomicInteger COUNTER = new AtomicInteger();
+	private static volatile Callback CALLBACK;
 
-    public static void reset() {
-        START_LATCH.reset();
-        CLOSED_LATCH.reset();
-        COUNTER.set(0);
-    }
+	public static void reset(Callback callback) {
+		CALLBACK = callback;
+		COUNTER.set(0);
+	}
 
-    public static void start() {
-        START_LATCH.countDown();
-    }
+	public static int getCount() {
+		return COUNTER.get();
+	}
 
-    public static void awaitClosed() {
-        CLOSED_LATCH.await(1);
-    }
+	@Override
+	public String getSignature() {
+		return "test_latched_counter()";
+	}
 
-    public static int getCount() {
-        return COUNTER.get();
-    }
+	@Override
+	public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration)
+			throws SqlException {
+		return new TestLatchFunction(position);
+	}
 
-    @Override
-    public String getSignature() {
-        return "test_latched_counter()";
-    }
+	private static class TestLatchFunction extends BooleanFunction {
+		private final Callback callback;
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        return new TestLatchFunction(position);
-    }
+		public TestLatchFunction(int position) {
+			super(position);
+			callback = CALLBACK;
+		}
 
-    private static class TestLatchFunction extends BooleanFunction {
+		@Override
+		public boolean getBool(Record rec) {
+			int count = COUNTER.incrementAndGet();
+			if (null == callback) {
+				return true;
+			}
+			return callback.onGet(rec, count);
+		}
 
-        public TestLatchFunction(int position) {
-            super(position);
-        }
+		@Override
+		public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+		}
 
-        @Override
-        public boolean getBool(Record rec) {
-            START_LATCH.await(1);
-            COUNTER.incrementAndGet();
-            return true;
-        }
+		@Override
+		public void close() {
+			if (null != callback) {
+				callback.onClose();
+			}
+		}
 
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        }
+	}
 
-        @Override
-        public void close() {
-            CLOSED_LATCH.countDown();
-        }
-
-    }
+	public interface Callback {
+		default boolean onGet(Record rec, int count) {
+			return true;
+		}
+		
+		default void onClose() {
+		}
+	}
 }

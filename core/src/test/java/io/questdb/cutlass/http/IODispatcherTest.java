@@ -42,7 +42,6 @@ import org.junit.rules.TemporaryFolder;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -50,7 +49,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -59,12 +58,9 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -1599,119 +1595,121 @@ public class IODispatcherTest {
         });
     }
 
-    @Test
-    public void testJsonQueryWithInterruption() throws Exception {
-        assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128, false, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[] { -1 };
-                }
+	@Test
+	public void testJsonQueryWithInterruption() throws Exception {
+		assertMemoryLeak(() -> {
+			final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+			final String baseDir = temp.getRoot().getAbsolutePath();
+			final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
+					false, false);
+			final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+				@Override
+				public int[] getWorkerAffinity() {
+					return new int[] { -1 };
+				}
 
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
+				@Override
+				public int getWorkerCount() {
+					return 1;
+				}
 
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir),
-                            null);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
+				@Override
+				public boolean haltOnError() {
+					return false;
+				}
+			});
+			try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+					HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+				httpServer.bind(new HttpRequestProcessorFactory() {
+					@Override
+					public HttpRequestProcessor newInstance() {
+						return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+					}
 
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
+					@Override
+					public String getUrl() {
+						return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+					}
+				});
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount());
-                    }
+				httpServer.bind(new HttpRequestProcessorFactory() {
+					@Override
+					public HttpRequestProcessor newInstance() {
+						return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
+								null, workerPool.getWorkerCount());
+					}
 
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
+					@Override
+					public String getUrl() {
+						return "/query";
+					}
+				});
 
-                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
-                    @Override
-                    public void onStartingRequest() {
-                        TestLatchedCounterFunctionFactory.reset();
+				final AtomicBoolean clientClosed = new AtomicBoolean(false);
+				final AtomicBoolean serverClosed = new AtomicBoolean(false);
+				HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+					@Override
+					public void onStartingRequest() {
+					}
 
-                    }
+					@Override
+					public void onReceived(int nBytes) {
+						LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
+					}
 
-                    @Override
-                    public void onReceived(int nBytes) {
+					@Override
+					public void onClosed() {
+						clientClosed.set(true);
 
-                    }
+					}
+				};
+				workerPool.start(LOG);
 
-                    @Override
-                    public void onClosed() {
-                        TestLatchedCounterFunctionFactory.start();
-                    }
-                };
-                workerPool.start(LOG);
+				try {
+					// create table with all column types
+					CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
+							new TestRecord.ArrayBinarySequence());
 
-                try {
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            10000,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+					// send multipart request to server
 
-                    // send multipart request to server
+					final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
+							+ "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
+							+ "Upgrade-Insecure-Requests: 1\r\n"
+							+ "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
+							+ "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
+							+ "Accept-Encoding: gzip, deflate, br\r\n"
+							+ "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
+					String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
+							+ "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
+							+ "Content-Type: application/json; charset=utf-8\r\n"
+							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
+					TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+						public boolean onGet(Record record, int count) {
+							if (count == 4) {
+								while (!clientClosed.get()) {
+									LockSupport.parkNanos(1);
+								}
+							}
+							return true;
+						}
 
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "80\r\n" +
-                            "\r\n";
-
-                    sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 40, clientStateListener);
-                    TestLatchedCounterFunctionFactory.awaitClosed();
-                    Assert.assertEquals(5, TestLatchedCounterFunctionFactory.getCount());
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
+						public void onClose() {
+							serverClosed.set(true);
+						}
+					});
+					sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 200,
+							clientStateListener);
+					while (!serverClosed.get()) {
+						LockSupport.parkNanos(1);
+					}
+					Assert.assertEquals(5, TestLatchedCounterFunctionFactory.getCount());
+				} finally {
+					workerPool.halt();
+				}
+			}
+		});
+	}
 
     @Test
     public void testJsonQueryBadUtf8() throws Exception {
