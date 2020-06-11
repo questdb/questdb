@@ -328,6 +328,32 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddSymbolWithoutSpecifyingCapacityOrCacheWhenDefaultSymbolCacheConfigIsSetToTrue() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol", sqlExecutionContext).getType());
+
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(16);
+                        Assert.assertNotNull(smr);
+                        Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                        Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        //check that both configuration and new column have cached  == true
+                        Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
+                        Assert.assertTrue(smr.isCached());
+                    }
+                }
+        );
+    }
+
+
+    @Test
     public void testAddTwoColumns() throws Exception {
         assertMemoryLeak(
                 () -> {
