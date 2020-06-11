@@ -358,6 +358,34 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntSymbolAddValueMidTableCount() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))", sqlExecutionContext);
+            compiler.compile("alter table tab add column val long", sqlExecutionContext);
+            compiler.compile("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(33, 889992, 2) from long_sequence(1000000)", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile("select s1, count() from tab order by s1", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+
+                String expected = "s1\tcount\n" +
+                        "\t500194\n" +
+                        "a1\t248976\n" +
+                        "a2\t250638\n" +
+                        "a3\t250099\n" +
+                        "s1\t249898\n" +
+                        "s2\t250010\n" +
+                        "s3\t250185\n";
+
+                sink.clear();
+                printer.print(cursor, factory.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testIntSymbolAddValueMidTableMaxDate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))", sqlExecutionContext);

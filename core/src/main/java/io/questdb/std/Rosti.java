@@ -61,6 +61,10 @@ public final class Rosti {
 
     public static native void keyedIntDistinct(long pRosti, long pKeys, long count);
 
+    public static native void keyedIntCount(long pRosti, long pKeys, long count, int valueOffset);
+
+    public static native void keyedIntCountMerge(long pRostiA, long pRostiB, int valueOffset);
+
     // sum double
     public static native void keyedIntSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 

@@ -1,12 +1,35 @@
-package io.questdb.griffin;
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
 
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+package io.questdb.griffin;
 
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 public class SecurityTest extends AbstractGriffinTest {
     protected static SqlExecutionContext readOnlyExecutionContext;
@@ -363,6 +386,15 @@ public class SecurityTest extends AbstractGriffinTest {
 
     @Test
     public void testMaxInMemoryRowsWithImplicitGroupBy() throws Exception {
+        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(
+                messageBus,
+                1,
+                engine)
+                .with(
+                        new CairoSecurityContextImpl(false,
+                                3),
+                        bindVariableService,
+                        null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -373,18 +405,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     " from long_sequence(1000)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
                     "sym2\tcount\nGZ\t509\nRX\t491\n",
-                    "select sym2, count() from tb1",
+                    "select sym2, count() from tb1 order by sym2",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
                         "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
-                        "select sym1, count() from tb1",
+                        "select sym1, count() from tb1 order by sym1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 3 exceeded"));
             }
         });
     }
