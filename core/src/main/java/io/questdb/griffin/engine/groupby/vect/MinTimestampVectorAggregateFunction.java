@@ -68,7 +68,11 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntMinLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntMinLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -78,7 +82,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinLongSetNull(pRosti, valueOffset);
+        Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 
     @Override

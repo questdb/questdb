@@ -38,6 +38,40 @@ import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
 
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels
+    ) throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                try {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        CairoTestUtils.create(tableModels[i]);
+                    }
+                    compiler.compile(query, sqlExecutionContext);
+                    Assert.fail("Exception expected");
+                } catch (SqlException e) {
+                    Assert.assertEquals(position, e.getPosition());
+                    TestUtils.assertContains(e.getMessage(), contains);
+                }
+            });
+        } finally {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
+    }
+
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
+        assertSyntaxError(compiler, query, position, contains, tableModels);
+    }
+
     @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1)",
@@ -3079,7 +3113,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
-
     @Test
     public void testOrderByGroupByCol2() throws SqlException {
         assertQuery(
@@ -4871,10 +4904,11 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
         );
     }
+
     @Test
     public void testFilterPostJoinSubQuery() throws SqlException {
         assertQuery(
-                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag)) _xQdbA1)",
+                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where a.seq > b.seq + 1)) _xQdbA1)",
                 "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
                 modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
         );
@@ -4891,40 +4925,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 71,
                 "empty where clause"
         );
-    }
-
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels
-    ) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
-                try {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        CairoTestUtils.create(tableModels[i]);
-                    }
-                    compiler.compile(query, sqlExecutionContext);
-                    Assert.fail("Exception expected");
-                } catch (SqlException e) {
-                    Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), contains);
-                }
-            });
-        } finally {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
-    }
-
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
-        assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

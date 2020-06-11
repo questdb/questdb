@@ -284,7 +284,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.commitMode = getCommitMode(properties, "cairo.commit.mode");
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
         this.defaultMapType = getString(properties, "cairo.default.map.type", "fast");
-        this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", false);
+        this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", true);
         this.defaultSymbolCapacity = getInt(properties, "cairo.default.symbol.capacity", 256);
         this.fileOperationRetryCount = getInt(properties, "cairo.file.operation.retry.count", 30);
         this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 5 * 60 * 1000L);

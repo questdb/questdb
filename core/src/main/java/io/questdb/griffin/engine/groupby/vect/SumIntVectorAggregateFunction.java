@@ -67,7 +67,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntSumInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntSumInt(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -77,7 +81,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumIntSetNull(pRosti, valueOffset);
+        Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

@@ -65,12 +65,16 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         // double is derived at the very end. The initial values need to be set
         // correctly with long sum and count in mind.
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
     }
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntSumLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntSumLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -80,7 +84,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgLongSetNull(pRosti, valueOffset);
+        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

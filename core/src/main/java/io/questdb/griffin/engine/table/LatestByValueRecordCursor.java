@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
@@ -35,7 +37,8 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
     private boolean empty;
     private boolean hasNext;
 
-    public LatestByValueRecordCursor(int columnIndex, int symbolKey) {
+    public LatestByValueRecordCursor(int columnIndex, int symbolKey, @NotNull IntList columnIndexes) {
+        super(columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
     }

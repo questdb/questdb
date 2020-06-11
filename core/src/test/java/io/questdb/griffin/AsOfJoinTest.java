@@ -103,31 +103,23 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
-        final String expected = "tag\thi\tlo\n" +
-                "AA\t315515118\t315515118\n" +
-                "BB\t-727724771\t-727724771\n" +
-                "CC\t-948263339\t-948263339\n" +
-                "CC\t592859671\t592859671\n" +
-                "AA\t-847531048\t-847531048\n" +
-                "BB\t-2041844972\t-2041844972\n" +
-                "BB\t-1575378703\t-1575378703\n" +
-                "BB\t1545253512\t1545253512\n" +
-                "AA\t1573662097\t1573662097\n" +
-                "AA\t339631474\t339631474\n";
+    public void testLtJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
+        final String expected = "hi\tlo\n" +
+                "1\tNaN\n" +
+                "18116\t18114\n" +
+                "48689\t48687\n" +
+                "57275\t57273\n" +
+                "63855\t63853\n" +
+                "72763\t72761\n" +
+                "87011\t87009\n" +
+                "87113\t87111\n" +
+                "91369\t91367\n";
         assertQuery(
-                "tag\thi\tlo\n",
-                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
-                "create table tab (\n" +
-                        "    tag symbol index,\n" +
-                        "    seq int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
+                "hi\tlo\n",
+                "(select a.seq hi, b.seq lo from test a lt join test b) where hi > lo + 1",
+                "create table test(seq long, ts timestamp) timestamp(ts)",
                 null,
-                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
-                        "        rnd_int() seq, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
+                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999)",
                 expected,
                 false
         );

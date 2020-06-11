@@ -140,11 +140,11 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public long getPageSize(int pageIndex) {
-        throw new UnsupportedOperationException();
+        return 0;
     }
 
     @Override
     public long getPageAddress(int pageIndex) {
-        throw new UnsupportedOperationException();
+        return 0;
     }
 }

@@ -73,7 +73,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntKSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntKSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -83,7 +87,18 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntKSumDoubleSetNull(pRosti, valueOffset);
+        double sum = 0;
+        long count = 0;
+        double c = 0;
+        for (int i = 0; i < workerCount; i++) {
+            final int offset = i * Misc.CACHE_LINE_SIZE;
+            double y = this.sum[offset] - c;
+            double t = sum + y;
+            c = t - sum - y;
+            sum = t;
+            count += this.count[offset];
+        }
+        Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 
     @Override

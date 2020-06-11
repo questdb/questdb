@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,8 +45,10 @@ class LatestByAllFilteredRecordCursor extends AbstractRecordListCursor {
             @NotNull Map map,
             @NotNull DirectLongList rows,
             @NotNull RecordSink recordSink,
-            @NotNull Function filter) {
-        super(rows);
+            @NotNull Function filter,
+            @NotNull IntList columnIndexes
+    ) {
+        super(rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter;

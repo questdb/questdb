@@ -67,7 +67,11 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        if (valueAddress == 0) {
+            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+        } else {
+            Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
     }
 
     @Override
@@ -77,7 +81,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgDoubleSetNull(pRosti, valueOffset);
+        Rosti.keyedIntAvgDoubleWrapUp(pRosti, valueOffset, this.sum.sum(), this.count.sum());
     }
 
     @Override

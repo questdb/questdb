@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
@@ -84,6 +85,19 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         for (int i = 0; i < workerCount; i++) {
             pRosti[i] = Rosti.alloc(columnTypes, configuration.getGroupByMapCapacity());
 
+            // todo: init key to null value
+
+            // remember, single key for now
+            switch (columnTypes.getColumnType(0)) {
+                case ColumnType.INT:
+                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NaN);
+                    break;
+                case ColumnType.SYMBOL:
+                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
+                    break;
+                default:
+            }
+
             // configure map with default values
             // when our execution order is sum(x) then min(y) over the same map
             // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
@@ -98,9 +112,13 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         // check where our keys are and pull them to front
         final long pRosti = this.pRosti[0];
         final long columnOffsets = Rosti.getValueOffsets(pRosti);
+
+        // skew logic assumes single key, for multiple keys skew would be different
+
         final IntList columnSkewIndex = new IntList();
         // key is in the middle, shift aggregates before the key one position left
         addOffsets(columnSkewIndex, vafList, 0, keyColumnIndexInThisCursor, columnOffsets);
+
         // this is offset of the key column
         columnSkewIndex.add(0);
 
@@ -118,7 +136,13 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
-    private static void addOffsets(IntList columnSkewIndex, @Transient ObjList<VectorAggregateFunction> vafList, int start, int end, long columnOffsets) {
+    private static void addOffsets(
+            IntList columnSkewIndex,
+            @Transient ObjList<VectorAggregateFunction> vafList,
+            int start,
+            int end,
+            long columnOffsets
+    ) {
         for (int i = start; i < end; i++) {
             columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
         }
@@ -190,17 +214,17 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                     }
                     ownCount++;
                 } else {
-                    final VectorAggregateEntry entry = entryPool.next();
-                    if (keyColumnSize == 0) {
-                        entry.of(queuedCount++, vaf, null, 0, valueAddress, valueCount, doneLatch);
-                    } else {
-                        assert keyAddress != 0;
-                        assert valueAddress != 0;
-                        entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueCount, doneLatch);
+                    if (keyAddress != 0 || valueAddress != 0) {
+                        final VectorAggregateEntry entry = entryPool.next();
+                        if (keyAddress == 0) {
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueCount, doneLatch);
+                        } else {
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueCount, doneLatch);
+                        }
+                        activeEntries.add(entry);
+                        queue.get(seq).entry = entry;
+                        pubSeq.done(seq);
                     }
-                    activeEntries.add(entry);
-                    queue.get(seq).entry = entry;
-                    pubSeq.done(seq);
                 }
                 total++;
             }
@@ -217,8 +241,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 reclaimed++;
             }
         }
-
-        // todo: pick largest map to be the lead one
 
         LOG.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
         doneLatch.await(queuedCount);

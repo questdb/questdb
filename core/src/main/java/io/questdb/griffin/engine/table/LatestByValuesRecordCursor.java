@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByValuesRecordCursor extends AbstractRecordListCursor {
 
@@ -35,8 +36,8 @@ class LatestByValuesRecordCursor extends AbstractRecordListCursor {
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
 
-    public LatestByValuesRecordCursor(int columnIndex, DirectLongList rows, IntHashSet symbolKeys) {
-        super(rows);
+    public LatestByValuesRecordCursor(int columnIndex, DirectLongList rows, IntHashSet symbolKeys, @NotNull IntList columnIndexes) {
+        super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));

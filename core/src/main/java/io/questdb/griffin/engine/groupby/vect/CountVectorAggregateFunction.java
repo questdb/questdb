@@ -27,26 +27,18 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.LongAccumulator;
-import java.util.function.LongBinaryOperator;
+import java.util.concurrent.atomic.LongAdder;
 
-public class MaxTimestampVectorAggregateFunction extends TimestampFunction implements VectorAggregateFunction {
-
-    public static final LongBinaryOperator MAX = Math::max;
-    private final LongAccumulator max = new LongAccumulator(
-            MAX, Long.MIN_VALUE
-    );
-    private final int columnIndex;
+public class CountVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+    private final LongAdder count = new LongAdder();
     private int valueOffset;
 
-    public MaxTimestampVectorAggregateFunction(int position, int columnIndex) {
+    public CountVectorAggregateFunction(int position) {
         super(position);
-        this.columnIndex = columnIndex;
     }
 
     @Override
@@ -62,47 +54,40 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
     }
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
-        } else {
-            Rosti.keyedIntMaxLong(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
+        Rosti.keyedIntCount(pRosti, keyAddress, count, valueOffset);
     }
 
     @Override
     public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
+        Rosti.keyedIntCountMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
     }
 
     @Override
     public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            max.accumulate(Vect.maxLong(address, count));
-        }
+        this.count.add(count);
     }
 
     @Override
     public int getColumnIndex() {
-        return columnIndex;
+        return 0;
     }
 
     @Override
     public void clear() {
-        max.reset();
+        count.reset();
     }
 
     @Override
-    public long getTimestamp(Record rec) {
-        return max.longValue();
+    public long getLong(Record rec) {
+        return count.sum();
     }
 }

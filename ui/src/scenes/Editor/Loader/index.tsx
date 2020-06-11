@@ -1,7 +1,15 @@
-import React from "react"
+import React, { useEffect, useRef, useState } from "react"
+import { CSSTransition } from "react-transition-group"
 import styled, { keyframes } from "styled-components"
 
+import { createGlobalFadeTransition, TransitionDuration } from "components"
 import { color } from "utils"
+
+type Props = Readonly<{
+  show: boolean
+}>
+
+const GlobalTransitionCss = createGlobalFadeTransition(TransitionDuration.SLOW)
 
 const move = keyframes`
   0% {
@@ -19,7 +27,7 @@ const Wrapper = styled.div`
   top: 0;
   left: 0;
   right: 0;
-  z-index: 5;
+  z-index: 15;
   background: linear-gradient(
       to left,
       ${color("draculaSelection")} 30%,
@@ -34,6 +42,41 @@ const Wrapper = styled.div`
   animation-timing-function: linear;
 `
 
-const Loader = () => <Wrapper />
+const Loader = ({ show }: Props) => {
+  const [visible, setVisible] = useState(false)
+  const timeoutId = useRef<number | undefined>()
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(timeoutId.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    clearTimeout(timeoutId.current)
+
+    if (!show) {
+      setVisible(false)
+    } else {
+      timeoutId.current = setTimeout(() => {
+        setVisible(true)
+      }, 5e2)
+    }
+  }, [show])
+
+  return (
+    <>
+      <GlobalTransitionCss />
+      <CSSTransition
+        classNames="fade"
+        in={visible && show}
+        timeout={TransitionDuration.SLOW}
+        unmountOnExit
+      >
+        <Wrapper />
+      </CSSTransition>
+    </>
+  )
+}
 
 export default Loader

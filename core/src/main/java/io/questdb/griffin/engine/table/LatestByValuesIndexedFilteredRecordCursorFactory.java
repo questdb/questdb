@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,13 +47,14 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             int columnIndex,
             @Transient CharSequenceHashSet keyValues,
             @Transient SymbolMapReader symbolMapReader,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
         if (filter != null) {
-            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);
+            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
         } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rowidList);
+            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rowidList, columnIndexes);
         }
         this.filter = filter;
     }

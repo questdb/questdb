@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,20 +51,21 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
             boolean indexed,
-            @NotNull Record.CharSequenceFunction func
+            @NotNull Record.CharSequenceFunction func,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (indexed) {
             if (filter != null) {
-                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);
+                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rows);
+                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rows, columnIndexes);
             }
         } else {
             if (filter != null) {
-                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, filter);
+                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys);
+                this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, columnIndexes);
             }
         }
         this.columnIndex = columnIndex;

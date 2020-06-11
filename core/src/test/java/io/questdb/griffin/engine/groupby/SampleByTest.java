@@ -289,11 +289,11 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testGroupByCount() throws Exception {
         assertQuery("c\tcount\n" +
-                        "XY\t6\n" +
                         "\t5\n" +
-                        "ZP\t5\n" +
-                        "UU\t4\n",
-                "select c, count() from x",
+                        "UU\t4\n" +
+                        "XY\t6\n" +
+                        "ZP\t5\n",
+                "select c, count() from x order by c",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -311,12 +311,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(5)" +
                         ")",
                 "c\tcount\n" +
-                        "XY\t6\n" +
                         "\t5\n" +
-                        "ZP\t5\n" +
-                        "UU\t4\n" +
+                        "KK\t1\n" +
                         "PL\t4\n" +
-                        "KK\t1\n",
+                        "UU\t4\n" +
+                        "XY\t6\n" +
+                        "ZP\t5\n",
                 true);
     }
 

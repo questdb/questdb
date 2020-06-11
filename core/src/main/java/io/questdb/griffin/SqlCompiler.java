@@ -175,9 +175,9 @@ public class SqlCompiler implements Closeable {
     public static boolean isAssignableFrom(int to, int from) {
         return to == from
                 || (from >= ColumnType.BYTE
-                        && to >= ColumnType.BYTE
-                        && to <= ColumnType.DOUBLE
-                        && from < to)
+                && to >= ColumnType.BYTE
+                && to <= ColumnType.DOUBLE
+                && from < to)
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
@@ -803,7 +803,7 @@ public class SqlCompiler implements Closeable {
                     indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 }
             } else {
-                cache = false;
+                cache = configuration.getDefaultSymbolCacheFlag();
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 symbolCapacity = configuration.getDefaultSymbolCapacity();
                 indexed = false;
