@@ -31,7 +31,7 @@ const Wrapper = styled(PaneWrapper)`
 const Content = styled(PaneContent)`
   color: ${color("draculaForeground")};
 
-  &:selection {
+  *::selection {
     background: ${color("draculaRed")};
     color: ${color("draculaForeground")};
   }
