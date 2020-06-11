@@ -39,6 +39,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
@@ -84,8 +85,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext(), configuration.getMaxInMemoryRows());
-        // TODO setup HttpSqlExecutionInterruptor from configuration
-        execInterruptor = new HttpSqlExecutionInterruptor(this.nf, 1_000, 64);
+        execInterruptor = configuration.isInterruptOnClosedConnection()
+                ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
+                : null;
     }
 
     @Override
@@ -104,7 +106,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
-        execInterruptor.close();
+        Misc.free(execInterruptor);
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -176,7 +178,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
-        this.execInterruptor.of(fd);
+        if (null != execInterruptor) {
+            this.execInterruptor.of(fd);
+        }
         return this;
     }
 

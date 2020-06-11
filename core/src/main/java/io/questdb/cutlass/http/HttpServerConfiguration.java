@@ -71,4 +71,10 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
     boolean readOnlySecurityContext();
 
     long getMaxInMemoryRows();
+
+    boolean isInterruptOnClosedConnection();
+
+    int getInterruptorNIterationsPerCheck();
+
+    int getInterruptorBufferSize();
 }

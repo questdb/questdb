@@ -8,30 +8,31 @@ import io.questdb.std.Unsafe;
 
 public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Closeable {
     private final NetworkFacade nf;
-    private final int nIterrationsPerCheck;
+    private final int nIterationsPerCheck;
     private final int bufferSize;
     private long buffer;
-    private int nIterrationsSinceCheck;
-    private long fd;
+    private int nIterationsSinceCheck;
+    private long fd = -1;
 
-    public HttpSqlExecutionInterruptor(NetworkFacade nf, int nIterrationsPerCheck, int bufferSize) {
+    public HttpSqlExecutionInterruptor(NetworkFacade nf, int nIterationsPerCheck, int bufferSize) {
         super();
         this.nf = nf;
-        this.nIterrationsPerCheck = nIterrationsPerCheck;
+        this.nIterationsPerCheck = nIterationsPerCheck;
         this.bufferSize = bufferSize;
         buffer = Unsafe.malloc(bufferSize);
     }
 
     @Override
     public void checkInterrupted() {
-        if (nIterrationsSinceCheck == nIterrationsPerCheck) {
-            nIterrationsSinceCheck = 0;
+        assert fd != -1;
+        if (nIterationsSinceCheck == nIterationsPerCheck) {
+            nIterationsSinceCheck = 0;
             int nRead = nf.peek(fd, buffer, bufferSize);
             if (nRead == 0) {
                 return;
             }
             if (nRead < 0) {
-                throw CairoException.instance(0).put("Interrupting SQL processings, client fd ").put(fd).put(" is closed");
+                throw CairoException.instance(0).put("Interrupting SQL processing, client fd ").put(fd).put(" is closed");
             }
 
             int index = 0;
@@ -48,12 +49,13 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
                 nf.recv(fd, buffer, index);
             }
         } else {
-            nIterrationsSinceCheck++;
+            nIterationsSinceCheck++;
         }
     }
 
     public HttpSqlExecutionInterruptor of(long fd) {
-        nIterrationsSinceCheck = 0;
+        assert buffer != 0;
+        nIterationsSinceCheck = 0;
         this.fd = fd;
         return this;
     }
@@ -62,5 +64,6 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
     public void close() {
         Unsafe.free(buffer, bufferSize);
         buffer = 0;
+        fd = -1;
     }
 }

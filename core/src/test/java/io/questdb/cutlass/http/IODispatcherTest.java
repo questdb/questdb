@@ -24,28 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -54,10 +33,74 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TestRecord;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cutlass.NetUtils;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.test.tools.TestUtils;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private static final AtomicInteger N_BYTES_RECIEVED_BY_CLIENT = new AtomicInteger();
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
@@ -1549,6 +1592,120 @@ public class IODispatcherTest {
                             "\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithInterruption() throws Exception {
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[] { -1 };
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir),
+                            null);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+                    @Override
+                    public void onStartingRequest() {
+                        TestLatchedCounterFunctionFactory.reset();
+
+                    }
+
+                    @Override
+                    public void onReceived(int nBytes) {
+
+                    }
+
+                    @Override
+                    public void onClosed() {
+                        TestLatchedCounterFunctionFactory.start();
+                    }
+                };
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            10000,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+
+                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "80\r\n" +
+                            "\r\n";
+
+                    sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 40, clientStateListener);
+                    TestLatchedCounterFunctionFactory.awaitClosed();
+                    Assert.assertEquals(5, TestLatchedCounterFunctionFactory.getCount());
                 } finally {
                     workerPool.halt();
                 }
@@ -4409,51 +4566,7 @@ public class IODispatcherTest {
                 long ptr = Unsafe.malloc(len);
                 try {
                     for (int j = 0; j < requestCount; j++) {
-                        int sent = 0;
-                        int reqLen = request.length();
-                        Chars.asciiStrCpy(request, reqLen, ptr);
-                        while (sent < reqLen) {
-                            int n = nf.send(fd, ptr + sent, reqLen - sent);
-                            Assert.assertTrue(n > -1);
-                            sent += n;
-                        }
-
-                        if (pauseBetweenSendAndReceive > 0) {
-                            Thread.sleep(pauseBetweenSendAndReceive);
-                        }
-                        // receive response
-                        final int expectedToReceive = expectedResponse.length;
-                        int received = 0;
-                        if (print) {
-                            System.out.println("expected");
-                            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
-                        }
-                        boolean disconnected = false;
-                        while (received < expectedToReceive) {
-                            int n = nf.recv(fd, ptr + received, len - received);
-                            if (n > 0) {
-                                // dump(ptr + received, n);
-                                // compare bytes
-                                for (int i = 0; i < n; i++) {
-                                    if (print) {
-                                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                                    } else {
-                                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
-                                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                                        }
-                                    }
-                                }
-                                received += n;
-                            } else if (n < 0) {
-                                disconnected = true;
-                                break;
-                            }
-                        }
-                        if (disconnected && !expectDisconnect) {
-                            LOG.error().$("disconnected?").$();
-                            Assert.fail();
-                        }
+                        sendAndReceive(nf, request, pauseBetweenSendAndReceive, print, expectDisconnect, fd, expectedResponse, len, ptr, null);
                     }
                 } finally {
                     Unsafe.free(ptr, len);
@@ -4463,6 +4576,96 @@ public class IODispatcherTest {
             }
         } finally {
             nf.close(fd);
+        }
+    }
+
+    private void sendAndReceiveWithPrematureDisconnect(
+            NetworkFacade nf,
+            String request,
+            String response,
+            boolean print,
+            int disconnectAfterNBytes,
+            HttpClientStateListener listener
+    ) throws InterruptedException {
+        long fd = nf.socketTcp(true);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            try {
+                Assert.assertTrue(fd > -1);
+                Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+                byte[] expectedResponse = response.getBytes();
+                long bufLen = request.length() > disconnectAfterNBytes ? request.length() : disconnectAfterNBytes;
+                long ptr = Unsafe.malloc(bufLen);
+                try {
+                    sendAndReceive(nf, request, 0, print, true, fd, expectedResponse, disconnectAfterNBytes, ptr, listener);
+                } finally {
+                    Unsafe.free(ptr, bufLen);
+                }
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+            listener.onClosed();
+        }
+    }
+
+    private void sendAndReceive(
+            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
+            HttpClientStateListener listener
+    ) throws InterruptedException {
+        if (null != listener) {
+            listener.onStartingRequest();
+        }
+        int sent = 0;
+        int reqLen = request.length();
+        Chars.asciiStrCpy(request, reqLen, ptr);
+        while (sent < reqLen) {
+            int n = nf.send(fd, ptr + sent, reqLen - sent);
+            Assert.assertTrue(n > -1);
+            sent += n;
+        }
+
+        if (pauseBetweenSendAndReceive > 0) {
+            Thread.sleep(pauseBetweenSendAndReceive);
+        }
+        // receive response
+        final int expectedToReceive = expectedResponse.length;
+        int received = 0;
+        if (print) {
+            System.out.println("expected");
+            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
+        }
+        boolean disconnected = false;
+        while (received < expectedToReceive) {
+            int n = nf.recv(fd, ptr + received, len - received);
+            if (n > 0) {
+                // dump(ptr + received, n);
+                // compare bytes
+                for (int i = 0; i < n; i++) {
+                    if (print) {
+                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
+                    } else {
+                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
+                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                        }
+                    }
+                }
+                received += n;
+                if (null != listener) {
+                    listener.onReceived(received);
+                }
+            } else if (n < 0) {
+                disconnected = true;
+                break;
+            }
+        }
+        if (disconnected && !expectDisconnect) {
+            LOG.error().$("disconnected?").$();
+            Assert.fail();
         }
     }
 
@@ -4650,5 +4853,13 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
+    }
+
+    private interface HttpClientStateListener {
+        void onStartingRequest();
+
+        void onReceived(int nBytes);
+
+        void onClosed();
     }
 }

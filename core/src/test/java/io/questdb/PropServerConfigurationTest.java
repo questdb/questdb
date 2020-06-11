@@ -118,6 +118,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(false, configuration.getHttpServerConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
+        Assert.assertEquals(true, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+        Assert.assertEquals(1000, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
@@ -332,6 +335,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(true, configuration.getHttpServerConfiguration().readOnlySecurityContext());
             Assert.assertEquals(10000, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
+            Assert.assertEquals(false, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+            Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
+            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
