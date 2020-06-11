@@ -613,7 +613,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testIntSymbolAddBothMidTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))", sqlExecutionContext);
-            compiler.compile("alter table tab add column s2 symbol cache", sqlExecutionContext);
+            compiler.compile("alter table tab add column s2 symbol", sqlExecutionContext);
             compiler.compile("alter table tab add column val double", sqlExecutionContext);
             compiler.compile("insert into tab select null, rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)", sqlExecutionContext);
 
