@@ -1446,7 +1446,8 @@ class SqlOptimiser {
                     continue;
                 } else if (distinctIndexes > 1) {
                     int greatest = tempList.get(distinctIndexes - 1);
-                    model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), nodes.getQuick(greatest)));
+                    final QueryModel m = model.getJoinModels().get(greatest);
+                    m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), nodes.getQuick(i)));
                     continue;
                 }
 
@@ -2256,9 +2257,6 @@ class SqlOptimiser {
 
                                     // the column may appear in the list after literals from expressions have been emitted
                                     index = synthetic.getColumnNameToAliasMap().keyIndex(column);
-                                    if (index > -1 && dot > -1) {
-                                        index = synthetic.getColumnNameToAliasMap().keyIndex(column, dot + 1, column.length());
-                                    }
 
                                     if (index < 0) {
                                         alias = synthetic.getColumnNameToAliasMap().valueAtQuick(index);
