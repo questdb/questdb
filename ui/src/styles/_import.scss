@@ -46,8 +46,19 @@ $drag-drop-border: #c6c6c6;
 
 .ud-canvas {
   position: relative;
-  height: 180px;
   overflow: auto;
+  flex: 1;
+}
+
+#import-file-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+#import-top {
+  display: flex;
+  flex-direction: column;
 }
 
 .ud-row {

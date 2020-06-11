@@ -25,18 +25,13 @@ let messageBus = $({})
 window.bus = messageBus
 
 $(document).ready(function () {
-  setupConsoleController(messageBus)
-  setupImportController(messageBus)
-
-  function exportClick(e) {
-    e.preventDefault()
-    messageBus.trigger("grid.publish.query")
-  }
-
-  $(".js-query-export").click(exportClick)
-
   messageBus.trigger("preferences.load")
 
   const win = $(window)
   win.trigger("resize")
+})
+
+messageBus.on("react.ready", () => {
+  setupConsoleController(messageBus)
+  setupImportController(messageBus)
 })

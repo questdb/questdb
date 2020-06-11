@@ -1,131 +1,233 @@
 import React, {
   MouseEvent as ReactMouseEvent,
+  TouchEvent as ReactTouchEvent,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react"
-import styled from "styled-components"
+import styled, { createGlobalStyle, css } from "styled-components"
 import { DragIndicator } from "@styled-icons/material/DragIndicator"
 
 import { color } from "utils"
 
-type Props = Readonly<{
-  max?: number
-  min?: number
-  onChange: (x: number) => void
-}>
-
-const DragIcon = styled(DragIndicator)`
-  position: absolute;
-  color: ${color("gray1")};
+const PreventUserSelectionHorizontal = createGlobalStyle`
+  html {
+    user-select: none;
+    cursor: ew-resize !important;
+    pointer-events: none;
+  }
 `
 
-const Wrapper = styled.div`
+const PreventUserSelectionVertical = createGlobalStyle`
+  html {
+    user-select: none;
+    cursor: row-resize !important;
+    pointer-events: none;
+  }
+`
+
+type Props = Readonly<{
+  direction: "vertical" | "horizontal"
+  max?: number
+  min?: number
+  onChange: (value: number) => void
+}>
+
+const HorizontalDragIcon = styled(DragIndicator)`
+  position: absolute;
+`
+
+const VerticalDragIcon = styled(HorizontalDragIcon)`
+  transform: rotate(90deg);
+`
+
+const wrapperStyles = css`
   display: flex;
-  width: 8px;
-  height: 100%;
   align-items: center;
   justify-content: center;
+  border: 1px solid rgba(0, 0, 0, 0.1);
   background: ${color("draculaBackgroundDarker")};
-  border: 1px solid rgba(255, 255, 255, 0.03);
-  border-top: none;
-  border-bottom: none;
+  color: ${color("gray1")};
 
   &:hover {
     background: ${color("draculaSelection")};
-    cursor: ew-resize;
+    color: ${color("draculaForeground")};
   }
 `
 
-const Ghost = styled(Wrapper)`
+const HorizontalWrapper = styled.div`
+  ${wrapperStyles};
+  width: 1rem;
+  height: 100%;
+  border-top: none;
+  border-bottom: none;
+  cursor: ew-resize;
+`
+
+const VerticalWrapper = styled.div`
+  ${wrapperStyles};
+  width: 100%;
+  height: 1rem;
+  border-left: none;
+  border-right: none;
+  cursor: row-resize;
+`
+
+const ghostStyles = css`
   position: absolute;
-  width: 8px;
-  top: 0;
-  bottom: 0;
   z-index: 20;
+  background: ${color("draculaPurple")};
 
   &:hover {
     background: ${color("draculaPurple")};
-    cursor: ew-resize;
   }
 `
 
-type Position = Readonly<{
-  x: number
-}>
+const HorizontalGhost = styled.div`
+  ${ghostStyles};
+  width: 1rem;
+  top: 0;
+  bottom: 0;
+`
 
-export const Splitter = ({ max, min, onChange }: Props) => {
+const VerticalGhost = styled.div`
+  ${ghostStyles};
+  height: 1rem;
+  left: 0;
+  right: 0;
+`
+
+export const Splitter = ({ direction, max, min, onChange }: Props) => {
+  const [offset, setOffset] = useState(0)
+  const [originalPosition, setOriginalPosition] = useState(0)
+  const [ghostPosition, setGhostPosition] = useState(0)
   const [pressed, setPressed] = useState(false)
-  const [left, setLeft] = useState<number>(0)
-  const [xOffset, setXOffset] = useState<number>(0)
   const splitter = useRef<HTMLDivElement | null>(null)
-  const [position, setPosition] = useState<Position>({ x: 0 })
 
   const handleMouseMove = useCallback(
-    (event: MouseEvent) => {
+    (event: TouchEvent | MouseEvent) => {
       event.stopPropagation()
-      event.preventDefault()
+      const clientPosition = direction === "horizontal" ? "clientX" : "clientY"
+      const side = direction === "horizontal" ? "outerWidth" : "outerHeight"
+      let position = 0
+
+      if (event instanceof TouchEvent) {
+        position = event.touches[0][clientPosition]
+      }
+
+      if (event instanceof MouseEvent) {
+        position = event[clientPosition]
+      }
 
       if (
-        (min &&
-          max &&
-          event.clientX > min &&
-          event.clientX < window.outerWidth - max) ||
-        (!min && max && event.clientX < window.outerWidth - max) ||
-        (!max && min && event.clientX > min) ||
+        (min && max && position > min && position < window[side] - max) ||
+        (!min && max && position < window[side] - max) ||
+        (!max && min && position > min) ||
         (!min && !max)
       ) {
-        setPosition({
-          x: event.clientX,
-        })
+        setGhostPosition(position)
       }
     },
-    [max, min],
+    [direction, max, min],
   )
 
   const handleMouseUp = useCallback(() => {
     document.removeEventListener("mouseup", handleMouseUp)
     document.removeEventListener("mousemove", handleMouseMove)
+    document.removeEventListener("touchend", handleMouseUp)
+    document.removeEventListener("touchmove", handleMouseMove)
     setPressed(false)
   }, [handleMouseMove])
 
   const handleMouseDown = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
+    (event: ReactTouchEvent | ReactMouseEvent) => {
       if (splitter.current && splitter.current.parentElement) {
-        const { x } = splitter.current.parentElement.getBoundingClientRect()
+        const clientPosition =
+          direction === "horizontal" ? "clientX" : "clientY"
+        const coordinate = direction === "horizontal" ? "x" : "y"
+        const offset = splitter.current.parentElement.getBoundingClientRect()[
+          coordinate
+        ]
+        let position = 0
 
-        setLeft(event.clientX - x)
-        setXOffset(x)
+        if (event.nativeEvent instanceof TouchEvent) {
+          position = event.nativeEvent.touches[0][clientPosition]
+        }
+
+        if (event.nativeEvent instanceof MouseEvent) {
+          position = event.nativeEvent[clientPosition]
+        }
+
+        setOriginalPosition(position)
+        setOffset(offset)
         setPressed(true)
 
         document.addEventListener("mouseup", handleMouseUp)
-        document.addEventListener("mousemove", handleMouseMove)
+        document.addEventListener("mousemove", handleMouseMove, {
+          passive: true,
+        })
+        document.addEventListener("touchend", handleMouseUp)
+        document.addEventListener("touchmove", handleMouseMove, {
+          passive: true,
+        })
       }
     },
-    [handleMouseMove, handleMouseUp],
+    [direction, handleMouseMove, handleMouseUp],
   )
 
   useEffect(() => {
-    if (!pressed && position.x) {
-      onChange(position.x - left - xOffset)
-      setLeft(0)
-      setPosition({ x: 0 })
+    if (!pressed && ghostPosition) {
+      onChange(ghostPosition - originalPosition)
+      setOriginalPosition(0)
+      setGhostPosition(0)
     }
-  }, [onChange, position, pressed, left, xOffset])
+  }, [onChange, ghostPosition, pressed, originalPosition])
+
+  if (direction === "horizontal") {
+    return (
+      <>
+        <HorizontalWrapper
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleMouseDown}
+          ref={splitter}
+        >
+          <HorizontalDragIcon size="16px" />
+        </HorizontalWrapper>
+
+        {ghostPosition > 0 && (
+          <>
+            <HorizontalGhost
+              style={{
+                left: `${ghostPosition - offset}px`,
+              }}
+            />
+            <PreventUserSelectionHorizontal />
+          </>
+        )}
+      </>
+    )
+  }
 
   return (
     <>
-      <Wrapper onMouseDown={handleMouseDown} ref={splitter}>
-        <DragIcon size="12px" />
-      </Wrapper>
+      <VerticalWrapper
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleMouseDown}
+        ref={splitter}
+      >
+        <VerticalDragIcon size="16px" />
+      </VerticalWrapper>
 
-      {position.x > 0 && (
-        <Ghost
-          style={{
-            left: `${position.x - xOffset}px`,
-          }}
-        />
+      {ghostPosition > 0 && (
+        <>
+          <VerticalGhost
+            style={{
+              top: `${ghostPosition - offset}px`,
+            }}
+          />
+          <PreventUserSelectionVertical />
+        </>
       )}
     </>
   )

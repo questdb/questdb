@@ -22,7 +22,7 @@ const Wrapper = styled.div`
   padding: 0.6rem 0;
   flex-direction: column;
   background: ${color("draculaBackgroundDarker")};
-  box-shadow: rgb(0, 0, 0) 0px 5px 8px;
+  box-shadow: ${color("black")} 0px 5px 8px;
   border: 1px solid ${color("black")};
   border-radius: 4px;
 `

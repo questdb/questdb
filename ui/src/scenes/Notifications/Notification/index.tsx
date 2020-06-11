@@ -68,7 +68,7 @@ const Out = styled.div<{ animationPlay: AnimationPlay }>`
   width: 100%;
   height: 1px;
   background: ${color("gray2")};
-  animation: ${disappear} 120s linear 0s 1 normal forwards;
+  animation: ${disappear} 15s linear 0s 1 normal forwards;
   animation-play-state: ${({ animationPlay }) => animationPlay};
 `
 
@@ -138,12 +138,12 @@ const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
           />
         )}
 
-        <CloseIcon onClick={handleCloseClick} size="16px" />
+        <CloseIcon onClick={handleCloseClick} size="18px" />
 
         {pinned ? (
-          <Unpin onClick={handlePinClick} size="14px" />
+          <Unpin onClick={handlePinClick} size="16px" />
         ) : (
-          <Pin onClick={handlePinClick} size="14px" />
+          <Pin onClick={handlePinClick} size="16px" />
         )}
       </Wrapper>
     </CSSTransition>

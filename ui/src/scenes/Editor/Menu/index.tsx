@@ -2,9 +2,9 @@ import docsearch from "docsearch.js"
 import React, { useCallback, useEffect, useState } from "react"
 import { useDispatch, useSelector } from "react-redux"
 import styled from "styled-components"
-import { ControllerPlay } from "@styled-icons/entypo/ControllerPlay"
-import { ControllerStop } from "@styled-icons/entypo/ControllerStop"
-import { Plus } from "@styled-icons/entypo/Plus"
+import { Play } from "@styled-icons/remix-line/Play"
+import { Stop } from "@styled-icons/remix-line/Stop"
+import { Add } from "@styled-icons/remix-line/Add"
 
 import {
   ErrorButton,
@@ -85,14 +85,14 @@ const Menu = () => {
     <Wrapper>
       {running && (
         <ErrorButton onClick={handleClick}>
-          <ControllerStop size="18px" />
+          <Stop size="18px" />
           <span>Cancel</span>
         </ErrorButton>
       )}
 
       {!running && (
         <SuccessButton onClick={handleClick}>
-          <ControllerPlay size="18px" />
+          <Play size="18px" />
           <span>Run</span>
         </SuccessButton>
       )}
@@ -104,7 +104,7 @@ const Menu = () => {
           onToggle={handleToggle}
           trigger={
             <QueryPickerButton onClick={handleClick}>
-              <Plus size="18px" />
+              <Add size="18px" />
               <span>Saved queries</span>
             </QueryPickerButton>
           }

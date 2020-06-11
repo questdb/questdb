@@ -1,7 +1,7 @@
 import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
-import { Code } from "@styled-icons/entypo/Code"
-import { Info } from "@styled-icons/entypo/Info"
+import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
+import { Information } from "@styled-icons/remix-line/Information"
 
 import {
   PopperHover,
@@ -45,11 +45,15 @@ const Wrapper = styled.div<Pick<Props, "expanded">>`
   padding-left: 1rem;
   transition: background ${TransitionDuration.REG}ms;
 
-  &:hover ${/* sc-selector */ PlusButton} {
+  &:hover
+    ${/* sc-selector */ PlusButton},
+    &:active
+    ${/* sc-selector */ PlusButton} {
     opacity: 1;
   }
 
-  &:hover {
+  &:hover,
+  &:active {
     background: ${color("draculaSelection")};
   }
 
@@ -67,7 +71,7 @@ const Spacer = styled.span`
   flex: 1;
 `
 
-const InfoIcon = styled(Info)`
+const InfoIcon = styled(Information)`
   color: ${color("draculaPurple")};
 `
 
@@ -115,7 +119,7 @@ const Row = ({
         )}
 
         <PlusButton onClick={handleClick} size="sm" tooltip={tooltip}>
-          <Code size="16px" />
+          <CodeSSlash size="16px" />
           <span>Add</span>
         </PlusButton>
 

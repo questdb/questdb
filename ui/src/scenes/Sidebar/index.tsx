@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react"
 import { useSelector } from "react-redux"
 import styled from "styled-components"
-import { Code } from "@styled-icons/entypo/Code"
-import { Upload } from "@styled-icons/entypo/Upload"
+import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
+import { Upload2 } from "@styled-icons/remix-line/Upload2"
 
 import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
 import { selectors } from "store"
@@ -10,14 +10,16 @@ import { color } from "utils"
 
 const Wrapper = styled.div`
   display: flex;
-  flex: 0 0 45px;
+  height: calc(100% - 4rem);
+  flex: 0 0 4.5rem;
   flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, 0.1);
 `
 
 const Logo = styled.div`
   position: relative;
   display: flex;
-  flex: 0 0 41px;
+  flex: 0 0 4rem;
   background: ${color("black")};
   z-index: 1;
 
@@ -96,7 +98,7 @@ const Sidebar = () => {
             onClick={handleConsoleClick}
             selected={selected === "console"}
           >
-            <Code size="18px" />
+            <CodeSSlash size="18px" />
           </Navigation>
         }
       >
@@ -115,7 +117,7 @@ const Sidebar = () => {
                 onClick={handleImportClick}
                 selected={selected === "import"}
               >
-                <Upload size="16px" />
+                <Upload2 size="18px" />
               </Navigation>
             </DisabledNavigation>
           ) : (
@@ -124,7 +126,7 @@ const Sidebar = () => {
               onClick={handleImportClick}
               selected={selected === "import"}
             >
-              <Upload size="16px" />
+              <Upload2 size="18px" />
             </Navigation>
           )
         }

@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled, { css } from "styled-components"
-import { Database } from "@styled-icons/entypo/Database"
-import { Loader3 } from "@styled-icons/remix-fill/Loader3"
+import { Database2 } from "@styled-icons/remix-line/Database2"
+import { Loader3 } from "@styled-icons/remix-line/Loader3"
 import { Refresh } from "@styled-icons/remix-line/Refresh"
 
 import {
@@ -43,15 +43,21 @@ const Menu = styled(PaneMenu)`
   justify-content: space-between;
 `
 
+const Header = styled(Text)`
+  display: flex;
+  align-items: center;
+`
+
 const Content = styled(PaneContent)<{
   _loading: boolean
 }>`
   display: block;
   font-family: ${({ theme }) => theme.fontMonospace};
+  overflow: auto;
   ${({ _loading }) => _loading && loadingStyles};
 `
 
-const DatabaseIcon = styled(Database)`
+const DatabaseIcon = styled(Database2)`
   margin-right: 1rem;
 `
 
@@ -121,17 +127,17 @@ const Schema = ({ widthOffset }: Props) => {
   return (
     <Wrapper basis={width} ref={element}>
       <Menu>
-        <Text color="draculaForeground">
+        <Header color="draculaForeground">
           <DatabaseIcon size="18px" />
           Tables
-        </Text>
+        </Header>
 
         <PopperHover
           delay={350}
           placement="bottom"
           trigger={
             <SecondaryButton onClick={fetchTables}>
-              <Refresh size="16px" />
+              <Refresh size="18px" />
             </SecondaryButton>
           }
         >

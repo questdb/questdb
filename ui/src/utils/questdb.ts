@@ -51,7 +51,12 @@ export type ErrorResult = RawErrorResult & {
   type: Type.ERROR
 }
 
-export type Result<T extends Record<string, any>> =
+export type QueryRawResult =
+  | (Omit<RawDqlResult, "ddl"> & { type: Type.DQL })
+  | DdlResult
+  | ErrorResult
+
+export type QueryResult<T extends Record<string, any>> =
   | {
       columns: ColumnDefinition[]
       count: number
@@ -122,7 +127,7 @@ export class Client {
     this._controllers = []
   }
 
-  async query<T>(query: string, options?: Options): Promise<Result<T>> {
+  async query<T>(query: string, options?: Options): Promise<QueryResult<T>> {
     const result = await this.queryRaw(query, options)
 
     if (result.type === Type.DQL) {
@@ -151,12 +156,7 @@ export class Client {
     return result
   }
 
-  async queryRaw(
-    query: string,
-    options?: Options,
-  ): Promise<
-    (Omit<RawDqlResult, "ddl"> & { type: Type.DQL }) | DdlResult | ErrorResult
-  > {
+  async queryRaw(query: string, options?: Options): Promise<QueryRawResult> {
     const controller = new AbortController()
     const payload = {
       ...options,
@@ -245,7 +245,7 @@ export class Client {
     })
   }
 
-  async showTables(): Promise<Result<Table>> {
+  async showTables(): Promise<QueryResult<Table>> {
     const response = await this.query<Table>("SHOW TABLES;")
 
     if (response.type === Type.DQL) {
@@ -268,7 +268,7 @@ export class Client {
     return response
   }
 
-  async showColumns(table: string): Promise<Result<Column>> {
+  async showColumns(table: string): Promise<QueryResult<Column>> {
     return await this.query<Column>(`SHOW COLUMNS FROM '${table}';`)
   }
 }

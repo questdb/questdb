@@ -1,5 +1,7 @@
 import type { ReactNode } from "react"
 
+import type { QueryRawResult } from "utils/questdb"
+
 export enum NotificationType {
   ERROR = "error",
   INFO = "info",
@@ -16,6 +18,7 @@ export type NotificationShape = Readonly<{
 
 export type QueryStateShape = Readonly<{
   notifications: NotificationShape[]
+  result?: QueryRawResult
   running: boolean
 }>
 
@@ -23,6 +26,7 @@ export enum QueryAT {
   ADD_NOTIFICATION = "QUERY/ADD_NOTIFICATION",
   CLEANUP_NOTIFICATIONS = "QUERY/CLEANUP_NOTIFICATIONS",
   REMOVE_NOTIFICATION = "QUERY/REMOVE_NOTIFICATION",
+  SET_RESULT = "QUERY/SET_RESULT",
   STOP_RUNNING = "QUERY/STOP_RUNNING",
   TOGGLE_RUNNING = "QUERY/TOGGLE_RUNNING",
 }
@@ -41,6 +45,11 @@ type RemoveNotificationAction = Readonly<{
   type: QueryAT.REMOVE_NOTIFICATION
 }>
 
+type SetResultAction = Readonly<{
+  payload: QueryRawResult
+  type: QueryAT.SET_RESULT
+}>
+
 type StopRunningAction = Readonly<{
   type: QueryAT.STOP_RUNNING
 }>
@@ -53,5 +62,6 @@ export type QueryAction =
   | AddNotificationAction
   | CleanupNotificationsAction
   | RemoveNotificationAction
+  | SetResultAction
   | StopRunningAction
   | ToggleRunningAction
