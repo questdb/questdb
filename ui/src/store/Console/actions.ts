@@ -9,4 +9,8 @@ const setConfiguration = (payload: ConfigurationShape): ConsoleAction => ({
   type: ConsoleAT.SET_CONFIGURATION,
 })
 
-export default { bootstrap, setConfiguration }
+const toggleSideMenu = (): ConsoleAction => ({
+  type: ConsoleAT.TOGGLE_SIDE_MENU,
+})
+
+export default { bootstrap, setConfiguration, toggleSideMenu }

@@ -28,6 +28,7 @@
     "@types/react-redux": "7.1.9",
     "@types/react-transition-group": "4.4.0",
     "@types/styled-components": "5.1.0",
+    "@types/throttle-debounce": "2.1.0",
     "ace-builds": "1.4.11",
     "animate.css": "3.7.2",
     "bootstrap-sass": "3.4.1",
@@ -51,7 +52,7 @@
     "slim-select": "1.26.0",
     "styled-components": "5.1.1",
     "styled-icons": "10.2.1",
-    "use-media": "1.4.0"
+    "throttle-debounce": "2.2.1"
   },
   "devDependencies": {
     "@babel/cli": "7.10.1",

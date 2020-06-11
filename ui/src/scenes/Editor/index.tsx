@@ -1,15 +1,26 @@
-import React from "react"
+import React, { CSSProperties, forwardRef, Ref } from "react"
 
 import { PaneWrapper } from "components"
 
 import Ace from "./Ace"
 import Menu from "./Menu"
 
-const Editor = () => (
-  <PaneWrapper>
+type Props = Readonly<{
+  style?: CSSProperties
+}>
+
+const Editor = ({
+  innerRef,
+  ...rest
+}: Props & { innerRef: Ref<HTMLDivElement> }) => (
+  <PaneWrapper ref={innerRef} {...rest}>
     <Menu />
     <Ace />
   </PaneWrapper>
 )
 
-export default Editor
+const EditorWithRef = (props: Props, ref: Ref<HTMLDivElement>) => (
+  <Editor {...props} innerRef={ref} />
+)
+
+export default forwardRef(EditorWithRef)

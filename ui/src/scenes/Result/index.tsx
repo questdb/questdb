@@ -15,6 +15,7 @@ import {
   SecondaryButton,
   Text,
   Tooltip,
+  useScreenSize,
 } from "components"
 import { selectors } from "store"
 import { BusEvent, color } from "utils"
@@ -52,22 +53,26 @@ const ButtonWrapper = styled.div`
 
 const ToggleButton = styled(PrimaryToggleButton)`
   height: 4rem;
-  width: 10rem;
+  width: 8.5rem;
 `
 
 const Result = () => {
   const [selected, setSelected] = useState<"chart" | "grid">("grid")
   const [count, setCount] = useState<number | undefined>()
-  const handleToggle = useCallback(() => {
-    setSelected(selected === "grid" ? "chart" : "grid")
-  }, [selected])
+  const { sm } = useScreenSize()
+  const result = useSelector(selectors.query.getResult)
+  const handleChartClick = useCallback(() => {
+    setSelected("chart")
+  }, [])
+  const handleGridClick = useCallback(() => {
+    setSelected("grid")
+  }, [])
   const handleExportClick = useCallback(() => {
     window.bus.trigger("grid.publish.query")
   }, [])
   const handleRefreshClick = useCallback(() => {
     window.bus.trigger("grid.refresh")
   }, [])
-  const result = useSelector(selectors.query.getResult)
 
   useEffect(() => {
     if (result?.type === QuestDB.Type.DQL) {
@@ -97,35 +102,43 @@ const Result = () => {
     <Wrapper>
       <Menu>
         <ButtonWrapper>
-          <ToggleButton onClick={handleToggle} selected={selected === "grid"}>
+          <ToggleButton
+            onClick={handleGridClick}
+            selected={selected === "grid"}
+          >
             <Grid size="18px" />
             <span>Grid</span>
           </ToggleButton>
 
-          <ToggleButton onClick={handleToggle} selected={selected === "chart"}>
+          <ToggleButton
+            onClick={handleChartClick}
+            selected={selected === "chart"}
+          >
             <PieChart size="18px" />
             <span>Chart</span>
           </ToggleButton>
         </ButtonWrapper>
 
         <ButtonWrapper>
-          {count && (
+          {count && !sm && (
             <Text color="draculaForeground">
               {`${count} row${count > 1 ? "s" : ""}`}
             </Text>
           )}
 
-          <PopperHover
-            delay={350}
-            placement="bottom"
-            trigger={
-              <SecondaryButton onClick={handleRefreshClick}>
-                <Refresh size="18px" />
-              </SecondaryButton>
-            }
-          >
-            <Tooltip>Refresh</Tooltip>
-          </PopperHover>
+          {!sm && (
+            <PopperHover
+              delay={350}
+              placement="bottom"
+              trigger={
+                <SecondaryButton onClick={handleRefreshClick}>
+                  <Refresh size="18px" />
+                </SecondaryButton>
+              }
+            >
+              <Tooltip>Refresh</Tooltip>
+            </PopperHover>
+          )}
 
           <PopperHover
             delay={350}
