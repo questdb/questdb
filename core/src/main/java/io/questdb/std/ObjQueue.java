@@ -24,14 +24,14 @@
 
 package io.questdb.std;
 
-public class ObjStack<T> implements Mutable {
+public class ObjQueue<T> implements Mutable {
     private final ObjArrayDequeue<T> dequeue;
 
-    public ObjStack() {
+    public ObjQueue() {
         dequeue = new ObjArrayDequeue<>();
     }
 
-    public ObjStack(int initialCapacity) {
+    public ObjQueue(int initialCapacity) {
         dequeue = new ObjArrayDequeue<>(initialCapacity);
     }
 
@@ -39,20 +39,8 @@ public class ObjStack<T> implements Mutable {
         dequeue.clear();
     }
 
-    public boolean notEmpty() {
-        return dequeue.notEmpty();
-    }
-
-    public T peek() {
-        return dequeue.peekLast();
-    }
-
-    public T peek(int n) {
-        return dequeue.peekLast(n);
-    }
-
     public T pop() {
-        return dequeue.popLast();
+        return dequeue.popFirst();
     }
 
     public void push(T e) {
@@ -61,9 +49,5 @@ public class ObjStack<T> implements Mutable {
 
     public int size() {
         return dequeue.size();
-    }
-
-    public void update(T e) {
-        dequeue.update(e);
     }
 }

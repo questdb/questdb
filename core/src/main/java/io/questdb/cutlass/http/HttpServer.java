@@ -52,7 +52,7 @@ public class HttpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
     private static final WorkerPoolAwareConfiguration.ServerFactory<HttpServer, HttpServerConfiguration> CREATE0 = HttpServer::create0;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-    private final Queue<Retry> retries;
+    private final ObjQueue<Retry> retries;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
@@ -61,7 +61,7 @@ public class HttpServer implements Closeable {
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
-        this.retries = new LinkedList<>();
+        this.retries = new ObjQueue<>();
         QueryCache.configure(configuration);
 
         if (localPool) {
@@ -80,12 +80,7 @@ public class HttpServer implements Closeable {
         );
         pool.assign(dispatcher);
 
-        RescheduleContext rescheduleContext = new RescheduleContext() {
-            @Override
-            public void reschedule(Retry retry) {
-                retries.add(retry);
-            }
-        };
+        RescheduleContext rescheduleContext = retry -> retries.push(retry);
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
@@ -100,13 +95,13 @@ public class HttpServer implements Closeable {
 
                     // Run retries
                     int retriesDepth = retries.size();
-                    for(int i = 0; i < retriesDepth; i++){
-                        Retry r = retries.poll();
+                    for (int i = 0; i < retriesDepth; i++) {
+                        Retry r = retries.pop();
                         if (r != null) {
                             boolean processed = r.run();
                             if (!processed) {
                                 // Add to back of the queue if not done
-                                retries.add(r);
+                                retries.push(r);
                             }
                             useful |= processed;
                         }
