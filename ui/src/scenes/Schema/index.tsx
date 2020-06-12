@@ -79,7 +79,7 @@ const Schema = ({
   innerRef,
   ...rest
 }: Props & { innerRef: Ref<HTMLDivElement> }) => {
-  const [quest] = useState(new QuestDB.Client({ port: BACKEND_PORT }))
+  const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()

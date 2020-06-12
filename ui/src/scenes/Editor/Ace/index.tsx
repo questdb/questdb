@@ -23,7 +23,7 @@ import {
   toTextPosition,
 } from "./utils"
 
-const quest = new QuestDB.Client({ port: BACKEND_PORT })
+const quest = new QuestDB.Client()
 
 const Content = styled(PaneContent)`
   position: relative;

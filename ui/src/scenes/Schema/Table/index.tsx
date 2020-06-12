@@ -74,7 +74,7 @@ const Loader = styled(Loader4)`
 `
 
 const Table = ({ description, expanded, onChange, tableName }: Props) => {
-  const [quest] = useState(new QuestDB.Client({ port: BACKEND_PORT }))
+  const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
