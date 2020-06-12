@@ -225,6 +225,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMapMaxResizes() {
+        return 64;
+    }
+
+    @Override
     public int getSqlModelPoolCapacity() {
         return 1024;
     }
@@ -277,6 +282,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlJoinMetadataPageSize() {
         return 16 * 1024;
+    }
+
+    @Override
+    public int getSqlJoinMetadataMaxResizes() {
+        return 10;
     }
 
     @Override

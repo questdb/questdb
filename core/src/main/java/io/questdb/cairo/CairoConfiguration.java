@@ -113,6 +113,8 @@ public interface CairoConfiguration {
 
     int getSqlMapPageSize();
 
+    int getSqlMapMaxResizes();
+
     int getSqlModelPoolCapacity();
 
     long getSqlSortKeyPageSize();
@@ -139,6 +141,8 @@ public interface CairoConfiguration {
      * @return memory page size
      */
     int getSqlJoinMetadataPageSize();
+
+    int getSqlJoinMetadataMaxResizes();
 
     int getAnalyticColumnPoolCapacity();
 

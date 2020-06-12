@@ -44,7 +44,8 @@ public class MapFactory {
                     keyTypes,
                     valueTypes,
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor());
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
@@ -68,7 +69,8 @@ public class MapFactory {
                     configuration.getSqlMapPageSize(),
                     keyTypes,
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor());
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {

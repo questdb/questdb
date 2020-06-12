@@ -90,6 +90,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapKeyCapacity;
     private final int sqlMapPageSize;
+    private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
     private final long sqlSortKeyPageSize;
     private final long sqlSortLightValuePageSize;
@@ -100,6 +101,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long workStealTimeoutNanos;
     private final boolean parallelIndexingEnabled;
     private final int sqlJoinMetadataPageSize;
+    private final int sqlJoinMetadataMaxResizes;
     private final int lineUdpCommitRate;
     private final int lineUdpGroupIPv4Address;
     private final int lineUdpMsgBufferSize;
@@ -308,6 +310,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
+        this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", 256);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
@@ -318,6 +321,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
+        this.sqlJoinMetadataMaxResizes = getIntSize(properties, "cairo.sql.join.metadata.max.resizes", 25_000);
         this.sqlAnalyticColumnPoolCapacity = getInt(properties, "cairo.sql.analytic.column.pool.capacity", 64);
         this.sqlCreateTableModelPoolCapacity = getInt(properties, "cairo.sql.create.table.model.pool.capacity", 16);
         this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);
@@ -1101,6 +1105,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMapMaxResizes() {
+            return sqlMapMaxResizes;
+        }
+
+        @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
         }
@@ -1153,6 +1162,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJoinMetadataPageSize() {
             return sqlJoinMetadataPageSize;
+        }
+
+        @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
         }
 
         @Override
