@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
@@ -39,14 +38,12 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.IORequestHandler;
+import io.questdb.network.IORequestProcessor;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.LinkedList;
-import java.util.Queue;
 
 public class HttpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
@@ -86,12 +83,12 @@ public class HttpServer implements Closeable {
             final int index = i;
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
-                private final IORequestHandler<HttpConnectionContext> handler =
+                private final IORequestProcessor<HttpConnectionContext> processor =
                         (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
                 public boolean run() {
-                    boolean useful = dispatcher.processIOQueue(handler);
+                    boolean useful = dispatcher.processIOQueue(processor);
 
                     // Run retries
                     int retriesDepth = retries.size();

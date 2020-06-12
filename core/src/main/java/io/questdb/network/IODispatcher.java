@@ -33,7 +33,7 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
 
     void registerChannel(C context, int operation);
 
-    boolean processIOQueue(IORequestHandler<C> processor);
+    boolean processIOQueue(IORequestProcessor<C> processor);
 
     void disconnect(C context);
 }
