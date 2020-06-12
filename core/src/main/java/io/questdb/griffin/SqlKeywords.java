@@ -46,6 +46,10 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
+    public static boolean isSemicolon(CharSequence tok) {
+        return tok.length() == 1 && (tok.charAt(0) | 32) == ';';
+    }
+
     public static boolean isOnKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;

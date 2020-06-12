@@ -1337,6 +1337,19 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGORMConnect() throws Exception {
+        // GORM is a Golang ORM tool
+        assertHexScript(
+                ">0000005e0003000064617461626173650071646200646174657374796c650049534f2c204d44590065787472615f666c6f61745f646967697473003200757365720061646d696e00636c69656e745f656e636f64696e6700555446380000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000a717565737400\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005a0000000549\n" +
+                        ">51000000063b00\n" +
+                        "<43000000063b005a0000000549\n"
+        );
+    }
+
+    @Test
     public void testSimpleSimpleQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);
