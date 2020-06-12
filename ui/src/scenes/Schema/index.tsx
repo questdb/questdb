@@ -131,12 +131,12 @@ const Schema = ({
         {loading && <Loader size="48px" />}
         {!loading &&
           tables &&
-          tables.map(({ tableName }) => (
+          tables.map(({ table }) => (
             <Table
-              expanded={tableName === opened}
-              key={tableName}
+              expanded={table === opened}
+              key={table}
               onChange={handleChange}
-              tableName={tableName}
+              table={table}
             />
           ))}
         {!loading && <FlexSpacer />}

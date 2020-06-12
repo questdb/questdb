@@ -68,12 +68,12 @@ export type QueryResult<T extends Record<string, any>> =
   | DdlResult
 
 export type Table = {
-  tableName: string
+  table: string
 }
 
 export type Column = {
-  columnName: string
-  columnType: string
+  column: string
+  type: string
 }
 
 export type Options = {
@@ -235,11 +235,11 @@ export class Client {
       return {
         ...response,
         data: response.data.slice().sort((a, b) => {
-          if (a.tableName > b.tableName) {
+          if (a.table > b.table) {
             return 1
           }
 
-          if (a.tableName < b.tableName) {
+          if (a.table < b.table) {
             return -1
           }
 

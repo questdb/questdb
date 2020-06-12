@@ -18,7 +18,8 @@ type Props = QuestDB.Table &
   Readonly<{
     expanded: boolean
     description?: string
-    onChange: (tableName: string) => void
+    onChange: (table: string) => void
+    table: string
   }>
 
 type TitleProps = Readonly<{ expanded: boolean }>
@@ -73,7 +74,7 @@ const Loader = styled(Loader4)`
   ${spinAnimation};
 `
 
-const Table = ({ description, expanded, onChange, tableName }: Props) => {
+const Table = ({ description, expanded, onChange, table }: Props) => {
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
@@ -83,10 +84,10 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
       onChange("")
     } else {
       setColumns(undefined)
-      onChange(tableName)
+      onChange(table)
 
       combineLatest(
-        from(quest.showColumns(tableName)).pipe(startWith(null)),
+        from(quest.showColumns(table)).pipe(startWith(null)),
         of(true).pipe(delay(1000), startWith(false)),
       ).subscribe(([response, loading]) => {
         if (response && response.type === QuestDB.Type.DQL) {
@@ -97,14 +98,14 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
         }
       })
     }
-  }, [expanded, onChange, quest, tableName])
+  }, [expanded, onChange, quest, table])
 
   return (
     <Wrapper _height={columns ? columns.length * 30 : 0}>
       <Title
         description={description}
         expanded={expanded}
-        name={tableName}
+        name={table}
         onClick={handleClick}
         prefix={<TitleIcon size="18px" />}
         suffix={loading && <Loader size="18px" />}
@@ -119,8 +120,8 @@ const Table = ({ description, expanded, onChange, tableName }: Props) => {
       >
         <Columns>
           {columns &&
-            columns.map(({ columnName, columnType }) => (
-              <Row key={columnName} name={columnName} type={columnType} />
+            columns.map(({ column, type }) => (
+              <Row key={column} name={column} type={type} />
             ))}
         </Columns>
       </CSSTransition>
