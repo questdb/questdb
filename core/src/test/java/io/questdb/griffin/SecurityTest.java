@@ -24,22 +24,41 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.test.tools.TestUtils;
+
 public class SecurityTest extends AbstractGriffinTest {
-    protected static SqlExecutionContext readOnlyExecutionContext;
+    private static SqlExecutionContext readOnlyExecutionContext;
+    private static SqlCompiler memoryRestrictedCompiler;
+    private static CairoEngine memoryRestrictedEngine;
 
     @BeforeClass
     public static void setUpReadOnlyExecutionContext() {
+        CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSqlSortKeyPageSize() {
+                return 64;
+            }
+
+            @Override
+            public int getSqlSortKeyMaxPages() {
+                return 2;
+            }
+        };
+        memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration, messageBus);
         readOnlyExecutionContext = new SqlExecutionContextImpl(
                 messageBus,
                 1,
-                engine)
+                memoryRestrictedEngine)
                         .with(
                                 new CairoSecurityContextImpl(false,
                                         2),
@@ -47,6 +66,26 @@ public class SecurityTest extends AbstractGriffinTest {
                                 null,
                                 -1,
                                 null);
+        memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine, messageBus);
+    }
+
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                memoryRestrictedEngine.releaseInactive();
+                Assert.assertEquals(0, memoryRestrictedEngine.getBusyWriterCount());
+                Assert.assertEquals(0, memoryRestrictedEngine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                memoryRestrictedEngine.releaseAllReaders();
+                memoryRestrictedEngine.releaseAllWriters();
+            }
+        });
     }
 
     @Test
@@ -171,19 +210,21 @@ public class SecurityTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
+                    memoryRestrictedCompiler,
                     "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\nPEHN\t0.3288176907679504\n",
-                        "select sym, d from tb1 where d < 0.34 ORDER BY d",
+                        "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
             }
         });
     }
@@ -392,11 +433,11 @@ public class SecurityTest extends AbstractGriffinTest {
                 messageBus,
                 1,
                 engine)
-                .with(
-                        new CairoSecurityContextImpl(false,
-                                3),
-                        bindVariableService,
-                        null, -1, null);
+                        .with(
+                                new CairoSecurityContextImpl(false,
+                                        3),
+                                bindVariableService,
+                                null, -1, null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -404,21 +445,23 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_symbol(2,2,2,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(1000)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(2000)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
-                    "sym2\tcount\nGZ\t509\nRX\t491\n",
+                    memoryRestrictedCompiler,
+                    "sym2\tcount\nGZ\t1040\nRX\t960\n",
                     "select sym2, count() from tb1 order by sym2",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
                         "select sym1, count() from tb1 order by sym1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 3 exceeded"));
+                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
             }
         });
     }

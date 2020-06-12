@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
@@ -39,11 +40,17 @@ public class MemoryPages implements Closeable, Mutable {
     private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
+    private final int maxPages;
 
     public MemoryPages(long pageSize) {
+        this(pageSize, Integer.MAX_VALUE);
+    }
+
+    public MemoryPages(long pageSize, int maxPages) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
+        this.maxPages = maxPages;
         allocate0(0);
     }
 
@@ -62,6 +69,7 @@ public class MemoryPages implements Closeable, Mutable {
         return (cachePageLo += length) - length;
     }
 
+    @Override
     public void clear() {
         cachePageLo = 0;
         cachePageHi = cachePageLo + pageSize;
@@ -85,6 +93,10 @@ public class MemoryPages implements Closeable, Mutable {
     private void allocate0(long index) {
         if (index > Integer.MAX_VALUE) {
             throw new OutOfMemoryError();
+        }
+
+        if (index > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached");
         }
 
         if (index >= pages.size()) {

@@ -30,8 +30,8 @@ public class LongTreeSet extends AbstractRedBlackTree {
 
     private final TreeCursor cursor = new TreeCursor();
 
-    public LongTreeSet(int keyPageSize) {
-        super(keyPageSize);
+    public LongTreeSet(int keyPageSize, int keyMaxPages) {
+        super(keyPageSize, keyMaxPages);
     }
 
     public TreeCursor getCursor() {

@@ -44,20 +44,16 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     private static final byte BLACK = 0;
     protected final MemoryPages mem;
     protected long root = -1;
-    private long maxSize = Long.MAX_VALUE;
 
-    public AbstractRedBlackTree(long keyPageSize) {
-        this.mem = new MemoryPages(keyPageSize);
+    public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
+        assert keyPageSize >= getBlockSize();
+        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
     }
 
     @Override
     public void clear() {
         root = -1;
         this.mem.clear();
-    }
-
-    public void setMaxSize(long maxSize) {
-        this.maxSize = maxSize;
     }
 
     @Override
@@ -132,15 +128,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     }
 
     protected long allocateBlock() {
-        if (size() < maxSize) {
-            long p = mem.allocate(getBlockSize());
-            setLeft(p, -1);
-            setRight(p, -1);
-            setColor(p, BLACK);
-            return p;
-        } else {
-            throw LimitOverflowException.instance(maxSize);
-        }
+        long p = mem.allocate(getBlockSize());
+        setLeft(p, -1);
+        setRight(p, -1);
+        setColor(p, BLACK);
+        return p;
     }
 
     protected void fix(long x) {

@@ -153,6 +153,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlMapMaxResizes());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
+        Assert.assertEquals(512, configuration.getCairoConfiguration().getSqlSortKeyMaxPages());
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinValuePageSize());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
@@ -407,6 +408,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlMapMaxResizes());
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
             Assert.assertEquals(10 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
+            Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlSortKeyMaxPages());
             Assert.assertEquals(3 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
             Assert.assertEquals(8 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinValuePageSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getSqlLatestByRowCount());

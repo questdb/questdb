@@ -93,6 +93,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
     private final long sqlSortKeyPageSize;
+    private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
     private final int sqlHashJoinValuePageSize;
     private final long sqlLatestByRowCount;
@@ -313,6 +314,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", 256);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
+        this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", 512);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
@@ -1117,6 +1119,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlSortKeyPageSize() {
             return sqlSortKeyPageSize;
+        }
+
+        @Override
+        public int getSqlSortKeyMaxPages() {
+            return sqlSortKeyMaxPages;
         }
 
         @Override

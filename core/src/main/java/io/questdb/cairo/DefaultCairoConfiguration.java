@@ -240,6 +240,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSortKeyMaxPages() {
+        return 128;
+    }
+
+    @Override
     public long getSqlSortLightValuePageSize() {
         return Numbers.SIZE_1MB;
     }

@@ -119,6 +119,8 @@ public interface CairoConfiguration {
 
     long getSqlSortKeyPageSize();
 
+    int getSqlSortKeyMaxPages();
+
     long getSqlSortLightValuePageSize();
 
     int getSqlHashJoinValuePageSize();

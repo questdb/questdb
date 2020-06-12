@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
 
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -45,6 +44,8 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         super(metadata);
         this.chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
+                configuration
+                        .getSqlSortKeyMaxPages(),
                 configuration.getSqlSortLightValuePageSize());
         this.base = base;
         this.cursor = new SortedLightRecordCursor(chain, comparator);
@@ -60,13 +61,8 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            long maxInMemoryRows = executionContext.getCairoSecurityContext().getMaxInMemoryRows();
-            if (maxInMemoryRows > baseCursor.size()) {
-                chain.setMaxSize(maxInMemoryRows);
-                this.cursor.of(baseCursor);
-                return cursor;
-            }
-            throw LimitOverflowException.instance(maxInMemoryRows);
+            cursor.of(baseCursor);
+            return cursor;
         } catch (RuntimeException ex) {
             baseCursor.close();
             throw ex;
