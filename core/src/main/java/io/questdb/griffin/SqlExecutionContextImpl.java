@@ -124,6 +124,24 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd
+    ) {
+        this.cairoSecurityContext = cairoSecurityContext;
+        this.bindVariableService = bindVariableService;
+        this.random = rnd;
+        return this;
+    }
+
+    public SqlExecutionContextImpl with(
+            long requestFd
+    ) {
+        this.requestFd = requestFd;
+        return this;
+    }
+
+    public SqlExecutionContextImpl with(
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
             long requestFd,
             @Nullable SqlExecutionInterruptor interruptor

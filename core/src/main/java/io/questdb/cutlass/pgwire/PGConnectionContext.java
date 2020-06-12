@@ -328,7 +328,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
         this.fd = clientFd;
-        sqlExecutionContext.with(sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService(), sqlExecutionContext.getRandom(), clientFd, null);
+        sqlExecutionContext.with(clientFd);
         this.dispatcher = dispatcher;
         clear();
         return this;
