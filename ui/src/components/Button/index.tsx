@@ -36,7 +36,7 @@ type ThemeShape = {
 export const getButtonSize = ({ size }: ButtonProps) =>
   size === "sm" ? "2rem" : "3rem"
 
-const baseCss = css<ButtonProps>`
+const baseStyles = css<ButtonProps>`
   display: flex;
   height: ${getButtonSize};
   padding: 0 1rem;
@@ -87,7 +87,7 @@ const getTheme = (
   `
 
 export const PrimaryButton = styled.button<ButtonProps>`
-  ${baseCss};
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -110,7 +110,7 @@ export const PrimaryButton = styled.button<ButtonProps>`
 PrimaryButton.defaultProps = defaultProps
 
 export const SecondaryButton = styled.button<ButtonProps>`
-  ${baseCss};
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaBackground",
@@ -133,7 +133,7 @@ export const SecondaryButton = styled.button<ButtonProps>`
 SecondaryButton.defaultProps = defaultProps
 
 export const SuccessButton = styled.button<ButtonProps>`
-  ${baseCss};
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -156,7 +156,7 @@ export const SuccessButton = styled.button<ButtonProps>`
 SuccessButton.defaultProps = defaultProps
 
 export const ErrorButton = styled.button<ButtonProps>`
-  ${baseCss};
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -177,3 +177,26 @@ export const ErrorButton = styled.button<ButtonProps>`
 `
 
 ErrorButton.defaultProps = defaultProps
+
+export const TransparentButton = styled.button<ButtonProps>`
+  ${baseStyles};
+  ${getTheme(
+    {
+      background: "transparent",
+      border: "transparent",
+      color: "draculaForeground",
+    },
+    {
+      background: "draculaComment",
+      border: "transparent",
+      color: "draculaForeground",
+    },
+    {
+      background: "draculaSelection",
+      border: "gray1",
+      color: "gray1",
+    },
+  )};
+`
+
+TransparentButton.defaultProps = defaultProps

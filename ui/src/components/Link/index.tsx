@@ -3,7 +3,7 @@ import styled from "styled-components"
 
 import { color } from "utils"
 
-import { Text, textCss, TextProps } from "../Text"
+import { Text, textStyles, TextProps } from "../Text"
 
 const defaultProps = Text.defaultProps
 
@@ -15,7 +15,7 @@ type Props = Readonly<{
   TextProps
 
 const Wrapper = styled.a<Props>`
-  ${textCss};
+  ${textStyles};
   text-decoration: none;
 
   &:hover:not([disabled]),

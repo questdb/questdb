@@ -1,6 +1,8 @@
 import React, {
+  Children,
   MouseEvent as ReactMouseEvent,
   TouchEvent as ReactTouchEvent,
+  ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -28,10 +30,13 @@ const PreventUserSelectionVertical = createGlobalStyle`
 `
 
 type Props = Readonly<{
+  children: ReactNode
   direction: "vertical" | "horizontal"
+  fallback: number
   max?: number
   min?: number
-  onChange: (value: number) => void
+  name: string
+  onChange?: (value: number) => void
 }>
 
 const HorizontalDragIcon = styled(DragIndicator)`
@@ -98,12 +103,24 @@ const VerticalGhost = styled.div`
   right: 0;
 `
 
-export const Splitter = ({ direction, max, min, onChange }: Props) => {
+export const Splitter = ({
+  children: rawChildren,
+  fallback,
+  direction,
+  max,
+  min,
+  name,
+  onChange,
+}: Props) => {
   const [offset, setOffset] = useState(0)
   const [originalPosition, setOriginalPosition] = useState(0)
   const [ghostPosition, setGhostPosition] = useState(0)
   const [pressed, setPressed] = useState(false)
+  const [basis, setBasis] = useState<number>()
   const splitter = useRef<HTMLDivElement | null>(null)
+  const firstChild = useRef<HTMLDivElement | null>(null)
+
+  const children = Children.toArray(rawChildren)
 
   const handleMouseMove = useCallback(
     (event: TouchEvent | MouseEvent) => {
@@ -177,16 +194,54 @@ export const Splitter = ({ direction, max, min, onChange }: Props) => {
   )
 
   useEffect(() => {
-    if (!pressed && ghostPosition) {
-      onChange(ghostPosition - originalPosition)
+    if (!pressed && ghostPosition && firstChild.current) {
+      const measure = direction === "horizontal" ? "width" : "height"
+
+      const size =
+        firstChild.current.getBoundingClientRect()[measure] +
+        (ghostPosition - originalPosition)
+      localStorage.setItem(`splitter.${name}`, `${size}`)
+
       setOriginalPosition(0)
       setGhostPosition(0)
+      setBasis(size)
+
+      if (onChange) {
+        onChange(size)
+      }
     }
-  }, [onChange, ghostPosition, pressed, originalPosition])
+  }, [direction, ghostPosition, name, onChange, originalPosition, pressed])
+
+  useEffect(() => {
+    const size = parseInt(localStorage.getItem(`splitter.${name}`) || "0", 10)
+
+    if (size) {
+      setBasis(size)
+    } else {
+      setBasis(fallback)
+    }
+  }, [fallback, name])
+
+  const style = {
+    display: "flex",
+    flexGrow: 0,
+    flexBasis: basis || fallback,
+    flexShrink: 1,
+  }
+
+  if (children.length === 1) {
+    return <>{children[0]}</>
+  }
 
   if (direction === "horizontal") {
     return (
       <>
+        {React.isValidElement(children[0]) &&
+          React.cloneElement(children[0], {
+            ref: firstChild,
+            style,
+          })}
+
         <HorizontalWrapper
           onMouseDown={handleMouseDown}
           onTouchStart={handleMouseDown}
@@ -194,6 +249,8 @@ export const Splitter = ({ direction, max, min, onChange }: Props) => {
         >
           <HorizontalDragIcon size="16px" />
         </HorizontalWrapper>
+
+        {children[1]}
 
         {ghostPosition > 0 && (
           <>
@@ -211,6 +268,12 @@ export const Splitter = ({ direction, max, min, onChange }: Props) => {
 
   return (
     <>
+      {React.isValidElement(children[0]) &&
+        React.cloneElement(children[0], {
+          ref: firstChild,
+          style,
+        })}
+
       <VerticalWrapper
         onMouseDown={handleMouseDown}
         onTouchStart={handleMouseDown}
@@ -218,6 +281,8 @@ export const Splitter = ({ direction, max, min, onChange }: Props) => {
       >
         <VerticalDragIcon size="16px" />
       </VerticalWrapper>
+
+      {children[1]}
 
       {ghostPosition > 0 && (
         <>

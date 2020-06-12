@@ -31,7 +31,7 @@ const ellipsisStyles = css`
   white-space: nowrap;
 `
 
-export const textCss = css<TextProps>`
+export const textStyles = css<TextProps>`
   color: ${(props) => (props.color ? color(props.color) : "inherit")};
   font-family: ${({ code, theme }) => code && theme.fontMonospace};
   font-size: ${({ size, theme }) => (size ? theme.fontSize[size] : "inherit")};
@@ -42,7 +42,7 @@ export const textCss = css<TextProps>`
 `
 
 export const Text = styled.span<TextProps>`
-  ${textCss};
+  ${textStyles};
 `
 
 Text.defaultProps = defaultProps

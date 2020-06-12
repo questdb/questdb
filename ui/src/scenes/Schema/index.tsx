@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from "react"
+import React, {
+  CSSProperties,
+  forwardRef,
+  Ref,
+  useCallback,
+  useEffect,
+  useState,
+} from "react"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled, { css } from "styled-components"
@@ -22,7 +29,8 @@ import * as QuestDB from "utils/questdb"
 import Table from "./Table"
 
 type Props = Readonly<{
-  widthOffset?: number
+  hideMenu?: boolean
+  style?: CSSProperties
 }>
 
 const loadingStyles = css`
@@ -30,12 +38,7 @@ const loadingStyles = css`
   justify-content: center;
 `
 
-const Wrapper = styled(PaneWrapper)<{
-  basis?: number
-}>`
-  flex-grow: 0;
-  flex-shrink: 1;
-  ${({ basis }) => basis && `flex-basis: ${basis}px`};
+const Wrapper = styled(PaneWrapper)`
   overflow-x: auto;
 `
 
@@ -72,11 +75,12 @@ const FlexSpacer = styled.div`
   flex: 1;
 `
 
-const Schema = ({ widthOffset }: Props) => {
-  const [quest] = useState(new QuestDB.Client({ port: BACKEND_PORT }))
+const Schema = ({
+  innerRef,
+  ...rest
+}: Props & { innerRef: Ref<HTMLDivElement> }) => {
+  const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
-  const element = useRef<HTMLDivElement | null>(null)
-  const [width, setWidth] = useState<number>()
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
 
@@ -102,30 +106,8 @@ const Schema = ({ widthOffset }: Props) => {
     void fetchTables()
   }, [fetchTables])
 
-  useEffect(() => {
-    if (element.current && widthOffset) {
-      const width = element.current.getBoundingClientRect().width + widthOffset
-      localStorage.setItem("splitter.schema", `${width}`)
-      setWidth(width)
-    }
-  }, [widthOffset])
-
-  useEffect(() => {
-    const size = parseInt(localStorage.getItem("splitter.schema") || "0", 10)
-
-    if (size) {
-      setWidth(size)
-    } else {
-      setWidth(350)
-    }
-  }, [])
-
-  if (!width) {
-    return null
-  }
-
   return (
-    <Wrapper basis={width} ref={element}>
+    <Wrapper ref={innerRef} {...rest}>
       <Menu>
         <Header color="draculaForeground">
           <DatabaseIcon size="18px" />
@@ -163,4 +145,8 @@ const Schema = ({ widthOffset }: Props) => {
   )
 }
 
-export default Schema
+const SchemaWithRef = (props: Props, ref: Ref<HTMLDivElement>) => (
+  <Schema {...props} innerRef={ref} />
+)
+
+export default forwardRef(SchemaWithRef)

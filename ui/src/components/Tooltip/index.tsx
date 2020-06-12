@@ -12,17 +12,17 @@ type Props = Readonly<{
   children: ReactNode
 }>
 
-const baseCss = css`
+const baseStyles = css`
   position: absolute;
   width: 7px;
   height: 7px;
 `
 
 export const TooltipArrow = styled.div`
-  ${baseCss};
+  ${baseStyles};
 
   &::before {
-    ${baseCss};
+    ${baseStyles};
     top: 0;
     left: 0;
     content: "";

@@ -9,7 +9,10 @@ type Props = Readonly<{
   show: boolean
 }>
 
-const GlobalTransitionCss = createGlobalFadeTransition(TransitionDuration.SLOW)
+const GlobalTransitionStyles = createGlobalFadeTransition(
+  "editor-loader-fade",
+  TransitionDuration.SLOW,
+)
 
 const move = keyframes`
   0% {
@@ -66,9 +69,9 @@ const Loader = ({ show }: Props) => {
 
   return (
     <>
-      <GlobalTransitionCss />
+      <GlobalTransitionStyles />
       <CSSTransition
-        classNames="fade"
+        classNames="editor-loader-fade"
         in={visible && show}
         timeout={TransitionDuration.SLOW}
         unmountOnExit

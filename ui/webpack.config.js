@@ -36,7 +36,6 @@ const basePlugins = [
     filename: "qdb.css",
   }),
   new Webpack.DefinePlugin({
-    BACKEND_PORT: JSON.stringify(isProdBuild ? BACKEND_PORT : PORT),
     "process.env": {
       NODE_ENV: JSON.stringify(process.env.NODE_ENV),
     },

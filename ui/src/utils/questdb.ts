@@ -80,30 +80,15 @@ export type Options = {
   limit?: string
 }
 
-const hostConfig: HostConfig = {
-  host: "http://localhost",
-  port: 9000,
-}
-
 export class Client {
-  private _config: HostConfig
+  private _host: string
   private _controllers: AbortController[] = []
 
-  constructor(config?: string | Partial<HostConfig>) {
-    if (!config) {
-      this._config = hostConfig
-    } else if (typeof config === "string") {
-      this._config = {
-        ...hostConfig,
-        host: config,
-      }
-    } else if (typeof config === "object") {
-      this._config = {
-        ...hostConfig,
-        ...config,
-      }
+  constructor(host?: string) {
+    if (!host) {
+      this._host = window.location.origin
     } else {
-      this._config = hostConfig
+      this._host = host
     }
   }
 
@@ -172,9 +157,7 @@ export class Client {
 
     try {
       response = await fetch(
-        `${this._config.host}:${this._config.port}/exec?${Client.encodeParams(
-          payload,
-        )}`,
+        `${this._host}/exec?${Client.encodeParams(payload)}`,
         { signal: controller.signal },
       )
     } catch (error) {

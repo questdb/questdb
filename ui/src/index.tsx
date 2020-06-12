@@ -8,7 +8,7 @@ import { applyMiddleware, compose, createStore } from "redux"
 import { createEpicMiddleware } from "redux-observable"
 import { ThemeProvider } from "styled-components"
 
-import { MediaQueryProvider } from "components"
+import { ScreenSizeProvider } from "components"
 import { actions, rootEpic, rootReducer } from "store"
 import { StoreAction, StoreShape } from "types"
 
@@ -27,12 +27,12 @@ epicMiddleware.run(rootEpic)
 store.dispatch(actions.console.bootstrap())
 
 ReactDOM.render(
-  <Provider store={store}>
-    <ThemeProvider theme={theme}>
-      <MediaQueryProvider>
+  <ScreenSizeProvider>
+    <Provider store={store}>
+      <ThemeProvider theme={theme}>
         <Layout />
-      </MediaQueryProvider>
-    </ThemeProvider>
-  </Provider>,
+      </ThemeProvider>
+    </Provider>
+  </ScreenSizeProvider>,
   document.getElementById("root"),
 )

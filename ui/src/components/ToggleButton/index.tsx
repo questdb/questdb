@@ -28,7 +28,7 @@ type ThemeShape = {
   color: Color
 }
 
-const baseCss = css<Props>`
+const baseStyles = css<Props>`
   display: flex;
   height: ${getButtonSize};
   padding: 0 1rem;
@@ -75,7 +75,7 @@ const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
   `
 
 export const PrimaryToggleButton = styled.button<Props>`
-  ${baseCss};
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaBackgroundDarker",

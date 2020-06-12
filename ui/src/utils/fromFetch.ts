@@ -16,7 +16,7 @@ export const fromFetch = <T extends Record<string, any>>(
   uri: string,
   init: RequestInit = {},
 ): Observable<SuccessShape<T> | ErrorShape> =>
-  rxFromFetch(`http://localhost:${BACKEND_PORT}/${uri}`, init).pipe(
+  rxFromFetch(`http://${window.location.host}/${uri}`, init).pipe(
     switchMap((response) => {
       if (response.ok) {
         return response.json()
