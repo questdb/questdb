@@ -19,7 +19,6 @@ if (!process.env.NODE_ENV) {
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
-    favicon: "assets/favicon.ico",
     template: "src/index.hbs",
     minify: {
       minifyCSS: true,
@@ -89,11 +88,11 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|svg|jpg|gif)$/,
+        test: /\.(png|jpg)$/,
         use: ["file-loader"],
       },
       {
-        test: /\.(woff|woff2|eot|ttf|otf)$/,
+        test: /\.(woff|woff2)$/,
         use: ["file-loader"],
       },
       {
