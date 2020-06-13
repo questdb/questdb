@@ -951,7 +951,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean enableTestFactories() {
-            return true;
+            return false;
         }
 
         @Override
