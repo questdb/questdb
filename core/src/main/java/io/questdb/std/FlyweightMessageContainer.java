@@ -22,23 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
-
-public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
-
-    void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
-
-    default void resumeRecv(HttpConnectionContext context) {
-    }
-
-    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-    }
-
-    default void parkRequest(HttpConnectionContext context) {
-    }
+@FunctionalInterface
+public interface FlyweightMessageContainer {
+    CharSequence getFlyweightMessage();
 }
