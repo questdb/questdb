@@ -2915,7 +2915,7 @@ public class IODispatcherTest {
                             NetworkFacadeImpl.INSTANCE,
                             request,
                             1,
-                            8000
+                            20000
                     );
                 } finally {
                     workerPool.halt();

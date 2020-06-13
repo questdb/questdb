@@ -816,6 +816,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories, boolean enableTestFactories) {
+        LOG.info().$("loading functions [test=").$(enableTestFactories).$(']').$();
         for (FunctionFactory factory : functionFactories) {
             if (!factory.getClass().getName().contains("test") || enableTestFactories) {
                 final String sig = factory.getSignature();

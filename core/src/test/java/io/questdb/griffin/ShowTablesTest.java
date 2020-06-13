@@ -52,7 +52,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     public void testShowColumnsWithSimpleTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances", null, false, sqlExecutionContext, false);
+            assertQuery("column\ttype\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances", null, false, sqlExecutionContext, false);
         });
     }
 
@@ -107,7 +107,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "select * from table_columns('balances')", null, false, sqlExecutionContext, false);
+            assertQuery("column\ttype\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "select * from table_columns('balances')", null, false, sqlExecutionContext, false);
         });
     }
 
