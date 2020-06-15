@@ -102,6 +102,21 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
+    void renameColumn(CharSequence name, CharSequence newName) {
+        int index = columnNameIndexMap.keyIndex(name);
+        int columnIndex = columnNameIndexMap.valueAt(index);
+        columnNameIndexMap.removeAt(index);
+        columnNameIndexMap.putAt(columnNameIndexMap.keyIndex(newName), newName, columnIndex);
+        //
+        TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
+        TableColumnMetadata newColumnMetadata = new TableColumnMetadata(Chars.toString(newName),
+                oldColumnMetadata.getType(),
+                oldColumnMetadata.isIndexed(),
+                oldColumnMetadata.getIndexValueBlockCapacity(),
+                oldColumnMetadata.isSymbolTableStatic());
+        columnMetadata.setQuick(columnIndex, newColumnMetadata);
+    }
+
     void setTimestampIndex(int index) {
         this.timestampIndex = index;
     }
