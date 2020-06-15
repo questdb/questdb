@@ -39,8 +39,8 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final int N_TYPE_COL = 1;
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("columnName", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("columnType", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("column", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
         METADATA = metadata;
     }
 

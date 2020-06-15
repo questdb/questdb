@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Atomicity;
@@ -35,10 +33,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -264,7 +259,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
-            } catch (TextException e) {
+            } catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);
             }
         }
@@ -338,7 +333,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             if (transientState.messagePart == MESSAGE_DATA) {
                 sendResponse(transientContext);
             }
-        } catch (TextException e) {
+        } catch (TextException | CairoException | CairoError e) {
             handleTextException(e);
         }
     }
@@ -398,7 +393,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.clear();
     }
 
-    private void handleTextException(TextException e)
+    private void handleTextException(FlyweightMessageContainer e)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         sendError(transientContext, e.getFlyweightMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
         throw ServerDisconnectException.INSTANCE;

@@ -30,14 +30,7 @@ import io.questdb.griffin.HttpSqlExecutionInterruptor;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.*;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -188,7 +181,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         processor.onRequestComplete(this);
     }

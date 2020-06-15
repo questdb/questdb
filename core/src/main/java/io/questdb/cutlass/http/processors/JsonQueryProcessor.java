@@ -24,10 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import java.io.Closeable;
-
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
@@ -36,11 +32,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
-import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -48,17 +40,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -102,7 +89,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         Misc.free(compiler);
     }
 
-    public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         state.startExecutionTimer();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // do not set random for new request to avoid copying random from previous request into next one
@@ -128,9 +115,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (SqlException e) {
             syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
-        } catch (CairoException | CairoError e) {
-            internalError(context.getChunkedResponseSocket(), e, state);
+        } catch (CairoError | CairoException e) {
+            internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
             readyForNextRequest(context);
+        } catch (Throwable e) {
+            LOG.error().$("Uh-oh. Error!").$(e).$();
+            throw ServerDisconnectException.INSTANCE;
         }
     }
 
@@ -141,7 +131,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new JsonQueryProcessorState(
@@ -358,11 +348,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void internalError(
             HttpChunkedResponseSocket socket,
+            CharSequence message,
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.error().$("Server error executing query ").utf8(state.getQuery()).$(e).$();
-        sendException(socket, 0, e.getMessage(), 500, state.getQuery(), configuration.getKeepAliveHeader());
+        state.error().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$();
+        sendException(socket, 0, message, 500, state.getQuery(), configuration.getKeepAliveHeader());
     }
 
     private boolean parseUrl(

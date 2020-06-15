@@ -102,6 +102,48 @@ public class IODispatcherTest {
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.asciiStrCpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
     @Test
     public void testBiasWrite() throws Exception {
 
@@ -596,7 +638,8 @@ public class IODispatcherTest {
                             requestCount,
                             0,
                             false,
-                            expectDisconnect);
+                            expectDisconnect
+                    );
                 } finally {
                     Net.close(fd);
                     workerPool.halt();
@@ -875,7 +918,6 @@ public class IODispatcherTest {
         );
     }
 
-    @Ignore
     @Test
     public void testImportMultipleOnSameConnection() throws Exception {
         testImport(
@@ -957,7 +999,163 @@ public class IODispatcherTest {
                         "--------------------------27d997ca93d2689d--"
                 , NetworkFacadeImpl.INSTANCE
                 , false
-                , 150
+                , 1 // todo: we need to fix writer queuing and increase request count
+        );
+    }
+
+    @Test
+    public void testImportColumnMismatch() throws Exception {
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "05d7\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                ,
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--"
+                , NetworkFacadeImpl.INSTANCE
+                , false
+                , 1
+        );
+
+        // append different data structure to the same table
+
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "5d\r\n" +
+                        "column count mismatch [textColumnCount=6, tableColumnCount=5, table=fhv_tripdata_2017-02.csv]\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                ,
+                "POST /upload?overwrite=false HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,DropOff_datetime,PUlocationID,DOlocationID,x,y\r\n" +
+                        "B00008,,,,,\r\n" +
+                        "B00008,,,,,\r\n" +
+                        "B00009,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00013,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "B00014,,,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--"
+                , NetworkFacadeImpl.INSTANCE
+                , false
+                , 1
         );
     }
 
@@ -1050,7 +1248,7 @@ public class IODispatcherTest {
                     }
                 },
                 false,
-                150
+                1 // todo: fix writer queue and increase request count
         );
     }
 
@@ -1211,7 +1409,6 @@ public class IODispatcherTest {
                             expectedResponse,
                             1,
                             0,
-                            false,
                             false
                     );
                 } finally {
@@ -1587,7 +1784,7 @@ public class IODispatcherTest {
                             "00\r\n" +
                             "\r\n";
 
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false, false);
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
                     workerPool.halt();
                 }
@@ -1801,7 +1998,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -1833,7 +2029,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -1865,7 +2060,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -1897,7 +2091,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -1929,7 +2122,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
         });
@@ -2419,7 +2611,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2449,7 +2640,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2479,7 +2669,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2509,7 +2698,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
         });
@@ -2547,7 +2735,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2579,7 +2766,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2611,7 +2797,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2643,7 +2828,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
 
@@ -2675,7 +2859,6 @@ public class IODispatcherTest {
                             "\r\n",
                     1,
                     0,
-                    false,
                     false
             );
         });
@@ -2803,11 +2986,97 @@ public class IODispatcherTest {
                         expectedResponse,
                         10,
                         0,
-                        false,
                         false
                 );
 
                 workerPool.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryDataError() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount()
+                        );
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+
+                    // send multipart request to server
+                    final String request = "GET /query?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1)&timings=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36\r\n" +
+                            "Accept: */*\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Sec-Fetch-Dest: empty\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "Cookie: _ga=GA1.1.2124932001.1573824669; _hjid=f2db90b2-18cf-4956-8870-fcdcde56f3ca; _hjIncludedInSample=1; _gid=GA1.1.697400188.1591597903\r\n" +
+                            "\r\n";
+
+                    sendAndExpectDisconnect(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            1,
+                            20000
+                    );
+                } finally {
+                    workerPool.halt();
+                }
             }
         });
     }
@@ -4370,48 +4639,6 @@ public class IODispatcherTest {
                         "\r\n");
     }
 
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.asciiStrCpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
-
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
             String baseDir,
@@ -4550,6 +4777,25 @@ public class IODispatcherTest {
             String response,
             int requestCount,
             long pauseBetweenSendAndReceive,
+            boolean print
+    ) throws InterruptedException {
+        sendAndReceive(
+                nf,
+                request,
+                response,
+                requestCount,
+                pauseBetweenSendAndReceive,
+                print,
+                false
+        );
+    }
+
+    private void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            String response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
             boolean print,
             boolean expectDisconnect
     ) throws InterruptedException {
@@ -4669,6 +4915,59 @@ public class IODispatcherTest {
         }
     }
 
+    private void sendAndExpectDisconnect(
+            NetworkFacade nf,
+            String request,
+            long pauseBetweenSendAndReceive,
+            int expectDisconnectInMillis
+    ) throws InterruptedException {
+        long fd = nf.socketTcp(true);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            try {
+                Assert.assertTrue(fd > -1);
+                Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+                final int len = request.length() * 2;
+                long ptr = Unsafe.malloc(len);
+                try {
+                    int sent = 0;
+                    int reqLen = request.length();
+                    Chars.asciiStrCpy(request, reqLen, ptr);
+                    while (sent < reqLen) {
+                        int n = nf.send(fd, ptr + sent, reqLen - sent);
+                        Assert.assertTrue(n > -1);
+                        sent += n;
+                    }
+
+                    if (pauseBetweenSendAndReceive > 0) {
+                        Thread.sleep(pauseBetweenSendAndReceive);
+                    }
+
+                    if (expectDisconnectInMillis > 0) {
+                        nf.configureNonBlocking(fd);
+                        long t = System.currentTimeMillis();
+                        boolean disconnected = true;
+                        while (nf.recv(fd, ptr, 1) > -1) {
+                            if (t + expectDisconnectInMillis < System.currentTimeMillis()) {
+                                disconnected = false;
+                                break;
+                            }
+                        }
+                        Assert.assertTrue("disconnect expected", disconnected);
+                    }
+                } finally {
+                    Unsafe.free(ptr, len);
+                }
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
@@ -4684,7 +4983,6 @@ public class IODispatcherTest {
                     expectedResponse,
                     requestCount,
                     0,
-                    false,
                     false
             );
         });
