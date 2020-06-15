@@ -10,11 +10,13 @@ export type ConfigurationShape = Readonly<{
 
 export type ConsoleStateShape = Readonly<{
   configuration?: ConfigurationShape
+  sideMenuOpened: boolean
 }>
 
 export enum ConsoleAT {
   BOOTSTRAP = "CONSOLE/BOOTSTRAP",
   SET_CONFIGURATION = "CONSOLE/SET_CONFIGURATION",
+  TOGGLE_SIDE_MENU = "CONSOLE/TOGGLE_SIDE_MENU",
 }
 
 export type BootstrapAction = Readonly<{
@@ -26,4 +28,11 @@ type SetConfigurationAction = Readonly<{
   type: ConsoleAT.SET_CONFIGURATION
 }>
 
-export type ConsoleAction = BootstrapAction | SetConfigurationAction
+type ToggleSideMenuAction = Readonly<{
+  type: ConsoleAT.TOGGLE_SIDE_MENU
+}>
+
+export type ConsoleAction =
+  | BootstrapAction
+  | SetConfigurationAction
+  | ToggleSideMenuAction

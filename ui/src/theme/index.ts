@@ -18,6 +18,7 @@ const color: ColorShape = {
   draculaPurple: "#bd93f9",
   draculaCyan: "#8be9fd",
   draculaPink: "#ff79c6",
+  transparent: "transparent",
   white: "#fafafa",
 }
 

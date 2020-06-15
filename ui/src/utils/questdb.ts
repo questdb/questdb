@@ -51,7 +51,12 @@ export type ErrorResult = RawErrorResult & {
   type: Type.ERROR
 }
 
-export type Result<T extends Record<string, any>> =
+export type QueryRawResult =
+  | (Omit<RawDqlResult, "ddl"> & { type: Type.DQL })
+  | DdlResult
+  | ErrorResult
+
+export type QueryResult<T extends Record<string, any>> =
   | {
       columns: ColumnDefinition[]
       count: number
@@ -63,42 +68,27 @@ export type Result<T extends Record<string, any>> =
   | DdlResult
 
 export type Table = {
-  tableName: string
+  table: string
 }
 
 export type Column = {
-  columnName: string
-  columnType: string
+  column: string
+  type: string
 }
 
 export type Options = {
   limit?: string
 }
 
-const hostConfig: HostConfig = {
-  host: "http://localhost",
-  port: 9000,
-}
-
 export class Client {
-  private _config: HostConfig
+  private _host: string
   private _controllers: AbortController[] = []
 
-  constructor(config?: string | Partial<HostConfig>) {
-    if (!config) {
-      this._config = hostConfig
-    } else if (typeof config === "string") {
-      this._config = {
-        ...hostConfig,
-        host: config,
-      }
-    } else if (typeof config === "object") {
-      this._config = {
-        ...hostConfig,
-        ...config,
-      }
+  constructor(host?: string) {
+    if (!host) {
+      this._host = window.location.origin
     } else {
-      this._config = hostConfig
+      this._host = host
     }
   }
 
@@ -122,7 +112,7 @@ export class Client {
     this._controllers = []
   }
 
-  async query<T>(query: string, options?: Options): Promise<Result<T>> {
+  async query<T>(query: string, options?: Options): Promise<QueryResult<T>> {
     const result = await this.queryRaw(query, options)
 
     if (result.type === Type.DQL) {
@@ -151,12 +141,7 @@ export class Client {
     return result
   }
 
-  async queryRaw(
-    query: string,
-    options?: Options,
-  ): Promise<
-    (Omit<RawDqlResult, "ddl"> & { type: Type.DQL }) | DdlResult | ErrorResult
-  > {
+  async queryRaw(query: string, options?: Options): Promise<QueryRawResult> {
     const controller = new AbortController()
     const payload = {
       ...options,
@@ -172,9 +157,7 @@ export class Client {
 
     try {
       response = await fetch(
-        `${this._config.host}:${this._config.port}/exec?${Client.encodeParams(
-          payload,
-        )}`,
+        `${this._host}/exec?${Client.encodeParams(payload)}`,
         { signal: controller.signal },
       )
     } catch (error) {
@@ -245,18 +228,18 @@ export class Client {
     })
   }
 
-  async showTables(): Promise<Result<Table>> {
+  async showTables(): Promise<QueryResult<Table>> {
     const response = await this.query<Table>("SHOW TABLES;")
 
     if (response.type === Type.DQL) {
       return {
         ...response,
         data: response.data.slice().sort((a, b) => {
-          if (a.tableName > b.tableName) {
+          if (a.table > b.table) {
             return 1
           }
 
-          if (a.tableName < b.tableName) {
+          if (a.table < b.table) {
             return -1
           }
 
@@ -268,7 +251,7 @@ export class Client {
     return response
   }
 
-  async showColumns(table: string): Promise<Result<Column>> {
+  async showColumns(table: string): Promise<QueryResult<Column>> {
     return await this.query<Column>(`SHOW COLUMNS FROM '${table}';`)
   }
 }

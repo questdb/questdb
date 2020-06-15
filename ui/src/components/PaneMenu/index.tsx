@@ -11,7 +11,7 @@ type Props = Readonly<{
 export const PaneMenu = styled.div`
   position: relative;
   display: flex;
-  height: 41px;
+  height: 4rem;
   padding: 0 1rem;
   align-items: center;
   background: ${color("draculaBackgroundDarker")};

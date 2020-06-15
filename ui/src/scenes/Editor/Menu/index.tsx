@@ -1,10 +1,13 @@
 import docsearch from "docsearch.js"
 import React, { useCallback, useEffect, useState } from "react"
 import { useDispatch, useSelector } from "react-redux"
+import { CSSTransition } from "react-transition-group"
 import styled from "styled-components"
-import { ControllerPlay } from "@styled-icons/entypo/ControllerPlay"
-import { ControllerStop } from "@styled-icons/entypo/ControllerStop"
-import { Plus } from "@styled-icons/entypo/Plus"
+import { Add } from "@styled-icons/remix-line/Add"
+import { Close as _CloseIcon } from "@styled-icons/remix-line/Close"
+import { Menu as _MenuIcon } from "@styled-icons/remix-fill/Menu"
+import { Play } from "@styled-icons/remix-line/Play"
+import { Stop } from "@styled-icons/remix-line/Stop"
 
 import {
   ErrorButton,
@@ -13,9 +16,13 @@ import {
   PopperToggle,
   SecondaryButton,
   SuccessButton,
+  TransitionDuration,
+  TransparentButton,
   useKeyPress,
+  useScreenSize,
 } from "components"
 import { actions, selectors } from "store"
+import { color } from "utils"
 
 import QueryPicker from "../QueryPicker"
 
@@ -43,9 +50,46 @@ const QueryPickerButton = styled(SecondaryButton)`
   flex: 0 0 auto;
 `
 
+const MenuIcon = styled(_MenuIcon)`
+  color: ${color("draculaForeground")};
+`
+
+const CloseIcon = styled(_CloseIcon)`
+  color: ${color("draculaForeground")};
+`
+
+const SideMenuMenuButton = styled(TransparentButton)`
+  padding: 0;
+  margin-left: 1rem;
+
+  .fade-enter {
+    opacity: 0;
+  }
+
+  .fade-enter-active {
+    opacity: 1;
+    transition: opacity ${TransitionDuration.REG}ms;
+  }
+
+  .fade-exit {
+    opacity: 0;
+  }
+
+  .fade-exit-active {
+    opacity: 1;
+    transition: opacity ${TransitionDuration.REG}ms;
+  }
+`
+
 const Menu = () => {
   const dispatch = useDispatch()
   const [popperActive, setPopperActive] = useState<boolean>()
+  const escPress = useKeyPress("Escape")
+  const { savedQueries } = useSelector(selectors.console.getConfiguration)
+  const running = useSelector(selectors.query.getRunning)
+  const opened = useSelector(selectors.console.getSideMenuOpened)
+  const { sm } = useScreenSize()
+
   const handleClick = useCallback(() => {
     dispatch(actions.query.toggleRunning())
   }, [dispatch])
@@ -55,9 +99,9 @@ const Menu = () => {
   const handleHidePicker = useCallback(() => {
     setPopperActive(false)
   }, [])
-  const escPress = useKeyPress("Escape")
-  const { savedQueries } = useSelector(selectors.console.getConfiguration)
-  const running = useSelector(selectors.query.getRunning)
+  const handleSideMenuButtonClick = useCallback(() => {
+    dispatch(actions.console.toggleSideMenu())
+  }, [dispatch])
 
   useEffect(() => {
     setPopperActive(false)
@@ -81,18 +125,24 @@ const Menu = () => {
     })
   }, [])
 
+  useEffect(() => {
+    if (!sm && opened) {
+      dispatch(actions.console.toggleSideMenu())
+    }
+  }, [dispatch, opened, sm])
+
   return (
     <Wrapper>
       {running && (
         <ErrorButton onClick={handleClick}>
-          <ControllerStop size="18px" />
+          <Stop size="18px" />
           <span>Cancel</span>
         </ErrorButton>
       )}
 
       {!running && (
         <SuccessButton onClick={handleClick}>
-          <ControllerPlay size="18px" />
+          <Play size="18px" />
           <span>Run</span>
         </SuccessButton>
       )}
@@ -104,7 +154,7 @@ const Menu = () => {
           onToggle={handleToggle}
           trigger={
             <QueryPickerButton onClick={handleClick}>
-              <Plus size="18px" />
+              <Add size="18px" />
               <span>Saved queries</span>
             </QueryPickerButton>
           }
@@ -120,6 +170,18 @@ const Menu = () => {
         placeholder="Search documentation"
         title="Search..."
       />
+
+      {sm && (
+        <SideMenuMenuButton onClick={handleSideMenuButtonClick}>
+          <CSSTransition
+            classNames="fade"
+            in={opened}
+            timeout={TransitionDuration.REG}
+          >
+            {opened ? <CloseIcon size="26px" /> : <MenuIcon size="26px" />}
+          </CSSTransition>
+        </SideMenuMenuButton>
+      )}
     </Wrapper>
   )
 }

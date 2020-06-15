@@ -21,8 +21,6 @@ declare module "docsearch.js" {
   export default function docsearch(config: Config): void
 }
 
-declare var BACKEND_PORT: number // eslint-disable-line no-var
-
 // eslint-disable-next-line no-var
 declare var bus: {
   on: (event: string, callback: (event: null, payload: any) => void) => void

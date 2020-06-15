@@ -1,13 +1,55 @@
 $fa-font-path: "~@fortawesome/fontawesome-free/webfonts";
 
 @import "@fortawesome/fontawesome-free/scss/fontawesome.scss";
-@import "@fortawesome/fontawesome-free/scss/solid.scss";
-@import "@fortawesome/fontawesome-free/scss/regular.scss";
-@import "@fortawesome/fontawesome-free/scss/brands.scss";
 
-$icon-font-path: "~bootstrap-sass/assets/fonts/bootstrap/";
+@font-face {
+    font-family: 'Font Awesome 5 Free';
+    font-style: normal;
+    font-weight: 900;
+    font-display: $fa-font-display;
+    src: url('#{$fa-font-path}/fa-solid-900.woff2') format('woff2'),
+    url('#{$fa-font-path}/fa-solid-900.woff') format('woff');
+}
 
-@import "bootstrap-sass/assets/stylesheets/_bootstrap.scss";
+.fa,
+.fas {
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+}
+
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_variables";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_mixins";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_normalize";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_print";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_scaffolding";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_type";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_code";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_grid";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_tables";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_forms";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_buttons";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_component-animations";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_dropdowns";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_button-groups";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_input-groups";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_navs";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_navbar";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_breadcrumbs";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_pagination";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_pager";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_labels";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_badges";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_jumbotron";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_thumbnails";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_alerts";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_media";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_list-group";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_panels";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_responsive-embed";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_wells";
+@import "~bootstrap-sass/assets/stylesheets/bootstrap/_close";
+
+
 @import "~animate.css/source/_base.css";
 
 $height: 3rem !default;

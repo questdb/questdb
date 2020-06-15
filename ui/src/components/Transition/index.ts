@@ -7,22 +7,23 @@ export enum TransitionDuration {
 }
 
 export const createGlobalFadeTransition = (
+  className: string,
   duration: TransitionDuration,
 ) => createGlobalStyle`
-  .fade-enter {
+  .${className}-enter {
     opacity: 0;
   }
 
-  .fade-enter-active {
+  .${className}-enter-active {
     opacity: 1;
     transition: all ${duration}ms;
   }
 
-  .fade-exit {
+  .${className}-exit {
     opacity: 1;
   }
 
-  .fade-exit-active {
+  .${className}-exit-active {
     opacity: 0;
     transition: all ${duration}ms;
   }

@@ -16,6 +16,7 @@ export type ColorShape = {
   draculaPurple: string
   draculaCyan: string
   draculaPink: string
+  transparent: string
   white: string
 }
 

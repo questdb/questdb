@@ -5,7 +5,9 @@ import {
   ConsoleStateShape,
 } from "types"
 
-export const initialState: ConsoleStateShape = {}
+export const initialState: ConsoleStateShape = {
+  sideMenuOpened: false,
+}
 
 export const defaultConfiguration: ConfigurationShape = {
   readOnly: false,
@@ -19,10 +21,18 @@ const _console = (
   switch (action.type) {
     case ConsoleAT.SET_CONFIGURATION: {
       return {
+        ...state,
         configuration: {
           ...defaultConfiguration,
           ...action.payload,
         },
+      }
+    }
+
+    case ConsoleAT.TOGGLE_SIDE_MENU: {
+      return {
+        ...state,
+        sideMenuOpened: !state.sideMenuOpened,
       }
     }
 

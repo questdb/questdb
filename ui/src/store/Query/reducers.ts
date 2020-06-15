@@ -46,6 +46,13 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
       }
     }
 
+    case QueryAT.SET_RESULT: {
+      return {
+        ...state,
+        result: action.payload,
+      }
+    }
+
     case QueryAT.STOP_RUNNING: {
       return {
         ...state,

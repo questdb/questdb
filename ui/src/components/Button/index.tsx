@@ -1,5 +1,5 @@
 import { darken } from "polished"
-import React, { forwardRef, MouseEvent, ReactNode, Ref } from "react"
+import { MouseEvent, ReactNode } from "react"
 import styled, { css } from "styled-components"
 
 import type { Color } from "types"
@@ -10,18 +10,22 @@ import { bezierTransition } from "../Transition"
 type Size = "sm" | "md"
 type Type = "button" | "submit"
 
-const defaultProps: Readonly<{
-  children?: ReactNode
-  disabled?: boolean
-  onClick?: (event: MouseEvent) => void
-  size: Size
-  type: Type
-}> = {
-  size: "md",
-  type: "button",
+const size: Size = "md"
+const type: Type = "button"
+
+const defaultProps = {
+  size,
+  type,
 }
 
-export type ButtonProps = Partial<typeof defaultProps>
+export type ButtonProps = Readonly<{
+  children?: ReactNode
+  className?: string
+  disabled?: boolean
+  onClick?: (event: MouseEvent) => void
+  size?: Size
+  type?: Type
+}>
 
 type ThemeShape = {
   background: Color
@@ -32,7 +36,7 @@ type ThemeShape = {
 export const getButtonSize = ({ size }: ButtonProps) =>
   size === "sm" ? "2rem" : "3rem"
 
-const baseCss = css<ButtonProps>`
+const baseStyles = css<ButtonProps>`
   display: flex;
   height: ${getButtonSize};
   padding: 0 1rem;
@@ -82,8 +86,8 @@ const getTheme = (
     }
   `
 
-const Primary = styled.button<ButtonProps>`
-  ${baseCss};
+export const PrimaryButton = styled.button<ButtonProps>`
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -103,17 +107,10 @@ const Primary = styled.button<ButtonProps>`
   )};
 `
 
-const PrimaryButtonWithRef = (
-  props: ButtonProps,
-  ref: Ref<HTMLButtonElement>,
-) => <Primary {...props} ref={ref} />
-
-export const PrimaryButton = forwardRef(PrimaryButtonWithRef)
-
 PrimaryButton.defaultProps = defaultProps
 
-const Secondary = styled.button<ButtonProps>`
-  ${baseCss};
+export const SecondaryButton = styled.button<ButtonProps>`
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaBackground",
@@ -133,17 +130,10 @@ const Secondary = styled.button<ButtonProps>`
   )};
 `
 
-const SecondaryButtonWithRef = (
-  props: ButtonProps,
-  ref: Ref<HTMLButtonElement>,
-) => <Secondary {...props} ref={ref} />
-
-export const SecondaryButton = forwardRef(SecondaryButtonWithRef)
-
 SecondaryButton.defaultProps = defaultProps
 
-const Success = styled.button<ButtonProps>`
-  ${baseCss};
+export const SuccessButton = styled.button<ButtonProps>`
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -162,18 +152,11 @@ const Success = styled.button<ButtonProps>`
     },
   )};
 `
-
-const SuccessButtonWithRef = (
-  props: ButtonProps,
-  ref: Ref<HTMLButtonElement>,
-) => <Success {...props} ref={ref} />
-
-export const SuccessButton = forwardRef(SuccessButtonWithRef)
 
 SuccessButton.defaultProps = defaultProps
 
-const Error = styled.button<ButtonProps>`
-  ${baseCss};
+export const ErrorButton = styled.button<ButtonProps>`
+  ${baseStyles};
   ${getTheme(
     {
       background: "draculaSelection",
@@ -193,11 +176,27 @@ const Error = styled.button<ButtonProps>`
   )};
 `
 
-const ErrorButtonWithRef = (
-  props: ButtonProps,
-  ref: Ref<HTMLButtonElement>,
-) => <Error {...props} ref={ref} />
-
-export const ErrorButton = forwardRef(ErrorButtonWithRef)
-
 ErrorButton.defaultProps = defaultProps
+
+export const TransparentButton = styled.button<ButtonProps>`
+  ${baseStyles};
+  ${getTheme(
+    {
+      background: "transparent",
+      border: "transparent",
+      color: "draculaForeground",
+    },
+    {
+      background: "draculaComment",
+      border: "transparent",
+      color: "draculaForeground",
+    },
+    {
+      background: "draculaSelection",
+      border: "gray1",
+      color: "gray1",
+    },
+  )};
+`
+
+TransparentButton.defaultProps = defaultProps

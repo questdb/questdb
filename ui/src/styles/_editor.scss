@@ -259,17 +259,11 @@
   flex: 1;
   overflow: hidden;
   background: #282a36;
-  color: #f8f8f2;
-
-  ::selection {
-    background: #ff5555;
-    color: #f9f9f2;
-  }
 }
 
 .menu-bar {
   display: flex;
-  height: 41px;
+  height: 4rem;
   padding: 0 1rem;
   align-items: center;
   background: #21222c;

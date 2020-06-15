@@ -19,7 +19,6 @@ if (!process.env.NODE_ENV) {
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
-    favicon: "assets/favicon.ico",
     template: "src/index.hbs",
     minify: {
       minifyCSS: true,
@@ -36,7 +35,6 @@ const basePlugins = [
     filename: "qdb.css",
   }),
   new Webpack.DefinePlugin({
-    BACKEND_PORT: JSON.stringify(isProdBuild ? BACKEND_PORT : PORT),
     "process.env": {
       NODE_ENV: JSON.stringify(process.env.NODE_ENV),
     },
@@ -90,11 +88,11 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|svg|jpg|gif)$/,
+        test: /\.(png|jpg)$/,
         use: ["file-loader"],
       },
       {
-        test: /\.(woff|woff2|eot|ttf|otf)$/,
+        test: /\.(woff|woff2)$/,
         use: ["file-loader"],
       },
       {

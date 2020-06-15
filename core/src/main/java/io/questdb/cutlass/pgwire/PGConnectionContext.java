@@ -1214,6 +1214,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareForNewQuery();
         parseQueryText(lo, limit - 1);
 
+        if (SqlKeywords.isSemicolon(queryText)) {
+            sendExecuteTail(TAIL_SUCCESS);
+            return;
+        }
+
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);

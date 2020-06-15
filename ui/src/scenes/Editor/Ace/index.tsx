@@ -23,7 +23,7 @@ import {
   toTextPosition,
 } from "./utils"
 
-const quest = new QuestDB.Client({ port: BACKEND_PORT })
+const quest = new QuestDB.Client()
 
 const Content = styled(PaneContent)`
   position: relative;
@@ -96,6 +96,7 @@ const Ace = () => {
           .then((result) => {
             setRequest(undefined)
             dispatch(actions.query.stopRunning())
+            dispatch(actions.query.setResult(result))
 
             if (result.type === QuestDB.Type.DDL) {
               dispatch(
@@ -130,11 +131,7 @@ const Ace = () => {
             dispatch(actions.query.stopRunning())
             dispatch(
               actions.query.addNotification({
-                line1: (
-                  <Text color="draculaForeground" ellipsis>
-                    {error.error}
-                  </Text>
-                ),
+                line1: <Text color="draculaForeground">{error.error}</Text>,
                 title: (
                   <Text color="draculaForeground" ellipsis>
                     {request.query}
