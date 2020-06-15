@@ -161,4 +161,6 @@ public interface CairoConfiguration {
     int getGroupByPoolCapacity();
 
     int getGroupByMapCapacity();
+
+    boolean enableTestFactories();
 }

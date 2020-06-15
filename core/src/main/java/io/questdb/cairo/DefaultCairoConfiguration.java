@@ -53,6 +53,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean enableTestFactories() {
+        return true;
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }

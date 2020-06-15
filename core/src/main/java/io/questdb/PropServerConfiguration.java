@@ -950,6 +950,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean enableTestFactories() {
+            return false;
+        }
+
+        @Override
         public int getDoubleToStrCastScale() {
             return doubleToStrCastScale;
         }

@@ -24,12 +24,13 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class BindException extends RuntimeException implements Sinkable {
+public class BindException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<BindException> tlException = new ThreadLocal<>(BindException::new);
     private final StringSink message = new StringSink();
 
@@ -43,6 +44,7 @@ public class BindException extends RuntimeException implements Sinkable {
         return ex;
     }
 
+    @Override
     public CharSequence getFlyweightMessage() {
         return message;
     }
