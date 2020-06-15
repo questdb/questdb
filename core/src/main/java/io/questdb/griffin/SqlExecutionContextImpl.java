@@ -47,6 +47,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private final SqlResourceLimiterImpl resourceLimiter = new SqlResourceLimiterImpl();
+    private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
 
     public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
         this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
@@ -121,6 +122,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return resourceLimiter;
     }
 
+    @Override
+    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
+        return interruptor;
+    }
+
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,
@@ -152,6 +158,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
         long maxInMemoryRows = null == cairoSecurityContext ? Long.MAX_VALUE : cairoSecurityContext.getMaxInMemoryRows();
         resourceLimiter.of(maxInMemoryRows, interruptor);
+        this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
     }
 }

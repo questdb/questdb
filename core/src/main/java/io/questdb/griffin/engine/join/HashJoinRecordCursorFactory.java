@@ -41,7 +41,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlResourceLimiter;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -90,10 +90,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(slaveCursor.size());
-            joinKeyMap.setResourceLimiter(resourceLimiter);
-            buildMapOfSlaveRecords(slaveCursor);
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
@@ -107,8 +104,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
-        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain);
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionInterruptor interruptor) {
+        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, interruptor);
     }
 
     private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {

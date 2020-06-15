@@ -32,7 +32,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -141,7 +140,6 @@ public class CompactMap implements Map {
     private long size;
     private int nResizes;
     private final int maxResizes;
-    private SqlResourceLimiter resourceLimiter = SqlResourceLimiter.NOP_LIMITER;
 
     public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
@@ -283,11 +281,6 @@ public class CompactMap implements Map {
 
     long getAppendOffset() {
         return currentEntryOffset + currentEntrySize;
-    }
-
-    @Override
-    public void setResourceLimiter(SqlResourceLimiter resourceLimiter) {
-        this.resourceLimiter = resourceLimiter;
     }
 
     @FunctionalInterface
@@ -683,7 +676,6 @@ public class CompactMap implements Map {
         }
 
         private CompactMapValue putNewEntryAt(long slot, byte flag) {
-            resourceLimiter.checkLimits(size);
             // entry size is now known
             // values are always fixed size and already accounted for
             // so go ahead and finalize

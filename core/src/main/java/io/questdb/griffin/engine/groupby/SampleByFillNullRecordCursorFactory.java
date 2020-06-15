@@ -45,7 +45,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlResourceLimiter;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
@@ -158,11 +158,9 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
+        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         try {
             map.clear();
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(baseCursor.size());
-            map.setResourceLimiter(resourceLimiter);
 
             // This factory fills gaps in data. To do that we
             // have to know all possible key values. Essentially, every time
@@ -172,6 +170,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             int n = groupByFunctions.size();
             final Record baseCursorRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
                 MapKey key = map.withKey();
                 mapSink.copy(baseCursorRecord, key);
                 MapValue value = key.createValue();

@@ -69,7 +69,6 @@ public class FastMap implements Map {
     private int mask;
     private int nResizes;
     private final int maxResizes;
-    private SqlResourceLimiter resourceLimiter = SqlResourceLimiter.NOP_LIMITER;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
@@ -236,11 +235,6 @@ public class FastMap implements Map {
     }
 
     @Override
-    public void setResourceLimiter(SqlResourceLimiter resourceLimiter) {
-        this.resourceLimiter = resourceLimiter;
-    }
-
-    @Override
     public long size() {
         return size;
     }
@@ -257,7 +251,6 @@ public class FastMap implements Map {
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
-        resourceLimiter.checkLimits(size);
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {

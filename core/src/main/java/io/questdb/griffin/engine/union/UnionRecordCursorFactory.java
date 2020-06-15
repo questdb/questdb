@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.std.Misc;
 
 public class UnionRecordCursorFactory implements RecordCursorFactory {
@@ -63,9 +62,6 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(masterCursor.size() + slaveCursor.size());
-            map.setResourceLimiter(resourceLimiter);
             cursor.of(
                     masterCursor,
                     slaveCursor);

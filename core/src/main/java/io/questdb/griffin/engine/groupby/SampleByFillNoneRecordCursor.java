@@ -27,8 +27,17 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
@@ -47,6 +56,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
+    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillNoneRecordCursor(
             Map map,
@@ -73,6 +83,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
             }
         }
         this.mapCursor = map.getCursor();
+        this.interruptor = interruptor;
     }
 
     @Override
@@ -109,6 +120,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         // of first record in base cursor
         int n = groupByFunctions.size();
         do {
+            interruptor.checkInterrupted();
             final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
                 final MapKey key = map.withKey();

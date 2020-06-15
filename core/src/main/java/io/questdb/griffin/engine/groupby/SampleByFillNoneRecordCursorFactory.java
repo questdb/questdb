@@ -39,7 +39,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
@@ -96,13 +95,16 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            map.clear();
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
+        try {
+            if (baseCursor.hasNext()) {
+                map.clear();
+                return initFunctionsAndCursor(executionContext, baseCursor);
+            }
 
-        baseCursor.close();
-        return EmptyTableRecordCursor.INSTANCE;
+            return EmptyTableRecordCursor.INSTANCE;
+        } finally {
+            baseCursor.close();
+        }
     }
 
     @Override
@@ -125,9 +127,6 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
         try {
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(baseCursor.size());
-            map.setResourceLimiter(resourceLimiter);
             cursor.of(baseCursor);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             for (int i = 0, m = recordFunctions.size(); i < m; i++) {

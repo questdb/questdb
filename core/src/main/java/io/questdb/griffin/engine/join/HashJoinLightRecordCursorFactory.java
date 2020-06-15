@@ -40,7 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlResourceLimiter;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -88,10 +88,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(slaveCursor.size());
-            joinKeyMap.setResourceLimiter(resourceLimiter);
-            buildMapOfSlaveRecords(slaveCursor);
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
@@ -105,11 +102,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionInterruptor interruptor) {
         slaveChain.clear();
         joinKeyMap.clear();
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
+            interruptor.checkInterrupted();
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
             MapValue value = key.createValue();

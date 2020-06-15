@@ -27,7 +27,6 @@ package io.questdb.cairo.map;
 import java.io.Closeable;
 
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.std.Mutable;
 
 public interface Map extends Mutable, Closeable {
@@ -43,6 +42,4 @@ public interface Map extends Mutable, Closeable {
     MapValue valueAt(long address);
 
     MapKey withKey();
-
-    void setResourceLimiter(SqlResourceLimiter resourceLimiter);
 }

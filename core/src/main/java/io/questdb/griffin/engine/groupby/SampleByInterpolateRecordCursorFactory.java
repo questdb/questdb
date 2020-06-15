@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -204,11 +205,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
+        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         try {
-            SqlResourceLimiter resourceLimiter = executionContext.getResourceLimiter();
-            resourceLimiter.checkLimits(baseCursor.size());
-            dataMap.setResourceLimiter(resourceLimiter);
-
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
@@ -217,6 +215,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.createValue();
@@ -281,6 +280,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
+                interruptor.checkInterrupted();
             } while (true);
 
             // fill gaps if any at end of base cursor
@@ -300,6 +300,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         long current = sample;
 
                         while (true) {
+                            interruptor.checkInterrupted();
                             // to timestamp after 'sample' to begin with
                             long x2 = sampler.nextTimestamp(current);
                             // is this timestamp within range?
@@ -341,6 +342,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                                 nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);
                                                 break;
                                             }
+                                            interruptor.checkInterrupted();
                                         }
                                     } else {
 

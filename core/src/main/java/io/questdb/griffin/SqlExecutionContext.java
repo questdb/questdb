@@ -56,4 +56,6 @@ public interface SqlExecutionContext {
     long getRequestFd();
 
     SqlResourceLimiter getResourceLimiter();
+
+    SqlExecutionInterruptor getSqlExecutionInterruptor();
 }
