@@ -66,7 +66,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        this.cursor.of(base.getCursor(executionContext), executionContext.getCairoSecurityContext().getMaxInMemoryRows());
+        this.cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
 

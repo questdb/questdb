@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
@@ -55,6 +56,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
+    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillNoneRecordCursor(
             Map map,
@@ -91,6 +93,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     @Override
     public void close() {
         base.close();
+        interruptor = null;
     }
 
     @Override
@@ -130,6 +133,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
                 this.nextTimestamp = timestamp;
                 return createMapCursor();
             }
+            interruptor.checkInterrupted();
         } while (base.hasNext());
 
         // we ran out of data, make sure hasNext() returns false at the next
@@ -157,12 +161,13 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     }
 
     @Override
-    public void of(RecordCursor base) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+        interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     private boolean mapHasNext() {

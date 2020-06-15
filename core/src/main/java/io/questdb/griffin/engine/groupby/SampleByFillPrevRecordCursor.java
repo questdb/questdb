@@ -30,6 +30,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -50,6 +52,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
+    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillPrevRecordCursor(
             Map map,
@@ -81,6 +84,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
     @Override
     public void close() {
         base.close();
+        interruptor = null;
     }
 
     @Override
@@ -126,6 +130,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
         int n = groupByFunctions.size();
         while (true) {
+            interruptor.checkInterrupted();
             long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
                 final MapKey key = map.withKey();
@@ -194,12 +199,13 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
     }
 
     @Override
-    public void of(RecordCursor base) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+        interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     private class TimestampFunc extends TimestampFunction implements NoArgFunction {

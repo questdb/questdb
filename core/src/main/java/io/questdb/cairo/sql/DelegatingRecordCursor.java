@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.SqlExecutionContext;
+
 public interface DelegatingRecordCursor extends RecordCursor {
-    void of(RecordCursor base);
+    void of(RecordCursor base, SqlExecutionContext executionContext);
 }

@@ -61,7 +61,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor);
+            cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (RuntimeException ex) {
             baseCursor.close();

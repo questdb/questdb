@@ -67,6 +67,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
+        interruptor = null;
     }
 
     @Override
