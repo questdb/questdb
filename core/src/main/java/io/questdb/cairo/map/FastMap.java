@@ -34,7 +34,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlResourceLimiter;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectLongList;
