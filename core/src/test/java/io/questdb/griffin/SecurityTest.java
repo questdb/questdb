@@ -24,12 +24,15 @@
 
 package io.questdb.griffin;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
@@ -40,10 +43,22 @@ public class SecurityTest extends AbstractGriffinTest {
     private static SqlExecutionContext readOnlyExecutionContext;
     private static SqlCompiler memoryRestrictedCompiler;
     private static CairoEngine memoryRestrictedEngine;
+    private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
+    private static int maxNCheckInterruptedCalls = Integer.MAX_VALUE;
 
     @BeforeClass
     public static void setUpReadOnlyExecutionContext() {
         CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public int getSqlMapPageSize() {
+                return 64;
+            }
+
+            @Override
+            public int getSqlMapMaxResizes() {
+                return 2;
+            }
+
             @Override
             public long getSqlSortKeyPageSize() {
                 return 64;
@@ -55,6 +70,16 @@ public class SecurityTest extends AbstractGriffinTest {
             }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration, messageBus);
+        SqlExecutionInterruptor dummyInterruptor = new SqlExecutionInterruptor() {
+            @Override
+            public void checkInterrupted() {
+                int nCalls = nCheckInterruptedCalls.incrementAndGet();
+                int max = maxNCheckInterruptedCalls;
+                if (nCalls > max) {
+                    throw CairoException.instance(0).put("Interrupting SQL processing, max calls is ").put(max);
+                }
+            }
+        };
         readOnlyExecutionContext = new SqlExecutionContextImpl(
                 messageBus,
                 1,
@@ -65,13 +90,20 @@ public class SecurityTest extends AbstractGriffinTest {
                                 bindVariableService,
                                 null,
                                 -1,
-                                null);
+                                dummyInterruptor);
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine, messageBus);
+    }
+
+    private static void setMaxInterruptorChecks(int max) {
+        nCheckInterruptedCalls.set(0);
+        maxNCheckInterruptedCalls = max;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
+                maxNCheckInterruptedCalls = Integer.MAX_VALUE;
+                nCheckInterruptedCalls.set(0);
                 code.run();
                 engine.releaseInactive();
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -201,7 +233,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithRandomAccessOrderBy() throws Exception {
+    public void testMemoryRestrictionsWithRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -428,7 +460,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithImplicitGroupBy() throws Exception {
+    public void testMemoryRestrictionsWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(
                 messageBus,
                 1,
@@ -467,33 +499,71 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithUnion() throws Exception {
+    public void testMemoryRestrictionsWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(3,3,3,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
             compiler.compile("create table tb2 as (select" +
-                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_symbol(20,3,3,20000) sym1," +
                     " rnd_double(2) d2," +
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
-                    " from long_sequence(1)) timestamp(ts2)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(ts2)", sqlExecutionContext);
             assertQuery(
-                    "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
-                    "select * from tb1 where d1 < 0.2 union tb2",
-                    "ts1",
+                    memoryRestrictedCompiler,
+                    "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
+                    "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
+                    null,
                     false, readOnlyExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nVTJW\t0.21583224269349388\t1970-01-01T01:40:00.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
-                        "select * from tb1 where d1 < 0.3 union tb2",
-                        "ts1",
+                        "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
+                        null,
                         false, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            }
+        });
+    }
+
+    @Test
+    public void testInterruptorWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(20,3,3,20000) sym1," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(10000000000, 1000000000) ts2" +
+                    " from long_sequence(100)) timestamp(ts2)", sqlExecutionContext);
+            assertQuery(
+                    memoryRestrictedCompiler,
+                    "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
+                    "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
+                    null,
+                    false, readOnlyExecutionContext);
+            Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
+            try {
+                setMaxInterruptorChecks(2);
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
+                        "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
+                        null,
+                        false, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
             }
         });
     }
