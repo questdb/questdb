@@ -1,4 +1,3 @@
-import { darken } from "polished"
 import styled, { css } from "styled-components"
 
 import type { Color } from "types"
@@ -70,7 +69,8 @@ const getTheme = (normal: ThemeShape, hover: ThemeShape) =>
     }
 
     &:active:not([disabled]) {
-      background: ${({ theme }) => darken(0.1, theme.color[hover.background])};
+      background: ${color(hover.background)};
+      filter: brightness(90%);
     }
   `
 

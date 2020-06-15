@@ -1,4 +1,3 @@
-import { darken } from "polished"
 import { MouseEvent, ReactNode } from "react"
 import styled, { css } from "styled-components"
 
@@ -75,7 +74,8 @@ const getTheme = (
     }
 
     &:active:not([disabled]) {
-      background: ${({ theme }) => darken(0.1, theme.color[hover.background])};
+      background: ${color(hover.background)};
+      filter: brightness(90%);
     }
 
     &:disabled {
