@@ -68,6 +68,16 @@ public class SecurityTest extends AbstractGriffinTest {
             public int getSqlSortKeyMaxPages() {
                 return 2;
             }
+
+            @Override
+            public int getSqlJoinMetadataPageSize() {
+                return 64;
+            }
+
+            @Override
+            public int getSqlJoinMetadataMaxResizes() {
+                return 10;
+            }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration, messageBus);
         SqlExecutionInterruptor dummyInterruptor = new SqlExecutionInterruptor() {
@@ -262,7 +272,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithoutRandomAccessOrderBy() throws Exception {
+    public void testMemoryRestrictionsWithoutRandomAccessOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -276,53 +286,57 @@ public class SecurityTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
             assertQuery(
+                    memoryRestrictedCompiler,
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\nPEHN\tRQQ\n",
-                        "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.34 ORDER BY d1",
+                        "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithDistinct() throws Exception {
+    public void testMemoryRestrictionsWithDistinct() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_symbol(20,4,4,20000) sym1," +
+                    " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
-                    "sym1\tsym2\nVTJW\tIBBT\nVTJW\tGPGW\n",
-                    "select distinct sym1, sym2 from tb1 where d < 0.3",
+                    memoryRestrictedCompiler,
+                    "sym1\tsym2\nDEYY\tCXZO\nDEYY\tDSWU\nSXUX\tZSRY\n",
+                    "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\tsym2\nHYRX\tGPGW\nVTJW\tIBBT\nVTJW\tGPGW\n",
-                        "select distinct sym1, sym2 from tb1 where d < 0.34",
+                        "select distinct sym1, sym2 from tb1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithSampleByFillLinear() throws Exception {
+    public void testMemoryRestrictionsWithSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -333,111 +347,116 @@ public class SecurityTest extends AbstractGriffinTest {
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithSampleByFillNone() throws Exception {
+    public void testMemoryRestrictionsWithSampleByFillNone() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_symbol(20,4,4,20000) sym1," +
+                    " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithSampleByFillPrev() throws Exception {
+    public void testMemoryRestrictionsWithSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(20,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithSampleByFillValue() throws Exception {
+    public void testMemoryRestrictionsWithSampleByFillValue() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_symbol(20,4,4,20000) sym1," +
+                    " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+                    " timestamp_sequence(0, 100000000000) ts" +
+                    " from long_sequence(1000)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithSampleByFillNull() throws Exception {
+    public void testMemoryRestrictionsWithSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_symbol(4,4,4,20000) sym2," +
+                    " rnd_symbol(20,4,4,20000) sym1," +
+                    " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
 
     @Test
-    public void testMaxInMemoryRowsWithLatestBy() throws Exception {
+    public void testMemoryRestrictionsWithLatestBy() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -445,16 +464,17 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_symbol(4,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select ts, d from tb1 LATEST BY d",
                         "ts",
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
@@ -569,7 +589,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithInnerJoin() throws Exception {
+    public void testMemoryRestrictionsWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -589,13 +609,14 @@ public class SecurityTest extends AbstractGriffinTest {
                     false, sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
@@ -633,7 +654,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithFullFatInnerJoin() throws Exception {
+    public void testMemoryRestrictionsWithFullFatInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -655,13 +676,14 @@ public class SecurityTest extends AbstractGriffinTest {
                         false, sqlExecutionContext);
                 try {
                     assertQuery(
+                            memoryRestrictedCompiler,
                             "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                             "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
                     Assert.fail();
                 } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
                 }
             } finally {
                 compiler.setFullSatJoins(false);
@@ -670,7 +692,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithFullFatOuterJoin() throws Exception {
+    public void testMemoryRstrictionsWithFullFatOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -692,13 +714,14 @@ public class SecurityTest extends AbstractGriffinTest {
                         false, sqlExecutionContext);
                 try {
                     assertQuery(
+                            memoryRestrictedCompiler,
                             "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                             "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
                     Assert.fail();
                 } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
                 }
             } finally {
                 compiler.setFullSatJoins(false);
