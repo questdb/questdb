@@ -102,8 +102,9 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             }
 
             return EmptyTableRecordCursor.INSTANCE;
-        } finally {
+        } catch (CairoException ex) {
             baseCursor.close();
+            throw ex;
         }
     }
 
