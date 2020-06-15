@@ -189,7 +189,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
     private boolean readOnlySecurityContext;
-    private long maxInMemoryRows;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private int interruptorNIterationsPerCheck;
@@ -267,7 +266,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
             this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
             this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
-            this.maxInMemoryRows = getLong(properties, "http.security.max.in.memory.rows", Long.MAX_VALUE);
             this.maxHttpQueryResponseRowLimit = getLong(properties, "http.security.max.response.rows", Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, "http.security.interrupt.on.closed.connection", true);
             this.interruptorNIterationsPerCheck = getInt(properties, "http.security.interruptor.iterations.per.check", 1000);
@@ -891,11 +889,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean readOnlySecurityContext() {
             return readOnlySecurityContext;
-        }
-
-        @Override
-        public long getMaxInMemoryRows() {
-            return maxInMemoryRows;
         }
 
         @Override

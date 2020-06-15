@@ -116,7 +116,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
-        Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
         Assert.assertEquals(true, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
         Assert.assertEquals(1000, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
@@ -336,7 +335,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().readOnlySecurityContext());
-            Assert.assertEquals(10000, configuration.getHttpServerConfiguration().getMaxInMemoryRows());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
             Assert.assertEquals(false, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
             Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());

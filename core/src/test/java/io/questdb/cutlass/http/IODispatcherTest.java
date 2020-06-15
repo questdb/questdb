@@ -1685,7 +1685,8 @@ public class IODispatcherTest {
 							+ "Content-Type: application/json; charset=utf-8\r\n"
 							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
 					TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-						public boolean onGet(Record record, int count) {
+						@Override
+                        public boolean onGet(Record record, int count) {
 							if (count == 4) {
 								while (!clientClosed.get()) {
 									LockSupport.parkNanos(1);
@@ -1694,7 +1695,8 @@ public class IODispatcherTest {
 							return true;
 						}
 
-						public void onClose() {
+						@Override
+                        public void onClose() {
 							serverClosed.set(true);
 						}
 					});
@@ -1703,7 +1705,7 @@ public class IODispatcherTest {
 					while (!serverClosed.get()) {
 						LockSupport.parkNanos(1);
 					}
-					Assert.assertEquals(5, TestLatchedCounterFunctionFactory.getCount());
+                    Assert.assertEquals(6, TestLatchedCounterFunctionFactory.getCount());
 				} finally {
 					workerPool.halt();
 				}

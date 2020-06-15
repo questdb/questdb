@@ -84,7 +84,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
-        cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext(), configuration.getMaxInMemoryRows());
+        cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
         execInterruptor = configuration.isInterruptOnClosedConnection()
                 ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
                 : null;

@@ -150,7 +150,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        long maxInMemoryRows = null == cairoSecurityContext ? Long.MAX_VALUE : cairoSecurityContext.getMaxInMemoryRows();
         this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
     }

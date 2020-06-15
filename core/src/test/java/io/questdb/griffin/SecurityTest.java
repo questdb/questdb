@@ -85,8 +85,8 @@ public class SecurityTest extends AbstractGriffinTest {
                 1,
                 memoryRestrictedEngine)
                         .with(
-                                new CairoSecurityContextImpl(false,
-                                        2),
+                                new CairoSecurityContextImpl(
+                                        false),
                                 bindVariableService,
                                 null,
                                 -1,
@@ -466,8 +466,8 @@ public class SecurityTest extends AbstractGriffinTest {
                 1,
                 engine)
                         .with(
-                                new CairoSecurityContextImpl(false,
-                                        3),
+                                new CairoSecurityContextImpl(
+                                        false),
                                 bindVariableService,
                                 null, -1, null);
         assertMemoryLeak(() -> {
