@@ -622,7 +622,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMaxInMemoryRowsWithOuterJoin() throws Exception {
+    public void testMemoryRestrictionsWithOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -642,13 +642,14 @@ public class SecurityTest extends AbstractGriffinTest {
                     false, sqlExecutionContext);
             try {
                 assertQuery(
+                        memoryRestrictedCompiler,
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 exceeded"));
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
             }
         });
     }
