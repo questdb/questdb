@@ -56,7 +56,6 @@ public class TableWriter implements Closeable {
     };
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
-    private final static RenameFileLambda RENAME_OR_LOG = TableWriter::renameFileOrLog;
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -745,23 +744,26 @@ public class TableWriter implements Closeable {
                 if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
+                    other.trimTo(rootLen);
+                    other.concat(nativeLPSZ);
                     int plen = path.length();
-                    RENAME_OR_LOG.rename(ff, dFile(path, columnName), dFile(path.trimTo(plen), newName));
-                    RENAME_OR_LOG.rename(ff, iFile(path.trimTo(plen), columnName), iFile(path.trimTo(plen), newName));
-                    RENAME_OR_LOG.rename(ff, topFile(path.trimTo(plen), columnName), topFile(path.trimTo(plen), newName));
-                    RENAME_OR_LOG.rename(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), BitmapIndexUtils.keyFileName(path.trimTo(plen), newName));
-                    RENAME_OR_LOG.rename(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName), BitmapIndexUtils.valueFileName(path.trimTo(plen), newName));
+                    renameFileOrLog(ff, dFile(path.trimTo(plen), columnName), dFile(other.trimTo(plen), newName));
+                    renameFileOrLog(ff, iFile(path.trimTo(plen), columnName), iFile(other.trimTo(plen), newName));
+                    renameFileOrLog(ff, topFile(path.trimTo(plen), columnName), topFile(other.trimTo(plen), newName));
+                    renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), BitmapIndexUtils.keyFileName(other.trimTo(plen), newName));
+                    renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName), BitmapIndexUtils.valueFileName(other.trimTo(plen), newName));
                 }
             });
 
             if (columnType == ColumnType.SYMBOL) {
-                RENAME_OR_LOG.rename(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.offsetFileName(path.trimTo(rootLen), newName));
-                RENAME_OR_LOG.rename(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.charFileName(path.trimTo(rootLen), newName));
-                RENAME_OR_LOG.rename(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName), BitmapIndexUtils.keyFileName(path.trimTo(rootLen), newName));
-                RENAME_OR_LOG.rename(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName), BitmapIndexUtils.valueFileName(path.trimTo(rootLen), newName));
+                renameFileOrLog(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.offsetFileName(other.trimTo(rootLen), newName));
+                renameFileOrLog(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.charFileName(other.trimTo(rootLen), newName));
+                renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName), BitmapIndexUtils.keyFileName(other.trimTo(rootLen), newName));
+                renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName), BitmapIndexUtils.valueFileName(other.trimTo(rootLen), newName));
             }
         } finally {
             path.trimTo(rootLen);
+            other.trimTo(rootLen);
         }
     }
 
@@ -2713,11 +2715,6 @@ public class TableWriter implements Closeable {
     @FunctionalInterface
     private interface FragileCode {
         void run(CharSequence columnName);
-    }
-
-    @FunctionalInterface
-    private interface RenameFileLambda {
-        void rename(FilesFacade ff, LPSZ name, LPSZ to);
     }
 
     private class OpenPartitionRowFunction implements RowFunction {
