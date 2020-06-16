@@ -21,8 +21,8 @@ const basePlugins = [
   new HtmlWebpackPlugin({
     template: "src/index.hbs",
     minify: {
-      minifyCSS: true,
-      minifyJS: true,
+      minifyCSS: false,
+      minifyJS: false,
       minifyURLs: true,
       removeComments: true,
       removeRedundantAttributes: true,
@@ -43,8 +43,10 @@ const basePlugins = [
 
 const devPlugins = [
   new ForkTsCheckerWebpackPlugin({
-    eslint: true,
-    measureCompilationTime: false,
+    eslint: {
+      enabled: true,
+      files: "./src/**/*.ts[x]",
+    },
   }),
 ]
 
@@ -88,11 +90,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|jpg)$/,
-        use: ["file-loader"],
-      },
-      {
-        test: /\.(woff|woff2)$/,
+        test: /\.(png|jpg|woff|woff2)$/,
         use: ["file-loader"],
       },
       {

@@ -12,7 +12,7 @@
     "node": ">=12.16.2"
   },
   "scripts": {
-    "ci:lint": "eslint 'src/js/**/*' --max-warnings=0 --config .eslintrc.js",
+    "ci:lint": "eslint 'src/**/*.ts[x]' --max-warnings=0 --config .eslintrc.js",
     "type-check": "tsc --noEmit",
     "type-check:watch": "npm run type-check -- --watch",
     "build": "cross-env NODE_ENV=production webpack && node utils/deploy.js",
@@ -39,7 +39,6 @@
     "echarts": "4.8.0",
     "glyphicons-halflings": "1.9.1",
     "jquery": "3.5.1",
-    "polished": "3.6.4",
     "react": "16.13.1",
     "react-ace": "9.0.0",
     "react-dom": "16.13.1",
@@ -83,7 +82,7 @@
     "eslint-plugin-react-hooks": "4.0.4",
     "eslint-plugin-standard": "4.0.1",
     "file-loader": "6.0.0",
-    "fork-ts-checker-webpack-plugin": "4.1.6",
+    "fork-ts-checker-webpack-plugin": "5.0.0",
     "handlebars": "4.7.6",
     "handlebars-loader": "1.7.1",
     "html-webpack-plugin": "4.3.0",
