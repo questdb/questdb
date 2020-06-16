@@ -117,15 +117,14 @@ public class SampleByFillPrevNotKeyedRecordCursor implements DelegatingRecordCur
 
         final int n = groupByFunctions.size();
         for (int i = 0; i < n; i++) {
-            interruptor.checkInterrupted();
             groupByFunctions.getQuick(i).computeFirst(simpleMapValue, baseRecord);
         }
 
         while (base.hasNext()) {
+            interruptor.checkInterrupted();
             long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
                 for (int i = 0; i < n; i++) {
-                    interruptor.checkInterrupted();
                     groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
                 }
             } else {
