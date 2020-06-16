@@ -96,7 +96,7 @@ public class MemoryPages implements Closeable, Mutable {
         }
 
         if (index > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached");
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in MemoryPages");
         }
 
         if (index >= pages.size()) {

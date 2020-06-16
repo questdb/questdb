@@ -268,7 +268,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, "http.security.max.response.rows", Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, "http.security.interrupt.on.closed.connection", true);
-            this.interruptorNIterationsPerCheck = getInt(properties, "http.security.interruptor.iterations.per.check", 1000);
+            this.interruptorNIterationsPerCheck = getInt(properties, "http.security.interruptor.iterations.per.check", 2_000_000);
             this.interruptorBufferSize = getInt(properties, "http.security.interruptor.buffer.size", 64);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
@@ -309,10 +309,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
-        this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", 256);
+        this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
-        this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", 512);
+        this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
@@ -321,7 +321,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
-        this.sqlJoinMetadataMaxResizes = getIntSize(properties, "cairo.sql.join.metadata.max.resizes", 25_000);
+        this.sqlJoinMetadataMaxResizes = getIntSize(properties, "cairo.sql.join.metadata.max.resizes", Integer.MAX_VALUE);
         this.sqlAnalyticColumnPoolCapacity = getInt(properties, "cairo.sql.analytic.column.pool.capacity", 64);
         this.sqlCreateTableModelPoolCapacity = getInt(properties, "cairo.sql.create.table.model.pool.capacity", 16);
         this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);

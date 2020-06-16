@@ -32,6 +32,7 @@ import io.questdb.std.str.StringSink;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
     private int errno;
     private boolean cacheable;
@@ -81,5 +82,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isCacheable() {
         return cacheable;
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        return EMPTY_STACK_TRACE;
     }
 }

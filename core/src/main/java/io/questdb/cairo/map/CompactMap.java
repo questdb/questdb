@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -612,7 +613,7 @@ public class CompactMap implements Map {
                     entries.jumpTo(appendPosition);
                 }
             } else {
-
+                throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in CompactMap");
             }
         }
 

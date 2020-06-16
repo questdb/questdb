@@ -368,7 +368,7 @@ public class FastMap implements Map {
             this.kStart = kAddress;
             this.kLimit = kAddress + kCapacity;
         } else {
-            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded");
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
     }
 
