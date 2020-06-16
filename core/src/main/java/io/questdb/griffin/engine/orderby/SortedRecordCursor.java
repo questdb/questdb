@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -85,10 +86,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
         try {
             this.chainCursor = chain.getCursor(base);
             final Record record = base.getRecord();
+            SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
 
             chain.clear();
             while (base.hasNext()) {
-                executionContext.getSqlExecutionInterruptor().checkInterrupted();
+                interruptor.checkInterrupted();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps
