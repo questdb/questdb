@@ -8,22 +8,19 @@ endif ($ENV{JAVA_HOME})
 
 set(
         VCL_FILES
-        src/main/c/share/vect.cpp
+        src/main/c/share/vec_agg.cpp
         src/main/c/share/rosti.h
 )
 
 set(
         VCL_FILES_SSE2
         src/main/c/share/rosti.h
-        src/main/c/share/rosti_bitmask.h
         src/main/c/share/rosti.cpp
-        src/main/c/share/vect_vanilla.h
-        src/main/c/share/vect_vanilla.cpp
-        src/main/c/share/vect.cpp
+        src/main/c/share/vec_agg_vanilla.h
+        src/main/c/share/vec_agg_vanilla.cpp
+        src/main/c/share/vec_agg.cpp
         src/main/c/share/vcl/instrset_detect.cpp
-        src/main/c/share/vectkeysum.cpp
-        src/main/c/share/vectkeysum_vanilla.h
-        src/main/c/share/vectkeysum_vanilla.cpp
+        src/main/c/share/vec_int_key_agg.cpp
 )
 
 set(
@@ -33,7 +30,7 @@ set(
         src/main/c/share/net.h
         src/main/c/share/zip.c
         src/main/c/share/os.h
-        src/main/c/share/vect_vanilla.h
+        src/main/c/share/vec_agg_vanilla.h
 )
 
 # JNI includes
@@ -126,7 +123,7 @@ if (AARCH64)
     set(
             AARCH64_FILES
             src/main/c/aarch64/vect.cpp
-            src/main/c/share/vect_vanilla.cpp
+            src/main/c/share/vec_agg_vanilla.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})

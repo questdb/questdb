@@ -44,7 +44,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final int columnIndex;
     private int valueOffset;
 
-    public MinDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public MinDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

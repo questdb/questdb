@@ -45,7 +45,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     private final int columnIndex;
     private int valueOffset;
 
-    public MinTimestampVectorAggregateFunction(int position, int columnIndex) {
+    public MinTimestampVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

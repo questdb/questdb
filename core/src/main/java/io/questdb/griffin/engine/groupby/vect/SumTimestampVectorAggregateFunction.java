@@ -41,7 +41,7 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
     private final int columnIndex;
     private int valueOffset;
 
-    public SumTimestampVectorAggregateFunction(int position, int columnIndex) {
+    public SumTimestampVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

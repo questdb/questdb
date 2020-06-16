@@ -73,6 +73,18 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         }
     }
 
+    public GenericRecordMetadata add(int i, TableColumnMetadata meta) {
+        int index = columnNameIndexMap.keyIndex(meta.getName());
+        if (index > -1) {
+            columnNameIndexMap.putAt(index, meta.getName(), i);
+            columnMetadata.extendAndSet(i, meta);
+            columnCount++;
+            return this;
+        } else {
+            throw CairoException.instance(0).put("Duplicate column [name=").put(meta.getName()).put(']');
+        }
+    }
+
     public void clear() {
         columnMetadata.clear();
         columnNameIndexMap.clear();

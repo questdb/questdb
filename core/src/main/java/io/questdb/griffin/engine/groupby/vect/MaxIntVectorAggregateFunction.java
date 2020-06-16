@@ -44,7 +44,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     private final int columnIndex;
     private int valueOffset;
 
-    public MaxIntVectorAggregateFunction(int position, int columnIndex) {
+    public MaxIntVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

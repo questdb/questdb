@@ -24,7 +24,7 @@
 
 #include <cfloat>
 #include <cmath>
-#include "vect.h"
+#include "vec_agg.h"
 
 #define MAX_VECTOR_SIZE 512
 

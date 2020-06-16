@@ -44,7 +44,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public MaxDateVectorAggregateFunction(int position, int columnIndex) {
+    public MaxDateVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

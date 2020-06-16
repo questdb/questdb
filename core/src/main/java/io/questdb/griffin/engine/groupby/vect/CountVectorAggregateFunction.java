@@ -34,10 +34,11 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.LongAdder;
 
 public class CountVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+    public static final VectorAggregateFunctionConstructor CONSTRUCTOR = CountVectorAggregateFunction::new;
     private final LongAdder count = new LongAdder();
     private int valueOffset;
 
-    public CountVectorAggregateFunction(int position) {
+    public CountVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
     }
 

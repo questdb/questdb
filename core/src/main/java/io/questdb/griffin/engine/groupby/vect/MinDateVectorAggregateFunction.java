@@ -45,7 +45,7 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public MinDateVectorAggregateFunction(int position, int columnIndex) {
+    public MinDateVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

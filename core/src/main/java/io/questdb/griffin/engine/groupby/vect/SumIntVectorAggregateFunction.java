@@ -42,7 +42,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     private int valueOffset;
 
-    public SumIntVectorAggregateFunction(int position, int columnIndex) {
+    public SumIntVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

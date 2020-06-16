@@ -42,7 +42,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final int columnIndex;
     private int valueOffset;
 
-    public AvgDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public AvgDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

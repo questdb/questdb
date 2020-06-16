@@ -44,7 +44,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     private final int columnIndex;
     private int valueOffset;
 
-    public MaxTimestampVectorAggregateFunction(int position, int columnIndex) {
+    public MaxTimestampVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

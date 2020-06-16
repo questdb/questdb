@@ -37,7 +37,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
-
     private final int columnIndex;
     private final double[] sum;
     private final long[] count;

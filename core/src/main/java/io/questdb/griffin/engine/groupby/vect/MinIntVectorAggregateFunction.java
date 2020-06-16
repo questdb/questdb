@@ -45,7 +45,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     private final int columnIndex;
     private int valueOffset;
 
-    public MinIntVectorAggregateFunction(int position, int columnIndex) {
+    public MinIntVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

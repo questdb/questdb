@@ -44,7 +44,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public MaxLongVectorAggregateFunction(int position, int columnIndex) {
+    public MaxLongVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

@@ -44,7 +44,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final int columnIndex;
     private int valueOffset;
 
-    public MaxDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public MaxDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

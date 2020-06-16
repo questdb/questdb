@@ -1,34 +1,30 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 #include <cmath>
 #include <algorithm>
-
-using namespace std;
-
-#include "vectkeysum_vanilla.h"
 #include "rosti.h"
-
-inline uint64_t hashInt(int32_t v) {
-    uint64_t h = v;
-    h = (h << 5) - h + ((unsigned char) (v >> 8));
-    h = (h << 5) - h + ((unsigned char) (v >> 16));
-    h = (h << 5) - h + ((unsigned char) (v >> 24));
-    return h;
-}
-
-inline bool eqInt(void *p, int32_t key) {
-    return *reinterpret_cast<int32_t *>(p) == key;
-}
-
-inline uint64_t hashIntMem(void *p) {
-    return hashInt(*reinterpret_cast<int32_t *>(p));
-}
-
-inline void cpySlot(void *to, void *from, uint64_t size) {
-    memcpy(to, from, size);
-}
-
-inline std::pair<uint64_t, bool> find(rosti_t *map, const int32_t key) {
-    return find_or_prepare_insert<int32_t>(map, key, hashInt, eqInt, hashIntMem, cpySlot);
-}
 
 extern "C" {
 
@@ -482,10 +478,10 @@ Java_io_questdb_std_Rosti_keyedIntMinDouble(JNIEnv *env, jclass cl, jlong pRosti
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(pKey) = key;
-            *reinterpret_cast<jdouble *>(pVal) = isnan(d) ? D_MAX : d;
+            *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = std::min((isnan(d) ? D_MAX : d), old);
+            *reinterpret_cast<jdouble *>(pVal) = std::min((std::isnan(d) ? D_MAX : d), old);
         }
     }
 }
@@ -513,10 +509,10 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleMerge(JNIEnv *env, jclass cl, jlong p
             auto pVal = dest + value_offset;
             if (PREDICT_FALSE(res.second)) {
                 *reinterpret_cast<int32_t *>(dest) = key;
-                *reinterpret_cast<jdouble *>(pVal) = isnan(d) ? D_MAX : d;
+                *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
             } else {
                 const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-                *reinterpret_cast<jdouble *>(pVal) = std::min((isnan(d) ? D_MAX : d), old);
+                *reinterpret_cast<jdouble *>(pVal) = std::min((std::isnan(d) ? D_MAX : d), old);
             }
         }
     }
@@ -579,10 +575,10 @@ Java_io_questdb_std_Rosti_keyedIntMaxDouble(JNIEnv *env, jclass cl, jlong pRosti
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(pKey) = v;
-            *reinterpret_cast<jdouble *>(pVal) = isnan(d) ? D_MIN : d;
+            *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = std::max(isnan(d) ? D_MIN : d, old);
+            *reinterpret_cast<jdouble *>(pVal) = std::max(std::isnan(d) ? D_MIN : d, old);
         }
     }
 }
@@ -610,10 +606,10 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleMerge(JNIEnv *env, jclass cl, jlong p
             auto pVal = pKey + value_offset;
             if (PREDICT_FALSE(res.second)) {
                 *reinterpret_cast<int32_t *>(pKey) = key;
-                *reinterpret_cast<jdouble *>(pVal) = isnan(d) ? D_MIN : d;
+                *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
             } else {
                 const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-                *reinterpret_cast<jdouble *>(pVal) = std::max(isnan(d) ? D_MIN : d, old);
+                *reinterpret_cast<jdouble *>(pVal) = std::max(std::isnan(d) ? D_MIN : d, old);
             }
         }
     }
@@ -1276,6 +1272,38 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongMerge(JNIEnv *env, jclass cl, jlong pRo
                 const jlong old = *reinterpret_cast<jlong *>(pVal);
                 *reinterpret_cast<jlong *>(pVal) = std::max(val, old);
             }
+        }
+    }
+}
+
+// ---------------------
+
+#define HOUR_MICROS  3600000000L
+#define DAY_HOURS  24
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedHourCount(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong count,
+                                        jint valueOffset) {
+
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *p_micros = reinterpret_cast<int64_t *>(pKeys);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        _mm_prefetch(p_micros + 16, _MM_HINT_T0);
+        auto micro = p_micros[i];
+        int32_t hour;
+        if (PREDICT_TRUE(micro > -1)) {
+            hour = ((micro / HOUR_MICROS) % DAY_HOURS);
+        } else {
+            hour = DAY_HOURS - 1 + (((micro + 1) / HOUR_MICROS) % DAY_HOURS);
+        }
+        auto res = find(map, hour);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            *reinterpret_cast<int32_t *>(dest) = hour;
+            *reinterpret_cast<jlong *>(dest + value_offset) = 1;
+        } else {
+            (*reinterpret_cast<jlong *>(dest + value_offset))++;
         }
     }
 }

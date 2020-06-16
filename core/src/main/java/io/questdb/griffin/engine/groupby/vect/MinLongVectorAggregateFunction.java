@@ -45,7 +45,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public MinLongVectorAggregateFunction(int position, int columnIndex) {
+    public MinLongVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

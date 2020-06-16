@@ -42,7 +42,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     private final int columnIndex;
     private int valueOffset;
 
-    public AvgLongVectorAggregateFunction(int position, int columnIndex) {
+    public AvgLongVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

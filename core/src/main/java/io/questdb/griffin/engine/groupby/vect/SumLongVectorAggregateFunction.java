@@ -41,7 +41,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public SumLongVectorAggregateFunction(int position, int columnIndex) {
+    public SumLongVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

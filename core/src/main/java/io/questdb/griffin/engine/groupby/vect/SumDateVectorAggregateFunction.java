@@ -41,7 +41,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     private final int columnIndex;
     private int valueOffset;
 
-    public SumDateVectorAggregateFunction(int position, int columnIndex) {
+    public SumDateVectorAggregateFunction(int position, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
     }

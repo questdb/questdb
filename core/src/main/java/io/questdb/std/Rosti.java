@@ -61,6 +61,8 @@ public final class Rosti {
 
     public static native void keyedIntDistinct(long pRosti, long pKeys, long count);
 
+    public static native void keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
+
     public static native void keyedIntCount(long pRosti, long pKeys, long count, int valueOffset);
 
     public static native void keyedIntCountMerge(long pRostiA, long pRostiB, int valueOffset);
