@@ -901,6 +901,11 @@ public class SqlCompiler implements Closeable {
             }
             CharSequence existingName = GenericLexer.immutableOf(tok);
 
+            tok = expectToken(lexer, "'to' expected");
+            if (!SqlKeywords.isToKeyboard(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
+            }
+
             tok = expectToken(lexer, "new column name");
             if (metadata.getColumnIndexQuiet(tok) > -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");

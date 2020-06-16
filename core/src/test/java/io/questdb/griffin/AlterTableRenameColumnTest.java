@@ -35,11 +35,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
 public class AlterTableRenameColumnTest extends AbstractGriffinTest {
@@ -51,55 +46,12 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x rename column l ,m", 31, "',' expected");
+        assertFailure("alter table x rename column l ,m", 30, "to' expected");
     }
 
     @Test
-    public void testBusyTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CountDownLatch allHaltLatch = new CountDownLatch(1);
-            try {
-                createX();
-                AtomicInteger errorCounter = new AtomicInteger();
-
-                // start a thread that would lock table we
-                // about to alter
-                CyclicBarrier startBarrier = new CyclicBarrier(2);
-                CountDownLatch haltLatch = new CountDownLatch(1);
-                new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                        // make sure writer is locked before test begins
-                        startBarrier.await();
-                        // make sure we don't release writer until main test finishes
-                        Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        errorCounter.incrementAndGet();
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-
-                        allHaltLatch.countDown();
-                    }
-                }).start();
-
-                startBarrier.await();
-                try {
-                    compiler.compile("alter table x rename column ik", sqlExecutionContext);
-                    Assert.fail();
-                } finally {
-                    haltLatch.countDown();
-                }
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' cannot be altered: [0]: table busy");
-            }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            allHaltLatch.await(2, TimeUnit.SECONDS);
-        });
+    public void testNewNameAlreadyExists() throws Exception {
+        assertFailure("alter table x rename column l to l", 33, " column already exists");
     }
 
     @Test
@@ -119,7 +71,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e z", sqlExecutionContext).getType());
+                        Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
 
                         String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
@@ -137,6 +89,53 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 }
         );
     }
+
+    @Test
+    public void testRenameColumnExistingReader() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
+                            String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
+                            sink.clear();
+                            reader.reload();
+                            reader.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected, sink);
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testRenameColumnAndCheckOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                Assert.assertEquals("b", reader.getMetadata().getColumnName(1));
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                    Assert.assertEquals("b", writer.getMetadata().getColumnName(1));
+                    writer.renameColumn("b", "bb");
+                    Assert.assertEquals("bb", writer.getMetadata().getColumnName(1));
+                }
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals("bb", reader.getMetadata().getColumnName(1));
+            }
+        });
+    }
+
 
     @Test
     public void testExpectActionKeyword() throws Exception {

@@ -263,6 +263,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isToKeyboard(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'o';
+    }
+
     public static boolean isCacheKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;

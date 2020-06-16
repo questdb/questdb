@@ -2049,14 +2049,7 @@ public class TableWriter implements Closeable {
             int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
             ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
-
-            if (timestampIndex == index) {
-                ddlMem.putInt(-1);
-            } else if (index < timestampIndex) {
-                ddlMem.putInt(timestampIndex - 1);
-            } else {
-                ddlMem.putInt(timestampIndex);
-            }
+            ddlMem.putInt(timestampIndex);
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
