@@ -37,7 +37,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
-public class HttpConnectionContext implements IOContext, Locality, Mutable {
+public class HttpConnectionContext implements IOContext, Locality, Mutable, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
@@ -46,7 +46,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final long sendBuffer;
     private final HttpServerConfiguration configuration;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
@@ -56,6 +55,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final boolean allowDeflateBeforeSend;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private HttpRequestProcessor retryProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
@@ -67,7 +67,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
-        this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -100,7 +99,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
         LOG.debug().$("closed").$();
     }
 
@@ -196,23 +194,28 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         try {
             processor.onRequestComplete(this);
         } catch (EntryUnavailableException e) {
-            rescheduleContext.reschedule(() -> {
-                try {
-                    processor.onRequestComplete(this);
-                }  catch (EntryUnavailableException e2) {
-                    return false;
-                } catch (PeerDisconnectedException ignore) {
-                    dispatcher.disconnect(this);
-                } catch (PeerIsSlowToReadException e2) {
-                    dispatcher.registerChannel(this, IOOperation.WRITE);
-                }
-                return true;
-            });
+            retryProcessor = processor;
+            rescheduleContext.reschedule(this);
         } catch (PeerDisconnectedException ignore) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException e) {
             dispatcher.registerChannel(this, IOOperation.WRITE);
         }
+    }
+
+    public boolean tryRerun() {
+        if (retryProcessor != null) {
+            try {
+                retryProcessor.onRequestComplete(this);
+            } catch (EntryUnavailableException e2) {
+                return false;
+            } catch (PeerDisconnectedException ignore) {
+                dispatcher.disconnect(this);
+            } catch (PeerIsSlowToReadException e2) {
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+            }
+        }
+        return true;
     }
 
     private void handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
@@ -375,19 +378,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         processor.onRequestComplete(this);
                         resumeProcessor = null;
                     } catch (EntryUnavailableException e) {
-                        HttpRequestProcessor finalProcessor = processor;
-                        rescheduleContext.reschedule(() -> {
-                            try {
-                                finalProcessor.onRequestComplete(this);
-                            }  catch (EntryUnavailableException e2) {
-                                return false;
-                            } catch (PeerDisconnectedException ignore) {
-                                dispatcher.disconnect(this);
-                            } catch (PeerIsSlowToReadException e2) {
-                                dispatcher.registerChannel(this, IOOperation.WRITE);
-                            }
-                            return true;
-                        });
+                        retryProcessor = processor;
+                        rescheduleContext.reschedule(this);
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this);
                     } catch (PeerIsSlowToReadException ignore) {

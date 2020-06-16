@@ -58,6 +58,24 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private final String RequestHeaders = "Host: localhost:9000\r\n" +
+            "Connection: keep-alive\r\n" +
+            "Accept: */*\r\n" +
+            "X-Requested-With: XMLHttpRequest\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+            "Sec-Fetch-Site: same-origin\r\n" +
+            "Sec-Fetch-Mode: cors\r\n" +
+            "Referer: http://localhost:9000/index.html\r\n" +
+            "Accept-Encoding: gzip, deflate, br\r\n" +
+            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+            "\r\n";
+    private final String ResponseHeaders = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Keep-Alive: timeout=5, max=10000\r\n" +
+            "\r\n";
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
@@ -4127,31 +4145,15 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryParallelInserts() throws Exception {
-        testJsonQuery0(1, engine -> {
-
+    public void testInsertWaitsWhenWriterLocked() throws Exception {
+        final int parallelCount = 2;
+        testJsonQuery0(parallelCount, engine -> {
             // create table
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
                             "0c\r\n" +
                             "{\"ddl\":\"OK\"}\r\n" +
                             "00\r\n" +
@@ -4164,9 +4166,9 @@ public class IODispatcherTest {
 
             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
 
-            int parallelCount = 1, insertCount = 500;
+            final int insertCount = 500;
             CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-            for(int i = 0; i < parallelCount; i++) {
+            for (int i = 0; i < parallelCount; i++) {
                 new Thread(() -> {
                     try {
                         for (int r = 0; r < insertCount; r++) {
@@ -4175,24 +4177,8 @@ public class IODispatcherTest {
                                 sendAndReceive(
                                         NetworkFacadeImpl.INSTANCE,
                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                "Host: localhost:9000\r\n" +
-                                                "Connection: keep-alive\r\n" +
-                                                "Accept: */*\r\n" +
-                                                "X-Requested-With: XMLHttpRequest\r\n" +
-                                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                                "Sec-Fetch-Site: same-origin\r\n" +
-                                                "Sec-Fetch-Mode: cors\r\n" +
-                                                "Referer: http://localhost:9000/index.html\r\n" +
-                                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                                "\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                                "\r\n" +
+                                                RequestHeaders,
+                                        ResponseHeaders +
                                                 "0c\r\n" +
                                                 "{\"ddl\":\"OK\"}\r\n" +
                                                 "00\r\n" +
@@ -4212,37 +4198,20 @@ public class IODispatcherTest {
                 }).start();
             }
 
-            boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
+            boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
 
-            // Cairo engine should no allow second writer to be opened on the same table
+            // Cairo engine should not allow second writer to be opened on the same table
             // Cairo is expected to have finished == false
-            if (!finished) {
-                writer.close();
-                countDownLatch.await();
-            }
+            Assert.assertFalse(finished);
+            writer.close();
+            countDownLatch.await();
 
             // check if we have parallelCount x insertCount  records
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
                             "014c\r\n" +
                             "{\"query\":\"\\n\\nselect count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]]}\r\n" +
                             "00\r\n" +
@@ -4252,10 +4221,82 @@ public class IODispatcherTest {
                     true,
                     false
             );
-
         });
     }
 
+    @Test
+    public void testInsertsNotPerformedWhenWriterLockedAndDisconnected() throws Exception {
+        for(int p = 1; p < 5; p++) {
+            final int parallelCount = p;
+            testJsonQuery0(parallelCount, engine -> {
+                // create table
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                RequestHeaders,
+                        ResponseHeaders +
+                                "0c\r\n" +
+                                "{\"ddl\":\"OK\"}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        true,
+                        false
+                );
+
+                TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
+                CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                Thread[] threads = new Thread[parallelCount];
+                for (int i = 0; i < parallelCount; i++) {
+                    threads[i] = new Thread(() -> {
+                        try {
+                            // insert one record
+                            try {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                RequestHeaders,
+                                        "",
+                                        1,
+                                        100,
+                                        false,
+                                        false
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                            }
+                        } finally {
+                            countDownLatch.countDown();
+                        }
+                    });
+                    threads[i].start();
+                }
+
+                countDownLatch.await();
+
+                // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
+                writer.close();
+
+                // check if we have parallelCount x insertCount  records
+                int expectedCount = 0;
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                                RequestHeaders,
+                        ResponseHeaders +
+                                "014c\r\n" +
+                                "{\"query\":\"\\n\\nselect count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + expectedCount + "]]}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        true,
+                        false
+                );
+            });
+        }
+    }
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
@@ -4413,6 +4454,44 @@ public class IODispatcherTest {
                             LOG.error().$("disconnected?").$();
                             Assert.fail();
                         }
+                    }
+                } finally {
+                    Unsafe.free(ptr, len);
+                }
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
+    private void sendAndAbort(
+            NetworkFacade nf,
+            String request
+    ) throws InterruptedException {
+        long fd = nf.socketTcp(true);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            try {
+                Assert.assertTrue(fd > -1);
+                Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+                final int len = request.length() * 2;
+                long ptr = Unsafe.malloc(len);
+                try {
+                    int sent = 0;
+                    int reqLen = request.length();
+                    Chars.asciiStrCpy(request, reqLen, ptr);
+                    while (sent < reqLen) {
+                        int n = nf.send(fd, ptr + sent, reqLen - sent);
+                        if (n < 0) {
+                            int i = 0;
+
+                        }
+                        Assert.assertTrue(n > -1);
+                        sent += n;
                     }
                 } finally {
                     Unsafe.free(ptr, len);

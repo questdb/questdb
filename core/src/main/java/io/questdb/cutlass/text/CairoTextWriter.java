@@ -164,7 +164,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext
     ) {
-        engine.creatTable(
+        engine.createTable(
                 cairoSecurityContext,
                 appendMemory,
                 path,

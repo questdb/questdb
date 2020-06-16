@@ -245,6 +245,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
+            LOG.info().$("Resource busy, will retry");
             throw e;
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);

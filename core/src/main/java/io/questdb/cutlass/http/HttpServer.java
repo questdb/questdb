@@ -77,7 +77,12 @@ public class HttpServer implements Closeable {
         );
         pool.assign(dispatcher);
 
-        RescheduleContext rescheduleContext = retry -> retries.push(retry);
+        RescheduleContext rescheduleContext = retry ->
+        {
+            synchronized (retries) {
+                retries.push(retry);
+            }
+        };
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
@@ -91,16 +96,18 @@ public class HttpServer implements Closeable {
                     boolean useful = dispatcher.processIOQueue(processor);
 
                     // Run retries
-                    int retriesDepth = retries.size();
-                    for (int i = 0; i < retriesDepth; i++) {
-                        Retry r = retries.pop();
-                        if (r != null) {
-                            boolean processed = r.run();
-                            if (!processed) {
-                                // Add to back of the queue if not done
-                                retries.push(r);
+                    synchronized (retries) {
+                        int retriesDepth = retries.size();
+                        for (int i = 0; i < retriesDepth; i++) {
+                            Retry r = retries.pop();
+                            if (r != null) {
+                                boolean processed = r.tryRerun();
+                                if (!processed) {
+                                    // Add to back of the queue if not done
+                                    retries.push(r);
+                                }
+                                useful |= processed;
                             }
-                            useful |= processed;
                         }
                     }
                     return useful;
