@@ -72,7 +72,7 @@ const formatTiming = (nanos: number) => {
 }
 
 const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const handleClick = useCallback(() => {
     setExpanded(!expanded)
   }, [expanded])
@@ -81,7 +81,7 @@ const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
     <Wrapper _height={95} duration={TransitionDuration.FAST}>
       <div>
         <Text color="draculaForeground">
-          {rowCount} row{rowCount > 1 ? "s" : ""} in&nbsp;
+          {rowCount.toLocaleString()} row{rowCount > 1 ? "s" : ""} in&nbsp;
           {formatTiming(fetch)}&nbsp;
         </Text>
         (

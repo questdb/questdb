@@ -33,6 +33,10 @@
 .qg-header-row {
   overflow: hidden;
   height: 33px;
+
+  .qg-header:last-child {
+    margin-right: 10px;
+  }
 }
 
 .qg-header-row,
@@ -96,7 +100,6 @@
 
 .qg-canvas {
   position: relative;
-  overflow: hidden;
   width: 100%;
 }
 

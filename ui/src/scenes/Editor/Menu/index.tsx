@@ -156,7 +156,7 @@ const Menu = () => {
           trigger={
             <QueryPickerButton onClick={handleClick}>
               <Add size="18px" />
-              <span>Saved queries</span>
+              <span>Example queries</span>
             </QueryPickerButton>
           }
         >
