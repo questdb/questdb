@@ -91,7 +91,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>prepare-package</phase>
+                        <phase>generate-sources</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
@@ -107,7 +107,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>prepare-package</phase>
+                        <phase>generate-sources</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
