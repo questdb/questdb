@@ -136,6 +136,15 @@ public final class Net {
 
     public native static int getTcpNoDelay(long fd);
 
+    /**
+     * 
+     * This method reads 1 byte (or none if the socket is non blocking and there is no data).
+     * If there is no error (EOF ?) then it returns false
+     * If there is an error (EOF ?) then it returns true
+     * 
+     * @param fd
+     * @return
+     */
     public static native boolean isDead(long fd);
 
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
@@ -172,6 +181,8 @@ public final class Net {
     }
 
     public static native int recv(long fd, long ptr, int len);
+
+    public static native int peek(long fd, long ptr, int len);
 
     public static native int recvmmsg(long fd, long msgvec, int vlen);
 

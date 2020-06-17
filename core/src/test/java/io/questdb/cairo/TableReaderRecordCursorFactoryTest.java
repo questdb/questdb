@@ -113,6 +113,8 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                             engine).with(
                             AllowAllCairoSecurityContext.INSTANCE,
                             new BindVariableService(),
+                                    null,
+                                    -1,
                             null
                     );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

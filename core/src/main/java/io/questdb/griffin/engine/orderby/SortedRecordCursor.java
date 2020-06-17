@@ -29,7 +29,8 @@ import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -81,34 +82,22 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void of(RecordCursor base) {
-        of(base, Long.MAX_VALUE);
-    }
-
-    public void of(RecordCursor base, long maxSize) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         try {
-            if (maxSize > base.size()) {
-                this.chainCursor = chain.getCursor(base);
-                final Record record = base.getRecord();
+            this.chainCursor = chain.getCursor(base);
+            final Record record = base.getRecord();
+            SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
 
-                long nRows = 0;
-                chain.clear();
-                while (base.hasNext()) {
-                    if (nRows < maxSize) {
-                        nRows++;
-                        // Tree chain is liable to re-position record to
-                        // other rows to do record comparison. We must use our
-                        // own record instance in case base cursor keeps
-                        // state in the record it returns.
-                        chain.put(record);
-                    } else {
-                        throw LimitOverflowException.instance(maxSize);
-                    }
-                }
-                chainCursor.toTop();
-            } else {
-                throw LimitOverflowException.instance(maxSize);
+            chain.clear();
+            while (base.hasNext()) {
+                interruptor.checkInterrupted();
+                // Tree chain is liable to re-position record to
+                // other rows to do record comparison. We must use our
+                // own record instance in case base cursor keeps
+                // state in the record it returns.
+                chain.put(record);
             }
+            chainCursor.toTop();
         } catch (CairoException ex) {
             base.close();
             throw ex;

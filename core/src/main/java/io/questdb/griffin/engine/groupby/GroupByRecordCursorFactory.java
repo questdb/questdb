@@ -100,11 +100,10 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
-            dataMap.setMaxSize(executionContext.getCairoSecurityContext().getMaxInMemoryRows());
-
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
             while (baseCursor.hasNext()) {
+                executionContext.getSqlExecutionInterruptor().checkInterrupted();
                 final MapKey key = dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();

@@ -48,8 +48,8 @@ public class QMapReadBenchmark {
     private static final double loadFactor = 0.5;
     private static final int M = 25;
     private static final Rnd rnd = new Rnd();
-    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
-    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
+    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

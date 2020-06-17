@@ -54,4 +54,6 @@ public interface SqlExecutionContext {
     CairoEngine getCairoEngine();
 
     long getRequestFd();
+
+    SqlExecutionInterruptor getSqlExecutionInterruptor();
 }

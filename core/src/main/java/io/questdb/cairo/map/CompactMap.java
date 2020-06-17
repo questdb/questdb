@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -134,13 +139,14 @@ public class CompactMap implements Map {
     private long keyCapacity;
     private long mask;
     private long size;
-    private long maxSize = Long.MAX_VALUE;
+    private int nResizes;
+    private final int maxResizes;
 
-    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
+    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction) {
+    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes) {
         this.entries = new VirtualMemory(pageSize);
         this.entrySlots = new VirtualMemory(pageSize);
         try {
@@ -155,6 +161,8 @@ public class CompactMap implements Map {
             this.value = new CompactMapValue(entries, columnOffsets);
             this.record = new CompactMapRecord(entries, columnOffsets, value);
             this.cursor = new CompactMapCursor(record);
+            nResizes = 0;
+            this.maxResizes = maxResizes;
         } catch (CairoException e) {
             Misc.free(this.entries);
             Misc.free(entrySlots);
@@ -274,11 +282,6 @@ public class CompactMap implements Map {
 
     long getAppendOffset() {
         return currentEntryOffset + currentEntrySize;
-    }
-
-    @Override
-    public void setMaxSize(long maxSize) {
-        this.maxSize = maxSize;
     }
 
     @FunctionalInterface
@@ -592,21 +595,25 @@ public class CompactMap implements Map {
         }
 
         private void grow() {
-            // resize offsets virtual memory
-            long appendPosition = entries.getAppendOffset();
-            try {
-                keyCapacity = keyCapacity * 2;
-                configureCapacity();
-                long target = size;
-                long offset = 0L;
-                while (target > 0) {
-                    final long entrySize = getEntrySize(offset);
-                    rehashEntry(offset, entrySize);
-                    offset += entrySize;
-                    target--;
+            if (nResizes < maxResizes) {
+                // resize offsets virtual memory
+                long appendPosition = entries.getAppendOffset();
+                try {
+                    keyCapacity = keyCapacity * 2;
+                    configureCapacity();
+                    long target = size;
+                    long offset = 0L;
+                    while (target > 0) {
+                        final long entrySize = getEntrySize(offset);
+                        rehashEntry(offset, entrySize);
+                        offset += entrySize;
+                        target--;
+                    }
+                } finally {
+                    entries.jumpTo(appendPosition);
                 }
-            } finally {
-                entries.jumpTo(appendPosition);
+            } else {
+                throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in CompactMap");
             }
         }
 
@@ -670,27 +677,23 @@ public class CompactMap implements Map {
         }
 
         private CompactMapValue putNewEntryAt(long slot, byte flag) {
-            if (size < maxSize) {
-                // entry size is now known
-                // values are always fixed size and already accounted for
-                // so go ahead and finalize
-                entries.putByte(currentEntryOffset, flag);
-                entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
-                entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
+            // entry size is now known
+            // values are always fixed size and already accounted for
+            // so go ahead and finalize
+            entries.putByte(currentEntryOffset, flag);
+            entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
+            entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
 
-                if (++size == keyCapacity) {
-                    // reached capacity?
-                    // no need to populate slot, grow() will do the job for us
-                    grow();
-                } else {
-                    setOffsetAt(slot, currentEntryOffset);
-                }
-                // this would be offset of entry values
-                value.of(currentEntryOffset, true);
-                return value;
+            if (++size == keyCapacity) {
+                // reached capacity?
+                // no need to populate slot, grow() will do the job for us
+                grow();
             } else {
-                throw LimitOverflowException.instance(maxSize);
+                setOffsetAt(slot, currentEntryOffset);
             }
+            // this would be offset of entry values
+            value.of(currentEntryOffset, true);
+            return value;
         }
 
         private void rehashEntry(long entryOffset, long currentEntrySize) {

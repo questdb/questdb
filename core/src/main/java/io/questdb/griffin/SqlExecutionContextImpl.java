@@ -46,6 +46,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
     private long requestFd = -1;
+    private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
 
     public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
         this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
@@ -115,8 +116,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return requestFd;
     }
 
-    public void setRequestFd(long requestFd) {
-        this.requestFd = requestFd;
+    @Override
+    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
+        return interruptor;
     }
 
     public SqlExecutionContextImpl with(
@@ -127,6 +129,28 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        return this;
+    }
+
+    public SqlExecutionContextImpl with(
+            long requestFd
+    ) {
+        this.requestFd = requestFd;
+        return this;
+    }
+
+    public SqlExecutionContextImpl with(
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd,
+            long requestFd,
+            @Nullable SqlExecutionInterruptor interruptor
+    ) {
+        this.cairoSecurityContext = cairoSecurityContext;
+        this.bindVariableService = bindVariableService;
+        this.random = rnd;
+        this.requestFd = requestFd;
+        this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
     }
 }

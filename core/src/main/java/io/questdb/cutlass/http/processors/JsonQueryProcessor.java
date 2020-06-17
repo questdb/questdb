@@ -94,8 +94,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // do not set random for new request to avoid copying random from previous request into next one
         // the only time we need to copy random from state is when we resume request execution
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
-        sqlExecutionContext.setRequestFd(context.getFd());
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), context.getSqlExecutionInterruptor());
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
@@ -161,8 +160,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd());
-            sqlExecutionContext.setRequestFd(context.getFd());
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), context.getSqlExecutionInterruptor());
             doResumeSend(state, context);
         }
     }
@@ -354,7 +352,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.error().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$();
+        if (e instanceof CairoException && ((CairoException) e).isInterruption()) {
+            state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+        } else {
+            state.error().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
+        }
         sendException(socket, 0, message, 500, state.getQuery(), configuration.getKeepAliveHeader());
     }
 

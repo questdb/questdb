@@ -218,7 +218,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void close() {
         clear();
         this.fd = -1;
-        sqlExecutionContext.setRequestFd(-1);
+        sqlExecutionContext.with(null, null, null, -1, null);
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
@@ -328,7 +328,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
         this.fd = clientFd;
-        sqlExecutionContext.setRequestFd(clientFd);
+        sqlExecutionContext.with(clientFd);
         this.dispatcher = dispatcher;
         clear();
         return this;
@@ -835,7 +835,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();

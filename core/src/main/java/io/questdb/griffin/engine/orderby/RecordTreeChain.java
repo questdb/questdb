@@ -60,10 +60,11 @@ public class RecordTreeChain implements Closeable, Mutable {
             RecordSink recordSink,
             RecordComparator comparator,
             long keyPageSize,
+            int keyMaxPages,
             long valuePageSize
     ) {
         this.comparator = comparator;
-        this.mem = new MemoryPages(keyPageSize);
+        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
         this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize);
         this.recordChainRecord = this.recordChain.getRecordB();
     }

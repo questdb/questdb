@@ -221,7 +221,17 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public long getMaxInMemoryRows() {
-        return Long.MAX_VALUE;
+    public boolean isInterruptOnClosedConnection() {
+        return true;
+    }
+
+    @Override
+    public int getInterruptorNIterationsPerCheck() {
+        return 5;
+    }
+
+    @Override
+    public int getInterruptorBufferSize() {
+        return 64;
     }
 }

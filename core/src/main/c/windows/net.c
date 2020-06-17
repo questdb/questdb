@@ -214,6 +214,25 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
     return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
+        (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
+    const int n = recv((SOCKET) fd, (char *) addr, len, MSG_PEEK);
+    if (n > 0) {
+        return n;
+    }
+
+    if (n == 0) {
+        return com_questdb_network_Net_EOTHERDISCONNECT;
+    }
+
+    if (WSAGetLastError() == WSAEWOULDBLOCK) {
+        return com_questdb_network_Net_ERETRY;
+    }
+
+    SaveLastError();
+    return com_questdb_network_Net_EOTHERDISCONNECT;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;

@@ -66,23 +66,26 @@ public class FastMap implements Map {
     private int keyCapacity;
     private int size = 0;
     private int mask;
-    private long maxSize = Long.MAX_VALUE;
+    private int nResizes;
+    private final int maxResizes;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    int keyCapacity,
-                   double loadFactor
+            double loadFactor,
+            int maxResizes
     ) {
-        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH);
+        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    @Transient @Nullable ColumnTypes valueTypes,
                    int keyCapacity,
-                   double loadFactor
+            double loadFactor,
+            int maxResizes
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
     FastMap(int pageSize,
@@ -90,7 +93,8 @@ public class FastMap implements Map {
             @Transient ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
-            HashFunction hashFunction
+            HashFunction hashFunction,
+            int maxResizes
 
     ) {
         assert pageSize > 3;
@@ -108,6 +112,8 @@ public class FastMap implements Map {
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(-1);
         this.hashFunction = hashFunction;
+        this.nResizes = 0;
+        this.maxResizes = maxResizes;
 
         int[] valueOffsets;
         int offset = 4;
@@ -228,11 +234,6 @@ public class FastMap implements Map {
     }
 
     @Override
-    public void setMaxSize(long maxSize) {
-        this.maxSize = maxSize;
-    }
-
-    @Override
     public long size() {
         return size;
     }
@@ -249,17 +250,13 @@ public class FastMap implements Map {
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
-        if (size < maxSize) {
-            kPos = keyWriter.appendAddress;
-            offsets.set(index, keyWriter.startAddress - kStart);
-            if (--free == 0) {
-                rehash();
-            }
-            size++;
-            return value.of(keyWriter.startAddress, true);
-        } else {
-            throw LimitOverflowException.instance(maxSize);
+        kPos = keyWriter.appendAddress;
+        offsets.set(index, keyWriter.startAddress - kStart);
+        if (--free == 0) {
+            rehash();
         }
+        size++;
+        return value.of(keyWriter.startAddress, true);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -346,28 +343,33 @@ public class FastMap implements Map {
     }
 
     private void resize(int size) {
-        long kCapacity = (kLimit - kStart) << 1;
-        long target = key.appendAddress + size - kStart;
-        if (kCapacity < target) {
-            kCapacity = Numbers.ceilPow2(target);
+        if (nResizes < maxResizes) {
+            nResizes++;
+            long kCapacity = (kLimit - kStart) << 1;
+            long target = key.appendAddress + size - kStart;
+            if (kCapacity < target) {
+                kCapacity = Numbers.ceilPow2(target);
+            }
+            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
+    
+            this.capacity = kCapacity;
+            long d = kAddress - this.kStart;
+            kPos += d;
+            long colOffsetDelta = key.nextColOffset - key.startAddress;
+            key.startAddress += d;
+            key.appendAddress += d;
+            key.nextColOffset = key.startAddress + colOffsetDelta;
+    
+            assert kPos > 0;
+            assert key.startAddress > 0;
+            assert key.appendAddress > 0;
+            assert key.nextColOffset > 0;
+    
+            this.kStart = kAddress;
+            this.kLimit = kAddress + kCapacity;
+        } else {
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
-        long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
-
-        this.capacity = kCapacity;
-        long d = kAddress - this.kStart;
-        kPos += d;
-        long colOffsetDelta = key.nextColOffset - key.startAddress;
-        key.startAddress += d;
-        key.appendAddress += d;
-        key.nextColOffset = key.startAddress + colOffsetDelta;
-
-        assert kPos > 0;
-        assert key.startAddress > 0;
-        assert key.appendAddress > 0;
-        assert key.nextColOffset > 0;
-
-        this.kStart = kAddress;
-        this.kLimit = kAddress + kCapacity;
     }
 
     @FunctionalInterface

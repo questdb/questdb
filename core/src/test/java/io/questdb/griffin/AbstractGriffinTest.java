@@ -104,6 +104,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         .with(
                                 AllowAllCairoSecurityContext.INSTANCE,
                                 bindVariableService,
+                                null,
+                                -1,
                                 null);
         bindVariableService.clear();
     }
@@ -547,14 +549,27 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
-        assertQuery(expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
+        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        assertQuery(expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext, true);
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext)
+            throws SqlException {
+        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext, true);
+    }
+
+    protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext)
+            throws SqlException {
+        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext, true);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean checkSameStr)
+            throws SqlException {
+        assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext, checkSameStr);
+    }
+
+    protected void assertQuery(
+            SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean checkSameStr
+    )
             throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr);

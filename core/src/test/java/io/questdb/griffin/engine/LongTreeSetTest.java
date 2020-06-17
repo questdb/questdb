@@ -24,18 +24,25 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.griffin.engine.table.LongTreeSet;
-import io.questdb.std.LongList;
-import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import io.questdb.griffin.engine.table.LongTreeSet;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
+
 public class LongTreeSetTest {
+    // To instantiate a logger to prevent memory leaks from being detected
+    @SuppressWarnings("unused")
+    private static final Log LOG = LogFactory.getLog(LongTreeSetTest.class);
+
     @Test
     public void testDuplicateValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LongTreeSet set = new LongTreeSet(1024)) {
+            try (LongTreeSet set = new LongTreeSet(1024, 1)) {
                 set.put(1);
                 set.put(2);
                 set.put(2);
@@ -59,7 +66,7 @@ public class LongTreeSetTest {
     @Test
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LongTreeSet set = new LongTreeSet(1024 * 1024)) {
+            try (LongTreeSet set = new LongTreeSet(1024 * 1024, 1)) {
                 doTestSimple(set);
                 set.clear();
                 doTestSimple(set);
