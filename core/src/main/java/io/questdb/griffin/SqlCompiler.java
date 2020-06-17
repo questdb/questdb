@@ -910,6 +910,9 @@ public class SqlCompiler implements Closeable {
             if (metadata.getColumnIndexQuiet(tok) > -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
+            if (Chars.contains(tok, "\\") || Chars.contains(tok, ".") || Chars.contains(tok, "/")) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters '\\', '.' or '/'");
+            }
             CharSequence newName = GenericLexer.immutableOf(tok);
 
             try {

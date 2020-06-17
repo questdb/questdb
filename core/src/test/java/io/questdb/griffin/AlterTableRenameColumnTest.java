@@ -196,7 +196,6 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
         });
     }
 
-
     @Test
     public void testExpectActionKeyword() throws Exception {
         assertFailure("alter table x", 13, "'add', 'alter' or 'drop' expected");
@@ -225,6 +224,31 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     @Test
     public void testTableDoesNotExist() throws Exception {
         assertFailure("alter table y", 12, "table 'y' does not");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName() throws Exception {
+        assertFailure("alter table x rename column e to z/ssd", 34, "',' expected");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName2() throws Exception {
+        assertFailure("alter table x rename column e to //", 33, "new column name contains invalid characters '\\', '.' or '/'");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName3() throws Exception {
+        assertFailure("alter table x rename column e to ..", 33, "new column name contains invalid characters '\\', '.' or '/'");
+     }
+
+    @Test
+    public void testRenameColumnWithBadName4() throws Exception {
+        assertFailure("alter table x rename column e to a.", 34, "',' expected");
+    }
+
+    @Test
+    public void testRenameColumnWithForwardSlashName() throws Exception {
+        assertFailure("alter table x rename column e to .", 33, "new column name contains invalid characters '\\', '.' or '/'");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

@@ -724,7 +724,7 @@ public class TableWriter implements Closeable {
             // remove _todo
             removeTodoFile();
 
-            // remove column files has to be done after _todo is removed
+            // rename column files has to be done after _todo is removed
             renameColumnFiles(currentName, newName, type);
         } catch (CairoException err) {
             throwDistressException(err);
