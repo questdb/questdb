@@ -39,7 +39,7 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
             return;
         }
         if (nRead < 0) {
-            throw CairoException.instance(0).put("Interrupting SQL processing, client fd ").put(fd).put(" is closed");
+            throw CairoException.instance(0).put("client fd ").put(fd).put(" is closed").setInterruption(true);
         }
 
         int index = 0;
