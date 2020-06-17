@@ -139,7 +139,7 @@ mvn clean package -DskipTests
 # replace the value with an actual directory name, example "out"
 mkdir <root_dir>
 
-java -p core/target/core-4.3.0-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
+java -p core/target/core-5.0.1-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
 
 QuestDB will start an HTTP server with the web console available at
