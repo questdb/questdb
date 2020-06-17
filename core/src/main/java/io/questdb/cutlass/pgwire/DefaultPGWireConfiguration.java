@@ -154,4 +154,5 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     public TimestampLocale getDefaultTimestampLocale() {
         return TimestampFormatUtils.enLocale;
     }
+
 }

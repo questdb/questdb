@@ -150,13 +150,19 @@ public class ServerMain {
                 messageBus
         );
 
-        final PGWireServer pgWireServer = PGWireServer.create(
-                configuration.getPGWireConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                messageBus
-        );
+        final PGWireServer pgWireServer;
+
+        if (configuration.getPGWireConfiguration().isEnabled()) {
+            pgWireServer = PGWireServer.create(
+                    configuration.getPGWireConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine,
+                    messageBus
+            );
+        } else {
+            pgWireServer = null;
+        }
 
         final AbstractLineProtoReceiver lineProtocolReceiver;
 
