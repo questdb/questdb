@@ -9,18 +9,17 @@ endif ($ENV{JAVA_HOME})
 set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
-        src/main/c/share/rosti.h
+        src/main/c/share/vec_ts_agg.cpp
 )
 
 set(
         VCL_FILES_SSE2
-        src/main/c/share/rosti.h
+        src/main/c/share/vcl/instrset_detect.cpp
         src/main/c/share/rosti.cpp
-        src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/vec_agg_vanilla.cpp
         src/main/c/share/vec_agg.cpp
-        src/main/c/share/vcl/instrset_detect.cpp
         src/main/c/share/vec_int_key_agg.cpp
+        src/main/c/share/vec_ts_agg.cpp
 )
 
 set(

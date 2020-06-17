@@ -25,6 +25,6 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 @FunctionalInterface
-public interface VectorAggregateFunctionConstructor {
-    VectorAggregateFunction create(int position, int keyKind, int columnIndex, int workerCount);
+interface KeyValueFunc {
+    void run(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 }

@@ -61,6 +61,8 @@ public final class Rosti {
 
     public static native void keyedIntDistinct(long pRosti, long pKeys, long count);
 
+    public static native void keyedHourDistinct(long pRosti, long pKeys, long count);
+
     public static native void keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
 
     public static native void keyedIntCount(long pRosti, long pKeys, long count, int valueOffset);
@@ -69,6 +71,8 @@ public final class Rosti {
 
     // sum double
     public static native void keyedIntSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -79,12 +83,16 @@ public final class Rosti {
     // ksum double
     public static native void keyedIntKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedHourKSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedIntKSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native void keyedIntKSumDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
     // nsum double
     public static native void keyedIntNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntNSumDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -93,12 +101,16 @@ public final class Rosti {
     // min double
     public static native void keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedHourMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedIntMinDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native void keyedIntMinDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull);
 
     // max double
     public static native void keyedIntMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourMaxDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntMaxDoubleMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -107,10 +119,14 @@ public final class Rosti {
     // sum int
     public static native void keyedIntSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedHourSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedIntSumIntMerge(long pRostiA, long pRostiB, int valueOffset);
 
     // min int
     public static native void keyedIntMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntMinIntMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -119,12 +135,16 @@ public final class Rosti {
     // max int
     public static native void keyedIntMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedHourMaxInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedIntMaxIntMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native void keyedIntMaxIntWrapUp(long pRosti, int valueOffset, int valueAtNull);
 
     // sum long
     public static native void keyedIntSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntSumLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -136,12 +156,16 @@ public final class Rosti {
     // min long
     public static native void keyedIntMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedHourMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedIntMinLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native void keyedIntMinLongWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
     // max long
     public static native void keyedIntMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntMaxLongMerge(long pRostiA, long pRostiB, int valueOffset);
 

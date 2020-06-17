@@ -2126,7 +2126,7 @@ static inline Vec32s divide_by_i(Vec32s const x) {
         // d is a power of 2. use shift
         constexpr int k = bit_scan_reverse_const(uint32_t(d1));
         __m512i sign;
-        if (k > 1) sign = _mm512_srai_epi16(x, abs(k-1)); else sign = x;  // k copies of sign bit
+        if (k > 1) sign = _mm512_srai_epi16(x, std::abs(k-1)); else sign = x;  // k copies of sign bit
         __m512i bias    = _mm512_srli_epi16(sign, 16-k);             // bias = x >= 0 ? 0 : k-1
         __m512i xpbias  = _mm512_add_epi16 (x, bias);                // x + bias
         __m512i q       = _mm512_srai_epi16(xpbias, k);              // (x + bias) >> k

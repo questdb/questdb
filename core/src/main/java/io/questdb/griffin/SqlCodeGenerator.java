@@ -128,6 +128,7 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempSymbolSkewIndexes = new IntList();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempAggIndex = new IntList();
+    public static final int GKK_VANILLA_INT = 0;
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private boolean fullFatJoins = false;
@@ -522,50 +523,7 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
-    private boolean assembleKeysAndFunctionReferences(
-            ObjList<QueryColumn> columns,
-            RecordMetadata metadata,
-            boolean checkLiterals
-    ) {
-        tempVaf.clear();
-        tempMetadata.clear();
-        tempSymbolSkewIndexes.clear();
-        tempVecConstructors.clear();
-        tempVecConstructorArgIndexes.clear();
-        tempAggIndex.clear();
-
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            final ExpressionNode ast = qc.getAst();
-            if (ast.type == LITERAL) {
-                if (checkLiterals) {
-                    final int columnIndex = metadata.getColumnIndex(ast.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.INT) {
-                        tempKeyIndexesInBase.add(columnIndex);
-                        tempKeyIndex.add(i);
-                        arrayColumnTypes.add(ColumnType.INT);
-                    } else if (type == ColumnType.SYMBOL) {
-                        tempKeyIndexesInBase.add(columnIndex);
-                        tempKeyIndex.add(i);
-                        tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
-                        arrayColumnTypes.add(ColumnType.SYMBOL);
-                    } else {
-                        return false;
-                    }
-                }
-            } else {
-                final VectorAggregateFunctionConstructor constructor = assembleFunctionReference(metadata, ast);
-                if (constructor != null) {
-                    tempVecConstructors.add(constructor);
-                    tempAggIndex.add(i);
-                } else {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
+    public static final int GKK_HOUR_INT = 1;
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
@@ -1523,6 +1481,55 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
+    private final IntList tempKeyKinds = new IntList();
+
+    private boolean assembleKeysAndFunctionReferences(
+            ObjList<QueryColumn> columns,
+            RecordMetadata metadata,
+            boolean checkLiterals
+    ) {
+        tempVaf.clear();
+        tempMetadata.clear();
+        tempSymbolSkewIndexes.clear();
+        tempVecConstructors.clear();
+        tempVecConstructorArgIndexes.clear();
+        tempAggIndex.clear();
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            final ExpressionNode ast = qc.getAst();
+            if (ast.type == LITERAL) {
+                if (checkLiterals) {
+                    final int columnIndex = metadata.getColumnIndex(ast.token);
+                    final int type = metadata.getColumnType(columnIndex);
+                    if (type == ColumnType.INT) {
+                        tempKeyIndexesInBase.add(columnIndex);
+                        tempKeyIndex.add(i);
+                        arrayColumnTypes.add(ColumnType.INT);
+                        tempKeyKinds.add(GKK_VANILLA_INT);
+                    } else if (type == ColumnType.SYMBOL) {
+                        tempKeyIndexesInBase.add(columnIndex);
+                        tempKeyIndex.add(i);
+                        tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
+                        arrayColumnTypes.add(ColumnType.SYMBOL);
+                        tempKeyKinds.add(GKK_VANILLA_INT);
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                final VectorAggregateFunctionConstructor constructor = assembleFunctionReference(metadata, ast);
+                if (constructor != null) {
+                    tempVecConstructors.add(constructor);
+                    tempAggIndex.add(i);
+                } else {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
         // fail fast if we cannot create timestamp sampler
@@ -1538,7 +1545,7 @@ public class SqlCodeGenerator implements Mutable {
             ExpressionNode columnExpr;
 
             // generate special case plan for "select count() from somewhere"
-            columns = model.getBottomUpColumns();
+            columns = model.getColumns();
             if (columns.size() == 1) {
                 CharSequence columnName = columns.getQuick(0).getName();
                 columnExpr = columns.getQuick(0).getAst();
@@ -1553,6 +1560,7 @@ public class SqlCodeGenerator implements Mutable {
             tempKeyIndexesInBase.clear();
             tempKeyIndex.clear();
             arrayColumnTypes.clear();
+            tempKeyKinds.clear();
 
             boolean pageFramingSupported;
             boolean checkFrameLiterals = true;
@@ -1562,8 +1570,8 @@ public class SqlCodeGenerator implements Mutable {
             assert nested != null;
             // check if underlying model has reference to hour(column) function
             if (nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                    && (columns = nested.getBottomUpColumns()).size() == 1
-                    && (columnExpr = columns.getQuick(0).getAst()).type == FUNCTION
+//                    && (columns = nested.getBottomUpColumns()).size() == 1
+                    && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
                     && isHourKeyword(columnExpr.token)
                     && columnExpr.paramCount == 1
                     && columnExpr.rhs.type == LITERAL
@@ -1588,7 +1596,7 @@ public class SqlCodeGenerator implements Mutable {
                         if (Chars.equals(columnExpr.token, functionColumnName)) {
                             tempKeyIndex.add(i);
                             // storage dimension for Rosti is INT when we use hour(). This function produces INT.
-                            // the
+                            tempKeyKinds.add(GKK_HOUR_INT);
                             arrayColumnTypes.add(ColumnType.INT);
                         } else {
                             // there is something else here, fallback to default implementation
@@ -1636,7 +1644,7 @@ public class SqlCodeGenerator implements Mutable {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(0, indexInBase, executionContext.getWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
                     tempVaf.add(vaf);
                     meta.add(indexInThis, new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), vaf.getType()));
                 }

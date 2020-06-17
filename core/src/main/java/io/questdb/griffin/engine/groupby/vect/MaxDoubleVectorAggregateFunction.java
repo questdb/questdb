@@ -35,6 +35,8 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MAX = Math::max;
@@ -42,11 +44,20 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
             MAX, Double.NEGATIVE_INFINITY
     );
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public MaxDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMaxDouble;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMaxDouble;
+        }
     }
 
     @Override
@@ -94,9 +105,9 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
         if (valueAddress == 0) {
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntMaxDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 

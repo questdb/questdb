@@ -35,6 +35,8 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class MaxLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
@@ -42,11 +44,20 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
             MAX, Long.MIN_VALUE
     );
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxLongVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public MaxLongVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMaxLong;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMaxLong;
+        }
     }
 
     @Override
@@ -68,9 +79,9 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
         if (valueAddress == 0) {
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntMaxLong(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 

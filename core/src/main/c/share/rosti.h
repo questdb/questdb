@@ -30,7 +30,6 @@
 #include <cstdint>
 #include "jni.h"
 
-#define VCL_NAMESPACE vcl
 #include "vcl/vectorclass.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
@@ -43,6 +42,7 @@
 
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
+
 
 using ctrl_t = signed char;
 using h2_t = uint8_t;
@@ -114,7 +114,7 @@ public:
     BitMask end() const { return BitMask(0); }
 
     int TrailingZeros() const {
-        return vcl::bit_scan_forward(mask_);
+        return bit_scan_forward(mask_);
     }
 
 private:
@@ -134,7 +134,7 @@ struct GroupSse2Impl {
 
     // Returns a bitmask representing the positions of slots that match hash.
     inline BitMask<uint32_t> Match(h2_t hash) const {
-        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(hash) == ctrl));
+        return BitMask<uint32_t>(to_bits(Vec16c(hash) == ctrl));
     }
 
     // Returns a bitmask representing the positions of empty slots.
@@ -144,10 +144,10 @@ struct GroupSse2Impl {
 
     // Returns a bitmask representing the positions of empty or deleted slots.
     BitMask<uint32_t> MatchEmptyOrDeleted() const {
-        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(kSentinel) > ctrl));
+        return BitMask<uint32_t>(to_bits(Vec16c(kSentinel) > ctrl));
     }
 
-    vcl::Vec16c ctrl;
+    Vec16c ctrl;
 };
 
 using Group = GroupSse2Impl;

@@ -35,6 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     private final int columnIndex;
@@ -42,13 +44,22 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final long[] count;
     private final int workerCount;
     private int valueOffset;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
 
-    public KSumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public KSumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourKSumDouble;
+        } else {
+            this.keyValueFunc = Rosti::keyedIntKSumDouble;
+            this.distinctFunc = Rosti::keyedIntDistinct;
+        }
     }
 
     @Override
@@ -74,9 +85,9 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
         if (valueAddress == 0) {
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntKSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 

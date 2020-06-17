@@ -35,6 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     private final int columnIndex;
@@ -45,13 +47,22 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private double transientSum;
     private double transientC;
     private long transientCount;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
 
-    public NSumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public NSumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourNSumDouble;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntNSumDouble;
+        }
     }
 
     @Override
@@ -72,9 +83,9 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
         if (valueAddress == 0) {
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntNSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 
