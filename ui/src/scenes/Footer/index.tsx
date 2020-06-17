@@ -21,12 +21,11 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 import React from "react"
 import styled from "styled-components"
-import {Github} from "@styled-icons/remix-fill/Github"
+import { Github } from "@styled-icons/remix-fill/Github"
 
-import {Link} from "components"
+import { Link } from "components"
 
 const Copyright = styled.div`
   display: flex;
@@ -43,18 +42,18 @@ const Icons = styled.div`
 
 const Footer = () => (
   <>
-      <Copyright>
-          Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
-      </Copyright>
-      <Icons>
-          <Link
-              color="draculaForeground"
-              href="https://github.com/questdb/questdb"
-              rel="noreferrer"
-              target="_blank"
-          >
-              <Github size="18px"/>
-          </Link>
+    <Copyright>
+      Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
+    </Copyright>
+    <Icons>
+      <Link
+        color="draculaForeground"
+        href="https://github.com/questdb/questdb"
+        rel="noreferrer"
+        target="_blank"
+      >
+        <Github size="18px" />
+      </Link>
     </Icons>
   </>
 )
