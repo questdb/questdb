@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -115,6 +116,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (SqlException e) {
             syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
+        } catch (EntryUnavailableException e) {
+            LOG.info().$("Resource busy, will retry");
+            throw e;
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
             readyForNextRequest(context);
@@ -318,6 +322,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 cc,
                 configuration.getKeepAliveHeader()
         );
+    }
+
+    @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        JsonQueryProcessorState state = LV.get(context);
+        if (state == null) {
+            readyForNextRequest(context);
+        }
+        execute0(state);
     }
 
     private void executeInsert(

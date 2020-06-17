@@ -22,26 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.std;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+public class ObjQueue<T> implements Mutable {
+    private final ObjArrayDequeue<T> dequeue;
 
-public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
-
-    void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
-
-    default void resumeRecv(HttpConnectionContext context) {
+    public ObjQueue() {
+        dequeue = new ObjArrayDequeue<>();
     }
 
-    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public ObjQueue(int initialCapacity) {
+        dequeue = new ObjArrayDequeue<>(initialCapacity);
     }
 
-    default void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void clear() {
+        dequeue.clear();
     }
 
-    default void parkRequest(HttpConnectionContext context) {
+    public T pop() {
+        return dequeue.popFirst();
+    }
+
+    public void push(T e) {
+        dequeue.push(e);
+    }
+
+    public int size() {
+        return dequeue.size();
     }
 }

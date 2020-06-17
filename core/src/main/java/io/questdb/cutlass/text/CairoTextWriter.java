@@ -198,7 +198,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext
     ) throws TextException {
-        engine.creatTable(
+        engine.createTable(
                 cairoSecurityContext,
                 appendMemory,
                 path,

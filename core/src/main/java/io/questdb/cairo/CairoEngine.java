@@ -76,7 +76,7 @@ public class CairoEngine implements Closeable {
         Misc.free(readerPool);
     }
 
-    public void creatTable(
+    public void createTable(
             CairoSecurityContext securityContext,
             AppendMemory mem,
             Path path,

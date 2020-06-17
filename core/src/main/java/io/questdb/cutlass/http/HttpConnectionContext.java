@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.griffin.HttpSqlExecutionInterruptor;
 import io.questdb.griffin.SqlExecutionInterruptor;
@@ -39,7 +40,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
-public class HttpConnectionContext implements IOContext, Locality, Mutable {
+public class HttpConnectionContext implements IOContext, Locality, Mutable, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
@@ -48,7 +49,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final long sendBuffer;
     private final HttpServerConfiguration configuration;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
@@ -59,6 +59,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final HttpSqlExecutionInterruptor execInterruptor;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private HttpRequestProcessor retryProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
@@ -72,7 +73,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
-        this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -94,6 +94,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.csPool.clear();
         this.localValueMap.clear();
         this.responseSink.clear();
+        this.retryProcessor = null;
     }
 
     @Override
@@ -109,7 +110,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
         LOG.debug().$("closed").$();
     }
 
@@ -120,7 +120,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
     @Override
     public boolean invalid() {
-        return this.fd == -1;
+        return retryProcessor != null || this.fd == -1;
     }
 
     @Override
@@ -153,10 +153,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getHeader();
     }
 
-    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector) {
+    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         switch (operation) {
             case IOOperation.READ:
-                handleClientRecv(selector);
+                handleClientRecv(selector, rescheduleContext);
                 break;
             case IOOperation.WRITE:
                 handleClientSend();
@@ -181,9 +181,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private void completeRequest(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
-        processor.onRequestComplete(this);
+        try {
+            processor.onRequestComplete(this);
+        } catch (EntryUnavailableException e) {
+            retryProcessor = processor;
+            rescheduleContext.reschedule(this);
+        }
     }
 
     private void consumeMultipart(
@@ -191,7 +196,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             HttpRequestProcessor processor,
             long headerEnd,
             int read,
-            boolean newRequest
+            boolean newRequest,
+            RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (newRequest) {
             processor.onHeadersReady(this);
@@ -243,7 +249,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 if (buf > start) {
                     if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
                         // request is complete
-                        completeRequest(processor);
+                        completeRequest(processor, rescheduleContext);
                         break;
                     }
 
@@ -268,7 +274,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             if (bufRemaining == 0) {
                 if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
                     // request is complete
-                    completeRequest(processor);
+                    completeRequest(processor, rescheduleContext);
                     break;
                 }
 
@@ -285,7 +291,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    private void handleClientRecv(HttpRequestProcessorSelector selector) {
+    private void handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         try {
             final long fd = this.fd;
             // this is address of where header ended in our receive buffer
@@ -340,7 +346,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     LOG.error().$("bad request [non-multipart/multipart]").$();
                     dispatcher.registerChannel(this, IOOperation.READ);
                 } else if (multipartProcessor) {
-                    consumeMultipart(fd, processor, headerEnd, read, newRequest);
+                    consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else {
 
                     // Do not expect any more bytes to be sent to us before
@@ -359,6 +365,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         resumeProcessor = null;
                     }
                 }
+            } catch (EntryUnavailableException e) {
+                retryProcessor = processor;
+                rescheduleContext.reschedule(this);
             } catch (PeerDisconnectedException e) {
                 dispatcher.disconnect(this);
             } catch (ServerDisconnectException e) {
@@ -410,5 +419,23 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
     public SqlExecutionInterruptor getSqlExecutionInterruptor() {
         return execInterruptor;
+    }
+
+    public boolean tryRerun() {
+        if (retryProcessor != null) {
+            try {
+                retryProcessor.onRequestRetry(this);
+            } catch (EntryUnavailableException e2) {
+                return false;
+            } catch (PeerDisconnectedException ignore) {
+                dispatcher.disconnect(this);
+            } catch (PeerIsSlowToReadException e2) {
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+            } catch (ServerDisconnectException e) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this);
+            }
+        }
+        return true;
     }
 }

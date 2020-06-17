@@ -28,13 +28,12 @@ import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.Job;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -44,6 +43,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.LockSupport;
 
 public class HttpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
@@ -53,6 +53,11 @@ public class HttpServer implements Closeable {
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
     private final WorkerPool workerPool;
+
+    private static final int retryQueueLength = 4096;
+    private final RingQueue<RetryHolder> retryQueue = new RingQueue<RetryHolder>(RetryHolder::new, retryQueueLength);
+    private final Sequence retryPubSequence = new MPSequence(retryQueueLength);
+    private final Sequence retrySubSequence = new MCSequence(retryQueueLength);
 
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
@@ -73,19 +78,26 @@ public class HttpServer implements Closeable {
                 configuration.getDispatcherConfiguration(),
                 httpContextFactory
         );
-
         pool.assign(dispatcher);
 
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+        retryPubSequence.then(retrySubSequence).then(retryPubSequence);
+        RescheduleContext rescheduleContext = retry -> queueRetry(retry);
+
+        for (int i = 0; i < workerCount; i++) {
             final int index = i;
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context) -> context.handleClientOperation(operation, selector);
+                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
                 public boolean run(int workerId) {
-                    return dispatcher.processIOQueue(processor);
+                    boolean useful = dispatcher.processIOQueue(processor);
+                    // Run retries
+                    if (useful) {
+                        useful |= checkReruns();
+                    }
+                    return useful ;//|| checkReruns();
                 }
             });
 
@@ -136,6 +148,78 @@ public class HttpServer implements Closeable {
         }
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
+    }
+
+    private boolean checkReruns() {
+        boolean rerunCompleted = false;
+
+        boolean firstProcessed = false;
+        while (true) {
+            long cursor = retrySubSequence.next();
+            // -2 = there was a contest for queue index and this thread has lost
+            if (cursor < -1) {
+                LockSupport.parkNanos(1);
+                continue;
+            }
+
+            // -1 = queue is empty. All done.
+            if (cursor < 0) {
+                break;
+            }
+
+            Retry toRun;
+            try {
+                toRun = retryQueue.get(cursor).retry;
+            } finally {
+                retrySubSequence.done(cursor);
+            }
+
+            if (toRun == RetryHolder.MARKER) {
+                if (!firstProcessed) {
+                    // Someone else marker stolen.
+                    // Add it back so that another thread stops at some point.
+                    queueRetry((RetryHolder.MARKER));
+                }
+                // All checked.
+                break;
+            }
+            boolean completed = toRun.tryRerun();
+            if (!completed) {
+                queueRetry(toRun);
+            }
+            rerunCompleted |= completed;
+
+            // Set a marker in the queue so that if it's found it means all elements checked.
+            if (!firstProcessed) {
+                firstProcessed = true;
+                queueRetry(RetryHolder.MARKER);
+            }
+
+        }
+        return rerunCompleted;
+    }
+
+    private void queueRetry(Retry retry) {
+        while (true) {
+            long cursor = retryPubSequence.next();
+            // -2 = there was a contest for queue index and this thread has lost
+            if (cursor < -1) {
+                LockSupport.parkNanos(1);
+                continue;
+            }
+
+            // -1 = queue is empty. It means there are already too many retries waiting
+            if (cursor < 0) {
+                throw EntryUnavailableException.INSTANCE;
+            }
+
+            try {
+                retryQueue.get(cursor).retry = retry;
+                return;
+            } finally {
+                retryPubSequence.done(cursor);
+            }
+        }
     }
 
     private static HttpServer create0(

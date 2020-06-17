@@ -29,25 +29,19 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.cairo.*;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
@@ -79,15 +73,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
-import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -96,6 +81,24 @@ import io.questdb.test.tools.TestUtils;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private final String RequestHeaders = "Host: localhost:9000\r\n" +
+            "Connection: keep-alive\r\n" +
+            "Accept: */*\r\n" +
+            "X-Requested-With: XMLHttpRequest\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+            "Sec-Fetch-Site: same-origin\r\n" +
+            "Sec-Fetch-Mode: cors\r\n" +
+            "Referer: http://localhost:9000/index.html\r\n" +
+            "Accept-Encoding: gzip, deflate, br\r\n" +
+            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+            "\r\n";
+    private final String ResponseHeaders = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Keep-Alive: timeout=5, max=10000\r\n" +
+            "\r\n";
     private static final AtomicInteger N_BYTES_RECIEVED_BY_CLIENT = new AtomicInteger();
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -287,7 +290,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -1880,7 +1883,7 @@ public class IODispatcherTest {
 					String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
 							+ "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
 							+ "Content-Type: application/json; charset=utf-8\r\n"
-							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
+							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
 					TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
 						@Override
                         public boolean onGet(Record record, int count) {
@@ -3293,7 +3296,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -3889,7 +3892,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4059,7 +4062,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4217,7 +4220,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4442,7 +4445,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
                             );
                         }
 
@@ -4574,6 +4577,284 @@ public class IODispatcherTest {
                 workerPool.start(LOG);
 
                 Thread.sleep(2000000);
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
+        for(int i = 0; i < 10; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testInsertWaitsWhenWriterLocked();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
+        for(int i = 0; i < 10; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testInsertsIsPerformedWhenWriterLockedAndDisconnected();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    public void testInsertWaitsWhenWriterLocked() throws Exception {
+        final int parallelCount = 2;
+        testJsonQuery0(parallelCount, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    true,
+                    false
+            );
+
+            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
+
+            final int insertCount = 10;
+            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+            for (int i = 0; i < parallelCount; i++) {
+                new Thread(() -> {
+                    try {
+                        for (int r = 0; r < insertCount; r++) {
+                            // insert one record
+                            try {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                RequestHeaders,
+                                        ResponseHeaders +
+                                                "0c\r\n" +
+                                                "{\"ddl\":\"OK\"}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        false
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                            }
+                        }
+                    } finally {
+                        countDownLatch.countDown();
+                    }
+                }).start();
+            }
+
+            boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+
+            // Cairo engine should not allow second writer to be opened on the same table
+            // Cairo is expected to have finished == false
+            Assert.assertFalse(finished);
+
+            writer.close();
+
+            // Since writer closed as a hacky way without any query completion.
+            // Execute a successful query to trigger re-run check.
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "70\r\n" +
+                            "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[0]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    true,
+                    false
+            );
+
+            countDownLatch.await();
+
+            // check if we have parallelCount x insertCount  records
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "71\r\n" +
+                            "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void queryAndDisconnect() throws Exception {
+        final int parallelCount = 4;
+        final int requestMult = 4;
+        testJsonQuery0(parallelCount, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    true,
+                    false
+            );
+
+            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+            Thread[] threads = new Thread[parallelCount * requestMult];
+            for (int i = 0; i < parallelCount; i++) {
+                int finalI = i;
+                threads[i] = new Thread(() -> {
+                    try {
+                        for (int j = 0; j < requestMult; j++) {
+                            // insert one record
+                            try {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                                                RequestHeaders,
+                                        "",
+                                        1,
+                                        5,
+                                        true,
+                                        false
+                                );
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /query?query=select+123,37463,38934,983,99203,102932,40954,count(*)+count123+from+balances_x&count=true HTTP/1.1\r\n" +
+                                                RequestHeaders,
+                                        "",
+                                        1,
+                                        5,
+                                        true,
+                                        false
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                            }
+                        }
+                    } finally {
+                        countDownLatch.countDown();
+                    }
+                });
+                threads[i].start();
+            }
+            countDownLatch.await();
+            Thread.sleep(1000);
+        });
+    }
+
+
+    @Test
+    public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
+        final int parallelCount = 4;
+        testJsonQuery0(parallelCount, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    true,
+                    false
+            );
+
+            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
+            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+            Thread[] threads = new Thread[parallelCount];
+            for (int i = 0; i < parallelCount; i++) {
+                int finalI = i;
+                threads[i] = new Thread(() -> {
+                    try {
+                        // insert one record
+                        try {
+                            sendAndReceive(
+                                    NetworkFacadeImpl.INSTANCE,
+                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                            RequestHeaders,
+                                    "",
+                                    1,
+                                    200,
+                                    false,
+                                    false
+                            );
+                        } catch (Exception e) {
+                            LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                        }
+                    } finally {
+                        countDownLatch.countDown();
+                    }
+                });
+                threads[i].start();
+            }
+
+            countDownLatch.await();
+
+            // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
+            writer.close();
+
+            for (int i = 0; i < 20; i++) {
+
+                try {
+                    // check if we have parallelCount x insertCount  records
+                    int expectedCount = parallelCount;
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "6f\r\n" +
+                                    "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + expectedCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            false
+                    );
+                    return;
+                } catch (ComparisonFailure e) {
+                    if (i < 9) {
+                        Thread.sleep(50);
+                    } else {
+                        throw e;
+                    }
+
+                }
             }
         });
     }
@@ -4796,7 +5077,7 @@ public class IODispatcherTest {
             String response,
             int requestCount,
             long pauseBetweenSendAndReceive,
-            boolean print,
+            boolean printOnly,
             boolean expectDisconnect
     ) throws InterruptedException {
         long fd = nf.socketTcp(true);
@@ -4812,7 +5093,7 @@ public class IODispatcherTest {
                 long ptr = Unsafe.malloc(len);
                 try {
                     for (int j = 0; j < requestCount; j++) {
-                        sendAndReceive(nf, request, pauseBetweenSendAndReceive, print, expectDisconnect, fd, expectedResponse, len, ptr, null);
+                        sendAndReceive(nf, request, pauseBetweenSendAndReceive, printOnly, expectDisconnect, fd, expectedResponse, len, ptr, null);
                     }
                 } finally {
                     Unsafe.free(ptr, len);
@@ -4859,7 +5140,7 @@ public class IODispatcherTest {
     }
 
     private void sendAndReceive(
-            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
+            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean printOnly, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
             HttpClientStateListener listener
     ) throws InterruptedException {
         if (null != listener) {
@@ -4880,34 +5161,34 @@ public class IODispatcherTest {
         // receive response
         final int expectedToReceive = expectedResponse.length;
         int received = 0;
-        if (print) {
+        if (printOnly) {
             System.out.println("expected");
             System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
         }
         boolean disconnected = false;
+        IntList receivedByteList = new IntList(expectedToReceive);
         while (received < expectedToReceive) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
-                // dump(ptr + received, n);
-                // compare bytes
                 for (int i = 0; i < n; i++) {
-                    if (print) {
-                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                    } else {
-                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
-                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                        }
-                    }
+                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
                 }
                 received += n;
-                if (null != listener) {
-                    listener.onReceived(received);
-                }
             } else if (n < 0) {
                 disconnected = true;
                 break;
             }
+        }
+        byte[] receivedBytes = new byte[receivedByteList.size()];
+        for (int i = 0; i < receivedByteList.size(); i++) {
+            receivedBytes[i] = (byte) receivedByteList.getQuick(i);
+        }
+        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
+        if (!printOnly) {
+            Assert.assertEquals(new String(expectedResponse, StandardCharsets.UTF_8), actual);
+        } else {
+            System.out.println("actual");
+            System.out.println(actual);
         }
         if (disconnected && !expectDisconnect) {
             LOG.error().$("disconnected?").$();
