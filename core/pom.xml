@@ -36,7 +36,7 @@
         <javac.target>11</javac.target>
     </properties>
 
-    <version>4.3.0-SNAPSHOT</version>
+    <version>5.0.0-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
