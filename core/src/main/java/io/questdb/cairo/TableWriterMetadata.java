@@ -109,12 +109,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         columnNameIndexMap.putAt(columnNameIndexMap.keyIndex(newName), newName, columnIndex);
         //
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
-        TableColumnMetadata newColumnMetadata = new TableColumnMetadata(Chars.toString(newName),
-                oldColumnMetadata.getType(),
-                oldColumnMetadata.isIndexed(),
-                oldColumnMetadata.getIndexValueBlockCapacity(),
-                oldColumnMetadata.isSymbolTableStatic());
-        columnMetadata.setQuick(columnIndex, newColumnMetadata);
+        oldColumnMetadata.setName(Chars.toString(newName));
     }
 
     void setTimestampIndex(int index) {
