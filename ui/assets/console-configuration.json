@@ -1,1 +1,4 @@
-{"readOnly": true, "savedQueries":[{"name":"Select data","value":"SELECT * FROM trips;"},{"name":"Aggregations","value":"SELECT count() FROM trips;"},{"name":"Keyed aggregations","value":"SELECT hour(trip_datetime), count() FROM trips;"},{"name":"Keyed aggregations by time with SAMPLE BY","value":"SELECT hour(trip_datetime), count() FROM trips SAMPLE BY 1M;"},{"name":"Assemble tables based on time with ASOF JOIN","value":"trips ASOF JOIN weather;"}]}
+{
+  "readOnly": false,
+  "savedQueries": []
+}
