@@ -12,7 +12,7 @@ export const Toast = styled.div<{ borderColor: Color }>`
   background: ${color("draculaBackgroundDarker")};
   border: 2px solid ${color("draculaSelection")};
 
-  &:after {
+  &:before {
     position: absolute;
     display: block;
     content: " ";

@@ -20,6 +20,7 @@ const Wrapper = styled(Toast)`
   margin-top: 1rem;
   padding-right: 3rem;
   border-right: none;
+  border-bottom: none;
   box-shadow: ${color("black")} 0 0 4px;
 
   overflow: hidden;
@@ -66,10 +67,29 @@ const Out = styled.div<{ animationPlay: AnimationPlay }>`
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 1px;
-  background: ${color("gray2")};
-  animation: ${disappear} 120s linear 0s 1 normal forwards;
-  animation-play-state: ${({ animationPlay }) => animationPlay};
+  height: 2px;
+
+  :before {
+    content: " ";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: ${color("draculaSelection")};
+  }
+
+  :after {
+    content: " ";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: ${color("gray2")};
+    animation: ${disappear} 120s linear 0s 1 normal forwards;
+    animation-play-state: ${({ animationPlay }) => animationPlay};
+  }
 `
 
 const Pin = styled(Pushpin2)`
