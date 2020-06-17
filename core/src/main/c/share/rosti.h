@@ -27,7 +27,10 @@
 
 #include <utility>
 #include <cstring>
-#include "rosti_bitmask.h"
+#include <cstdint>
+#include "jni.h"
+
+#include "vcl/vectorclass.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
 #define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
@@ -39,6 +42,7 @@
 
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
+
 
 using ctrl_t = signed char;
 using h2_t = uint8_t;
@@ -81,6 +85,47 @@ struct rosti_t {
     unsigned char *slot_initial_values_ = nullptr; // contains pointer to memory arena
 };
 
+// An abstraction over a bitmask. It provides an easy way to iterate through the
+// indexes of the set bits of a bitmask.  When Shift=0 (platforms with SSE),
+// this is a true bitmask.  On non-SSE, platforms the arithematic used to
+// emulate the SSE behavior works in bytes (Shift=3) and leaves each bytes as
+// either 0x00 or 0x80.
+//
+// For example:
+//   for (int i : BitMask<uint32_t, 16>(0x5)) -> yields 0, 2
+//   for (int i : BitMask<uint64_t, 8, 3>(0x0000000080800000)) -> yields 2, 3
+template<class T>
+class BitMask {
+
+public:
+    explicit BitMask(T mask) : mask_(mask) {}
+
+    inline BitMask &operator++() {
+        mask_ &= (mask_ - 1);
+        return *this;
+    }
+
+    explicit operator bool() const { return mask_ != 0; }
+
+    int operator*() const { return TrailingZeros(); }
+
+    BitMask begin() const { return *this; }
+
+    BitMask end() const { return BitMask(0); }
+
+    int TrailingZeros() const {
+        return bit_scan_forward(mask_);
+    }
+
+private:
+
+    friend bool operator!=(const BitMask &a, const BitMask &b) {
+        return a.mask_ != b.mask_;
+    }
+
+    T mask_;
+};
+
 struct GroupSse2Impl {
 
     explicit GroupSse2Impl(const ctrl_t *pos) {
@@ -89,7 +134,7 @@ struct GroupSse2Impl {
 
     // Returns a bitmask representing the positions of slots that match hash.
     inline BitMask<uint32_t> Match(h2_t hash) const {
-        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(hash) == ctrl));
+        return BitMask<uint32_t>(to_bits(Vec16c(hash) == ctrl));
     }
 
     // Returns a bitmask representing the positions of empty slots.
@@ -99,10 +144,10 @@ struct GroupSse2Impl {
 
     // Returns a bitmask representing the positions of empty or deleted slots.
     BitMask<uint32_t> MatchEmptyOrDeleted() const {
-        return BitMask<uint32_t>(vcl::to_bits(vcl::Vec16c(kSentinel) > ctrl));
+        return BitMask<uint32_t>(to_bits(Vec16c(kSentinel) > ctrl));
     }
 
-    vcl::Vec16c ctrl;
+    Vec16c ctrl;
 };
 
 using Group = GroupSse2Impl;
@@ -321,6 +366,34 @@ inline std::pair<uint64_t, bool> find_or_prepare_insert(
         seq.next();
     }
     return {prepare_insert(map, hash, hash_m_f, cpy_f), true};
+}
+
+inline uint64_t hashInt(int32_t v) {
+    uint64_t h = v;
+    h = (h << 5) - h + ((unsigned char) (v >> 8));
+    h = (h << 5) - h + ((unsigned char) (v >> 16));
+    h = (h << 5) - h + ((unsigned char) (v >> 24));
+    return h;
+}
+
+// int equivalence
+inline bool eqInt(void *p, int32_t key) {
+    return *reinterpret_cast<int32_t *>(p) == key;
+}
+
+// int pointer hash
+inline uint64_t hashIntMem(void *p) {
+    return hashInt(*reinterpret_cast<int32_t *>(p));
+}
+
+// generic slot copy
+inline void cpySlot(void *to, void *from, uint64_t size) {
+    memcpy(to, from, size);
+}
+
+// int key lookup
+inline std::pair<uint64_t, bool> find(rosti_t *map, const int32_t key) {
+    return find_or_prepare_insert<int32_t>(map, key, hashInt, eqInt, hashIntMem, cpySlot);
 }
 
 #endif //ROSTI_H

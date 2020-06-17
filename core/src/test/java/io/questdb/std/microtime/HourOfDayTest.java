@@ -22,36 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.std.microtime;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Mutable;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface VectorAggregateFunction extends Function, Mutable {
+public class HourOfDayTest {
 
-    void aggregate(long address, long count, int workerId);
-
-    void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId);
-
-    void pushValueTypes(ArrayColumnTypes types);
-
-    void initRosti(long pRosti);
-
-    int getColumnIndex();
-
-    void merge(long pRostiA, long pRostiB);
-
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
-    void wrapUp(long pRosti);
-
-    // value offset in map
-    int getValueOffset();
-
-    @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    @Test
+    public void testSimple() {
+        Assert.assertEquals(19, Timestamps.getHourOfDay(1592078287051004L));
+        Assert.assertEquals(15, Timestamps.getHourOfDay(1592063943181693L));
+        Assert.assertEquals(8, Timestamps.getHourOfDay(-1592063943181693L));
     }
 }

@@ -60,7 +60,7 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
     }
     auto map = reinterpret_cast<rosti_t *>(malloc(sizeof(rosti_t)));
     map->slot_size_ = ceil_pow_2(slot_key_size);
-    map->slot_size_shift_ = vcl::bit_scan_forward(map->slot_size_);
+    map->slot_size_shift_ = bit_scan_forward(map->slot_size_);
     map->capacity_ = map_capacity;
     map->size_ = 0;
     map->value_offsets_ = value_offsets;

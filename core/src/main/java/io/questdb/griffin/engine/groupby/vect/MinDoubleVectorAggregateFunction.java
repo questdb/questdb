@@ -35,6 +35,8 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;
@@ -42,11 +44,20 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
             MIN, Double.POSITIVE_INFINITY
     );
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public MinDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMinDouble;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMinDouble;
+        }
     }
 
     @Override
@@ -99,9 +110,9 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntMinDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 

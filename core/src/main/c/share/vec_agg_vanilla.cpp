@@ -1,7 +1,3 @@
-#include <cfloat>
-#include <cstdint>
-#include <cmath>
-
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -26,8 +22,10 @@
  *
  ******************************************************************************/
 
-#include "vect_vanilla.h"
-#include "jni.h"
+#include <cfloat>
+#include <cstdint>
+#include <cmath>
+#include "vec_agg_vanilla.h"
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
     int32_t *pi1 = pi;

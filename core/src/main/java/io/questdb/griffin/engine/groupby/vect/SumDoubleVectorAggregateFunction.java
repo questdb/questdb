@@ -36,20 +36,31 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
+public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private final int columnIndex;
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
     private int valueOffset;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
 
-    public SumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public SumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+
+        if (keyKind == GKK_HOUR_INT) {
+            distinctFunc = Rosti::keyedHourDistinct;
+            keyValueFunc = Rosti::keyedHourSumDouble;
+        } else {
+            distinctFunc = Rosti::keyedIntDistinct;
+            keyValueFunc = Rosti::keyedIntSumDouble;
+        }
     }
 
     @Override
@@ -98,9 +109,9 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them
-            Rosti.keyedIntDistinct(pRosti, keyAddress, count);
+            distinctFunc.run(pRosti, keyAddress, count);
         } else {
-            Rosti.keyedIntSumDouble(pRosti, keyAddress, valueAddress, count, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
         }
     }
 

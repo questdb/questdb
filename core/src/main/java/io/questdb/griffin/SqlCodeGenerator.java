@@ -48,8 +48,7 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.griffin.SqlKeywords.isCountKeyword;
-import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
@@ -58,6 +57,12 @@ public class SqlCodeGenerator implements Mutable {
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, true, true, false, true};
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
 
     static {
         limitTypes.add(ColumnType.LONG);
@@ -71,6 +76,35 @@ public class SqlCodeGenerator implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    static {
+        sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
+
+        ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
+        nsumConstructors.put(ColumnType.DOUBLE, NSumDoubleVectorAggregateFunction::new);
+
+        avgConstructors.put(ColumnType.DOUBLE, AvgDoubleVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.LONG, AvgLongVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
+
+        minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
+
+        maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
     }
 
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
@@ -93,6 +127,10 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempKeyIndexesInBase = new IntList();
     private final IntList tempSymbolSkewIndexes = new IntList();
     private final IntList tempKeyIndex = new IntList();
+    private final IntList tempAggIndex = new IntList();
+    public static final int GKK_VANILLA_INT = 0;
+    private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    private final IntList tempVecConstructorArgIndexes = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -485,135 +523,40 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
-    private void addVaf(VectorAggregateFunction vaf, CharSequence columnName) {
-        tempVaf.add(vaf);
-        tempMetadata.add(new TableColumnMetadata(Chars.toString(columnName), vaf.getType()));
-    }
+    public static final int GKK_HOUR_INT = 1;
 
-    private boolean createVectorAggregateFunctions(
-            ObjList<QueryColumn> columns,
-            RecordMetadata metadata,
-            int workerCount
-    ) {
-        tempVaf.clear();
-        tempMetadata.clear();
-        tempKeyIndexesInBase.clear();
-        tempSymbolSkewIndexes.clear();
-        tempKeyIndex.clear();
-
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            final ExpressionNode ast = qc.getAst();
-            if (ast.type == LITERAL) {
-                final int columnIndex = metadata.getColumnIndex(ast.token);
-                final int type = metadata.getColumnType(columnIndex);
-                if (type == ColumnType.INT) {
-                    tempKeyIndexesInBase.add(columnIndex);
-                    tempMetadata.add(new TableColumnMetadata(
-                            Chars.toString(qc.getName()),
-                            type
-                    ));
-                    continue;
-                } else if (type == ColumnType.SYMBOL) {
-                    tempKeyIndexesInBase.add(columnIndex);
-                    tempKeyIndex.add(i);
-                    tempMetadata.add(new TableColumnMetadata(Chars.toString(qc.getName()), type, false, 0, metadata.isSymbolTableStatic(columnIndex)));
-                    tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
-                    continue;
-                }
-            } else {
-                if (isSingleColumnFunction(ast, "sum")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new SumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.INT) {
-                        addVaf(new SumIntVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.LONG) {
-                        addVaf(new SumLongVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.DATE) {
-                        addVaf(new SumDateVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.TIMESTAMP) {
-                        addVaf(new SumTimestampVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    }
-                } else if (ast.type == FUNCTION && ast.paramCount == 0 && Chars.equals(ast.token, "count")) {
-                    addVaf(new CountVectorAggregateFunction(ast.position), qc.getName());
-                    continue;
-                } else if (isSingleColumnFunction(ast, "ksum")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new KSumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount), qc.getName());
-                        continue;
-                    }
-                } else if (isSingleColumnFunction(ast, "nsum")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new NSumDoubleVectorAggregateFunction(ast.rhs.position, columnIndex, workerCount), qc.getName());
-                        continue;
-                    }
-                } else if (isSingleColumnFunction(ast, "avg")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new AvgDoubleVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.INT) {
-                        addVaf(new AvgIntVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.LONG || type == ColumnType.TIMESTAMP || type == ColumnType.DATE) {
-                        addVaf(new AvgLongVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    }
-                } else if (isSingleColumnFunction(ast, "min")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new MinDoubleVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.INT) {
-                        addVaf(new MinIntVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.LONG) {
-                        addVaf(new MinLongVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.DATE) {
-                        addVaf(new MinDateVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.TIMESTAMP) {
-                        addVaf(new MinTimestampVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    }
-                } else if (isSingleColumnFunction(ast, "max")) {
-                    final int columnIndex = metadata.getColumnIndex(ast.rhs.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.DOUBLE) {
-                        addVaf(new MaxDoubleVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.INT) {
-                        addVaf(new MaxIntVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.LONG) {
-                        addVaf(new MaxLongVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.DATE) {
-                        addVaf(new MaxDateVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    } else if (type == ColumnType.TIMESTAMP) {
-                        addVaf(new MaxTimestampVectorAggregateFunction(ast.rhs.position, columnIndex), qc.getName());
-                        continue;
-                    }
-                }
-            }
-            return false;
+    private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
+        int columnIndex;
+        if (isSingleColumnFunction(ast, "sum")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return sumConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (ast.type == FUNCTION && ast.paramCount == 0 && Chars.equals(ast.token, "count")) {
+            // count() is a no-arg function
+            tempVecConstructorArgIndexes.add(-1);
+            return CountVectorAggregateFunction.CONSTRUCTOR;
+        } else if (isSingleColumnFunction(ast, "ksum")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return ksumConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (isSingleColumnFunction(ast, "nsum")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return nsumConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (isSingleColumnFunction(ast, "avg")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return avgConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (isSingleColumnFunction(ast, "min")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return minConstructors.get(metadata.getColumnType(columnIndex));
+        } else if (isSingleColumnFunction(ast, "max")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
-        return true;
+        return null;
     }
 
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1538,6 +1481,55 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
+    private final IntList tempKeyKinds = new IntList();
+
+    private boolean assembleKeysAndFunctionReferences(
+            ObjList<QueryColumn> columns,
+            RecordMetadata metadata,
+            boolean checkLiterals
+    ) {
+        tempVaf.clear();
+        tempMetadata.clear();
+        tempSymbolSkewIndexes.clear();
+        tempVecConstructors.clear();
+        tempVecConstructorArgIndexes.clear();
+        tempAggIndex.clear();
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            final ExpressionNode ast = qc.getAst();
+            if (ast.type == LITERAL) {
+                if (checkLiterals) {
+                    final int columnIndex = metadata.getColumnIndex(ast.token);
+                    final int type = metadata.getColumnType(columnIndex);
+                    if (type == ColumnType.INT) {
+                        tempKeyIndexesInBase.add(columnIndex);
+                        tempKeyIndex.add(i);
+                        arrayColumnTypes.add(ColumnType.INT);
+                        tempKeyKinds.add(GKK_VANILLA_INT);
+                    } else if (type == ColumnType.SYMBOL) {
+                        tempKeyIndexesInBase.add(columnIndex);
+                        tempKeyIndex.add(i);
+                        tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
+                        arrayColumnTypes.add(ColumnType.SYMBOL);
+                        tempKeyKinds.add(GKK_VANILLA_INT);
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                final VectorAggregateFunctionConstructor constructor = assembleFunctionReference(metadata, ast);
+                if (constructor != null) {
+                    tempVecConstructors.add(constructor);
+                    tempAggIndex.add(i);
+                } else {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
         // fail fast if we cannot create timestamp sampler
@@ -1547,67 +1539,153 @@ public class SqlCodeGenerator implements Mutable {
             return generateSampleBy(model, executionContext, sampleByNode);
         }
 
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        RecordCursorFactory factory = null;
         try {
-            // generate special case plan for "select count() from somewhere"
-            ObjList<QueryColumn> columns = model.getBottomUpColumns();
-            if (columns.size() == 1) {
-                QueryColumn column = columns.getQuick(0);
-                if (column.getAst().type == FUNCTION && isCountKeyword(column.getAst().token)) {
-                    if (isCountKeyword(column.getName())) {
-                        return new CountRecordCursorFactory(CountRecordCursorFactory.DEFAULT_COUNT_METADATA, factory);
-                    }
+            ObjList<QueryColumn> columns;
+            ExpressionNode columnExpr;
 
-                    GenericRecordMetadata metadata = new GenericRecordMetadata();
-                    metadata.add(new TableColumnMetadata(Chars.toString(column.getName()), ColumnType.LONG));
-                    return new CountRecordCursorFactory(metadata, factory);
+            // generate special case plan for "select count() from somewhere"
+            columns = model.getColumns();
+            if (columns.size() == 1) {
+                CharSequence columnName = columns.getQuick(0).getName();
+                columnExpr = columns.getQuick(0).getAst();
+                if (columnExpr.type == FUNCTION && isCountKeyword(columnExpr.token)) {
+                    // check if count() was not aliased, if it was, we need to generate new metadata, bummer
+                    final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
+                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));
+                    return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
 
-            final RecordMetadata metadata = factory.getMetadata();
+            tempKeyIndexesInBase.clear();
+            tempKeyIndex.clear();
+            arrayColumnTypes.clear();
+            tempKeyKinds.clear();
+
+            boolean pageFramingSupported;
+            boolean specialCaseKeys = false;
+
+            // check for special case time function aggregations
+            final QueryModel nested = model.getNestedModel();
+            assert nested != null;
+            // check if underlying model has reference to hour(column) function
+            if (nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+//                    && (columns = nested.getBottomUpColumns()).size() == 1
+                    && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
+                    && isHourKeyword(columnExpr.token)
+                    && columnExpr.paramCount == 1
+                    && columnExpr.rhs.type == LITERAL
+            ) {
+                specialCaseKeys = true;
+                factory = generateSubQuery(nested, executionContext);
+                // todo: check that base query for hour() is actually a table and not sub-query
+                //      factory will have supported page framing
+                pageFramingSupported = factory.supportPageFrameCursor();
+                assert pageFramingSupported;
+
+                // find position of the hour() argument in the factory meta
+                tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
+
+                // find position of hour() alias in selected columns
+                // also make sure there are no other literal column than our function reference
+                final CharSequence functionColumnName = columns.getQuick(0).getName();
+                columns = model.getBottomUpColumns();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    columnExpr = columns.getQuick(i).getAst();
+                    if (columnExpr.type == LITERAL) {
+                        if (Chars.equals(columnExpr.token, functionColumnName)) {
+                            tempKeyIndex.add(i);
+                            // storage dimension for Rosti is INT when we use hour(). This function produces INT.
+                            tempKeyKinds.add(GKK_HOUR_INT);
+                            arrayColumnTypes.add(ColumnType.INT);
+                        } else {
+                            // there is something else here, fallback to default implementation
+                            pageFramingSupported = false;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                factory = generateSubQuery(model, executionContext);
+                pageFramingSupported = factory.supportPageFrameCursor();
+            }
+
+            RecordMetadata metadata = factory.getMetadata();
 
             // inspect model for possibility of vector aggregate intrinsics
-            if (factory.supportPageFrameCursor()) {
-                if (createVectorAggregateFunctions(columns, metadata, executionContext.getWorkerCount())) {
-                    if (tempKeyIndexesInBase.size() == 0) {
-                        return new GroupByNotKeyedVectorRecordCursorFactory(
-                                configuration,
-                                factory,
-                                GenericRecordMetadata.copyOf(tempMetadata),
-                                tempVaf
+            if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
+                // create metadata from everything we've gathered
+                GenericRecordMetadata meta = new GenericRecordMetadata();
+
+                // start with keys
+                for (int i = 0, n = tempKeyIndex.size(); i < n; i++) {
+                    final int indexInThis = tempKeyIndex.getQuick(i);
+                    final int indexInBase = tempKeyIndexesInBase.getQuick(i);
+                    final int type = arrayColumnTypes.getColumnType(i);
+
+                    if (type == ColumnType.SYMBOL) {
+                        meta.add(
+                                indexInThis,
+                                new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), type, false, 0, metadata.isSymbolTableStatic(indexInBase))
                         );
-                    }
-
-                    if (tempKeyIndexesInBase.size() == 1) {
-
-                        // the types are transient, they are used to
-                        // initialize map and reference to type list is not stored
-                        arrayColumnTypes.clear();
-
-                        // this is overly generic, but we will catchup C code
-                        for (int i = 0, n = tempKeyIndexesInBase.size(); i < n; i++) {
-                            // todo: when we have more key types we need to dispatch function references into
-                            //     vector aggregate functions. Right now they call functions for "int" keys.
-                            arrayColumnTypes.add(tempMetadata.getColumnType(tempKeyIndexesInBase.getQuick(i)));
-                        }
-
-                        for (int i = 0, n = tempVaf.size(); i < n; i++) {
-                            tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
-                        }
-
-                        return new GroupByRecordCursorFactory(
-                                configuration,
-                                factory,
-                                GenericRecordMetadata.copyOf(tempMetadata),
-                                arrayColumnTypes,
-                                executionContext.getWorkerCount(),
-                                tempVaf,
-                                tempKeyIndexesInBase.getQuick(0),
-                                tempKeyIndex.getQuick(0),
-                                tempSymbolSkewIndexes
+                    } else {
+                        meta.add(
+                                indexInThis,
+                                new TableColumnMetadata(
+                                        Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        type
+                                )
                         );
                     }
                 }
+
+                // add aggregates
+                for (int i = 0, n = tempVecConstructors.size(); i < n; i++) {
+                    VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
+                    int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
+                    int indexInThis = tempAggIndex.getQuick(i);
+                    VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
+                    tempVaf.add(vaf);
+                    meta.add(indexInThis, new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), vaf.getType()));
+                }
+
+                if (tempKeyIndexesInBase.size() == 0) {
+                    return new GroupByNotKeyedVectorRecordCursorFactory(
+                            configuration,
+                            factory,
+                            meta,
+                            tempVaf
+                    );
+                }
+
+                if (tempKeyIndexesInBase.size() == 1) {
+                    for (int i = 0, n = tempVaf.size(); i < n; i++) {
+                        tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
+                    }
+
+                    return new GroupByRecordCursorFactory(
+                            configuration,
+                            factory,
+                            meta,
+                            arrayColumnTypes,
+                            executionContext.getWorkerCount(),
+                            tempVaf,
+                            tempKeyIndexesInBase.getQuick(0),
+                            tempKeyIndex.getQuick(0),
+                            tempSymbolSkewIndexes
+                    );
+                }
+            }
+
+            if (specialCaseKeys) {
+                // uh-oh, we had special case keys, but could not find implementation for the functions
+                // release factory we created unnecessarily
+                Misc.free(factory);
+                // create factory on top level model
+                factory = generateSubQuery(model, executionContext);
+                // and reset metadata
+                metadata = factory.getMetadata();
+
             }
 
             final int timestampIndex = getTimestampIndex(model, factory);
@@ -1666,7 +1744,7 @@ public class SqlCodeGenerator implements Mutable {
             );
 
         } catch (CairoException e) {
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }

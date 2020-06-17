@@ -24,7 +24,7 @@
 
 #include <cfloat>
 #include <cmath>
-#include "vect.h"
+#include "vec_agg.h"
 
 #define MAX_VECTOR_SIZE 512
 
@@ -397,7 +397,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
     int n = 0;
     for (; i < count; i++) {
         double x = *(d + i);
-        if (x == x) {
+        if (std::isfinite(x)) {
             sum += x;
         } else {
             n++;
@@ -440,7 +440,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     int64_t nans = horizontal_add(nancount);
     for (; d < lim; d++) {
         double x = *d;
-        if (x == x) {
+        if (std::isfinite(x)) {
             auto y = x - c;
             auto t = sum + y;
             c = (t - sum) -y;

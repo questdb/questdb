@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
@@ -34,11 +35,14 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.LongAdder;
 
 public class CountVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
+    public static final VectorAggregateFunctionConstructor CONSTRUCTOR = CountVectorAggregateFunction::new;
     private final LongAdder count = new LongAdder();
     private int valueOffset;
+    private final CountFunc countFunc;
 
-    public CountVectorAggregateFunction(int position) {
+    public CountVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
+        countFunc = keyKind == SqlCodeGenerator.GKK_HOUR_INT ? Rosti::keyedHourCount : Rosti::keyedIntCount;
     }
 
     @Override
@@ -59,7 +63,7 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        Rosti.keyedIntCount(pRosti, keyAddress, count, valueOffset);
+        countFunc.count(pRosti, keyAddress, count, valueOffset);
     }
 
     @Override
@@ -89,5 +93,10 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     @Override
     public long getLong(Record rec) {
         return count.sum();
+    }
+
+    @FunctionalInterface
+    private interface CountFunc {
+        void count(long pRosti, long pKeys, long count, int valueOffset);
     }
 }
