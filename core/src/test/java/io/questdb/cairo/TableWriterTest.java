@@ -2601,27 +2601,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotRemoveKFile() throws Exception {
-        renameColumn(new TestFilesFacade() {
-            int count = 0;
-
-            @Override
-            public boolean rename(LPSZ name, LPSZ to) {
-                if (Chars.endsWith(name, "supplier.k")) {
-                    count++;
-                    return false;
-                }
-                return super.rename(name, to);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return count > 0;
-            }
-        });
-    }
-
-    @Test
     public void testRenameColumnCannotRemoveSomeMetadataPrev() throws Exception {
         renameColumn(new TestFilesFacade() {
             int count = 5;
