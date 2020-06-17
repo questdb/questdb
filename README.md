@@ -13,7 +13,7 @@
   <a href="https://circleci.com/gh/questdb/questdb">
     <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
   </a>
-  <a href="https://github.com/questdb/questdb/releases/download/4.2.1/questdb-4.2.1-bin.tar.gz">
+  <a href="https://github.com/questdb/questdb/releases/tag/5.0.0">
     <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
@@ -35,118 +35,137 @@
 
 ## What is QuestDB
 
-QuestDB is an open-source NewSQL relational database designed to process
-time-series data, faster. Our approach comes from low-latency trading; QuestDB’s
-stack is engineered from scratch, zero-GC Java and dependency-free.
+QuestDB is an open-source database designed to make time-series lightning fast and easy.
 
-QuestDB ingests data via HTTP, PostgreSQL wire protocol, Influx line protocol or
-directly from Java. Reading data is done using SQL via HTTP, PostgreSQL wire
-protocol or via Java API. The whole database and console fits in a < 4 MB
-package.
+It uses a column-oriented approach, vectorized execution, SIMD instructions, and
+a whole array of low-latency techniques. The whole code base is built from
+scratch, without dependencies, in the name of performance. We are 100% free from garbage collection.
 
-## Project goals
+QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
+Wire protocol, a high-performance HTTP API, and even supports ingestion with
+Influx Line Protocol. It supports both relational and time-series joins, which
+makes it easy to correlate data over time. Writes are durably committed to disk,
+meaning that the data is safe, yet instantly accessible.
 
-- Treat time-series as first class citizen within a relational database
-  framework.
+## Performance figures
 
-- Minimise hardware resources through software optimisation. Don’t waste CPU
-  cycles, memory nor storage.
+### Raw figures
+Number operations per second **per thread**. Writes are durable and writen to disk.
 
-- Be a reliable and trustworthy store of critical data.
+| Operation | 64-bit double | 32-bit int |
+|---|---|---|
+| Read | 120 Million /s | 240 Million /s |
+| Write | 240 Million /s| 480M Million /s |
 
-- Low friction operation. Empower developers with SQL. Simplify every database
-  interaction.
+On a CPU with 6 memory channels, QuestDB can scan through **117GB of data per second**.
 
-- Operate efficiently at both extremes: allow users to prioritise performance
-  over data loss, and vice versa.
+### Queries
 
-- Be both embedded and standalone.
+Execution time on a c5.metal instance using 16 of the 96 threads available. 
+
+| Query | Runtime |
+|---|---|
+|`SELECT sum(double) FROM 1bn` | 0.061 secs |
+|`SELECT tag, sum(double) FROM 1bn` | 0.179 secs |
+|`SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs |
 
 ## Getting Started
 
-See our [My First Database](https://www.questdb.io/docs/myFirstDatabase)
-tutorial. The easiest way to get started is to play with our web
-[console](https://www.questdb.io/docs/usingWebConsole). This will allow you to
-import and query data using an intuitive interface.
+The easiest way to get started is with Docker:
 
-You may also take a look at our
-[storage model](https://www.questdb.io/docs/storageModel). In short, we are a
-column-oriented database, which partitions data by time intervals. Additionally,
-you can find our documentation
-[here](https://www.questdb.io/docs/documentationOverview).
-
-There are various ways of installing QuestDB.
-
-### Binaries
-
-You can find our compiled binaries available for download on the
-[release page](https://github.com/questdb/questdb/releases). The archive
-contains both the \*nix and Windows version.
-
-### Docker
-
-Docker images are available on
-[Docker Hub](https://hub.docker.com/r/questdb/questdb).
-
-You can launch a QuestDB container with:
-
-    $ docker run -p 9000:9000 questdb/questdb
-
-QuestDB will now be reachable at [localhost:9000](http://localhost:9000).
-
-### Building from source
-
-#### Prerequisites
-
-- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
-  (AArch64/A64)**: Linux
-- Java 11 64-bit. We recommend Oracle Java 11, but OpenJDK 11 will also work
-  (although a little slower)
-- Maven 3 (from your package manager on Linux / OSX
-  ([Homebrew](https://github.com/Homebrew/brew)) or
-  [from the jar](https://maven.apache.org/install.html) for any OS)
-- Node.js 12 / npm 6 (to manage your Node.js versions we recommend
-  [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
-  [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
-  OPTIONAL
-
-#### Building & Running
-
-```bash
-git clone git@github.com:questdb/questdb.git
-cd questdb
-
-# Check the java version, the output should be similar to:
-#
-# openjdk 11.0.6 2020-01-14
-# OpenJDK Runtime Environment (build 11.0.6+10)
-# OpenJDK 64-Bit Server VM (build 11.0.6+10, mixed mode)
-#
-# For OpenJDK, for Oracle JDK you should get:
-#
-# java version "11.0.6" 2019-01-14 LTS
-# Java(TM) SE Runtime Environment 18.9 (build 11.0.6+8-LTS)
-# Java HotSpot(TM) 64-Bit Server VM 18.9 (build 11.0.6+8-LTS, mixed mode)
-java -version
-
-# Maven flags:
-# 1. Remove 'skipTests' if you want to run all tests (3000+ unit tests, 3-5 mins)
-# 2. You can add the parameter '-Dprofile.install-local-nodejs' if you do not want
-# to rely on a local version of NodeJS, it will be pulled by maven instead
-mvn clean package -DskipTests
-
-# <root_dir> is where the data and configuration will live
-# replace the value with an actual directory name, example "out"
-mkdir <root_dir>
-
-java -p core/target/core-5.0.1-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
+```shell script
+docker pull questdb/questdb
+docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-QuestDB will start an HTTP server with the web console available at
-[localhost:9000](http://localhost:9000). Additionally, a PostgreSQL server will
-be started and available on port 8812, the default login credentials are
-`admin`/`quest`. Both the HTTP and PostgreSQL servers reference the database in
+#### Alternative methods
+
+- [Start with Homebrew](https://questdb.io/docs/guideHomebrew)
+- [Start with the binaries](https://questdb.io/docs/guideBinaries)
+
+### Connecting to QuestDB
+
+You can interact with QuestDB using:
+
+- [Web Console](https://questdb.io/docs/usingWebConsole) listening on port
+  `9000`: [localhost:9000](http://localhost:9000)
+- [Postgres Wire](https://questdb.io/docs/guidePSQL), for example with PSQL
+  (alpha) on port `8812`
+- [HTTP API](https://questdb.io/docs/guideREST) listening on port `9000`
+
+Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
+
+You can connect to the Postgres server as follows. The default password is
+`quest`
+
+```shell script
+psql -h localhost -p 8812 -U admin -W -d qdb
+```
+
+## Building from source
+
+#### (a) Prerequisites
+
+- Java 11 64-bit
+- Maven 3
+- Node.js 12 / npm 6
+
+```shell script
+java --version
+mvn --version
+npm --version
+```
+
+#### (b) Clone the Repository
+
+```shell script
+git clone git@github.com:questdb/questdb.git
+```
+
+#### (c) Build the Code
+
+```shell script
+cd questdb
+mvn clean package -DskipTests
+```
+
+The build should take around 2 minutes. You can remove `-DskipTests` to run the
+3000+ unit tests. The tests take 3-5 minutes to run.
+
+#### (d) Run QuestDB
+
+```shell script
+# Create a database root directory and run QuestDB
+mkdir <root_directory>
+java -p core/target/core-4.3.0-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+```
+
+## Resources
+
+Complete references are available in the
+[Documentation](https://questdb.io/docs/documentationOverview). There are also
+several guides to get started.
+
+Quick-start guides:
+
+- [Docker](https://questdb.io/docs/guideDocker)
+- [Homebrew](https://questdb.io/docs/guideHomebrew)
+- [Using the binaries](https://questdb.io/docs/guideBinaries)
+
+Usage guides:
+
+- [Web Console](https://questdb.io/docs/usingWebConsole)
+- [Postgres Wire with PSQL](https://questdb.io/docs/guidePSQL) (alpha)
+- [REST API](https://questdb.io/docs/guideREST)
+- [CRUD operations](https://questdb.io/docs/crudOperations)
+
+Concepts:
+
+- [SQL extensions](https://questdb.io/docs/sqlExtensions)
+- [Storage model](https://questdb.io/docs/storageModel)
+- [Partitions](https://questdb.io/docs/partitions)
+- [Designated timestamp](https://questdb.io/docs/designatedTimestamp)
 
 ## Support / Contact
 
@@ -164,20 +183,20 @@ pull requests. Please make sure you have read our
 
 ## Contributors ✨
 
-Thanks goes to these wonderful people
+Thanks to these wonderful people
 ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
 <table>
-  <tr>
-    <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
-    <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>ideoma</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
-    <td align="center"><a href="https://github.com/tonytamwk"><img src="https://avatars2.githubusercontent.com/u/20872271?v=4" width="100px;" alt=""/><br /><sub><b>tonytamwk</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=tonytamwk" title="Code">💻</a> <a href="#userTesting-tonytamwk" title="User Testing">📓</a></td>
-    <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>sirinath</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
-    <td align="center"><a href="https://www.linkedin.com/in/suhorukov"><img src="https://avatars1.githubusercontent.com/u/10332206?v=4" width="100px;" alt=""/><br /><sub><b>igor-suhorukov</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=igor-suhorukov" title="Code">💻</a> <a href="#ideas-igor-suhorukov" title="Ideas, Planning, & Feedback">🤔</a></td>
-  </tr>
+ <tr>
+   <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
+   <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>ideoma</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
+   <td align="center"><a href="https://github.com/tonytamwk"><img src="https://avatars2.githubusercontent.com/u/20872271?v=4" width="100px;" alt=""/><br /><sub><b>tonytamwk</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=tonytamwk" title="Code">💻</a> <a href="#userTesting-tonytamwk" title="User Testing">📓</a></td>
+   <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>sirinath</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
+   <td align="center"><a href="https://www.linkedin.com/in/suhorukov"><img src="https://avatars1.githubusercontent.com/u/10332206?v=4" width="100px;" alt=""/><br /><sub><b>igor-suhorukov</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=igor-suhorukov" title="Code">💻</a> <a href="#ideas-igor-suhorukov" title="Ideas, Planning, & Feedback">🤔</a></td>
+ </tr>
 </table>
 
 <!-- markdownlint-enable -->
