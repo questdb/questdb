@@ -1563,7 +1563,7 @@ public class SqlCodeGenerator implements Mutable {
             tempKeyKinds.clear();
 
             boolean pageFramingSupported;
-            boolean checkFrameLiterals = true;
+            boolean specialCaseKeys = false;
 
             // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
@@ -1576,7 +1576,7 @@ public class SqlCodeGenerator implements Mutable {
                     && columnExpr.paramCount == 1
                     && columnExpr.rhs.type == LITERAL
             ) {
-                checkFrameLiterals = false;
+                specialCaseKeys = true;
                 factory = generateSubQuery(nested, executionContext);
                 // todo: check that base query for hour() is actually a table and not sub-query
                 //      factory will have supported page framing
@@ -1610,10 +1610,10 @@ public class SqlCodeGenerator implements Mutable {
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
 
-            final RecordMetadata metadata = factory.getMetadata();
+            RecordMetadata metadata = factory.getMetadata();
 
             // inspect model for possibility of vector aggregate intrinsics
-            if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, checkFrameLiterals)) {
+            if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
                 // create metadata from everything we've gathered
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -1675,6 +1675,17 @@ public class SqlCodeGenerator implements Mutable {
                             tempSymbolSkewIndexes
                     );
                 }
+            }
+
+            if (specialCaseKeys) {
+                // uh-oh, we had special case keys, but could not find implementation for the functions
+                // release factory we created unnecessarily
+                Misc.free(factory);
+                // create factory on top level model
+                factory = generateSubQuery(model, executionContext);
+                // and reset metadata
+                metadata = factory.getMetadata();
+
             }
 
             final int timestampIndex = getTimestampIndex(model, factory);

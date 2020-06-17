@@ -682,7 +682,6 @@ Java_io_questdb_std_Rosti_keyedIntAvgLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
             auto pValue = src + value_offset;
             auto d = (jdouble) *reinterpret_cast<jlong *>(pValue);
-            printf("sum = %e, count=%lu\n", d, count);
             *reinterpret_cast<jdouble *>(pValue) = d / count;
         }
     }
@@ -1138,20 +1137,18 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongMerge(JNIEnv *env, jclass cl, jlong pRo
 template<typename TO_INT>
 void kIntMaxInt(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
-    const auto *pk = reinterpret_cast<int32_t *>(pKeys);
     const auto *pi = reinterpret_cast<jint *>(pInt);
     const auto shift = map->slot_size_shift_;
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pk + 16, _MM_HINT_T0);
         _mm_prefetch(pi + 16, _MM_HINT_T0);
-        const int32_t v = pk[i];
+        const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
-        auto res = find(map, v);
+        auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
-            *reinterpret_cast<int32_t *>(pKey) = v;
+            *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jint *>(pVal) = val;
         } else {
             const jint old = *reinterpret_cast<jint *>(pVal);
@@ -1167,13 +1164,13 @@ void kIntMaxLong(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pl + 8, _MM_HINT_T0);
-        const int32_t v = to_int(pKeys, i);
+        const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
-        auto res = find(map, v);
+        auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
-            *reinterpret_cast<int32_t *>(pKey) = v;
+            *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
@@ -1189,13 +1186,13 @@ void kIntMaxDouble(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pd + 8, _MM_HINT_T0);
-        const int32_t v = to_int(pKeys, i);
+        const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
-        auto res = find(map, v);
+        auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
-            *reinterpret_cast<int32_t *>(pKey) = v;
+            *reinterpret_cast<int32_t *>(pKey) = key;
             *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
@@ -1211,13 +1208,13 @@ void kIntMinInt(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pi + 16, _MM_HINT_T0);
-        const int32_t v = to_int(pKeys, i);
+        const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
-        auto res = find(map, v);
+        auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
         if (PREDICT_FALSE(res.second)) {
-            *reinterpret_cast<int32_t *>(pKey) = v;
+            *reinterpret_cast<int32_t *>(pKey) = key;
             if (val != I_MIN) {
                 *reinterpret_cast<jint *>(pVal) = val;
             }
@@ -1314,12 +1311,12 @@ void kIntNSumDouble(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong pDouble, jl
 
     for (int i = 0; i < count; i++) {
         _mm_prefetch(pd + 8, _MM_HINT_T0);
-        const int32_t v = to_int(pKeys, i);
+        const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
-        auto res = find(map, v);
+        auto res = find(map, key);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
-            *reinterpret_cast<int32_t *>(dest) = v;
+            *reinterpret_cast<int32_t *>(dest) = key;
             *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
             *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
@@ -1439,7 +1436,7 @@ void kIntCount(TO_INT* to_int, jlong pRosti, jlong pKeys, jlong count, jint valu
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        int32_t key = to_int(pKeys, i);
+        auto const key = to_int(pKeys, i);
         auto res = find(map, key);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {

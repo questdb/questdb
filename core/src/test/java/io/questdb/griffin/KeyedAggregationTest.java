@@ -81,6 +81,32 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testHourLongMissingFunctions() throws Exception {
+        assertQuery(
+                "hour\tksum\tnsum\n" +
+                        "0\t-5.597664489165837E22\t-5.597664489165837E22\n" +
+                        "1\t-5.473148966668288E22\t-5.473148966668288E22\n" +
+                        "2\t-4.204935311601048E22\t-4.204935311601048E22\n",
+                "select hour(ts), ksum(val), nsum(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true
+        );
+    }
+
+    @Test
+    public void testHourInt() throws Exception {
+        assertQuery(
+                "hour\tcount\tsum\tmin\tmax\tavg\n" +
+                        "0\t36000\t13332495967\t-995\t889975\t445441.0466406067\n" +
+                        "1\t36000\t13360114022\t-950\t889928\t444359.54307190847\n" +
+                        "2\t28000\t10420189893\t-914\t889980\t444528.3858623779\n",
+                "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_int(-998, 889991, 2) val from long_sequence(100000))",
+                null, true
+        );
+    }
+
+    @Test
     public void testIntSymbolAddKeyMidTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val from long_sequence(1000000))", sqlExecutionContext);
