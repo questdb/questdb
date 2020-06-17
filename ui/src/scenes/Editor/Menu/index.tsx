@@ -38,7 +38,8 @@ const Separator = styled.div`
   flex: 1;
 `
 
-const DocsearchInput = styled(Input)`
+const DocsearchInput = styled(Input)<{ _display: string }>`
+  display: ${({ _display }) => _display};
   width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -166,6 +167,7 @@ const Menu = () => {
       <Separator />
 
       <DocsearchInput
+        _display={sm ? "none" : "inline"}
         id="docsearch-input"
         placeholder="Search documentation"
         title="Search..."

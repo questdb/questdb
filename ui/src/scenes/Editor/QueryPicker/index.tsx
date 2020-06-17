@@ -3,7 +3,7 @@ import styled from "styled-components"
 import { DownArrowSquare } from "@styled-icons/boxicons-solid/DownArrowSquare"
 import { UpArrowSquare } from "@styled-icons/boxicons-solid/UpArrowSquare"
 
-import { Text, useKeyPress } from "components"
+import { Text, useKeyPress, useScreenSize } from "components"
 import { QueryShape } from "types"
 import { BusEvent, color } from "utils"
 
@@ -15,10 +15,10 @@ type Props = {
   ref: Ref<HTMLDivElement>
 }
 
-const Wrapper = styled.div`
+const Wrapper = styled.div<{ _width: number }>`
   display: flex;
-  max-height: 600px;
-  width: 600px;
+  max-height: ${({ _width }) => _width}px;
+  width: ${({ _width }) => _width}px;
   padding: 0.6rem 0;
   flex-direction: column;
   background: ${color("draculaBackgroundDarker")};
@@ -45,6 +45,7 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   const enterPress = useKeyPress("Enter", { preventDefault: true })
   const [cursor, setCursor] = useState(0)
   const [hovered, setHovered] = useState<QueryShape | undefined>()
+  const { sm } = useScreenSize()
 
   useEffect(() => {
     if (queries.length && downPress) {
@@ -74,7 +75,7 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   }, [hovered, queries])
 
   return (
-    <Wrapper ref={ref}>
+    <Wrapper _width={sm ? 370 : 600} ref={ref}>
       <Helper _style="italic" color="draculaForeground" size="xs">
         Navigate the list with <UpArrowSquare size="16px" />
         <DownArrowSquare size="16px" /> keys, exit with&nbsp;
