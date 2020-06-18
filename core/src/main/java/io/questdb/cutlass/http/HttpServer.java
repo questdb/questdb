@@ -95,9 +95,9 @@ public class HttpServer implements Closeable {
                     boolean useful = dispatcher.processIOQueue(processor);
                     // Run retries
                     if (useful) {
-                        useful |= checkReruns();
+                        useful |= checkReruns(selector);
                     }
-                    return useful ;//|| checkReruns();
+                    return useful;
                 }
             });
 
@@ -150,7 +150,7 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private boolean checkReruns() {
+    private boolean checkReruns(HttpRequestProcessorSelector selector) {
         boolean rerunCompleted = false;
 
         boolean firstProcessed = false;
@@ -183,7 +183,7 @@ public class HttpServer implements Closeable {
                 // All checked.
                 break;
             }
-            boolean completed = toRun.tryRerun();
+            boolean completed = toRun.tryRerun(selector);
             if (!completed) {
                 queueRetry(toRun);
             }

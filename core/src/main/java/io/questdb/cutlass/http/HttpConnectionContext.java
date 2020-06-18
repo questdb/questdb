@@ -59,7 +59,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final HttpSqlExecutionInterruptor execInterruptor;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
-    private HttpRequestProcessor retryProcessor = null;
+    private boolean pendingRetry = false;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
@@ -94,7 +94,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.csPool.clear();
         this.localValueMap.clear();
         this.responseSink.clear();
-        this.retryProcessor = null;
+        if (this.pendingRetry) {
+            LOG.error().$("Reused context with retry pending.").$();
+        }
+        this.pendingRetry = false;
     }
 
     @Override
@@ -110,6 +113,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
+        if (this.pendingRetry) {
+            LOG.error().$("Closed context with retry pending.").$();
+        }
+        this.pendingRetry = false;
         LOG.debug().$("closed").$();
     }
 
@@ -120,7 +127,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     @Override
     public boolean invalid() {
-        return retryProcessor != null || this.fd == -1;
+        return pendingRetry || this.fd == -1;
     }
 
     @Override
@@ -186,7 +193,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         try {
             processor.onRequestComplete(this);
         } catch (EntryUnavailableException e) {
-            retryProcessor = processor;
+            pendingRetry = true;
             rescheduleContext.reschedule(this);
         }
     }
@@ -322,11 +329,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 }
             }
 
-            HttpRequestProcessor processor = selector.select(headerParser.getUrl());
-
-            if (processor == null) {
-                processor = selector.getDefaultProcessor();
-            }
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
 
             final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
@@ -366,7 +369,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                     }
                 }
             } catch (EntryUnavailableException e) {
-                retryProcessor = processor;
+                pendingRetry = true;
                 rescheduleContext.reschedule(this);
             } catch (PeerDisconnectedException e) {
                 dispatcher.disconnect(this);
@@ -385,6 +388,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.error().$("http error [e=").$(e.getFlyweightMessage()).$(']').$();
             dispatcher.disconnect(this);
         }
+    }
+
+    private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
+        HttpRequestProcessor processor = selector.select(headerParser.getUrl());
+
+        if (processor == null) {
+            processor = selector.getDefaultProcessor();
+        }
+        return processor;
     }
 
     private void handleClientSend() {
@@ -421,11 +433,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return execInterruptor;
     }
 
-    public boolean tryRerun() {
-        if (retryProcessor != null) {
+    public boolean tryRerun(HttpRequestProcessorSelector selector) {
+        if (pendingRetry) {
+            pendingRetry = false;
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+            
             try {
-                retryProcessor.onRequestRetry(this);
+                processor.onRequestRetry(this);
             } catch (EntryUnavailableException e2) {
+                pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this);
