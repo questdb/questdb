@@ -35,11 +35,13 @@
 
 ## What is QuestDB
 
-QuestDB is an open-source database designed to make time-series lightning fast and easy.
+QuestDB is an open-source database designed to make time-series lightning fast
+and easy.
 
 It uses a column-oriented approach, vectorized execution, SIMD instructions, and
 a whole array of low-latency techniques. The whole code base is built from
-scratch, without dependencies, in the name of performance. We are 100% free from garbage collection.
+scratch, without dependencies, in the name of performance. We are 100% free from
+garbage collection.
 
 QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
 Wire protocol, a high-performance HTTP API, and even supports ingestion with
@@ -50,24 +52,27 @@ meaning that the data is safe, yet instantly accessible.
 ## Performance figures
 
 ### Raw figures
-Number operations per second **per thread**. Writes are durable and writen to disk.
 
-| Operation | 64-bit double | 32-bit int |
-|---|---|---|
-| Read | 120 Million /s | 240 Million /s |
-| Write | 240 Million /s| 480M Million /s |
+Number operations per second **per thread**. Writes are durable and written to
+disk.
 
-On a CPU with 6 memory channels, QuestDB can scan through **117GB of data per second**.
+| Operation | 64-bit double  | 32-bit int      |
+| --------- | -------------- | --------------- |
+| Read      | 120 Million /s | 240 Million /s  |
+| Write     | 240 Million /s | 480M Million /s |
+
+On a CPU with 6 memory channels, QuestDB can scan through **117GB of data per
+second**.
 
 ### Queries
 
-Execution time on a c5.metal instance using 16 of the 96 threads available. 
+Execution time on a c5.metal instance using 16 of the 96 threads available.
 
-| Query | Runtime |
-|---|---|
-|`SELECT sum(double) FROM 1bn` | 0.061 secs |
-|`SELECT tag, sum(double) FROM 1bn` | 0.179 secs |
-|`SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs |
+| Query                                                     | Runtime    |
+| --------------------------------------------------------- | ---------- |
+| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
+| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
+| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
 
 ## Getting Started
 
@@ -109,7 +114,7 @@ psql -h localhost -p 8812 -U admin -W -d qdb
 
 - Java 11 64-bit
 - Maven 3
-- Node.js 12 / npm 6
+- Node.js 12 / NPM 6
 
 ```shell script
 java --version
