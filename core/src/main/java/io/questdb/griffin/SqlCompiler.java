@@ -701,7 +701,27 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (SqlKeywords.isAlterKeyword(tok)) {
-                alterTableColumnAddIndex(executionContext, tableNamePosition, tableName);
+                tok = expectToken(lexer, "'column'");
+                if (SqlKeywords.isColumnKeyword(tok)) {
+                    tok = expectToken(lexer, "column name");
+                    final CharSequence columnName = GenericLexer.immutableOf(tok);
+                    tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
+                    if (SqlKeywords.isAddKeyword(tok)) {
+                        expectKeyword(lexer, "index");
+                        alterTableColumnAddIndex(tableNamePosition, columnName, writer);
+                    } else {
+                        if (SqlKeywords.isCacheKeyword(tok)) {
+                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
+                        } else if (SqlKeywords.isNoCacheKeyword(tok)) {
+                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
+                        } else {
+                            //TODO throw error
+                        }
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                }
+
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
             }
@@ -834,21 +854,25 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableColumnAddIndex(SqlExecutionContext executionContext, int tableNamePosition, CharSequence tableName) throws SqlException {
-        expectKeyword(lexer, "column");
-        final CharSequence columnName = GenericLexer.immutableOf(expectToken(lexer, "column name"));
+    private void alterTableColumnAddIndex(int tableNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
         final int columnNamePosition = lexer.lastTokenPosition();
-        expectKeyword(lexer, "add");
-        expectKeyword(lexer, "index");
 
         try {
-            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
-                // do column existence check to provide adequate error position
-                if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
-                    throw SqlException.invalidColumn(columnNamePosition, columnName);
-                }
-                w.addIndex(columnName, configuration.getIndexValueBlockSize());
+            if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName);
             }
+            w.addIndex(columnName, configuration.getIndexValueBlockSize());
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
+    }
+
+    private void alterTableColumnCacheFlag(int tableNamePosition, CharSequence columnName, TableWriter w, boolean cache) throws SqlException {
+
+        try {
+            //TODO check column exist
+            //TODO check column is type == symbol
+            //TODO call w.changeCacheFlag(cache);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
         }
