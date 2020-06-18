@@ -30,7 +30,7 @@ const oop = ace.require("ace/lib/oop") as { inherits: (a: any, b: any) => void }
 
 const QuestDBHighlightRules = function (this: HighlightRules) {
   const keywords =
-    "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename|truncate|asof|copy|alter|into|values|index|add|column|then|distinct|show|tables|columns"
+    "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename|truncate|asof|copy|alter|into|values|index|add|column|then|distinct|show|tables|columns|group"
   const builtinConstants = "true|false"
   const builtinFunctions =
     "avg|count|first|last|max|min|sum|ucase|lcase|mid|len|round|rank|now|format|coalesce|ifnull|isnull|nvl"
