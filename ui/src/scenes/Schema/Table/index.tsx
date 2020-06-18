@@ -4,7 +4,6 @@ import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled from "styled-components"
 import { Loader4 } from "@styled-icons/remix-line/Loader4"
-import { Table as TableIcon } from "@styled-icons/remix-line/Table"
 import {
   collapseTransition,
   spinAnimation,
@@ -61,13 +60,6 @@ const Columns = styled.div`
   }
 `
 
-const TitleIcon = styled(TableIcon)`
-  min-height: 18px;
-  min-width: 18px;
-  margin-right: 1rem;
-  color: ${color("draculaCyan")};
-`
-
 const Loader = styled(Loader4)`
   margin-left: 1rem;
   color: ${color("draculaOrange")};
@@ -105,9 +97,9 @@ const Table = ({ description, expanded, onChange, table }: Props) => {
       <Title
         description={description}
         expanded={expanded}
+        kind="table"
         name={table}
         onClick={handleClick}
-        prefix={<TitleIcon size="18px" />}
         suffix={loading && <Loader size="18px" />}
         tooltip={!!description}
       />
@@ -120,8 +112,13 @@ const Table = ({ description, expanded, onChange, table }: Props) => {
       >
         <Columns>
           {columns &&
-            columns.map(({ column, type }) => (
-              <Row key={column} name={column} type={type} />
+            columns.map((column) => (
+              <Row
+                {...column}
+                key={column.column}
+                kind="column"
+                name={column.column}
+              />
             ))}
         </Columns>
       </CSSTransition>

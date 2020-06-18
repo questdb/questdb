@@ -73,6 +73,7 @@ export type Table = {
 
 export type Column = {
   column: string
+  indexed: boolean
   type: string
 }
 
