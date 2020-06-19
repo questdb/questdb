@@ -2727,7 +2727,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTimestampFromPartitionedTable() {
+    public void testRenameTimestampFromPartitionedTable() throws Exception {
         try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2736,12 +2736,26 @@ public class TableWriterTest extends AbstractCairoTest {
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)) {
             CairoTestUtils.create(model);
-        }
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-        try (TableWriter writer = new TableWriter(configuration, "ABC")) {
-            try {
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+
+                append10KProducts(ts, rnd, writer);
+
                 writer.renameColumn("timestamp", "ts");
-            } catch (CairoException ignore) {
+
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
             }
         }
     }
@@ -2827,7 +2841,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 ts = append10KProducts(ts, rnd, writer);
 
-                writer.renameColumn("supplier", "sup" );
+                writer.renameColumn("supplier", "sup");
 
                 // assert attempt to remove files
                 Assert.assertTrue(ff.wasCalled());
