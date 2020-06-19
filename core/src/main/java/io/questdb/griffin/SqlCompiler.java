@@ -703,19 +703,20 @@ public class SqlCompiler implements Closeable {
             } else if (SqlKeywords.isAlterKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
+                    final int columnNameNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "column name");
                     final CharSequence columnName = GenericLexer.immutableOf(tok);
                     tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
                     if (SqlKeywords.isAddKeyword(tok)) {
                         expectKeyword(lexer, "index");
-                        alterTableColumnAddIndex(tableNamePosition, columnName, writer);
+                        alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
                     } else {
                         if (SqlKeywords.isCacheKeyword(tok)) {
                             alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
                         } else if (SqlKeywords.isNoCacheKeyword(tok)) {
                             alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
                         } else {
-                            //TODO throw error
+                            throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
                         }
                     }
                 } else {
@@ -854,9 +855,7 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableColumnAddIndex(int tableNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
-        final int columnNamePosition = lexer.lastTokenPosition();
-
+    private void alterTableColumnAddIndex(int tableNamePosition, int columnNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
         try {
             if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
                 throw SqlException.invalidColumn(columnNamePosition, columnName);
@@ -867,12 +866,20 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void alterTableColumnCacheFlag(int tableNamePosition, CharSequence columnName, TableWriter w, boolean cache) throws SqlException {
-
+    private void alterTableColumnCacheFlag(int tableNamePosition, CharSequence columnName, TableWriter writer, boolean cache) throws SqlException {
         try {
-            //TODO check column exist
-            //TODO check column is type == symbol
-            //TODO call w.changeCacheFlag(cache);
+            RecordMetadata metadata = writer.getMetadata();
+
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
+            }
+
+            if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
+                SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
+            }
+
+            writer.changeCacheFlag(columnIndex, cache);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
         }

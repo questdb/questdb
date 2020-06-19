@@ -25,18 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
@@ -48,35 +45,194 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     }
 
     @Test
-    public void testAlterColumnCacheSetting() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
+    public void testBadSyntax() throws Exception {
+        assertFailure("alter table x alter column z", 28, "'add index' or 'cache' or 'nocache' expected");
+    }
 
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+    @Test
+    public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
+        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
+    }
 
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                        @Override
-                        public boolean getDefaultSymbolCacheFlag() {
-                            return false;
-                        }
-                    };
+    @Test
+    public void testAlterExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x alter", 19, "'column' expected");
+    }
 
-                    try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                        try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(ALTER, compiler.compile("alter table x alter column sym cache", sqlExecutionContext).getType());
+    @Test
+    public void testAlterExpectColumnName() throws Exception {
+        assertFailure("alter table x alter column", 26, "column name expected");
+    }
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                                SymbolMapReader smr = reader.getSymbolMapReader(16);
-                                //TODO assert
-                            }
+    @Test
+    public void testInvalidColumn() throws Exception {
+        assertFailure("alter table x alter column y cache", 29, "Invalid column: y");
+    }
+
+    @Test
+    public void testAlterSymbolCacheFlagToFalseAndCheckOpenReaderWithCursor() throws Exception {
+
+        String expectedOrderedWhenCached = "sym\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "ibm\n" +
+                "ibm\n" +
+                "msft\n" +
+                "msft\n";
+
+        String expectedChronological = "sym\n" +
+                "msft\n" +
+                "googl\n" +
+                "googl\n" +
+                "ibm\n" +
+                "googl\n" +
+                "ibm\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "msft\n";
 
 
-                        }
-                    }
+        String expectedUnordered = "sym\n" +
+                "msft\n" +
+                "googl\n" +
+                "googl\n" +
+                "googl\n" +
+                "ibm\n" +
+                "googl\n" +
+                "ibm\n" +
+                "googl\n" +
+                "googl\n" +
+                "msft\n";
+
+        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
+
+        assertMemoryLeak(this::createX);
+
+        assertQuery(expectedOrderedWhenCached,
+                "select sym from x order by sym",
+                "x",
+                null);
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                //check cursor before altering symbol column
+                sink.clear();
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                Assert.assertEquals(expectedChronological, sink.toString());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                    writer.changeCacheFlag(1, false);
                 }
-        );
+                //reload reader
+                Assert.assertTrue(reader.reload());
+                //check cursor after reload
+                sink.clear();
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                Assert.assertEquals(expectedChronological, sink.toString());
+
+                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                    sink.clear();
+                    printer.print(reader2.getCursor(), reader2.getMetadata(), true);
+                    Assert.assertEquals(expectedChronological, sink.toString());
+                }
+            }
+        });
+
+        assertQuery(expectedUnordered,
+                "select sym from x order by 1 asc",
+                "x",
+                null);
+    }
+
+    @Test
+    public void testAlterSymbolCacheFlagToTrueCheckOpenReaderWithCursor() throws Exception {
+        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (i int, sym symbol nocache) ;", sqlExecutionContext);
+            executeInsert("insert into x values (1, 'GBP')\"");
+            executeInsert("insert into x values (2, 'CHF')\"");
+            executeInsert("insert into x values (3, 'GBP')\"");
+            executeInsert("insert into x values (4, 'JPY')\"");
+            executeInsert("insert into x values (5, 'USD')\"");
+            executeInsert("insert into x values (6, 'GBP')\"");
+            executeInsert("insert into x values (7, 'GBP')\"");
+            executeInsert("insert into x values (8, 'GBP')\"");
+            executeInsert("insert into x values (9, 'GBP')\"");
+        });
+
+
+        String expectUnordered = "sym\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "USD\n" +
+                "JPY\n" +
+                "GBP\n" +
+                "CHF\n" +
+                "GBP\n";
+        assertQuery(expectUnordered,
+                "select sym from x order by sym",
+                "x",
+                null);
+
+        String expected = "sym\n" +
+                "GBP\n" +
+                "CHF\n" +
+                "GBP\n" +
+                "JPY\n" +
+                "USD\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n";
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                //check cursor before altering symbol column
+                sink.clear();
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                Assert.assertEquals(expected, sink.toString());
+
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                    writer.changeCacheFlag(1, true);
+                }
+                //reload reader
+                Assert.assertTrue(reader.reload());
+                //check cursor after reload
+                sink.clear();
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                Assert.assertEquals(expected, sink.toString());
+
+                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                    sink.clear();
+                    printer.print(reader2.getCursor(), reader2.getMetadata(), true);
+                    Assert.assertEquals(expected, sink.toString());
+                }
+
+            }
+        });
+
+        String expectedOrdered = "sym\n" +
+                "CHF\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "JPY\n" +
+                "USD\n";
+        assertQuery(expectedOrdered,
+                "select sym from x order by 1 asc",
+                "x",
+                null);
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -116,5 +272,29 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                         ") timestamp (timestamp);",
                 sqlExecutionContext
         );
+    }
+
+    static class SingleColumnRecordCursorPrinter extends RecordCursorPrinter {
+
+        private final int columnIndex;
+
+        public SingleColumnRecordCursorPrinter(CharSink sink, int columnIndex) {
+            super(sink);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void printHeader(RecordMetadata metadata) {
+            sink.put(metadata.getColumnName(columnIndex));
+            sink.put('\n');
+        }
+
+        @Override
+        public void print(Record r, RecordMetadata m) {
+            printColumn(r, m, columnIndex);
+            sink.put("\n");
+            sink.flush();
+        }
+
     }
 }

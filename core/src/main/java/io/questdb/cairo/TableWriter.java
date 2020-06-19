@@ -480,6 +480,21 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
+    public void changeCacheFlag(int columnIndex, boolean cache) {
+        checkDistressed();
+
+        commit();
+
+        SymbolMapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+        if (symbolMapWriter.isCached() != cache) {
+            symbolMapWriter.updateCacheFlag(cache);
+        } else {
+            return;
+        }
+
+        bumpStructureVersion();
+    }
+
     @Override
     public void close() {
         if (isOpen() && lifecycleManager.close()) {
