@@ -647,9 +647,6 @@ public class VirtualMemory implements Closeable {
 
     protected void ensurePagesListCapacity(long size) {
         int capacity = pageIndex(size) + 1;
-        if (capacity > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
-        }
         pages.ensureCapacity(capacity);
     }
 
