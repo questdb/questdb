@@ -129,7 +129,7 @@ export const Splitter = ({
       const side = direction === "horizontal" ? "outerWidth" : "outerHeight"
       let position = 0
 
-      if (event instanceof TouchEvent) {
+      if (window.TouchEvent && event instanceof TouchEvent) {
         position = event.touches[0][clientPosition]
       }
 
@@ -168,7 +168,7 @@ export const Splitter = ({
         ]
         let position = 0
 
-        if (event.nativeEvent instanceof TouchEvent) {
+        if (window.TouchEvent && event.nativeEvent instanceof TouchEvent) {
           position = event.nativeEvent.touches[0][clientPosition]
         }
 
