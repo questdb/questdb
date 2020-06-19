@@ -83,6 +83,7 @@ const Schema = ({
   const [loading, setLoading] = useState(false)
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
+  const [refresh, setRefresh] = useState(Date.now())
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -96,6 +97,7 @@ const Schema = ({
       if (response && response.type === QuestDB.Type.DQL) {
         setTables(response.data)
         setLoading(false)
+        setRefresh(Date.now())
       } else {
         setLoading(loading)
       }
@@ -136,6 +138,7 @@ const Schema = ({
               expanded={table === opened}
               key={table}
               onChange={handleChange}
+              refresh={refresh}
               table={table}
             />
           ))}

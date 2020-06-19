@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import { CSSTransition } from "react-transition-group"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
@@ -18,6 +18,7 @@ type Props = QuestDB.Table &
     expanded: boolean
     description?: string
     onChange: (table: string) => void
+    refresh: number
     table: string
   }>
 
@@ -66,18 +67,13 @@ const Loader = styled(Loader4)`
   ${spinAnimation};
 `
 
-const Table = ({ description, expanded, onChange, table }: Props) => {
+const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
-  const handleClick = useCallback(() => {
+  useEffect(() => {
     if (expanded) {
-      onChange("")
-    } else {
-      setColumns(undefined)
-      onChange(table)
-
       combineLatest(
         from(quest.showColumns(table)).pipe(startWith(null)),
         of(true).pipe(delay(1000), startWith(false)),
@@ -89,8 +85,14 @@ const Table = ({ description, expanded, onChange, table }: Props) => {
           setLoading(loading)
         }
       })
+    } else {
+      setColumns(undefined)
     }
-  }, [expanded, onChange, quest, table])
+  }, [expanded, refresh, quest, table])
+
+  const handleClick = useCallback(() => {
+    onChange(expanded ? "" : table)
+  }, [expanded, onChange, table])
 
   return (
     <Wrapper _height={columns ? columns.length * 30 : 0}>
@@ -115,7 +117,9 @@ const Table = ({ description, expanded, onChange, table }: Props) => {
             columns.map((column) => (
               <Row
                 {...column}
-                key={column.column}
+                key={`${column.column}-${column.type}${
+                  column.indexed ? "-i" : ""
+                }`}
                 kind="column"
                 name={column.column}
               />
