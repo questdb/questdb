@@ -2,6 +2,7 @@ import { Range } from "ace-builds"
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import ReactAce from "react-ace"
 import { useDispatch, useSelector } from "react-redux"
+import ResizeObserver from "resize-observer-polyfill"
 import styled from "styled-components"
 
 import { PaneContent, Text } from "components"
