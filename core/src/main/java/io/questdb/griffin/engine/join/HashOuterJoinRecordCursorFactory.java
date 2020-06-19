@@ -71,7 +71,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-        slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize());
+        slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashOuterJoinRecordCursor(

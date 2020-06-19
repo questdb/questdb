@@ -78,6 +78,16 @@ public class SecurityTest extends AbstractGriffinTest {
             public int getSqlJoinMetadataMaxResizes() {
                 return 10;
             }
+
+            @Override
+            public long getSqlSortLightValuePageSize() {
+                return 1024;
+            }
+
+            @Override
+            public int getSqlSortLightValueMaxPages() {
+                return 11;
+            }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration, messageBus);
         SqlExecutionInterruptor dummyInterruptor = new SqlExecutionInterruptor() {
@@ -480,16 +490,9 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMemoryRestrictionsWithImplicitGroupBy() throws Exception {
-        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(
-                messageBus,
-                1,
-                engine)
-                        .with(
-                                new CairoSecurityContextImpl(
-                                        false),
-                                bindVariableService,
-                                null, -1, null);
+    public void testTreeResizesWithImplicitGroupBy() throws Exception {
+        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
+                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -514,6 +517,38 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryResizesWithImplicitGroupBy() throws Exception {
+        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
+                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(2,2,2,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(1000)) timestamp(ts)", sqlExecutionContext);
+            assertQuery(
+                    memoryRestrictedCompiler,
+                    "sym2\td\nGZ\t0.006817672510656014\nGZ\t0.0014986299883373855\nGZ\t0.007868356216637062\nGZ\t0.007985454958725269\nGZ\t0.0011075361080621349\nRX\t4.016718301054212E-4\nRX\t0.006651203432318287\nRX\t6.503932953429992E-4\nRX\t0.0072398675350549\nRX\t0.0016532800623808575\n",
+                    "select sym2, d from tb1 where d < 0.01 order by sym2",
+                    null,
+                    true, readOnlyExecutionContext);
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "",
+                        "select sym2, d from tb1 order by sym2",
+                        null,
+                        true, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("Maximum number of pages (11) breached"));
             }
         });
     }

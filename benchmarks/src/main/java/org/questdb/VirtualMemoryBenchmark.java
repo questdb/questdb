@@ -40,8 +40,8 @@ import java.util.concurrent.TimeUnit;
 public class VirtualMemoryBenchmark {
 
 
-    private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024);
-    private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024);
+    private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+    private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {

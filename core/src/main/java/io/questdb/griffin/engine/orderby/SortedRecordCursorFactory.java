@@ -53,7 +53,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                 configuration.getSqlSortKeyPageSize(),
                 configuration
                         .getSqlSortKeyMaxPages(),
-                configuration.getSqlSortValuePageSize());
+                configuration.getSqlSortValuePageSize(),
+                configuration.getSqlSortValueMaxPages());
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
     }

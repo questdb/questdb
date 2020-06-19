@@ -24,19 +24,24 @@
 
 package io.questdb.griffin.engine.join;
 
+import org.junit.Assert;
+import org.junit.Test;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
 
 public class LongChainTest {
+    @SuppressWarnings("unused")
+    private static final Log LOG = LogFactory.getLog(LongChainTest.class);
 
     @Test
     public void testAll() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LongChain chain = new LongChain(1024 * 1024)) {
+            try (LongChain chain = new LongChain(1024 * 1024, Integer.MAX_VALUE)) {
                 final int N = 1000;
                 final int nChains = 10;
                 final Rnd rnd = new Rnd();

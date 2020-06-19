@@ -89,15 +89,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapKeyCapacity;
     private final int sqlMapPageSize;
+    private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
     private final long sqlSortKeyPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
+    private final int sqlSortLightValueMaxPages;
     private final int sqlHashJoinValuePageSize;
+    private final int sqlHashJoinValueMaxPages;
     private final long sqlLatestByRowCount;
     private final int sqlHashJoinLightValuePageSize;
+    private final int sqlHashJoinLightValueMaxPages;
     private final int sqlSortValuePageSize;
+    private final int sqlSortValueMaxPages;
     private final long workStealTimeoutNanos;
     private final boolean parallelIndexingEnabled;
     private final int sqlJoinMetadataPageSize;
@@ -375,15 +380,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
+        this.sqlMapMaxPages = getIntSize(properties, "cairo.sql.map.max.pages", Integer.MAX_VALUE);
         this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
         this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
+        this.sqlSortLightValueMaxPages = getIntSize(properties, "cairo.sql.sort.light.value.max.pages", Integer.MAX_VALUE);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
+        this.sqlHashJoinValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.value.max.pages", Integer.MAX_VALUE);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
         this.sqlHashJoinLightValuePageSize = getIntSize(properties, "cairo.sql.hash.join.light.value.page.size", 1048576);
+        this.sqlHashJoinLightValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.light.value.max.pages", Integer.MAX_VALUE);
         this.sqlSortValuePageSize = getIntSize(properties, "cairo.sql.sort.value.page.size", 16777216);
+        this.sqlSortValueMaxPages = getIntSize(properties, "cairo.sql.sort.value.max.pages", Integer.MAX_VALUE);
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
@@ -1171,6 +1181,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMapMaxPages() {
+            return sqlMapMaxPages;
+        }
+
+        @Override
         public int getSqlMapMaxResizes() {
             return sqlMapMaxResizes;
         }
@@ -1196,8 +1211,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlSortLightValueMaxPages() {
+            return sqlSortLightValueMaxPages;
+        }
+
+        @Override
         public int getSqlHashJoinValuePageSize() {
             return sqlHashJoinValuePageSize;
+        }
+
+        @Override
+        public int getSqlHashJoinValueMaxPages() {
+            return sqlHashJoinValueMaxPages;
         }
 
         @Override
@@ -1211,8 +1236,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlHashJoinLightValueMaxPages() {
+            return sqlHashJoinLightValueMaxPages;
+        }
+
+        @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
+        }
+
+        @Override
+        public int getSqlSortValueMaxPages() {
+            return sqlSortValueMaxPages;
         }
 
         @Override
