@@ -79,6 +79,7 @@ open module io.questdb {
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;
+    exports io.questdb.tasks;
 
     provides FunctionFactory with
             // test functions

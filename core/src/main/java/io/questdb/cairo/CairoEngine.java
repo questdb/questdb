@@ -24,12 +24,6 @@
 
 package io.questdb.cairo;
 
-import static io.questdb.cairo.ColumnType.SYMBOL;
-
-import java.io.Closeable;
-
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -37,6 +31,7 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -44,6 +39,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.ColumnType.SYMBOL;
 
 public class CairoEngine implements Closeable {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -66,7 +66,7 @@ public class CairoEngine implements Closeable {
         this.messageBus = messageBus;
     }
 
-    public WriterMaintenanceJob getWriterMaintenanceJob() {
+    public Job getWriterMaintenanceJob() {
         return writerMaintenanceJob;
     }
 
@@ -321,16 +321,12 @@ public class CairoEngine implements Closeable {
             this.checkInterval = configuration.getIdleCheckInterval() * 1000;
         }
 
-        protected boolean doRun() {
-            return releaseInactive();
-        }
-
         @Override
         protected boolean runSerially() {
             long t = clock.getTicks();
             if (last + checkInterval < t) {
                 last = t;
-                return doRun();
+                return releaseInactive();
             }
             return false;
         }

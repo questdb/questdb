@@ -347,7 +347,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (this.pgDefaultTimestampLocale == null) {
                 throw new ServerConfigurationException("pg.timestamp.locale", dateLocale);
             }
-            this.pgWorkerCount = getInt(properties, "pg.worker.count", 2);
+            this.pgWorkerCount = getInt(properties, "pg.worker.count", 0);
             this.pgWorkerAffinity = getAffinity(properties, "pg.worker.affinity", pgWorkerCount);
             this.pgHaltOnError = getBoolean(properties, "pg.halt.on.error", false);
             this.pgDaemonPool = getBoolean(properties, "pg.daemon.pool", true);
