@@ -11,7 +11,7 @@ import { usePopper } from "react-popper"
 import { CSSTransition } from "react-transition-group"
 
 import { usePopperStyles, useTransition } from "../Hooks"
-import { createGlobalFadeTransition, TransitionDuration } from "../Transition"
+import { TransitionDuration } from "../Transition"
 
 type Props = Readonly<{
   active?: boolean
@@ -21,11 +21,6 @@ type Props = Readonly<{
   onToggle?: (_active: boolean) => void
   trigger: ReactNode
 }>
-
-const GlobalTransitionStyles = createGlobalFadeTransition(
-  "popper-toggle-fade",
-  TransitionDuration.REG,
-)
 
 export const PopperToggle = ({
   active,
@@ -102,8 +97,6 @@ export const PopperToggle = ({
 
   return (
     <>
-      <GlobalTransitionStyles />
-
       {React.isValidElement(trigger) &&
         React.cloneElement(trigger, {
           onClick: handleClick,
@@ -112,7 +105,7 @@ export const PopperToggle = ({
 
       {React.isValidElement(children) && (
         <CSSTransition
-          classNames="popper-toggle-fade"
+          classNames="popper-fade"
           in={_active}
           timeout={TransitionDuration.REG}
           unmountOnExit

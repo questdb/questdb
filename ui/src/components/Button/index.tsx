@@ -47,6 +47,7 @@ const baseStyles = css<ButtonProps>`
   outline: 0;
   line-height: 1.15;
   ${bezierTransition};
+  ${({ disabled }) => disabled && "pointer-events: none;"};
 
   svg + span {
     margin-left: 0.5rem;
