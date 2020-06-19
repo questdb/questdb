@@ -487,6 +487,10 @@ public final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
+            if (Chars.indexOf(name, '.') > -1) {
+                throw SqlException.$(position, "Column name cannot have character '.'");
+            }
+
             if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity())) {
                 throw SqlException.$(position, "Duplicate column");
             }

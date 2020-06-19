@@ -727,6 +727,10 @@ public class SqlCompiler implements Closeable {
 
             CharSequence columnName = GenericLexer.immutableOf(tok);
 
+            if (Chars.indexOf(tok, '\\') > -1 || Chars.indexOf(tok, '.') > -1 || Chars.indexOf(tok, '/') > -1) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters '\\', '.' or '/'");
+            }
+
             tok = expectToken(lexer, "column type");
 
             int type = ColumnType.columnTypeOf(tok);

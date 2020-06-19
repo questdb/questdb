@@ -53,6 +53,21 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddBadColumnNameDot() throws Exception {
+        assertFailure("alter table x add column .", 25, "new column name contains invalid characters '\\', '.' or '/'");
+    }
+
+    @Test
+    public void testAddBadColumnNameFwdSlash() throws Exception {
+        assertFailure("alter table x add column /", 25, "new column name contains invalid characters '\\', '.' or '/'");
+    }
+
+    @Test
+    public void testAddBadColumnNameBackSlash() throws Exception {
+        assertFailure("alter table x add column \\", 25, "new column name contains invalid characters '\\', '.' or '/'");
+    }
+
+    @Test
     public void testAddBusyTable() throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
