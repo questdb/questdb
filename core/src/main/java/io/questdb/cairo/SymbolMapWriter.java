@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 
@@ -182,6 +181,10 @@ public class SymbolMapWriter implements Closeable {
 
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    }
+
+    public void updateCacheFlag(boolean flag) {
+        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
     }
 
     public void rollback(int symbolCount) {
