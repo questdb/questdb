@@ -196,7 +196,7 @@ public class TableWriter implements Closeable {
             }
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize());
+            this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);

@@ -945,7 +945,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1075,7 +1075,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1144,7 +1144,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {

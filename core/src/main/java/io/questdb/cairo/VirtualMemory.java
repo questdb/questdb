@@ -24,13 +24,20 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Sink;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
-
-import java.io.Closeable;
 
 public class VirtualMemory implements Closeable {
     static final int STRING_LENGTH_BYTES = 4;
@@ -42,6 +49,7 @@ public class VirtualMemory implements Closeable {
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private long pageSize;
+    private final int maxPages;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -52,12 +60,13 @@ public class VirtualMemory implements Closeable {
     private long roOffsetHi = 0;
     private long absolutePointer;
 
-    public VirtualMemory(long pageSize) {
-        this();
+    public VirtualMemory(long pageSize, int maxPages) {
         setPageSize(pageSize);
+        this.maxPages = maxPages;
     }
 
     protected VirtualMemory() {
+        maxPages = Integer.MAX_VALUE;
     }
 
     public static int getStorageLength(CharSequence s) {
@@ -603,6 +612,9 @@ public class VirtualMemory implements Closeable {
 
     protected long allocateNextPage(int page) {
         LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
+        if (page > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+        }
         return Unsafe.malloc(getMapPageSize());
     }
 
@@ -634,7 +646,8 @@ public class VirtualMemory implements Closeable {
     }
 
     protected void ensurePagesListCapacity(long size) {
-        pages.ensureCapacity(pageIndex(size) + 1);
+        int capacity = pageIndex(size) + 1;
+        pages.ensureCapacity(capacity);
     }
 
     private byte getByte0(long offset) {
@@ -1120,6 +1133,7 @@ public class VirtualMemory implements Closeable {
         private long readAddress;
         private long readLimit;
 
+        @Override
         public byte byteAt(long index) {
             try {
                 if (index == lastIndex + 1 && readAddress < readLimit) {
@@ -1148,6 +1162,7 @@ public class VirtualMemory implements Closeable {
             }
         }
 
+        @Override
         public long length() {
             return len;
         }

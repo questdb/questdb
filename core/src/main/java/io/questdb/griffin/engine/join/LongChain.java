@@ -34,8 +34,8 @@ public class LongChain implements Closeable, Mutable {
     private final VirtualMemory valueChain;
     private final TreeCursor cursor;
 
-    public LongChain(long valuePageSize) {
-        this.valueChain = new VirtualMemory(valuePageSize);
+    public LongChain(long valuePageSize, int valueMaxPages) {
+        this.valueChain = new VirtualMemory(valuePageSize, valueMaxPages);
         this.cursor = new TreeCursor();
     }
 
