@@ -42,7 +42,7 @@ public class WaitProcessorTests {
     final TestWorkerPool workerPool = new TestWorkerPool();
 
     @Test
-    public void testRescheduleNotHappensImmediately() throws Exception {
+    public void testRescheduleNotHappensImmediately() {
 
         WaitProcessor processor = createProcessor();
         job1Attempts = 0;
@@ -61,7 +61,7 @@ public class WaitProcessorTests {
     }
 
     @Test
-    public void testRescheduleHappensInFirstSecond() throws Exception {
+    public void testRescheduleHappensInFirstSecond() {
         WaitProcessor processor = createProcessor();
         job1Attempts = 0;
 
@@ -82,7 +82,7 @@ public class WaitProcessorTests {
     }
 
     @Test
-    public void testMultipleRetriesExecutedSameCountOverSamePeriod() throws Exception {
+    public void testMultipleRetriesExecutedSameCountOverSamePeriod() {
         WaitProcessor processor = createProcessor();
         int[] jobAttempts = new int[10];
 

@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.pool.ex.RetryOperationException;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.griffin.HttpSqlExecutionInterruptor;
 import io.questdb.griffin.SqlExecutionInterruptor;
@@ -192,7 +192,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         try {
             processor.onRequestComplete(this);
-        } catch (EntryUnavailableException e) {
+        } catch (RetryOperationException e) {
             pendingRetry = true;
             rescheduleContext.reschedule(this);
         }
@@ -368,7 +368,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         resumeProcessor = null;
                     }
                 }
-            } catch (EntryUnavailableException e) {
+            } catch (RetryOperationException e) {
                 pendingRetry = true;
                 rescheduleContext.reschedule(this);
             } catch (PeerDisconnectedException e) {
@@ -440,7 +440,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             
             try {
                 processor.onRequestRetry(this);
-            } catch (EntryUnavailableException e2) {
+            } catch (RetryOperationException e2) {
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {

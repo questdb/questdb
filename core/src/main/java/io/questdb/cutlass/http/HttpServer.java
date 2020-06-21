@@ -141,10 +141,6 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private void queueRetry(Retry retry) {
-
-    }
-
     private static HttpServer create0(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,

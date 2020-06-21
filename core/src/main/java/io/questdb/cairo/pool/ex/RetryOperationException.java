@@ -22,8 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cairo.pool.ex;
 
-public interface RescheduleContext {
-    void reschedule(Retry retry);
+import io.questdb.cairo.CairoException;
+
+public class RetryOperationException extends CairoException {
+    public static final RetryOperationException INSTANCE;
+
+    static {
+        INSTANCE = new RetryOperationException();
+        INSTANCE.put("resource is busy");
+    }
 }
