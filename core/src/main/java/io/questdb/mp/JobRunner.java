@@ -22,19 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.mp;
 
-import org.jetbrains.annotations.NotNull;
+import java.io.Closeable;
 
-public class RetryHolder implements Comparable<RetryHolder> {
-    public Retry retry;
-    public long nextRunTimestamp;
-    public long lastRunTimestamp;
-    public long waitStartTimestamp;
-    public int attempt;
-
-    @Override
-    public int compareTo(@NotNull RetryHolder o) {
-        return nextRunTimestamp > o.nextRunTimestamp ? 1 : (nextRunTimestamp < o.nextRunTimestamp ? -1 : 0);
-    }
+public interface JobRunner {
+    void assign(Job job);
+    void assign(int worker, Job job);
+    void assign(int worker, Closeable cleaner);
+    int getWorkerCount();
 }

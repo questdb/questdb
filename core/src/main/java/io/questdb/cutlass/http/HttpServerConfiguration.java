@@ -55,6 +55,8 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
 
     IODispatcherConfiguration getDispatcherConfiguration();
 
+    WaitProcessorConfiguration getWaitProcessorConfiguration();
+
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();

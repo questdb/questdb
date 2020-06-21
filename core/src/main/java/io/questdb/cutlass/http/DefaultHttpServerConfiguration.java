@@ -171,6 +171,26 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+        return new WaitProcessorConfiguration() {
+            @Override
+            public MillisecondClock getClock() {
+                return MillisecondClockImpl.INSTANCE;
+            }
+
+            @Override
+            public long getMaxWaitCapMs() {
+                return 1000;
+            }
+
+            @Override
+            public double getExponentialWaitMultiplier() {
+                return 2.0;
+            }
+        };
+    }
+
+    @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
     }

@@ -24,17 +24,10 @@
 
 package io.questdb.cutlass.http;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.time.MillisecondClock;
 
-public class RetryHolder implements Comparable<RetryHolder> {
-    public Retry retry;
-    public long nextRunTimestamp;
-    public long lastRunTimestamp;
-    public long waitStartTimestamp;
-    public int attempt;
-
-    @Override
-    public int compareTo(@NotNull RetryHolder o) {
-        return nextRunTimestamp > o.nextRunTimestamp ? 1 : (nextRunTimestamp < o.nextRunTimestamp ? -1 : 0);
-    }
+public interface WaitProcessorConfiguration {
+    MillisecondClock getClock();
+    long getMaxWaitCapMs();
+    double getExponentialWaitMultiplier();
 }

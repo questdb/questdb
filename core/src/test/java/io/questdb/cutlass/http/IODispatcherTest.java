@@ -36,6 +36,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import io.questdb.cairo.*;
 import io.questdb.std.*;
+import io.questdb.std.time.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -1795,123 +1796,123 @@ public class IODispatcherTest {
         });
     }
 
-	@Test
-	public void testJsonQueryWithInterruption() throws Exception {
-		assertMemoryLeak(() -> {
-			final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-			final String baseDir = temp.getRoot().getAbsolutePath();
-			final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
-					false, false);
-			final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-				@Override
-				public int[] getWorkerAffinity() {
-					return new int[] { -1 };
-				}
+    @Test
+    public void testJsonQueryWithInterruption() throws Exception {
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
+                    false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
 
-				@Override
-				public int getWorkerCount() {
-					return 1;
-				}
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
 
-				@Override
-				public boolean haltOnError() {
-					return false;
-				}
-			});
-			try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
-					HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-				httpServer.bind(new HttpRequestProcessorFactory() {
-					@Override
-					public HttpRequestProcessor newInstance() {
-						return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-					}
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
 
-					@Override
-					public String getUrl() {
-						return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-					}
-				});
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
 
-				httpServer.bind(new HttpRequestProcessorFactory() {
-					@Override
-					public HttpRequestProcessor newInstance() {
-						return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
-								null, workerPool.getWorkerCount());
-					}
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
+                                null, workerPool.getWorkerCount());
+                    }
 
-					@Override
-					public String getUrl() {
-						return "/query";
-					}
-				});
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
 
-				final AtomicBoolean clientClosed = new AtomicBoolean(false);
-				final AtomicBoolean serverClosed = new AtomicBoolean(false);
-				HttpClientStateListener clientStateListener = new HttpClientStateListener() {
-					@Override
-					public void onStartingRequest() {
-					}
+                final AtomicBoolean clientClosed = new AtomicBoolean(false);
+                final AtomicBoolean serverClosed = new AtomicBoolean(false);
+                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+                    @Override
+                    public void onStartingRequest() {
+                    }
 
-					@Override
-					public void onReceived(int nBytes) {
-						LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
-					}
+                    @Override
+                    public void onReceived(int nBytes) {
+                        LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
+                    }
 
-					@Override
-					public void onClosed() {
-						clientClosed.set(true);
+                    @Override
+                    public void onClosed() {
+                        clientClosed.set(true);
 
-					}
-				};
-				workerPool.start(LOG);
+                    }
+                };
+                workerPool.start(LOG);
 
-				try {
-					// create table with all column types
-					CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
-							new TestRecord.ArrayBinarySequence());
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
 
-					// send multipart request to server
+                    // send multipart request to server
 
-					final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
-							+ "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
-							+ "Upgrade-Insecure-Requests: 1\r\n"
-							+ "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
-							+ "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
-							+ "Accept-Encoding: gzip, deflate, br\r\n"
-							+ "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
+                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
+                            + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
+                            + "Upgrade-Insecure-Requests: 1\r\n"
+                            + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
+                            + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
+                            + "Accept-Encoding: gzip, deflate, br\r\n"
+                            + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-					String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
-							+ "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
-							+ "Content-Type: application/json; charset=utf-8\r\n"
-							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
-					TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-						@Override
+                    String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
+                            + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
+                            + "Content-Type: application/json; charset=utf-8\r\n"
+                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
                         public boolean onGet(Record record, int count) {
-							if (count == 4) {
-								while (!clientClosed.get()) {
-									LockSupport.parkNanos(1);
-								}
-							}
-							return true;
-						}
+                            if (count == 4) {
+                                while (!clientClosed.get()) {
+                                    LockSupport.parkNanos(1);
+                                }
+                            }
+                            return true;
+                        }
 
-						@Override
+                        @Override
                         public void onClose() {
-							serverClosed.set(true);
-						}
-					});
-					sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 200,
-							clientStateListener);
-					while (!serverClosed.get()) {
-						LockSupport.parkNanos(1);
-					}
+                            serverClosed.set(true);
+                        }
+                    });
+                    sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 200,
+                            clientStateListener);
+                    while (!serverClosed.get()) {
+                        LockSupport.parkNanos(1);
+                    }
                     Assert.assertEquals(6, TestLatchedCounterFunctionFactory.getCount());
-				} finally {
-					workerPool.halt();
-				}
-			}
-		});
-	}
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
 
     @Test
     public void testJsonQueryBadUtf8() throws Exception {
@@ -4584,7 +4585,7 @@ public class IODispatcherTest {
     @Test
     @Ignore
     public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
-        for(int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
@@ -4597,7 +4598,7 @@ public class IODispatcherTest {
     @Test
     @Ignore
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
-        for(int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
@@ -4773,7 +4774,6 @@ public class IODispatcherTest {
             Thread.sleep(1000);
         });
     }
-
 
     @Test
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
@@ -5020,6 +5020,27 @@ public class IODispatcherTest {
             @Override
             public MillisecondClock getClock() {
                 return () -> 0;
+            }
+
+            @Override
+            public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+                return new WaitProcessorConfiguration() {
+                    @Override
+                    public MillisecondClock getClock() {
+                        return MillisecondClockImpl.INSTANCE;
+                    }
+
+                    @Override
+                    public long getMaxWaitCapMs() {
+                        // The bigger the number here the longer it may take for retry tests to finish.
+                        return 100;
+                    }
+
+                    @Override
+                    public double getExponentialWaitMultiplier() {
+                        return 2.0;
+                    }
+                };
             }
 
             @Override

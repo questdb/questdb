@@ -30,6 +30,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
@@ -55,6 +56,7 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new HttpIODispatcherConfiguration();
+    private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -192,7 +194,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private int interruptorNIterationsPerCheck;
-    private int interruptorBufferSize;;
+    private int interruptorBufferSize;
+    private long maxRerunWaitCapMs;
+    private double rerunExponentialWaitMultiplier;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -280,6 +284,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
+
+            this.maxRerunWaitCapMs = getLong(properties,"http.busy.retry.maximum.wait.before.retry", 1000);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, "http.busy.retry.exponential.wait.multipier", 2.0);
         }
 
         this.commitMode = getCommitMode(properties, "cairo.commit.mode");
@@ -842,6 +849,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+            return httpWaitProcessorConfiguration;
+        }
+
+        @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
         }
@@ -1358,6 +1370,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
+        }
+    }
+
+    private class PropWaitProcessorConfiguration implements WaitProcessorConfiguration {
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getMaxWaitCapMs() {
+            return maxRerunWaitCapMs;
+        }
+
+        @Override
+        public double getExponentialWaitMultiplier() {
+            return rerunExponentialWaitMultiplier;
         }
     }
 }
