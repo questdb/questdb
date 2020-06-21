@@ -125,6 +125,10 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("REPAIR", this::repairTables);
         keywordBasedExecutors.put("set", this::compileSet);
         keywordBasedExecutors.put("SET", this::compileSet);
+        keywordBasedExecutors.put("begin", this::compileSet);
+        keywordBasedExecutors.put("BEGIN", this::compileSet);
+        keywordBasedExecutors.put("rollback", this::compileSet);
+        keywordBasedExecutors.put("ROLLBACK", this::compileSet);
         keywordBasedExecutors.put("drop", this::dropTable);
         keywordBasedExecutors.put("DROP", this::dropTable);
         keywordBasedExecutors.put("backup", this::sqlBackup);

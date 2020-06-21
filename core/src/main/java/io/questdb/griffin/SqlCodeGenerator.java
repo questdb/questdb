@@ -566,6 +566,7 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode filter = model.getWhereClause();
         if (filter != null) {
+            model.setWhereClause(null);
             return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
         }
         return factory;
