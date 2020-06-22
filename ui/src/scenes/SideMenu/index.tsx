@@ -3,16 +3,11 @@ import { useDispatch, useSelector } from "react-redux"
 import { CSSTransition } from "react-transition-group"
 import styled from "styled-components"
 
-import { createGlobalFadeTransition, TransitionDuration } from "components"
+import { TransitionDuration } from "components"
 import { actions, selectors } from "store"
 import { color } from "utils"
 
 import Schema from "../Schema"
-
-const GlobalTransitionStyles = createGlobalFadeTransition(
-  "side-menu-backdrop-fade",
-  TransitionDuration.REG,
-)
 
 const WIDTH = 280
 
@@ -68,15 +63,15 @@ const SideMenu = () => {
 
   return (
     <>
-      {opened && <GlobalTransitionStyles />}
       <CSSTransition
-        classNames="side-menu-backdrop-fade"
+        classNames="fade-reg"
         in={opened}
         timeout={TransitionDuration.REG}
         unmountOnExit
       >
         <Backdrop onClick={handleBackdropClick} />
       </CSSTransition>
+
       <CSSTransition
         classNames="side-menu-slide"
         in={opened}

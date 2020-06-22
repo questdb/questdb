@@ -96,7 +96,7 @@ export const PopperHover = ({
 
       {ReactDOM.createPortal(
         <CSSTransition
-          classNames="popper-fade"
+          classNames="fade-reg"
           in={active}
           timeout={TransitionDuration.REG}
           unmountOnExit

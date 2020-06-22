@@ -2,17 +2,12 @@ import React, { useEffect, useRef, useState } from "react"
 import { CSSTransition } from "react-transition-group"
 import styled, { keyframes } from "styled-components"
 
-import { createGlobalFadeTransition, TransitionDuration } from "components"
+import { TransitionDuration } from "components"
 import { color } from "utils"
 
 type Props = Readonly<{
   show: boolean
 }>
-
-const GlobalTransitionStyles = createGlobalFadeTransition(
-  "editor-loader-fade",
-  TransitionDuration.SLOW,
-)
 
 const move = keyframes`
   0% {
@@ -69,9 +64,8 @@ const Loader = ({ show }: Props) => {
 
   return (
     <>
-      <GlobalTransitionStyles />
       <CSSTransition
-        classNames="editor-loader-fade"
+        classNames="fade-slow"
         in={visible && show}
         timeout={TransitionDuration.SLOW}
         unmountOnExit

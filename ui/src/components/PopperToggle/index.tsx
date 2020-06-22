@@ -105,7 +105,7 @@ export const PopperToggle = ({
 
       {React.isValidElement(children) && (
         <CSSTransition
-          classNames="popper-fade"
+          classNames="fade-reg"
           in={_active}
           timeout={TransitionDuration.REG}
           unmountOnExit
