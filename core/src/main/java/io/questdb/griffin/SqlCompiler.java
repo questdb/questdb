@@ -915,7 +915,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
 
-            if (!isValidColumnName(tok)) {
+            if (!SqlKeywords.isValidColumnName(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -937,36 +937,6 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
-    }
-
-    private boolean isValidColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            char c = seq.charAt(i);
-            switch (c) {
-                case ' ':
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case '\0':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '-':
-                case '*':
-                case '%':
-                case '~':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                default:
-
-            }
-        }
-        return true;
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
