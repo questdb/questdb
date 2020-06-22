@@ -487,8 +487,8 @@ public final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
-            if (Chars.indexOf(name, '.') > -1) {
-                throw SqlException.$(position, "Column name cannot have character '.'");
+            if (!SqlKeywords.isValidColumnName(name)) {
+                throw SqlException.$(position, " new column name contains invalid characters");
             }
 
             if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity())) {
