@@ -11,7 +11,7 @@ import { usePopper } from "react-popper"
 import { CSSTransition } from "react-transition-group"
 
 import { usePopperStyles, useTransition } from "../Hooks"
-import { createGlobalFadeTransition, TransitionDuration } from "../Transition"
+import { TransitionDuration } from "../Transition"
 
 type Props = Readonly<{
   children: ReactNode
@@ -20,11 +20,6 @@ type Props = Readonly<{
   modifiers: Options["modifiers"]
   trigger: ReactNode
 }>
-
-const GlobalTransitionStyles = createGlobalFadeTransition(
-  "popper-hover-fade",
-  TransitionDuration.REG,
-)
 
 export const PopperHover = ({
   children,
@@ -39,24 +34,28 @@ export const PopperHover = ({
   const [active, setActive] = useState(false)
   const [triggerElement, setTriggerElement] = useState<HTMLElement | null>(null)
   const [arrowElement, setArrowElement] = useState<HTMLElement | null>(null)
-  const { attributes, styles } = usePopper(triggerElement, container, {
-    modifiers: [
-      ...modifiers,
-      {
-        name: "arrow",
-        options: { element: arrowElement },
-      },
-      {
-        name: "offset",
-        options: { offset: [0, 6] },
-      },
-      {
-        name: "eventListeners",
-        enabled: active,
-      },
-    ],
-    placement,
-  })
+  const { attributes, styles, forceUpdate } = usePopper(
+    triggerElement,
+    container,
+    {
+      modifiers: [
+        ...modifiers,
+        {
+          name: "arrow",
+          options: { element: arrowElement },
+        },
+        {
+          name: "offset",
+          options: { offset: [0, 6] },
+        },
+        {
+          name: "eventListeners",
+          enabled: active,
+        },
+      ],
+      placement,
+    },
+  )
 
   const handleMouseEnter = useCallback(() => {
     if (delay) {
@@ -73,10 +72,6 @@ export const PopperHover = ({
     setActive(false)
   }, [])
 
-  usePopperStyles(container, styles.popper)
-
-  useTransition(container, active, transitionTimeoutId)
-
   useEffect(() => {
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,34 +81,33 @@ export const PopperHover = ({
     }
   }, [container])
 
+  usePopperStyles(container, styles.popper)
+
+  useTransition(container, active, transitionTimeoutId, forceUpdate)
+
   return (
     <>
-      <GlobalTransitionStyles />
-
       {React.isValidElement(trigger) &&
         React.cloneElement(trigger, {
           onMouseEnter: handleMouseEnter,
           onMouseLeave: handleMouseLeave,
-          ref: active ? setTriggerElement : null,
+          ref: setTriggerElement,
         })}
 
-      {React.isValidElement(children) && (
+      {ReactDOM.createPortal(
         <CSSTransition
-          classNames="popper-toggle-fade"
+          classNames="popper-fade"
           in={active}
           timeout={TransitionDuration.REG}
           unmountOnExit
         >
-          <>
-            {ReactDOM.createPortal(
-              React.cloneElement(children, {
-                ...attributes.popper,
-                arrow: { setArrowElement, styles: styles.arrow },
-              }),
-              container,
-            )}
-          </>
-        </CSSTransition>
+          {React.isValidElement(children) &&
+            React.cloneElement(children, {
+              ...attributes.popper,
+              arrow: { setArrowElement, styles: styles.arrow },
+            })}
+        </CSSTransition>,
+        container,
       )}
     </>
   )

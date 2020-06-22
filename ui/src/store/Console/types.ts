@@ -4,7 +4,7 @@ export type QueryShape = Readonly<{
 }>
 
 export type ConfigurationShape = Readonly<{
-  readOnly: boolean
+  readOnly?: boolean
   savedQueries: QueryShape[]
 }>
 
