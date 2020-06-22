@@ -1834,7 +1834,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
                     }
                     tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null) {
+                    if (tok == null || Chars.equals(tok, ';')) {
                         break;
                     }
                     if (Chars.equalsNc(tok, ',')) {

@@ -142,6 +142,41 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testHappyPathWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        assertQuery(
+                                "count\n" +
+                                        "10\n",
+                                "select count() from x",
+                                null,
+                                false
+                        );
+
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x;", sqlExecutionContext).getType());
+
+                        assertQuery(
+                                "count\n" +
+                                        "0\n",
+                                "select count() from x",
+                                null,
+                                false
+                        );
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testTableBusy() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
