@@ -69,7 +69,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-        slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
+        slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);

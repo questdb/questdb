@@ -36,9 +36,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
     private final MCSequence indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
 
-    private final RingQueue<VectorAggregateTask> vectorAggregaterQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
-    private final MPSequence vectorAggregatePubSeq = new MPSequence(vectorAggregaterQueue.getCapacity());
-    private final MCSequence vectorAggregateSubSeq = new MCSequence(vectorAggregaterQueue.getCapacity());
+    private final RingQueue<VectorAggregateTask> vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
+    private final MPSequence vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
+    private final MCSequence vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
 
     public MessageBusImpl() {
         this.indexerPubSeq.then(this.indexerSubSeq).then(this.indexerPubSeq);
@@ -62,7 +62,7 @@ public class MessageBusImpl implements MessageBus {
 
     @Override
     public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
-        return vectorAggregaterQueue;
+        return vectorAggregateQueue;
     }
 
     @Override

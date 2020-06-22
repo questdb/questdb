@@ -701,7 +701,28 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (SqlKeywords.isAlterKeyword(tok)) {
-                alterTableColumnAddIndex(executionContext, tableNamePosition, tableName);
+                tok = expectToken(lexer, "'column'");
+                if (SqlKeywords.isColumnKeyword(tok)) {
+                    final int columnNameNamePosition = lexer.getPosition();
+                    tok = expectToken(lexer, "column name");
+                    final CharSequence columnName = GenericLexer.immutableOf(tok);
+                    tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
+                    if (SqlKeywords.isAddKeyword(tok)) {
+                        expectKeyword(lexer, "index");
+                        alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
+                    } else {
+                        if (SqlKeywords.isCacheKeyword(tok)) {
+                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
+                        } else if (SqlKeywords.isNoCacheKeyword(tok)) {
+                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
+                        }
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                }
+
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
             }
@@ -834,21 +855,31 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableColumnAddIndex(SqlExecutionContext executionContext, int tableNamePosition, CharSequence tableName) throws SqlException {
-        expectKeyword(lexer, "column");
-        final CharSequence columnName = GenericLexer.immutableOf(expectToken(lexer, "column name"));
-        final int columnNamePosition = lexer.lastTokenPosition();
-        expectKeyword(lexer, "add");
-        expectKeyword(lexer, "index");
-
+    private void alterTableColumnAddIndex(int tableNamePosition, int columnNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
         try {
-            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
-                // do column existence check to provide adequate error position
-                if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
-                    throw SqlException.invalidColumn(columnNamePosition, columnName);
-                }
-                w.addIndex(columnName, configuration.getIndexValueBlockSize());
+            if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName);
             }
+            w.addIndex(columnName, configuration.getIndexValueBlockSize());
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
+    }
+
+    private void alterTableColumnCacheFlag(int tableNamePosition, CharSequence columnName, TableWriter writer, boolean cache) throws SqlException {
+        try {
+            RecordMetadata metadata = writer.getMetadata();
+
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
+            }
+
+            if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
+                SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
+            }
+
+            writer.changeCacheFlag(columnIndex, cache);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
         }

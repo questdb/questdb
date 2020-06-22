@@ -37,7 +37,6 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -92,15 +91,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapKeyCapacity;
     private final int sqlMapPageSize;
+    private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
     private final long sqlSortKeyPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
+    private final int sqlSortLightValueMaxPages;
     private final int sqlHashJoinValuePageSize;
+    private final int sqlHashJoinValueMaxPages;
     private final long sqlLatestByRowCount;
     private final int sqlHashJoinLightValuePageSize;
+    private final int sqlHashJoinLightValueMaxPages;
     private final int sqlSortValuePageSize;
+    private final int sqlSortValueMaxPages;
     private final long workStealTimeoutNanos;
     private final boolean parallelIndexingEnabled;
     private final int sqlJoinMetadataPageSize;
@@ -115,12 +119,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
-    private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
-    };
+    private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final String inputRoot;
@@ -145,6 +144,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int backupMkdirMode;
     private final int floatToStrCastScale;
     private final int doubleToStrCastScale;
+    private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
+    private final boolean pgEnabled;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -195,6 +196,34 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean interruptOnClosedConnection;
     private int interruptorNIterationsPerCheck;
     private int interruptorBufferSize;
+    private int pgNetActiveConnectionLimit;
+    private int pgNetBindIPv4Address;
+    private int pgNetBindPort;
+    private int pgNetEventCapacity;
+    private int pgNetIOQueueCapacity;
+    private long pgNetIdleConnectionTimeout;
+    private int pgNetInterestQueueCapacity;
+    private int pgNetListenBacklog;
+    private int pgNetRcvBufSize;
+    private int pgNetSndBufSize;
+    private int pgCharacterStoreCapacity;
+    private int pgCharacterStorePoolCapacity;
+    private int pgConnectionPoolInitialCapacity;
+    private String pgPassword;
+    private String pgUsername;
+    private int pgFactoryCacheColumnCount;
+    private int pgFactoryCacheRowCount;
+    private int pgIdleRecvCountBeforeGivingUp;
+    private int pgIdleSendCountBeforeGivingUp;
+    private int pgMaxBlobSizeOnQuery;
+    private int pgRecvBufferSize;
+    private int pgSendBufferSize;
+    private DateLocale pgDefaultDateLocale;
+    private TimestampLocale pgDefaultTimestampLocale;
+    private int[] pgWorkerAffinity;
+    private int pgWorkerCount;
+    private boolean pgHaltOnError;
+    private boolean pgDaemonPool;
     private long maxRerunWaitCapMs;
     private double rerunExponentialWaitMultiplier;
 
@@ -288,6 +317,48 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxRerunWaitCapMs = getLong(properties,"http.busy.retry.maximum.wait.before.retry", 1000);
             this.rerunExponentialWaitMultiplier = getDouble(properties, "http.busy.retry.exponential.wait.multipier", 2.0);
         }
+        this.pgEnabled = getBoolean(properties, "pg.enabled", true);
+        if (pgEnabled) {
+            pgNetActiveConnectionLimit = getInt(properties, "pg.net.active.connection.limit", 10);
+            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:8812", (a, p) -> {
+                pgNetBindIPv4Address = a;
+                pgNetBindPort = p;
+            });
+
+            this.pgNetEventCapacity = getInt(properties, "pg.net.event.capacity", 1024);
+            this.pgNetIOQueueCapacity = getInt(properties, "pg.net.io.queue.capacity", 1024);
+            this.pgNetIdleConnectionTimeout = getLong(properties, "pg.net.idle.timeout", 300_000);
+            this.pgNetInterestQueueCapacity = getInt(properties, "pg.net.interest.queue.capacity", 1024);
+            this.pgNetListenBacklog = getInt(properties, "pg.net.listen.backlog", 50_000);
+            this.pgNetRcvBufSize = getIntSize(properties, "pg.net.recv.buf.size", -1);
+            this.pgNetSndBufSize = getIntSize(properties, "pg.net.send.buf.size", -1);
+            this.pgCharacterStoreCapacity = getInt(properties, "pg.character.store.capacity", 4096);
+            this.pgCharacterStorePoolCapacity = getInt(properties, "pg.character.store.pool.capacity", 64);
+            this.pgConnectionPoolInitialCapacity = getInt(properties, "pg.connection.pool.capacity", 64);
+            this.pgPassword = getString(properties, "pg.password", "quest");
+            this.pgUsername = getString(properties, "pg.user", "admin");
+            this.pgFactoryCacheColumnCount = getInt(properties, "pg.factory.cache.column.count", 16);
+            this.pgFactoryCacheRowCount = getInt(properties, "pg.factory.cache.row.count", 16);
+            this.pgIdleRecvCountBeforeGivingUp = getInt(properties, "pg.idle.recv.count.before.giving.up", 10_000);
+            this.pgIdleSendCountBeforeGivingUp = getInt(properties, "pg.idle.send.count.before.giving.up", 10_000);
+            this.pgMaxBlobSizeOnQuery = getIntSize(properties, "pg.max.blob.size.on.query", 512 * 1024);
+            this.pgRecvBufferSize = getIntSize(properties, "pg.recv.buffer.size", 1024 * 1024);
+            this.pgSendBufferSize = getIntSize(properties, "pg.send.buffer.size", 1024 * 1024);
+            final String dateLocale = getString(properties, "pg.date.locale", "en");
+            this.pgDefaultDateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+            if (this.pgDefaultDateLocale == null) {
+                throw new ServerConfigurationException("pg.date.locale", dateLocale);
+            }
+            final String timestampLocale = getString(properties, "pg.timestamp.locale", "en");
+            this.pgDefaultTimestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
+            if (this.pgDefaultTimestampLocale == null) {
+                throw new ServerConfigurationException("pg.timestamp.locale", dateLocale);
+            }
+            this.pgWorkerCount = getInt(properties, "pg.worker.count", 0);
+            this.pgWorkerAffinity = getAffinity(properties, "pg.worker.affinity", pgWorkerCount);
+            this.pgHaltOnError = getBoolean(properties, "pg.halt.on.error", false);
+            this.pgDaemonPool = getBoolean(properties, "pg.daemon.pool", true);
+        }
 
         this.commitMode = getCommitMode(properties, "cairo.commit.mode");
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
@@ -316,15 +387,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
+        this.sqlMapMaxPages = getIntSize(properties, "cairo.sql.map.max.pages", Integer.MAX_VALUE);
         this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
         this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
+        this.sqlSortLightValueMaxPages = getIntSize(properties, "cairo.sql.sort.light.value.max.pages", Integer.MAX_VALUE);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
+        this.sqlHashJoinValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.value.max.pages", Integer.MAX_VALUE);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
         this.sqlHashJoinLightValuePageSize = getIntSize(properties, "cairo.sql.hash.join.light.value.page.size", 1048576);
+        this.sqlHashJoinLightValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.light.value.max.pages", Integer.MAX_VALUE);
         this.sqlSortValuePageSize = getIntSize(properties, "cairo.sql.sort.value.page.size", 16777216);
+        this.sqlSortValueMaxPages = getIntSize(properties, "cairo.sql.sort.value.max.pages", Integer.MAX_VALUE);
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
@@ -1117,6 +1193,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMapMaxPages() {
+            return sqlMapMaxPages;
+        }
+
+        @Override
         public int getSqlMapMaxResizes() {
             return sqlMapMaxResizes;
         }
@@ -1142,8 +1223,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlSortLightValueMaxPages() {
+            return sqlSortLightValueMaxPages;
+        }
+
+        @Override
         public int getSqlHashJoinValuePageSize() {
             return sqlHashJoinValuePageSize;
+        }
+
+        @Override
+        public int getSqlHashJoinValueMaxPages() {
+            return sqlHashJoinValueMaxPages;
         }
 
         @Override
@@ -1157,8 +1248,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlHashJoinLightValueMaxPages() {
+            return sqlHashJoinLightValueMaxPages;
+        }
+
+        @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
+        }
+
+        @Override
+        public int getSqlSortValueMaxPages() {
+            return sqlSortValueMaxPages;
         }
 
         @Override
@@ -1388,6 +1489,207 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getExponentialWaitMultiplier() {
             return rerunExponentialWaitMultiplier;
+        }
+    }
+
+    private class PropPGWireDispatcherConfiguration implements IODispatcherConfiguration {
+
+        @Override
+        public String getDispatcherLogName() {
+            return "pg-server";
+        }
+
+        @Override
+        public int getActiveConnectionLimit() {
+            return pgNetActiveConnectionLimit;
+        }
+
+        @Override
+        public int getBindIPv4Address() {
+            return pgNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return pgNetBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getEventCapacity() {
+            return pgNetEventCapacity;
+        }
+
+        @Override
+        public int getIOQueueCapacity() {
+            return pgNetIOQueueCapacity;
+        }
+
+        @Override
+        public long getIdleConnectionTimeout() {
+            return pgNetIdleConnectionTimeout;
+        }
+
+        @Override
+        public int getInitialBias() {
+            return BIAS_READ;
+        }
+
+        @Override
+        public int getInterestQueueCapacity() {
+            return pgNetInterestQueueCapacity;
+        }
+
+        @Override
+        public int getListenBacklog() {
+            return pgNetListenBacklog;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getRcvBufSize() {
+            return pgNetRcvBufSize;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSndBufSize() {
+            return pgNetSndBufSize;
+        }
+    }
+
+    private class PropPGWireConfiguration implements PGWireConfiguration {
+
+        @Override
+        public int getCharacterStoreCapacity() {
+            return pgCharacterStoreCapacity;
+        }
+
+        @Override
+        public int getCharacterStorePoolCapacity() {
+            return pgCharacterStorePoolCapacity;
+        }
+
+        @Override
+        public int getConnectionPoolInitialCapacity() {
+            return pgConnectionPoolInitialCapacity;
+        }
+
+        @Override
+        public String getDefaultPassword() {
+            return pgPassword;
+        }
+
+        @Override
+        public String getDefaultUsername() {
+            return pgUsername;
+        }
+
+        @Override
+        public IODispatcherConfiguration getDispatcherConfiguration() {
+            return propPGWireDispatcherConfiguration;
+        }
+
+        @Override
+        public boolean getDumpNetworkTraffic() {
+            return false;
+        }
+
+        @Override
+        public int getFactoryCacheColumnCount() {
+            return pgFactoryCacheColumnCount;
+        }
+
+        @Override
+        public int getFactoryCacheRowCount() {
+            return pgFactoryCacheRowCount;
+        }
+
+        @Override
+        public int getIdleRecvCountBeforeGivingUp() {
+            return pgIdleRecvCountBeforeGivingUp;
+        }
+
+        @Override
+        public int getIdleSendCountBeforeGivingUp() {
+            return pgIdleSendCountBeforeGivingUp;
+        }
+
+        @Override
+        public int getMaxBlobSizeOnQuery() {
+            return pgMaxBlobSizeOnQuery;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getRecvBufferSize() {
+            return pgRecvBufferSize;
+        }
+
+        @Override
+        public int getSendBufferSize() {
+            return pgSendBufferSize;
+        }
+
+        @Override
+        public String getServerVersion() {
+            return "11.3";
+        }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return pgDefaultDateLocale;
+        }
+
+        @Override
+        public TimestampLocale getDefaultTimestampLocale() {
+            return pgDefaultTimestampLocale;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return pgEnabled;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return pgWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return pgWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return pgHaltOnError;
+        }
+
+        @Override
+        public boolean isDaemonPool() {
+            return pgDaemonPool;
         }
     }
 }

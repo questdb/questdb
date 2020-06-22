@@ -113,6 +113,8 @@ public interface CairoConfiguration {
 
     int getSqlMapPageSize();
 
+    int getSqlMapMaxPages();
+
     int getSqlMapMaxResizes();
 
     int getSqlModelPoolCapacity();
@@ -123,13 +125,21 @@ public interface CairoConfiguration {
 
     long getSqlSortLightValuePageSize();
 
+    int getSqlSortLightValueMaxPages();
+
     int getSqlHashJoinValuePageSize();
+
+    int getSqlHashJoinValueMaxPages();
 
     long getSqlLatestByRowCount();
 
     int getSqlHashJoinLightValuePageSize();
 
+    int getSqlHashJoinLightValueMaxPages();
+
     int getSqlSortValuePageSize();
+
+    int getSqlSortValueMaxPages();
 
     TextConfiguration getTextConfiguration();
 

@@ -233,6 +233,37 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinOuterWhereClause() throws Exception {
+        assertQuery(
+                "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from ((select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book on book.sym = trade.sym post-join-where book.price != NaN)) _xQdbA1)",
+                "select * from \n" +
+                        "(\n" +
+                        "select \n" +
+                        "trade.ts as trade_time,\n" +
+                        "book.ts as quote_time,\n" +
+                        "trade.price as trade_price,\n" +
+                        "trade.size as trade_size,\n" +
+                        "book.price as quote_price,\n" +
+                        "book.size as quote_size\n" +
+                        "from\n" +
+                        "trade asof join book\n" +
+                        "where trade.sym = book.sym\n" +
+                        ")\n" +
+                        "where quote_price != NaN;",
+                modelOf("trade")
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("size", ColumnType.LONG),
+                modelOf("book")
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("size", ColumnType.LONG)
+        );
+    }
+
+    @Test
     public void testBlockCommentNested() throws Exception {
         assertQuery("select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
                 "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",

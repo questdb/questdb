@@ -230,6 +230,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMapMaxPages() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlMapMaxResizes() {
         return 64;
     }
@@ -255,8 +260,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSortLightValueMaxPages() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlHashJoinValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlHashJoinValueMaxPages() {
+        return 1024;
     }
 
     @Override
@@ -270,8 +285,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHashJoinLightValueMaxPages() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlSortValueMaxPages() {
+        return 1024;
     }
 
     @Override

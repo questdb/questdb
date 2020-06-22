@@ -43,10 +43,10 @@ public class ColumnIndexerJob implements Job {
     @Override
     public boolean run(int workerId) {
         long cursor = subSeq.next();
-        if (cursor < 0) {
-            return false;
-        }
+        return cursor > -1 && doIndex(cursor);
+    }
 
+    private boolean doIndex(long cursor) {
         final ColumnIndexerTask queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;

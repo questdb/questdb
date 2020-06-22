@@ -37,10 +37,18 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final RecordMetadata METADATA;
     private static final int N_NAME_COL = 0;
     private static final int N_TYPE_COL = 1;
+    private static final int N_INDEXED_COL = 2;
+    private static final int N_INDEX_BLOCK_CAPACITY_COL = 3;
+    private static final int N_SYMBOL_CACHED_COL = 4;
+    private static final int N_SYMBOL_CAPACITY_COL = 5;
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("column", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
         METADATA = metadata;
     }
 
@@ -129,7 +137,7 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                 if (col == N_TYPE_COL) {
                     return ColumnType.nameOf(reader.getMetadata().getColumnType(columnIndex));
                 }
-                return null;
+                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -140,6 +148,36 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
             @Override
             public int getStrLen(int col) {
                 return getStr(col).length();
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                if (col == N_INDEXED_COL) {
+                    return reader.getMetadata().isColumnIndexed(columnIndex);
+                }
+                if (col == N_SYMBOL_CACHED_COL) {
+                    if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                        return reader.getSymbolMapReader(columnIndex).isCached();
+                    } else {
+                        return false;
+                    }
+                }
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public int getInt(int col) {
+                if (col == N_INDEX_BLOCK_CAPACITY_COL) {
+                    return reader.getMetadata().getIndexValueBlockCapacity(columnIndex);
+                }
+                if (col == N_SYMBOL_CAPACITY_COL) {
+                    if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                        return reader.getSymbolMapReader(columnIndex).getSymbolCapacity();
+                    } else {
+                        return 0;
+                    }
+                }
+                throw new UnsupportedOperationException();
             }
         }
     }

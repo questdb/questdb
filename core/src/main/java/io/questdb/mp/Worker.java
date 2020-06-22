@@ -48,14 +48,6 @@ public class Worker extends Thread {
     private volatile int fence;
 
     public Worker(
-            ObjHashSet<? extends Job> jobs,
-            SOCountDownLatch haltLatch,
-            int workerId
-    ) {
-        this(jobs, haltLatch, -1, null, null, true, workerId);
-    }
-
-    public Worker(
             final ObjHashSet<? extends Job> jobs,
             final SOCountDownLatch haltLatch,
             final int affinity,
@@ -114,14 +106,7 @@ public class Worker extends Thread {
                             try {
                                 useful |= jobs.get(i).run(workerId);
                             } catch (Throwable e) {
-                                if (haltOnError) {
-                                    throw e;
-                                }
-                                if (log != null) {
-                                    log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
-                                } else {
-                                    e.printStackTrace();
-                                }
+                                onError(i, e);
                             }
                         } finally {
                             storeFence();
@@ -158,6 +143,17 @@ public class Worker extends Thread {
                 cleaner.run(ex);
             }
             haltLatch.countDown();
+        }
+    }
+
+    private void onError(int i, Throwable e) throws Throwable {
+        if (haltOnError) {
+            throw e;
+        }
+        if (log != null) {
+            log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
+        } else {
+            e.printStackTrace();
         }
     }
 

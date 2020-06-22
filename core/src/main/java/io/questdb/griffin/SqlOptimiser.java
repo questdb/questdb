@@ -59,6 +59,38 @@ class SqlOptimiser {
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
+
+    static {
+        notOps.put("not", NOT_OP_NOT);
+        notOps.put("and", NOT_OP_AND);
+        notOps.put("or", NOT_OP_OR);
+        notOps.put(">", NOT_OP_GREATER);
+        notOps.put(">=", NOT_OP_GREATER_EQ);
+        notOps.put("<", NOT_OP_LESS);
+        notOps.put("<=", NOT_OP_LESS_EQ);
+        notOps.put("=", NOT_OP_EQUAL);
+        notOps.put("!=", NOT_OP_NOT_EQ);
+        notOps.put("<>", NOT_OP_NOT_EQ);
+
+        joinBarriers = new IntHashSet();
+        joinBarriers.add(QueryModel.JOIN_OUTER);
+        joinBarriers.add(QueryModel.JOIN_ASOF);
+        joinBarriers.add(QueryModel.JOIN_SPLICE);
+        joinBarriers.add(QueryModel.JOIN_LT);
+
+        nullConstants.add("null");
+        nullConstants.add("NaN");
+
+        joinOps.put("=", JOIN_OP_EQUAL);
+        joinOps.put("and", JOIN_OP_AND);
+        joinOps.put("or", JOIN_OP_OR);
+        joinOps.put("~", JOIN_OP_REGEX);
+
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
+    }
+
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -1462,8 +1494,9 @@ class SqlOptimiser {
                 int joinType = parent.getJoinType();
                 if (tableIndex > 0
                         && (joinBarriers.contains(joinType))
-                        && literalCollector.nullCount > 0) {
-                    model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
+                        && literalCollector.nullCount > 0
+                ) {
+                    model.getJoinModels().getQuick(tableIndex).setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
                     continue;
                 }
 
@@ -2900,36 +2933,5 @@ class SqlOptimiser {
         private void withModel(QueryModel model) {
             this.model = model;
         }
-    }
-
-    static {
-        notOps.put("not", NOT_OP_NOT);
-        notOps.put("and", NOT_OP_AND);
-        notOps.put("or", NOT_OP_OR);
-        notOps.put(">", NOT_OP_GREATER);
-        notOps.put(">=", NOT_OP_GREATER_EQ);
-        notOps.put("<", NOT_OP_LESS);
-        notOps.put("<=", NOT_OP_LESS_EQ);
-        notOps.put("=", NOT_OP_EQUAL);
-        notOps.put("!=", NOT_OP_NOT_EQ);
-        notOps.put("<>", NOT_OP_NOT_EQ);
-
-        joinBarriers = new IntHashSet();
-        joinBarriers.add(QueryModel.JOIN_OUTER);
-        joinBarriers.add(QueryModel.JOIN_ASOF);
-        joinBarriers.add(QueryModel.JOIN_SPLICE);
-        joinBarriers.add(QueryModel.JOIN_LT);
-
-        nullConstants.add("null");
-        nullConstants.add("NaN");
-
-        joinOps.put("=", JOIN_OP_EQUAL);
-        joinOps.put("and", JOIN_OP_AND);
-        joinOps.put("or", JOIN_OP_OR);
-        joinOps.put("~", JOIN_OP_REGEX);
-
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
-        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
     }
 }

@@ -46,7 +46,8 @@ public class CompactMapTest extends AbstractCairoTest {
                     new SingleColumnType(ColumnType.LONG),
                     N / 2,
                     0.9,
-                    1)) {
+                    1,
+                    Integer.MAX_VALUE)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -82,7 +83,7 @@ public class CompactMapTest extends AbstractCairoTest {
                     1024 * 1024,
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
-                    2 * N, 0.7, 1)) {
+                    2 * N, 0.7, 1, Integer.MAX_VALUE)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
                     MapKey key = map.withKey();
@@ -118,7 +119,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 try {
-                    new CompactMap(1024, reader.getMetadata(), columnTypes.of(ColumnType.LONG), 16, 0.75, 1);
+                    new CompactMap(1024, reader.getMetadata(), columnTypes.of(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "Unsupported column type");
@@ -139,7 +140,8 @@ public class CompactMapTest extends AbstractCairoTest {
                 12,
                 loadFactor,
                 new MockHash(),
-                1)) {
+                1,
+                Integer.MAX_VALUE)) {
             MapKey key;
             MapValue value;
 
@@ -213,7 +215,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         ,
                         N,
                         0.9,
-                        1)) {
+                        1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -241,7 +243,7 @@ public class CompactMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
             final int N = 10000;
             final Rnd rnd = new Rnd();
-            try (CompactMap map = new CompactMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)) {
+            try (CompactMap map = new CompactMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1, Integer.MAX_VALUE)) {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -321,7 +323,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash(), 1)) {
+                (long) (N * loadFactor), loadFactor, new MockHash(), 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -354,7 +356,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash(), 1)) {
+                (long) (N * loadFactor), loadFactor, new MockHash(), 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -441,7 +443,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         ,
                         N,
                         0.9,
-                        1)) {
+                        1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -507,7 +509,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         ,
                         N,
                         0.9,
-                        1)) {
+                        1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
 
