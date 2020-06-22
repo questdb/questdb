@@ -883,7 +883,7 @@ public class SqlCompiler implements Closeable {
             }
 
             if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
-                SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
+                throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
             writer.changeCacheFlag(columnIndex, cache);
