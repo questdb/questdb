@@ -10,7 +10,6 @@ export const initialState: ConsoleStateShape = {
 }
 
 export const defaultConfiguration: ConfigurationShape = {
-  readOnly: false,
   savedQueries: [],
 }
 
