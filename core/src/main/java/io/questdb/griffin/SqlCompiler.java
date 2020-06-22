@@ -907,14 +907,19 @@ public class SqlCompiler implements Closeable {
             }
 
             tok = expectToken(lexer, "new column name");
+            if (Chars.equals(existingName, tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
+            }
+
             if (metadata.getColumnIndexQuiet(tok) > -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
-            if (Chars.contains(tok, "\\") || Chars.contains(tok, ".") || Chars.contains(tok, "/")) {
-                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters '\\', '.' or '/'");
-            }
-            CharSequence newName = GenericLexer.immutableOf(tok);
 
+            if (!isValidColumnName(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+            }
+
+            CharSequence newName = GenericLexer.immutableOf(tok);
             try {
                 writer.renameColumn(existingName, newName);
             } catch (CairoException e) {
@@ -932,6 +937,36 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+    }
+
+    private boolean isValidColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+
+            }
+        }
+        return true;
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
