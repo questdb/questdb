@@ -755,6 +755,10 @@ public class SqlCompiler implements Closeable {
 
             CharSequence columnName = GenericLexer.immutableOf(tok);
 
+            if (!SqlKeywords.isValidColumnName(columnName)) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+            }
+
             tok = expectToken(lexer, "column type");
 
             int type = ColumnType.columnTypeOf(tok);
