@@ -105,6 +105,7 @@ public class IODispatcherTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {};
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
@@ -291,7 +292,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -3297,7 +3298,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -3893,7 +3894,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4063,7 +4064,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4221,7 +4222,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4446,7 +4447,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext.instance)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+@FunctionalInterface
 public interface RescheduleContext {
     void reschedule(Retry retry);
 }
