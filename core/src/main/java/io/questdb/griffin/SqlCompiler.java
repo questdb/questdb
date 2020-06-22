@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -1749,30 +1750,51 @@ public class SqlCompiler implements Closeable {
 
     @SuppressWarnings("resource")
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             if (isTablesKeyword(tok)) {
-                return compiledQuery.ofShowTables(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
+                return compiledQuery.ofShow(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
             }
             if (isColumnsKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (null == tok || !isFromKeyword(tok)) {
-                    throw SqlException.position(lexer.getPosition()).put("expected 'from'");
-                }
-                tok = SqlUtil.fetchNext(lexer);
-                if (null == tok) {
-                    throw SqlException.position(lexer.getPosition()).put("expected a table name");
-                }
-                final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-                int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
-                if (status != TableUtils.TABLE_EXISTS) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
-                }
-                return compiledQuery.ofShowTables(new ShowColumnsRecordCursorFactory(tableName));
+                return sqlShowColumns(executionContext);
+            }
+
+            if (isTransactionKeyword(tok)) {
+                return sqlShowTransaction();
             }
         }
 
         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables' or 'columns'");
+    }
+
+    private CompiledQuery sqlShowTransaction() throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && isIsolationKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && isLevelKeyword(tok)) {
+                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
+            }
+            throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'level'");
+        }
+        throw SqlException.position(tok != null ? lexer.lastTokenPosition() : lexer.getPosition()).put("expected 'isolation'");
+    }
+
+    private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (null == tok || !isFromKeyword(tok)) {
+            throw SqlException.position(lexer.getPosition()).put("expected 'from'");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        if (null == tok) {
+            throw SqlException.position(lexer.getPosition()).put("expected a table name");
+        }
+        final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
+        if (status != TableUtils.TABLE_EXISTS) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+        }
+        return compiledQuery.ofShow(new ShowColumnsRecordCursorFactory(tableName));
     }
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
