@@ -700,6 +700,13 @@ public class SqlCompiler implements Closeable {
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
+            } else if (SqlKeywords.isRenameKeyword(tok)) {
+                tok = expectToken(lexer, "'column'");
+                if (SqlKeywords.isColumnKeyword(tok)) {
+                    alterTableRenameColumn(tableNamePosition, writer);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
+                }
             } else if (SqlKeywords.isAlterKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -724,7 +731,7 @@ public class SqlCompiler implements Closeable {
                 }
 
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' expected");
+                throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
             }
         } catch (CairoException e) {
             LOG.info().$("failed to alter table: ").$((Sinkable) e).$();
@@ -898,8 +905,57 @@ public class SqlCompiler implements Closeable {
             try {
                 writer.removeColumn(tok);
             } catch (CairoException e) {
-                LOG.error().$("Cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+                LOG.error().$("cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later.");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+    }
+
+
+    private void alterTableRenameColumn(int tableNamePosition, TableWriter writer) throws SqlException {
+        RecordMetadata metadata = writer.getMetadata();
+
+        do {
+            CharSequence tok = expectToken(lexer, "current column name");
+            if (metadata.getColumnIndexQuiet(tok) == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+            }
+            CharSequence existingName = GenericLexer.immutableOf(tok);
+
+            tok = expectToken(lexer, "'to' expected");
+            if (!SqlKeywords.isToKeyboard(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
+            }
+
+            tok = expectToken(lexer, "new column name");
+            if (Chars.equals(existingName, tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
+            }
+
+            if (metadata.getColumnIndexQuiet(tok) > -1) {
+                throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
+            }
+
+            if (!SqlKeywords.isValidColumnName(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+            }
+
+            CharSequence newName = GenericLexer.immutableOf(tok);
+            try {
+                writer.renameColumn(existingName, newName);
+            } catch (CairoException e) {
+                LOG.error().$("cannot rename column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later.");
             }
 
             tok = SqlUtil.fetchNext(lexer);

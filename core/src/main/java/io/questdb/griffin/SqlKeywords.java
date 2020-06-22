@@ -263,6 +263,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isToKeyboard(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'o';
+    }
+
     public static boolean isCacheKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -690,5 +700,35 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 's';
         // @formatter:on
+    }
+
+    public static boolean isValidColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+
+            }
+        }
+        return true;
     }
 }

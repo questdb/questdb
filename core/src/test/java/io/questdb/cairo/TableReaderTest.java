@@ -2668,6 +2668,109 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnsuccessfulFileRename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 0;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
+                        counter++;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean rename(LPSZ name, LPSZ to) {
+                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
+                        counter++;
+                        return false;
+                    }
+                    return super.rename(name, to);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter > 0;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putStr(0, rnd.nextChars(10));
+                    row.putStr(1, rnd.nextChars(15));
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.renameColumn("b", "bb");
+
+                    // this must fail because we cannot delete foreign files
+                    try {
+                        writer.addColumn("b", ColumnType.STRING);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "Cannot remove");
+                    }
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
+                        // roll random generator to make sure it returns same values
+                        rnd.nextChars(15);
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
     public void testUnsuccessfulFileRemoveAndReloadStr() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
