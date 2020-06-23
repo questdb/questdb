@@ -1,7 +1,7 @@
 language: java
 jdk:
-  - oraclejdk7
-  - oraclejdk8
+  - oraclejdk11
+  - openjdk11  
   
 env:
   - MAVEN_OPTS=Xmx1024m
@@ -14,4 +14,3 @@ branches:
     - master
 
 install: mvn clean package
-
