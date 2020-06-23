@@ -30,16 +30,19 @@ const store = createStore(rootReducer, compose(applyMiddleware(epicMiddleware)))
 epicMiddleware.run(rootEpic)
 store.dispatch(actions.console.bootstrap())
 
-const GlobalTransitionStyles = createGlobalFadeTransition(
-  "popper-fade",
-  TransitionDuration.REG,
+const FadeReg = createGlobalFadeTransition("fade-reg", TransitionDuration.REG)
+
+const FadeSlow = createGlobalFadeTransition(
+  "fade-slow",
+  TransitionDuration.SLOW,
 )
 
 ReactDOM.render(
   <ScreenSizeProvider>
     <Provider store={store}>
       <ThemeProvider theme={theme}>
-        <GlobalTransitionStyles />
+        <FadeSlow />
+        <FadeReg />
         <Layout />
       </ThemeProvider>
     </Provider>
