@@ -221,6 +221,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             errorPosition = -1;
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
+                lexer.clear();
                 if (!isError() && firstFieldIndex == -1) {
                     errorPosition = (int) (recvBufLineNext - bytesPtr);
                     errorCode = LineProtoParser.ERROR_EMPTY;
