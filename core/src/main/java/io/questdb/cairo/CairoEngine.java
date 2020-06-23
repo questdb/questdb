@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,7 +43,6 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.sql.SQLException;
 
 import static io.questdb.cairo.ColumnType.SYMBOL;
 
