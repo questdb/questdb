@@ -53,7 +53,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>core</artifactId>
-            <version>5.0.1-SNAPSHOT</version>
+            <version>5.0.1</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
