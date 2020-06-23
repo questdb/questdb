@@ -32,13 +32,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 
-public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
+public class ShowStandardConformingStringsCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord RECORD = new StringValueRecord("read committed");
-
+    private static final StringValueRecord RECORD = new StringValueRecord("on");
 
     static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING));
     }
 
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
@@ -58,4 +57,5 @@ public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorF
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
+
 }

@@ -24,38 +24,48 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
 
-public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord RECORD = new StringValueRecord("read committed");
+class StringValueRecordCursor implements RecordCursor {
+    private final Record record;
+    private int remaining = 1;
 
-
-    static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING));
-    }
-
-    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public StringValueRecordCursor(Record record) {
+        this.record = record;
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
+    public void close() {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return remaining-- > 0;
+    }
+
+    @Override
+    public Record getRecordB() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void toTop() {
+        remaining = 1;
+    }
+
+    @Override
+    public long size() {
+        return 1;
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
@@ -1753,7 +1754,7 @@ public class SqlCompiler implements Closeable {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             if (isTablesKeyword(tok)) {
-                return compiledQuery.ofShow(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
+                return compiledQuery.of(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
             }
             if (isColumnsKeyword(tok)) {
                 return sqlShowColumns(executionContext);
@@ -1761,6 +1762,10 @@ public class SqlCompiler implements Closeable {
 
             if (isTransactionKeyword(tok)) {
                 return sqlShowTransaction();
+            }
+
+            if (isStandardConformingStringsKeyword(tok)) {
+                return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
         }
 
@@ -1794,7 +1799,7 @@ public class SqlCompiler implements Closeable {
         if (status != TableUtils.TABLE_EXISTS) {
             throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
         }
-        return compiledQuery.ofShow(new ShowColumnsRecordCursorFactory(tableName));
+        return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableName));
     }
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
