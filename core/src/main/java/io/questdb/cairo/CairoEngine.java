@@ -185,8 +185,8 @@ public class CairoEngine implements Closeable {
         return false;
     }
 
-    public void lockWriter(CharSequence tableName) {
-        writerPool.lock(tableName);
+    public boolean lockWriter(CharSequence tableName) {
+        return writerPool.lock(tableName);
     }
 
     public void unlockWriter(CharSequence tableName) {

@@ -674,6 +674,30 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
+    private void alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
+        try {
+            if (!engine.lockWriter(tok)) {
+                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put("`]");
+            }
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
+    }
+
+    private void alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
+        try {
+            engine.unlockWriter(tok);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
+    }
+
     private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "'table' or 'system'");
@@ -745,21 +769,13 @@ public class SqlCompiler implements Closeable {
                 tok = expectToken(lexer, "'writer'");
 
                 if (SqlKeywords.isWriterKeyword(tok)) {
-                    final int tableNamePosition = lexer.getPosition();
-                    tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-                    tableExistsOrFail(tableNamePosition, tok, executionContext);
-                    CharSequence tableName = GenericLexer.immutableOf(tok);
-                    engine.lockWriter(tableName);
+                    alterSystemLockWriter(executionContext);
                 }
             } else if (SqlKeywords.isUnlockKeyword(tok)) {
                 tok = expectToken(lexer, "'writer'");
 
                 if (SqlKeywords.isWriterKeyword(tok)) {
-                    final int tableNamePosition = lexer.getPosition();
-                    tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-                    tableExistsOrFail(tableNamePosition, tok, executionContext);
-                    CharSequence tableName = GenericLexer.immutableOf(tok);
-                    engine.unlockWriter(tableName);
+                    alterSystemUnlockWriter(executionContext);
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'lock' or 'unlock' expected");
