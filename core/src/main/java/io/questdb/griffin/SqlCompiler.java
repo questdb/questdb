@@ -674,70 +674,115 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
-    private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
-        expectKeyword(lexer, "table");
-
+    private void alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
-
-        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
-
-        CharSequence tableName = GenericLexer.immutableOf(tok);
-        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
-
-            tok = expectToken(lexer, "'add', 'alter' or 'drop'");
-
-            if (SqlKeywords.isAddKeyword(tok)) {
-                alterTableAddColumn(tableNamePosition, writer);
-            } else if (SqlKeywords.isDropKeyword(tok)) {
-                tok = expectToken(lexer, "'column' or 'partition'");
-                if (SqlKeywords.isColumnKeyword(tok)) {
-                    alterTableDropColumn(tableNamePosition, writer);
-                } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                    alterTableDropPartition(writer);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
-                }
-            } else if (SqlKeywords.isRenameKeyword(tok)) {
-                tok = expectToken(lexer, "'column'");
-                if (SqlKeywords.isColumnKeyword(tok)) {
-                    alterTableRenameColumn(tableNamePosition, writer);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
-                }
-            } else if (SqlKeywords.isAlterKeyword(tok)) {
-                tok = expectToken(lexer, "'column'");
-                if (SqlKeywords.isColumnKeyword(tok)) {
-                    final int columnNameNamePosition = lexer.getPosition();
-                    tok = expectToken(lexer, "column name");
-                    final CharSequence columnName = GenericLexer.immutableOf(tok);
-                    tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
-                    if (SqlKeywords.isAddKeyword(tok)) {
-                        expectKeyword(lexer, "index");
-                        alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
-                    } else {
-                        if (SqlKeywords.isCacheKeyword(tok)) {
-                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
-                        } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                            alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
-                        } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
-                        }
-                    }
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
-                }
-
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
+        try {
+            if (!engine.lockWriter(tok)) {
+                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put("`]");
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to alter table: ").$((Sinkable) e).$();
-            throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' cannot be altered: ").put(e);
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
         }
+    }
 
+    private void alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
+        try {
+            engine.unlockWriter(tok);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+        }
+    }
+
+    private CompiledQuery alterTable(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = expectToken(lexer, "'table' or 'system'");
+
+        if (SqlKeywords.isTableKeyword(tok)) {
+            final int tableNamePosition = lexer.getPosition();
+
+            tok = GenericLexer.unquote(expectToken(lexer, "table name"));
+
+            tableExistsOrFail(tableNamePosition, tok, executionContext);
+
+            CharSequence tableName = GenericLexer.immutableOf(tok);
+            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
+
+                tok = expectToken(lexer, "'add', 'alter' or 'drop'");
+
+                if (SqlKeywords.isAddKeyword(tok)) {
+                    alterTableAddColumn(tableNamePosition, writer);
+                } else if (SqlKeywords.isDropKeyword(tok)) {
+                    tok = expectToken(lexer, "'column' or 'partition'");
+                    if (SqlKeywords.isColumnKeyword(tok)) {
+                        alterTableDropColumn(tableNamePosition, writer);
+                    } else if (SqlKeywords.isPartitionKeyword(tok)) {
+                        alterTableDropPartition(writer);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                    }
+                } else if (SqlKeywords.isRenameKeyword(tok)) {
+                    tok = expectToken(lexer, "'column'");
+                    if (SqlKeywords.isColumnKeyword(tok)) {
+                        alterTableRenameColumn(tableNamePosition, writer);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
+                    }
+                } else if (SqlKeywords.isAlterKeyword(tok)) {
+                    tok = expectToken(lexer, "'column'");
+                    if (SqlKeywords.isColumnKeyword(tok)) {
+                        final int columnNameNamePosition = lexer.getPosition();
+                        tok = expectToken(lexer, "column name");
+                        final CharSequence columnName = GenericLexer.immutableOf(tok);
+                        tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
+                        if (SqlKeywords.isAddKeyword(tok)) {
+                            expectKeyword(lexer, "index");
+                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
+                        } else {
+                            if (SqlKeywords.isCacheKeyword(tok)) {
+                                alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
+                            } else if (SqlKeywords.isNoCacheKeyword(tok)) {
+                                alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
+                            }
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                    }
+
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
+                }
+            } catch (CairoException e) {
+                LOG.info().$("failed to alter table: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' cannot be altered: ").put(e);
+            }
+        } else if (SqlKeywords.isSystemKeyword(tok)) {
+            tok = expectToken(lexer, "'lock' or 'unlock'");
+
+            if (SqlKeywords.isLockKeyword(tok)) {
+                tok = expectToken(lexer, "'writer'");
+
+                if (SqlKeywords.isWriterKeyword(tok)) {
+                    alterSystemLockWriter(executionContext);
+                }
+            } else if (SqlKeywords.isUnlockKeyword(tok)) {
+                tok = expectToken(lexer, "'writer'");
+
+                if (SqlKeywords.isWriterKeyword(tok)) {
+                    alterSystemUnlockWriter(executionContext);
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'lock' or 'unlock' expected");
+            }
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
+        }
         return compiledQuery.ofAlter();
     }
 
