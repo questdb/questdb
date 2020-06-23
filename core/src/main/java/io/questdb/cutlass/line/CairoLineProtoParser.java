@@ -24,18 +24,33 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Sinkable;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
@@ -45,15 +60,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     };
     private static final FieldNameParser NOOP_FIELD_NAME = name -> {
     };
-    private static final ObjList<ColumnWriter> writers = new ObjList<>();
-
-    static {
-        writers.extendAndSet(ColumnType.LONG, CairoLineProtoParser::putLong);
-        writers.extendAndSet(ColumnType.BOOLEAN, CairoLineProtoParser::putBoolean);
-        writers.extendAndSet(ColumnType.STRING, CairoLineProtoParser::putStr);
-        writers.extendAndSet(ColumnType.SYMBOL, CairoLineProtoParser::putSymbol);
-        writers.extendAndSet(ColumnType.DOUBLE, CairoLineProtoParser::putDouble);
-    }
 
     private final CairoEngine engine;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
@@ -101,41 +107,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         this.engine = engine;
         this.cairoSecurityContext = cairoSecurityContext;
         this.timestampAdapter = timestampAdapter;
-    }
-
-    private static boolean isTrue(CharSequence value) {
-        final char firstChar = value.charAt(0);
-        return firstChar == 't' || firstChar == 'T';
-    }
-
-    private static void putSymbol(TableWriter.Row row, int index, CharSequence value) {
-        row.putSym(index, value);
-    }
-
-    private static void putStr(TableWriter.Row row, int index, CharSequence value) {
-        row.putStr(index, value, 1, value.length() - 2);
-    }
-
-    private static void putBoolean(TableWriter.Row row, int index, CharSequence value) {
-        row.putBool(index, isTrue(value));
-    }
-
-    private static void putDouble(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putDouble(index, Numbers.parseDouble(value));
-        } catch (NumericException e) {
-            LOG.error().$("not a DOUBLE: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
-    }
-
-    private static void putLong(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putLong(index, Numbers.parseLong(value, 0, value.length() - 1));
-        } catch (NumericException e) {
-            LOG.error().$("not an INT: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
     }
 
     @Override
@@ -310,34 +281,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         appendFirstRowAndCacheWriter(cache);
     }
 
-    private int getValueType(CharSequence token) {
-        int len = token.length();
-        switch (token.charAt(len - 1)) {
-            case 'i':
-                return ColumnType.LONG;
-            case 'e':
-                // tru(e)
-                // fals(e)
-            case 't':
-            case 'T':
-                // t
-                // T
-            case 'f':
-            case 'F':
-                // f
-                // F
-                return ColumnType.BOOLEAN;
-            case '"':
-                if (len < 2 || token.charAt(0) != '\"') {
-                    LOG.error().$("incorrectly quoted string: ").$(token).$();
-                    return -1;
-                }
-                return ColumnType.STRING;
-            default:
-                return ColumnType.DOUBLE;
-        }
-    }
-
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
         switch (entry.state) {
             case 0:
@@ -394,7 +337,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = getValueType(value);
+        int valueType = CairoLineProtoParserSupport.getValueType(value);
         if (valueType == -1) {
             switchModeToSkipLine();
         } else {
@@ -404,7 +347,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = getValueType(value);
+        int valueType = CairoLineProtoParserSupport.getValueType(value);
         if (valueType == -1) {
             switchModeToSkipLine();
         } else {
@@ -457,7 +400,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
      * @param value      value characters
      */
     private void putValue(TableWriter.Row row, int index, int columnType, CharSequence value) throws BadCastException {
-        writers.getQuick(columnType).write(row, index, value);
+        CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, index, value);
     }
 
     private void switchModeToAppend() {
@@ -506,10 +449,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
-    private interface ColumnWriter {
-        void write(TableWriter.Row row, int columnIndex, CharSequence value) throws BadCastException;
-    }
-
     @FunctionalInterface
     private interface LineEndParser {
         void parse(CharSequenceCache cache);
@@ -523,10 +462,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     @FunctionalInterface
     private interface FieldValueParser {
         void parse(CachedCharSequence value, CharSequenceCache cache);
-    }
-
-    private static class BadCastException extends Exception {
-        private static final BadCastException INSTANCE = new BadCastException();
     }
 
     private static class CacheEntry {

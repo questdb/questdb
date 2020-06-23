@@ -41,7 +41,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
     private long buffer;
-    private final CharSequenceCache charSequenceCache;
+    protected final CharSequenceCache charSequenceCache;
     private long bufferHi;
     private long dstPos = 0;
     private long dstTop = 0;
@@ -89,9 +89,18 @@ public class LineProtoLexer implements Mutable, Closeable {
      * @param hi       high watermark for byte array address
      */
     public void parse(long bytesPtr, long hi) {
+        parsePartial(bytesPtr, hi);
+    }
+
+    protected boolean partialComplete() {
+        // For extension
+        return false;
+    }
+
+    protected long parsePartial(long bytesPtr, long hi) {
         long p = bytesPtr;
 
-        while (p < hi) {
+        while (p < hi && !partialComplete()) {
 
             final byte b = Unsafe.getUnsafe().getByte(p);
 
@@ -136,6 +145,8 @@ public class LineProtoLexer implements Mutable, Closeable {
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
             }
         }
+        
+        return p;
     }
 
     public void parseLast() {
@@ -161,9 +172,14 @@ public class LineProtoLexer implements Mutable, Closeable {
         dstTop = dstPos;
     }
 
+    protected void doSkipLineComplete() {
+        // for extension
+    }
+
     private void doSkipLine(byte b) {
         if (b == '\n' || b == '\r') {
             clear();
+            doSkipLineComplete();
         }
     }
 
@@ -216,7 +232,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    private void onEol() throws LineProtoException {
+    protected void onEol() throws LineProtoException {
         switch (state) {
             case LineProtoParser.EVT_MEASUREMENT:
                 chop();

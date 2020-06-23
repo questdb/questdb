@@ -22,26 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.microtime.MicrosecondClock;
 
-public interface ServerConfiguration {
+public interface LineTcpReceiverConfiguration extends WorkerPoolAwareConfiguration {
+    CairoSecurityContext getCairoSecurityContext();
 
-    CairoConfiguration getCairoConfiguration();
+    LineProtoTimestampAdapter getTimestampAdapter();
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    int getConnectionPoolInitialCapacity();
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    IODispatcherConfiguration getDispatcherConfiguration();
 
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
+    int getMsgBufferSize();
 
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
+    int getMaxMeasurementSize();
 
-    PGWireConfiguration getPGWireConfiguration();
+    NetworkFacade getNetworkFacade();
+
+    int getNWriterThreads();
+
+    int getWriterQueueSize();
+
+    MicrosecondClock getMicrosecondClock();
 }

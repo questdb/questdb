@@ -523,6 +523,16 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         assertMultiTable(expected1, expected2, lines);
     }
 
+    @Test
+    public void testAddTag() throws Exception {
+        final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
+                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
+                "woopsie\t\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
+        final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
+        assertThat(expected, lines, "tab");
+    }
+
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override

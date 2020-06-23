@@ -24,6 +24,10 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.Properties;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
@@ -34,22 +38,51 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.*;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.*;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Properties;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocale;
+import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -222,6 +255,29 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private boolean pgHaltOnError;
     private boolean pgDaemonPool;
+
+    private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
+    private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
+    private final boolean lineTcpEnabled;
+    private int lineTcpNetActiveConnectionLimit;
+    private int lineTcpNetBindIPv4Address;
+    private int lineTcpNetBindPort;
+    private int lineTcpNetEventCapacity;
+    private int lineTcpNetIOQueueCapacity;
+    private long lineTcpNetIdleConnectionTimeout;
+    private int lineTcpNetInterestQueueCapacity;
+    private int lineTcpNetListenBacklog;
+    private int lineTcpNetRcvBufSize;
+    private int lineTcpNetSndBufSize;
+    private int[] lineTcpWorkerAffinity;
+    private int lineTcpWorkerCount;
+    private boolean lineTcpHaltOnError;
+    private int lineTcpConnectionPoolInitialCapacity;
+    private LineProtoTimestampAdapter lineTcpTimestampAdapter;
+    private int lineTcpMsgBufferSize;
+    private int lineTcpMaxMeasurementSize;
+    private int lineTcpNWriterThreads;
+    private int lineTcpWriterQueueSize;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -458,27 +514,54 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
         this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
         this.lineUdpCommitMode = getCommitMode(properties, "line.udp.commit.mode");
+        this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, "line.udp.timestamp");
 
+        this.lineTcpEnabled = getBoolean(properties, "line.tcp.enabled", true);
+        if (lineTcpEnabled) {
+            lineTcpNetActiveConnectionLimit = getInt(properties, "pg.net.active.connection.limit", 10);
+            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:9009", (a, p) -> {
+                lineTcpNetBindIPv4Address = a;
+                lineTcpNetBindPort = p;
+            });
+
+            this.lineTcpNetEventCapacity = getInt(properties, "line.tcp.net.event.capacity", 1024);
+            this.lineTcpNetIOQueueCapacity = getInt(properties, "line.tcp.net.io.queue.capacity", 1024);
+            this.lineTcpNetIdleConnectionTimeout = getLong(properties, "line.tcp.net.idle.timeout", 300_000);
+            this.lineTcpNetInterestQueueCapacity = getInt(properties, "line.tcp.net.interest.queue.capacity", 1024);
+            this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
+            this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
+            this.lineTcpNetSndBufSize = getIntSize(properties, "line.tcp.net.send.buf.size", -1);
+            this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 2);
+            this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
+            this.lineTcpHaltOnError = getBoolean(properties, "line.tcp.halt.on.error", false);
+            this.lineTcpConnectionPoolInitialCapacity = getInt(properties, "line.tcp.connection.pool.capacity", 64);
+            this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, "line.tcp.timestamp");
+            this.lineTcpMsgBufferSize = getIntSize(properties, "line.tcp.msg.buffer.size", 2048);
+            this.lineTcpMaxMeasurementSize = getIntSize(properties, "line.tcp.max.measurement.size", 2048);
+            if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
+                throw new IllegalArgumentException(
+                        "line.tcp.max.measuement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+            }
+            this.lineTcpNWriterThreads = getIntSize(properties, "line.tcp.n.writer.threads", 2);
+            this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 1024);
+        }
+    }
+
+    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
         final String lineUdpTimestampSwitch = getString(properties, "line.udp.timestamp", "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
-                lineUdpTimestampAdapter = LineProtoMicroTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoMicroTimestampAdapter.INSTANCE;
             case "ms":
-                lineUdpTimestampAdapter = LineProtoMilliTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoMilliTimestampAdapter.INSTANCE;
             case "s":
-                lineUdpTimestampAdapter = LineProtoSecondTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoSecondTimestampAdapter.INSTANCE;
             case "m":
-                lineUdpTimestampAdapter = LineProtoMinuteTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoMinuteTimestampAdapter.INSTANCE;
             case "h":
-                lineUdpTimestampAdapter = LineProtoHourTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoHourTimestampAdapter.INSTANCE;
             default:
-                lineUdpTimestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
-                break;
+                return LineProtoNanoTimestampAdapter.INSTANCE;
         }
     }
 
@@ -495,6 +578,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+        return lineTcpReceiverConfiguration;
     }
 
     @Override
@@ -1405,6 +1493,162 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
             return lineUdpTimestampAdapter;
+        }
+    }
+
+    private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
+
+        @Override
+        public String getDispatcherLogName() {
+            return "line-server";
+        }
+
+        @Override
+        public int getActiveConnectionLimit() {
+            return lineTcpNetActiveConnectionLimit;
+        }
+
+        @Override
+        public int getBindIPv4Address() {
+            return lineTcpNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return lineTcpNetBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getEventCapacity() {
+            return lineTcpNetEventCapacity;
+        }
+
+        @Override
+        public int getIOQueueCapacity() {
+            return lineTcpNetIOQueueCapacity;
+        }
+
+        @Override
+        public long getIdleConnectionTimeout() {
+            return lineTcpNetIdleConnectionTimeout;
+        }
+
+        @Override
+        public int getInitialBias() {
+            return BIAS_READ;
+        }
+
+        @Override
+        public int getInterestQueueCapacity() {
+            return lineTcpNetInterestQueueCapacity;
+        }
+
+        @Override
+        public int getListenBacklog() {
+            return lineTcpNetListenBacklog;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getRcvBufSize() {
+            return lineTcpNetRcvBufSize;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSndBufSize() {
+            return lineTcpNetSndBufSize;
+        }
+
+    }
+
+    private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+        @Override
+        public boolean isEnabled() {
+            return lineTcpEnabled;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineTcpWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineTcpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineTcpHaltOnError;
+        }
+
+        @Override
+        public CairoSecurityContext getCairoSecurityContext() {
+            return AllowAllCairoSecurityContext.INSTANCE;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return lineTcpTimestampAdapter;
+        }
+
+        @Override
+        public int getConnectionPoolInitialCapacity() {
+            return lineTcpConnectionPoolInitialCapacity;
+        }
+
+        @Override
+        public IODispatcherConfiguration getDispatcherConfiguration() {
+            return lineTcpReceiverDispatcherConfiguration;
+        }
+
+        @Override
+        public int getMsgBufferSize() {
+            return lineTcpMsgBufferSize;
+        }
+
+        @Override
+        public int getMaxMeasurementSize() {
+            return lineTcpMaxMeasurementSize;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getNWriterThreads() {
+            return lineTcpNWriterThreads;
+        }
+
+        @Override
+        public int getWriterQueueSize() {
+            return lineTcpWriterQueueSize;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return MicrosecondClockImpl.INSTANCE;
         }
     }
 

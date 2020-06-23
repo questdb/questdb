@@ -24,20 +24,11 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
-import io.questdb.cutlass.line.udp.LineProtoReceiver;
-import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
-import io.questdb.std.time.Dates;
-import sun.misc.Signal;
-
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.util.Date;
 import java.util.Enumeration;
@@ -46,6 +37,24 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.line.tcp.LineTcpServer;
+import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
+import io.questdb.cutlass.line.udp.LineProtoReceiver;
+import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
+import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
+import io.questdb.std.time.Dates;
+import sun.misc.Signal;
 
 public class ServerMain {
     public static void deleteOrException(File file) {
@@ -179,6 +188,8 @@ public class ServerMain {
                     workerPool
             );
         }
+        
+        LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine, messageBus);
 
         startQuestDb(workerPool, lineProtocolReceiver, log);
 
