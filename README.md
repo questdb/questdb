@@ -13,7 +13,7 @@
   <a href="https://circleci.com/gh/questdb/questdb">
     <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
   </a>
-  <a href="https://github.com/questdb/questdb/releases/tag/5.0.0">
+  <a href="https://github.com/questdb/questdb/releases/tag/5.0.1">
     <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
