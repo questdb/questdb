@@ -31,10 +31,10 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.ObjList;
 
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_namespace()";
+        return "pg_catalog.pg_namespace()";
     }
 
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {

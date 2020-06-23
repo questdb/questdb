@@ -24,27 +24,27 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
 
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_namespace()";
+class StringValueRecord implements Record {
+    private final String value;
+
+    public StringValueRecord(String value) {
+        this.value = value;
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        NamespaceCatalogueCursor.METADATA,
-                        new NamespaceCatalogueCursor(),
-                        false
-                )
-        );
+    @Override
+    public CharSequence getStr(int col) {
+        return value;
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+        return getStr(col);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return value.length();
     }
 }

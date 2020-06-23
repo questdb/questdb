@@ -24,27 +24,48 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_namespace()";
+class StringValueRecordCursor implements RecordCursor {
+    private final Record record;
+    private int remaining = 1;
+
+    public StringValueRecordCursor(Record record) {
+        this.record = record;
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        NamespaceCatalogueCursor.METADATA,
-                        new NamespaceCatalogueCursor(),
-                        false
-                )
-        );
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return remaining-- > 0;
+    }
+
+    @Override
+    public Record getRecordB() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void toTop() {
+        remaining = 1;
+    }
+
+    @Override
+    public long size() {
+        return 1;
     }
 }

@@ -944,6 +944,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareParams(sink, "application_name", "QuestDB");
         prepareParams(sink, "server_version", serverVersion);
         prepareParams(sink, "integer_datetimes", "on");
+        prepareParams(sink, "client_encoding", "UTF8");
         prepareReadyForQuery(sink);
     }
 

@@ -423,10 +423,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
 //                  avg()

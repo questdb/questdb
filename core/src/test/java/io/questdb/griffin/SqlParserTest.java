@@ -3577,6 +3577,22 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectNoWhere() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_int(1,2,0) rnd_int from (long_sequence(1))",
+                "select rnd_int(1, 2, 0)"
+        );
+    }
+
+    @Test
+    public void testSelectAliasNoWhere() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_int(1,2,0) a from (long_sequence(1))",
+                "select rnd_int(1, 2, 0) a"
+        );
+    }
+
+    @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
                 "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",

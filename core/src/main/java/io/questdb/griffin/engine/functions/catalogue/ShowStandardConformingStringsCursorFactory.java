@@ -24,27 +24,38 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class ShowStandardConformingStringsCursorFactory implements RecordCursorFactory {
+    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private static final StringValueRecord RECORD = new StringValueRecord("on");
+
+    static {
+        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING));
+    }
+
+    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+
     @Override
-    public String getSignature() {
-        return "pg_namespace()";
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.toTop();
+        return cursor;
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        NamespaceCatalogueCursor.METADATA,
-                        new NamespaceCatalogueCursor(),
-                        false
-                )
-        );
+    @Override
+    public RecordMetadata getMetadata() {
+        return METADATA;
     }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
 }

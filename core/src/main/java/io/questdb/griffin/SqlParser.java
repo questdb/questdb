@@ -41,6 +41,45 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("left");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("splice");
+        tableAliasStop.add("lt");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        tableAliasStop.add(";");
+        tableAliasStop.add("union");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("left", QueryModel.JOIN_INNER);
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
+        joinStartSet.put("lt", QueryModel.JOIN_LT);
+    }
+
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -640,6 +679,19 @@ public final class SqlParser {
         // [select]
         if (isSelectKeyword(tok)) {
             parseSelectClause(lexer, model);
+
+            tok = optTok(lexer);
+            if (tok == null) {
+                QueryModel nestedModel = queryModelPool.next();
+                nestedModel.setModelPosition(modelPosition);
+                ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
+                func.paramCount = 1;
+                func.rhs = expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
+                nestedModel.setTableName(func);
+                model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+                model.setNestedModel(nestedModel);
+                return model;
+            }
         } else {
             lexer.unparse();
             model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
@@ -1026,11 +1078,11 @@ public final class SqlParser {
                 }
             }
 
-            CharSequence alias;
+            final CharSequence alias;
 
-            tok = tok(lexer, "',', 'from', 'over' or literal");
+            tok = optTok(lexer);
 
-            if (columnAliasStop.excludes(tok)) {
+            if (tok != null && columnAliasStop.excludes(tok)) {
 
                 assertNotDot(lexer, tok);
 
@@ -1039,12 +1091,12 @@ public final class SqlParser {
                 } else {
                     alias = GenericLexer.immutableOf(tok);
                 }
-                tok = tok(lexer, "',', 'from' or 'over'");
+                tok = optTok(lexer);
             } else {
                 alias = createColumnAlias(expr, model);
             }
 
-            if (isOverKeyword(tok)) {
+            if (tok != null && isOverKeyword(tok)) {
                 // analytic
                 expectTok(lexer, '(');
 
@@ -1090,7 +1142,12 @@ public final class SqlParser {
                 model.addBottomUpColumn(queryColumnPool.next().of(alias, expr));
             }
 
+            if (tok == null) {
+                break;
+            }
+
             if (isFromKeyword(tok)) {
+                lexer.unparse();
                 break;
             }
 
@@ -1357,43 +1414,5 @@ public final class SqlParser {
                 break;
 
         }
-    }
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("left");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("splice");
-        tableAliasStop.add("lt");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        tableAliasStop.add(";");
-        tableAliasStop.add("union");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("left", QueryModel.JOIN_INNER);
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
-        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
-        joinStartSet.put("lt", QueryModel.JOIN_LT);
     }
 }

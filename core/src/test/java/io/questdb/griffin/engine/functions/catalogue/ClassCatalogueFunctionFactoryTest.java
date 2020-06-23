@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -127,5 +128,73 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPythonInitialSql() throws SqlException {
+        assertQuery(
+                "oid\ttyparray\n",
+                "SELECT t.oid, typarray\n" +
+                        "FROM pg_type t JOIN pg_namespace ns\n" +
+                        "    ON typnamespace = ns.oid\n" +
+                        "WHERE typname = 'hstore';",
+                null, false
+        );
+    }
+
+    @Test
+    public void testPSQLTableList() throws Exception {
+        assertQuery(
+                "Schema\tName\tType\tOwner\n" +
+                        "public\tx\ttable\tpublic\n",
+                "SELECT n.nspname as \"Schema\",\n" +
+                        "  c.relname as \"Name\",\n" +
+                        "  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' WHEN 's' THEN 'special' WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table' WHEN 'I' THEN 'partitioned index' END as \"Type\",\n" +
+                        "  pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
+                        "FROM pg_catalog.pg_class c\n" +
+                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
+                        "WHERE c.relkind IN ('r','p','v','m','S','f','')\n" +
+                        "      AND n.nspname <> 'pg_catalog'\n" +
+                        "      AND n.nspname <> 'information_schema'\n" +
+                        "      AND n.nspname !~ '^pg_toast'\n" +
+                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
+                        "ORDER BY 1,2;",
+                "create table x(a int)",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevel() throws SqlException {
+        assertQuery(
+                "transaction_isolation\n" +
+                        "read committed\n",
+                "show transaction isolation level",
+                null,
+                false,
+                sqlExecutionContext,
+                false
+        );
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevelErr1() throws Exception {
+        assertFailure("show transaction", null, 16, "expected 'isolation'");
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevelErr2() throws Exception {
+        assertFailure("show transaction oh", null, 17, "expected 'isolation'");
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevelErr3() throws Exception {
+        assertFailure("show transaction isolation", null, 26, "expected 'level'");
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevelErr4() throws Exception {
+        assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
     }
 }

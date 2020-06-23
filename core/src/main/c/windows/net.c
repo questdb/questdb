@@ -127,7 +127,12 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
         return FALSE;
     }
 
-    return (jboolean) (bind((SOCKET) fd, addr->ai_addr, (int) addr->ai_addrlen) == 0);
+    const int result = bind((SOCKET) fd, addr->ai_addr, (int) addr->ai_addrlen);
+    if (result != 0) {
+        SaveLastError();
+        return FALSE;
+    }
+    return TRUE;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_join
