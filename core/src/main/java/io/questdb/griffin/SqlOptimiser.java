@@ -1134,7 +1134,7 @@ class SqlOptimiser {
             // is applied before join. Please see post-join-where for filters that
             // executed in line with standard SQL behaviour.
 
-            if (where != null /*&& m.getJoinModels().size() == 1*/) {
+            if (where != null) {
                 if (where.type == ExpressionNode.LITERAL) {
                     m.setWhereClause(columnPrefixEraser.rewrite(where));
                 } else {

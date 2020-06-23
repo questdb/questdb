@@ -1074,9 +1074,7 @@ public final class SqlParser {
                 }
             }
 
-            CharSequence alias;
-
-//            tok = tok(lexer, "',', 'from', 'over' or literal");
+            final CharSequence alias;
 
             tok = optTok(lexer);
 
@@ -1089,7 +1087,6 @@ public final class SqlParser {
                 } else {
                     alias = GenericLexer.immutableOf(tok);
                 }
-//                tok = tok(lexer, "',', 'from' or 'over'");
                 tok = optTok(lexer);
             } else {
                 alias = createColumnAlias(expr, model);
