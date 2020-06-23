@@ -16,12 +16,12 @@ type Props = NotificationShape
 
 type AnimationPlay = "paused" | "running"
 
-const Wrapper = styled(Toast)`
+const Wrapper = styled(Toast)<{ pinned: boolean }>`
   margin-top: 1rem;
   padding-right: 3rem;
   border-right: none;
-  border-bottom: none;
   box-shadow: ${color("black")} 0 0 4px;
+  ${({ pinned }) => (pinned ? "" : "border-bottom: none;")};
 
   overflow: hidden;
   ${bezierTransition};
@@ -144,6 +144,7 @@ const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
         borderColor={getBorderColor(type)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        pinned={pinned}
       >
         <Title color="gray2" hasLine1={!!line1}>
           [{format("HH:mm:ss", createdAt)}]&nbsp;{title}
