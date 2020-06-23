@@ -226,7 +226,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgDaemonPool;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
-        this.sharedWorkerCount = getInt(properties, "shared.worker.count", 3);
+        this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
         this.httpServerEnabled = getBoolean(properties, "http.enabled", true);

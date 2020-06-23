@@ -38,24 +38,26 @@ public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
 
     @Test
-    public void testTelemetryOffByDefault() throws Exception {
+    public void testTelemetryDisabledByDefault() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 try (Path path = new Path()) {
                     Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
+                    Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
                 }
             }
         });
     }
 
     @Test
-    public void testTelemetryCreatesTableWhenOn() throws Exception {
+    public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 engine.startTelemetry();
 
                 try (Path path = new Path()) {
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry"));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry_config"));
                 }
             }
         });
@@ -87,40 +89,8 @@ public class TelemetryTest extends AbstractCairoTest {
             engine.startTelemetry();
             Misc.free(engine);
 
-            final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
-                    "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
-            assertTable(expected, "telemetry");
-        });
-    }
-
-    @Test
-    public void testTelemetryStoresUpAndDownEvent() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public MicrosecondClock getMicrosecondClock() {
-                    try {
-                        return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
-                    } catch (NumericException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-
-                @Override
-                public NanosecondClock getNanosecondClock() {
-                    try {
-                        return new TestNanoClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
-                    } catch (NumericException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            };
-            CairoEngine engine = new CairoEngine(configuration, null);
-            engine.startTelemetry();
-            Misc.free(engine);
-
-            final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
-                    "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
+            final String expected = "2020-06-19T10:36:16.527310Z\t100\n" +
+                    "2020-06-19T10:36:16.527310Z\t101\n";
             assertTable(expected, "telemetry");
         });
     }

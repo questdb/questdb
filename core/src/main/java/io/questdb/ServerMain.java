@@ -143,10 +143,7 @@ public class ServerMain {
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
-
-        if (configuration.getCairoConfiguration().getTelemetryEnabled()) {
-            workerPool.assign(cairoEngine.startTelemetry());
-        }
+        workerPool.assign(cairoEngine.startTelemetry());
 
         try {
             final HttpServer httpServer = HttpServer.create(

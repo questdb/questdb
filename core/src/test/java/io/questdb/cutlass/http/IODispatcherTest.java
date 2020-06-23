@@ -3192,9 +3192,9 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
-                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
-                "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
+        final String expected = "2020-06-19T10:36:16.527310Z\t100\n" +
+                "2020-06-19T10:36:16.527310Z\t0\n" +
+                "2020-06-19T10:36:16.527310Z\t101\n";
         assertTable(expected, "telemetry");
     }
 
@@ -3227,10 +3227,10 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
-                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
-                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
-                "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
+        final String expected = "2020-06-19T10:36:16.537310Z\t100\n" +
+                "2020-06-19T10:36:16.527310Z\t0\n" +
+                "2020-06-19T10:36:16.527310Z\t0\n" +
+                "2020-06-19T10:36:16.547310Z\t101\n";
         assertTable(expected, "telemetry");
     }
 
