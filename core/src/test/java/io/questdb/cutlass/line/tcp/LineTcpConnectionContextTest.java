@@ -20,7 +20,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
+    // private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
     private static final int FD = 1_000_000;
     private LineTcpConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
@@ -45,7 +45,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleMeasurements() throws Exception {
+    public void testMultipleMeasurements1() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -56,6 +56,69 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             context.handleIO();
             Assert.assertFalse(disconnected);
+            recvBuffer = null;
+            context.handleIO();
+            Assert.assertTrue(disconnected);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testMultipleMeasurements2() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            recvBuffer = null;
+            context.handleIO();
+            Assert.assertTrue(disconnected);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testExtremeFragmentation() throws Exception {
+        runInContext(() -> {
+            String allMsgs = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            int n = 0;
+            while (n < allMsgs.length()) {
+                recvBuffer = allMsgs.substring(n, n + 1);
+                n++;
+                context.handleIO();
+                Assert.assertFalse(disconnected);
+            }
             recvBuffer = null;
             context.handleIO();
             Assert.assertTrue(disconnected);
