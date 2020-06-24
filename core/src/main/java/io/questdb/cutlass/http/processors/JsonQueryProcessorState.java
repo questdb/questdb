@@ -88,7 +88,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long executeStartNanos;
     private long recordCountNanos;
     private long compilerNanos;
-    private boolean timigs;
+    private boolean timings;
     private boolean queryCacheable = false;
 
     public JsonQueryProcessorState(
@@ -184,7 +184,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.stop = stop;
         this.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
         this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
-        this.timigs = Chars.equalsNc("true", request.getUrlParam("timings"));
+        this.timings = Chars.equalsNc("true", request.getUrlParam("timings"));
     }
 
     public LogRecord error() {
@@ -227,6 +227,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         info().$("execute-new ").
                 $("[skip: ").$(skip).
                 $(", stop: ").$(stop).
+                $(']').$();
+    }
+
+    public void logTimings() {
+        info().$("timings ").
+                $("[compiler: ").$(compilerNanos).
+                $(", count: ").$(recordCountNanos).
+                $(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos).
                 $(']').$();
     }
 
@@ -467,7 +475,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.bookmark();
             socket.put(']');
             socket.put(',').putQuoted("count").put(':').put(count);
-            if (timigs) {
+            if (timings) {
                 socket.put(',').putQuoted("timings").put(':').put('{');
                 socket.putQuoted("compiler").put(':').put(compilerNanos).put(',');
                 socket.putQuoted("execute").put(':').put(nanosecondClock.getTicks() - executeStartNanos).put(',');
@@ -477,6 +485,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.put('}');
             count = -1;
             socket.sendChunk();
+            logTimings();
         }
         socket.done();
     }
