@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.time.Dates;
 import sun.misc.Signal;
@@ -42,6 +43,7 @@ import java.net.URL;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Properties;
+import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -142,57 +144,63 @@ public class ServerMain {
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
-        final HttpServer httpServer = HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                messageBus
-        );
-
-        final PGWireServer pgWireServer;
-
-        if (configuration.getPGWireConfiguration().isEnabled()) {
-            pgWireServer = PGWireServer.create(
-                    configuration.getPGWireConfiguration(),
+        try {
+            final HttpServer httpServer = HttpServer.create(
+                    configuration.getHttpServerConfiguration(),
                     workerPool,
                     log,
                     cairoEngine,
                     messageBus
             );
-        } else {
-            pgWireServer = null;
+
+            final PGWireServer pgWireServer;
+
+            if (configuration.getPGWireConfiguration().isEnabled()) {
+                pgWireServer = PGWireServer.create(
+                        configuration.getPGWireConfiguration(),
+                        workerPool,
+                        log,
+                        cairoEngine,
+                        messageBus
+                );
+            } else {
+                pgWireServer = null;
+            }
+
+            final AbstractLineProtoReceiver lineProtocolReceiver;
+
+            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+                lineProtocolReceiver = new LinuxMMLineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            } else {
+                lineProtocolReceiver = new LineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            }
+
+            startQuestDb(workerPool, lineProtocolReceiver, log);
+
+            if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
+                // suppress HUP signal
+                Signal.handle(new Signal("HUP"), signal -> {
+                });
+            }
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.err.println(new Date() + " QuestDB is shutting down");
+                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
+                System.err.println(new Date() + " QuestDB is down");
+            }));
+        } catch (NetworkError e) {
+            log.error().$(e.getMessage()).$();
+            LockSupport.parkNanos(10000000L);
+            System.exit(55);
         }
-
-        final AbstractLineProtoReceiver lineProtocolReceiver;
-
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            lineProtocolReceiver = new LinuxMMLineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        } else {
-            lineProtocolReceiver = new LineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        }
-
-        startQuestDb(workerPool, lineProtocolReceiver, log);
-
-        if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
-            // suppress HUP signal
-            Signal.handle(new Signal("HUP"), signal -> {
-            });
-        }
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.err.println(new Date() + " QuestDB is shutting down");
-            shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
-            System.err.println(new Date() + " QuestDB is down");
-        }));
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {

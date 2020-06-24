@@ -24,12 +24,13 @@
 
 package io.questdb.network;
 
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class NetworkError extends Error implements Sinkable {
+public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<NetworkError> tlException = new ThreadLocal<>(NetworkError::new);
     private final StringSink message = new StringSink();
     private int errno;
@@ -49,9 +50,13 @@ public class NetworkError extends Error implements Sinkable {
         return ex;
     }
 
-    public NetworkError couldNotBindSocket() {
-        message.put("could not bind socket");
-        return this;
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
+    public NetworkError couldNotBindSocket(CharSequence who, int ipv4, int port) {
+        return this.put("could not bind socket [who=").put(who).put(", bindTo=").ip(ipv4).put(':').put(port).put(']');
     }
 
     @Override
