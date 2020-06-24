@@ -1,5 +1,5 @@
 export type QueryShape = Readonly<{
-  name: string
+  name?: string
   value: string
 }>
 
