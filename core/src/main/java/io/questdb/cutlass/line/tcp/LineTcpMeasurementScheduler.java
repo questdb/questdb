@@ -84,7 +84,13 @@ class LineTcpMeasurementScheduler implements Closeable {
     LineTcpMeasurementEvent getNewEvent() {
         assert !closed();
         if (nextEventCursor == -1) {
-            nextEventCursor = pubSeq.next();
+            do {
+                nextEventCursor = pubSeq.next();
+            } while (nextEventCursor == -2);
+            if (nextEventCursor < 0) {
+                nextEventCursor = -1;
+                return null;
+            }
         }
         return queue.get(nextEventCursor);
     }
@@ -221,7 +227,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             errorPosition = -1;
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
-                lexer.clear();
                 if (!isError() && firstFieldIndex == -1) {
                     errorPosition = (int) (recvBufLineNext - bytesPtr);
                     errorCode = LineProtoParser.ERROR_EMPTY;

@@ -11,6 +11,7 @@ public class TruncatedLineProtoLexer extends LineProtoLexer {
         finishedLine = false;
         long atPtr = parsePartial(bytesPtr, hi);
         if (!finishedLine) {
+            clear();
             return -1;
         }
         return atPtr;

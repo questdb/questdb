@@ -30,54 +30,59 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     void handleIO() {
-        LineTcpMeasurementEvent event = scheduler.getNewEvent();
-        if (null == event) {
+        try {
+            LineTcpMeasurementEvent event = scheduler.getNewEvent();
+            if (null == event) {
+                dispatcher.registerChannel(this, IOOperation.READ);
+                return;
+            }
+
+            int len = (int) (recvBufEnd - recvBufPos);
+            int nRead = nf.recv(fd, recvBufPos, len);
+            if (nRead < 0) {
+                if (recvBufPos != recvBufStart) {
+                    LOG.info().$('[').$(fd).$("] disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                }
+                dispatcher.disconnect(this);
+                return;
+            }
+            recvBufPos += nRead;
+
+            long recvBufLineStart = recvBufStart;
+            do {
+                long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
+                if (recvBufLineNext == -1) {
+                    break;
+                }
+                if (!event.isError()) {
+                    scheduler.commitNewEvent(event);
+                    event = scheduler.getNewEvent();
+                } else {
+                    LOG.error().$('[').$(fd).$("] failed to parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
+                            .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
+                }
+                recvBufLineStart = recvBufLineNext;
+            } while (recvBufLineStart != recvBufPos && null != event);
+
+            if (recvBufLineStart != recvBufStart) {
+                len = (int) (recvBufPos - recvBufLineStart);
+                if (len > 0) {
+                    Unsafe.getUnsafe().copyMemory(recvBufLineStart, recvBufStart, len);
+                }
+                recvBufPos = recvBufStart + len;
+            }
+
+            if (recvBufPos == recvBufEnd) {
+                LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
+                dispatcher.disconnect(this);
+                return;
+            }
+
             dispatcher.registerChannel(this, IOOperation.READ);
-            return;
-        }
-
-        int len = (int) (recvBufEnd - recvBufPos);
-        int nRead = nf.recv(fd, recvBufPos, len);
-        if (nRead < 0) {
-            if (recvBufPos != recvBufStart) {
-                LOG.info().$('[').$(fd).$("] disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-            }
+        } catch (RuntimeException ex) {
+            LOG.error().$('[').$(fd).$("] Failed to process line data").$(ex).$();
             dispatcher.disconnect(this);
-            return;
         }
-        recvBufPos += nRead;
-
-        long recvBufLineStart = recvBufStart;
-        do {
-            long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
-            if (recvBufLineNext == -1) {
-                break;
-            }
-            if (!event.isError()) {
-                scheduler.commitNewEvent(event);
-                event = scheduler.getNewEvent();
-            } else {
-                LOG.error().$('[').$(fd).$("] failed to parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
-                        .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
-            }
-            recvBufLineStart = recvBufLineNext;
-        } while (recvBufLineStart != recvBufPos && null != event);
-
-        if (recvBufLineStart != recvBufStart) {
-            len = (int) (recvBufPos - recvBufLineStart);
-            if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(recvBufLineStart, recvBufStart, len);
-            }
-            recvBufPos = recvBufStart + len;
-        }
-
-        if (recvBufPos == recvBufEnd) {
-            LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-            dispatcher.disconnect(this);
-            return;
-        }
-
-        dispatcher.registerChannel(this, IOOperation.READ);
     }
 
     @Override
