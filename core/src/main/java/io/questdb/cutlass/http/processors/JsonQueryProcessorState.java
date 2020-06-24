@@ -235,6 +235,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 $("[compiler: ").$(compilerNanos).
                 $(", count: ").$(recordCountNanos).
                 $(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos).
+                $(", q=").$(query).
                 $(']').$();
     }
 
@@ -472,6 +473,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         queryState = QUERY_SUFFIX;
         if (count > -1) {
+            logTimings();
             socket.bookmark();
             socket.put(']');
             socket.put(',').putQuoted("count").put(':').put(count);
@@ -485,7 +487,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.put('}');
             count = -1;
             socket.sendChunk();
-            logTimings();
         }
         socket.done();
     }
