@@ -341,7 +341,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             eventProcessed = true;
                         }
                     } catch (RuntimeException ex) {
-                        LOG.error().$(ex);
+                        LOG.error().$(ex).$();
                         eventProcessed = true;
                     }
                     if (eventProcessed) {
@@ -477,10 +477,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             private void parseNames(LineTcpMeasurementEvent event) {
                 RecordMetadata metadata = writer.getMetadata();
                 for (int n = 0; n < nMeasurementValues; n++) {
-                    int colIndex = metadata.getColumnIndex(event.getName(n));
+                    int colIndex = metadata.getColumnIndexQuiet(event.getName(n));
                     if (colIndex == -1) {
+                        colIndex = metadata.getColumnCount();
                         writer.addColumn(event.getName(n), colTypes.getQuick(n));
-                        colIndex = n;
                     } else {
                         if (metadata.getColumnType(colIndex) != colTypes.getQuick(n)) {
                             LOG.error().$("mismatched column and value types [table=").$(writer.getName())
