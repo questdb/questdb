@@ -10,6 +10,8 @@ export const initialState: ConsoleStateShape = {
 }
 
 export const defaultConfiguration: ConfigurationShape = {
+  githubBanner: false,
+  readOnly: false,
   savedQueries: [],
 }
 
