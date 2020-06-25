@@ -116,6 +116,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
             readyForNextRequest(context);
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
+            // re-throw the exception
+            throw e;
         } catch (Throwable e) {
             LOG.error().$("Uh-oh. Error!").$(e).$();
             throw ServerDisconnectException.INSTANCE;
