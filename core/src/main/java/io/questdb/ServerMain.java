@@ -250,9 +250,7 @@ public class ServerMain {
                 log.error().$("could not find site [resource=").$(publicZip).$(']').$();
             }
         }
-        copyConfResource(dir, force, buffer, "conf/date.formats", log);
         copyConfResource(dir, force, buffer, "conf/mime.types", log);
-        copyConfResource(dir, force, buffer, "conf/server.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
