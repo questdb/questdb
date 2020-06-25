@@ -212,9 +212,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                 case '\n':
                     if (headerName == null) {
                         incomplete = false;
-                        if (url == null) {
-                            throw HttpException.instance("missing URL");
-                        }
                         parseKnownHeaders();
                         return p;
                     }

@@ -312,6 +312,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 }
             }
 
+            final CharSequence url = headerParser.getUrl();
+            if (url == null) {
+                throw HttpException.instance("missing URL");
+            }
             HttpRequestProcessor processor = selector.select(headerParser.getUrl());
 
             if (processor == null) {

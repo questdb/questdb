@@ -1755,123 +1755,144 @@ public class IODispatcherTest {
         });
     }
 
-	@Test
-	public void testJsonQueryWithInterruption() throws Exception {
-		assertMemoryLeak(() -> {
-			final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-			final String baseDir = temp.getRoot().getAbsolutePath();
-			final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
-					false, false);
-			final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-				@Override
-				public int[] getWorkerAffinity() {
-					return new int[] { -1 };
-				}
+    @Test
+    public void testJsonQueryWithInterruption() throws Exception {
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
+                    false, false);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
 
-				@Override
-				public int getWorkerCount() {
-					return 1;
-				}
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
 
-				@Override
-				public boolean haltOnError() {
-					return false;
-				}
-			});
-			try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
-					HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-				httpServer.bind(new HttpRequestProcessorFactory() {
-					@Override
-					public HttpRequestProcessor newInstance() {
-						return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-					}
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
 
-					@Override
-					public String getUrl() {
-						return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-					}
-				});
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
 
-				httpServer.bind(new HttpRequestProcessorFactory() {
-					@Override
-					public HttpRequestProcessor newInstance() {
-						return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
-								null, workerPool.getWorkerCount());
-					}
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
+                                null, workerPool.getWorkerCount());
+                    }
 
-					@Override
-					public String getUrl() {
-						return "/query";
-					}
-				});
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
 
-				final AtomicBoolean clientClosed = new AtomicBoolean(false);
-				final AtomicBoolean serverClosed = new AtomicBoolean(false);
-				HttpClientStateListener clientStateListener = new HttpClientStateListener() {
-					@Override
-					public void onStartingRequest() {
-					}
+                final AtomicBoolean clientClosed = new AtomicBoolean(false);
+                final AtomicBoolean serverClosed = new AtomicBoolean(false);
+                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+                    @Override
+                    public void onStartingRequest() {
+                    }
 
-					@Override
-					public void onReceived(int nBytes) {
-						LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
-					}
+                    @Override
+                    public void onReceived(int nBytes) {
+                        LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
+                    }
 
-					@Override
-					public void onClosed() {
-						clientClosed.set(true);
+                    @Override
+                    public void onClosed() {
+                        clientClosed.set(true);
 
-					}
-				};
-				workerPool.start(LOG);
+                    }
+                };
+                workerPool.start(LOG);
 
-				try {
-					// create table with all column types
-					CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
-							new TestRecord.ArrayBinarySequence());
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
 
-					// send multipart request to server
+                    // send multipart request to server
 
-					final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
-							+ "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
-							+ "Upgrade-Insecure-Requests: 1\r\n"
-							+ "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
-							+ "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
-							+ "Accept-Encoding: gzip, deflate, br\r\n"
-							+ "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
+                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
+                            + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
+                            + "Upgrade-Insecure-Requests: 1\r\n"
+                            + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
+                            + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
+                            + "Accept-Encoding: gzip, deflate, br\r\n"
+                            + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-					String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
-							+ "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
-							+ "Content-Type: application/json; charset=utf-8\r\n"
-							+ "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
-					TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-						@Override
+                    String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
+                            + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
+                            + "Content-Type: application/json; charset=utf-8\r\n"
+                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
                         public boolean onGet(Record record, int count) {
-							if (count == 4) {
-								while (!clientClosed.get()) {
-									LockSupport.parkNanos(1);
-								}
-							}
-							return true;
-						}
+                            if (count == 4) {
+                                while (!clientClosed.get()) {
+                                    LockSupport.parkNanos(1);
+                                }
+                            }
+                            return true;
+                        }
 
-						@Override
+                        @Override
                         public void onClose() {
-							serverClosed.set(true);
-						}
-					});
-					sendAndReceiveWithPrematureDisconnect(nf, request, expectedResponse, false, 200,
-							clientStateListener);
-					while (!serverClosed.get()) {
-						LockSupport.parkNanos(1);
-					}
+                            serverClosed.set(true);
+                        }
+                    });
+                    long fd = nf.socketTcp(true);
+                    try {
+                        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+                        try {
+                            Assert.assertTrue(fd > -1);
+                            Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+                            byte[] expectedResponse1 = expectedResponse.getBytes();
+                            long bufLen = Math.max(request.length(), 200);
+                            long ptr = Unsafe.malloc(bufLen);
+                            try {
+                                sendAndReceive(nf, request, 0, false, true, fd, expectedResponse1, 200, ptr, clientStateListener);
+                            } finally {
+                                Unsafe.free(ptr, bufLen);
+                            }
+                        } finally {
+                            nf.freeSockAddr(sockAddr);
+                        }
+                    } finally {
+                        nf.close(fd);
+                        clientStateListener.onClosed();
+                    }
+                    while (!serverClosed.get()) {
+                        LockSupport.parkNanos(1);
+                    }
                     Assert.assertEquals(6, TestLatchedCounterFunctionFactory.getCount());
-				} finally {
-					workerPool.halt();
-				}
-			}
-		});
-	}
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
 
     @Test
     public void testJsonQueryBadUtf8() throws Exception {
@@ -1899,6 +1920,67 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testMissingURL() throws Exception {
+        testJsonQuery0(2, engine -> {
+            long fd = NetworkFacadeImpl.INSTANCE.socketTcp(true);
+            try {
+                long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
+                try {
+                    Assert.assertTrue(fd > -1);
+                    Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                    Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
+
+                    final String request = "GET HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+                    final int len = request.length() * 2;
+                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    long ptr = Unsafe.malloc(len);
+                    try {
+                        int sent = 0;
+                        int reqLen = request.length();
+                        Chars.asciiStrCpy(request, reqLen, ptr);
+                        boolean disconnected = false;
+                        while (sent < reqLen) {
+                            int n = nf.send(fd, ptr + sent, reqLen - sent);
+                            if (n < 0) {
+                                disconnected = true;
+                                break;
+                            }
+                            if (n > 0) {
+                                sent += n;
+                            }
+                        }
+                        if (!disconnected) {
+                            while (true) {
+                                int n = nf.recv(fd, ptr, len);
+                                if (n < 0) {
+                                    disconnected = true;
+                                    break;
+                                }
+                            }
+                        }
+                        Assert.assertTrue(disconnected);
+                    } finally {
+                        Unsafe.free(ptr, len);
+                    }
+                } finally {
+                    NetworkFacadeImpl.INSTANCE.freeSockAddr(sockAddr);
+                }
+            } finally {
+                NetworkFacadeImpl.INSTANCE.close(fd);
+            }
+        });
     }
 
     @Test
@@ -3031,12 +3113,47 @@ public class IODispatcherTest {
                             "Cookie: _ga=GA1.1.2124932001.1573824669; _hjid=f2db90b2-18cf-4956-8870-fcdcde56f3ca; _hjIncludedInSample=1; _gid=GA1.1.697400188.1591597903\r\n" +
                             "\r\n";
 
-                    sendAndExpectDisconnect(
-                            NetworkFacadeImpl.INSTANCE,
-                            request,
-                            1,
-                            20000
-                    );
+                    long fd = NetworkFacadeImpl.INSTANCE.socketTcp(true);
+                    try {
+                        long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
+                        try {
+                            Assert.assertTrue(fd > -1);
+                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
+
+                            final int len = request.length() * 2;
+                            long ptr = Unsafe.malloc(len);
+                            try {
+                                int sent = 0;
+                                int reqLen = request.length();
+                                Chars.asciiStrCpy(request, reqLen, ptr);
+                                while (sent < reqLen) {
+                                    int n = NetworkFacadeImpl.INSTANCE.send(fd, ptr + sent, reqLen - sent);
+                                    Assert.assertTrue(n > -1);
+                                    sent += n;
+                                }
+
+                                Thread.sleep(1);
+
+                                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                                long t = System.currentTimeMillis();
+                                boolean disconnected = true;
+                                while (NetworkFacadeImpl.INSTANCE.recv(fd, ptr, 1) > -1) {
+                                    if (t + 20000 < System.currentTimeMillis()) {
+                                        disconnected = false;
+                                        break;
+                                    }
+                                }
+                                Assert.assertTrue("disconnect expected", disconnected);
+                            } finally {
+                                Unsafe.free(ptr, len);
+                            }
+                        } finally {
+                            NetworkFacadeImpl.INSTANCE.freeSockAddr(sockAddr);
+                        }
+                    } finally {
+                        NetworkFacadeImpl.INSTANCE.close(fd);
+                    }
                 } finally {
                     workerPool.halt();
                 }
@@ -4788,39 +4905,6 @@ public class IODispatcherTest {
         }
     }
 
-    private void sendAndReceiveWithPrematureDisconnect(
-            NetworkFacade nf,
-            String request,
-            String response,
-            boolean print,
-            int disconnectAfterNBytes,
-            HttpClientStateListener listener
-    ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                byte[] expectedResponse = response.getBytes();
-                long bufLen = Math.max(request.length(), disconnectAfterNBytes);
-                long ptr = Unsafe.malloc(bufLen);
-                try {
-                    sendAndReceive(nf, request, 0, print, true, fd, expectedResponse, disconnectAfterNBytes, ptr, listener);
-                } finally {
-                    Unsafe.free(ptr, bufLen);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-            listener.onClosed();
-        }
-    }
-
     private void sendAndReceive(
             NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
             HttpClientStateListener listener
@@ -4875,59 +4959,6 @@ public class IODispatcherTest {
         if (disconnected && !expectDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
-        }
-    }
-
-    private void sendAndExpectDisconnect(
-            NetworkFacade nf,
-            String request,
-            long pauseBetweenSendAndReceive,
-            int expectDisconnectInMillis
-    ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                final int len = request.length() * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    int sent = 0;
-                    int reqLen = request.length();
-                    Chars.asciiStrCpy(request, reqLen, ptr);
-                    while (sent < reqLen) {
-                        int n = nf.send(fd, ptr + sent, reqLen - sent);
-                        Assert.assertTrue(n > -1);
-                        sent += n;
-                    }
-
-                    if (pauseBetweenSendAndReceive > 0) {
-                        Thread.sleep(pauseBetweenSendAndReceive);
-                    }
-
-                    if (expectDisconnectInMillis > 0) {
-                        nf.configureNonBlocking(fd);
-                        long t = System.currentTimeMillis();
-                        boolean disconnected = true;
-                        while (nf.recv(fd, ptr, 1) > -1) {
-                            if (t + expectDisconnectInMillis < System.currentTimeMillis()) {
-                                disconnected = false;
-                                break;
-                            }
-                        }
-                        Assert.assertTrue("disconnect expected", disconnected);
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
         }
     }
 
@@ -5078,6 +5109,14 @@ public class IODispatcherTest {
         void run(CairoEngine engine) throws InterruptedException;
     }
 
+    private interface HttpClientStateListener {
+        void onStartingRequest();
+
+        void onReceived(int nBytes);
+
+        void onClosed();
+    }
+
     private static class HelloContext implements IOContext {
         private final long fd;
         private final long buffer = Unsafe.malloc(1024);
@@ -5114,13 +5153,5 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
-    }
-
-    private interface HttpClientStateListener {
-        void onStartingRequest();
-
-        void onReceived(int nBytes);
-
-        void onClosed();
     }
 }
