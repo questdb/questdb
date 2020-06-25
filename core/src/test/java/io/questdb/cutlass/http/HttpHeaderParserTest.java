@@ -300,6 +300,23 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testMalformedUrl() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "GET HTTP/1.1\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, p + v.length(), true);
+                Assert.fail();
+            } catch (HttpException e) {
+                TestUtils.assertContains(e.getMessage(), "missing URL");
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
     public void testQueryInvalidEncoding() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "GET /status?x=1&a=%i6b&c&d=x HTTP/1.1\r\n" +

@@ -31,11 +31,7 @@ import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
@@ -373,7 +369,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             }
         } catch (HttpException e) {
-            LOG.error().$("http error [e=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("http error [fd=").$(fd).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
             dispatcher.disconnect(this);
         }
     }
