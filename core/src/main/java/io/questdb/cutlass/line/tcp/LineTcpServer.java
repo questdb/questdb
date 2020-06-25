@@ -3,7 +3,6 @@ package io.questdb.cutlass.line.tcp;
 import java.io.Closeable;
 import java.io.IOException;
 
-import org.jetbrains.annotations.Async.Schedule;
 import org.jetbrains.annotations.Nullable;
 
 import io.questdb.MessageBus;

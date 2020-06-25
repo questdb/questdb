@@ -2,6 +2,7 @@ package io.questdb.cutlass.line.tcp;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
@@ -15,6 +16,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
@@ -348,6 +350,54 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMultiplTablesWithSingleWriterThread() throws Exception {
+        nWriterThreads.set(1);
+        int nTables = 3;
+        int nIterations = 20_000;
+        testThreading(nTables, nIterations);
+    }
+
+    @Test
+    public void testMultiplTablesWithMultipleWriterThreads() throws Exception {
+        nWriterThreads.set(5);
+        int nTables = 12;
+        int nIterations = 20_000;
+        testThreading(nTables, nIterations);
+    }
+
+    private void testThreading(int nTables, int nIterations) throws Exception {
+        Random random = new Random(0);
+        int countByTable[] = new int[nTables];
+        long maxTimestampByTable[] = new long[nTables];
+        runInContext(() -> {
+            long timestamp = 1465839830100400200l;
+            for (int nIter = 0; nIter < nIterations; nIter++) {
+                int nLines = random.nextInt(50) + 1;
+                recvBuffer = "";
+                for (int nLine = 0; nLine < nLines; nLine++) {
+                    int nTable = random.nextInt(nTables);
+                    double temperature = 50.0 + (random.nextInt(500) / 10.0);
+                    recvBuffer += "weather" + nTable + ",location=us-midwest temperature=" + temperature + " " + timestamp + "\n";
+                    countByTable[nTable]++;
+                    maxTimestampByTable[nTable] = timestamp;
+                    timestamp += 1000;
+                }
+                do {
+                    context.handleIO();
+                    Assert.assertFalse(disconnected);
+                } while (recvBuffer.length() > 0);
+            }
+            recvBuffer = null;
+            context.handleIO();
+            Assert.assertTrue(disconnected);
+            closeContext();
+            for (int nTable = 0; nTable < nTables; nTable++) {
+                assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable]);
+            }
+        });
+    }
+
     private void testFragmentation(int breakPos) throws Exception {
         runInContext(() -> {
             String allMsgs = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -418,6 +468,18 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
+            TableReaderRecordCursor recordCursor = reader.getCursor();
+            int nRows = 0;
+            while (recordCursor.hasNext()) {
+                nRows++;
+            }
+            Assert.assertEquals(nExpectedRows, nRows);
+        }
+    }
+
     private void addTable(String tableName) {
         try (@SuppressWarnings("resource")
         TableModel model = new TableModel(configuration, tableName,
@@ -477,7 +539,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         // addTable("test1");
         // addTable("test1234567890");
         // addTable("test12345678901234567890");
-        addTable("test123456789012345678901234567890");
+        addTable("test123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890");
     }
 
     private void setupContext(CairoEngine engine) {
