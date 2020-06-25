@@ -17,7 +17,7 @@ const activeStyles = css`
   background: ${color("draculaSelection")};
 `
 
-const QueryWrapper = styled.div<{ active: boolean }>`
+const Wrapper = styled.div<{ active: boolean }>`
   display: flex;
   height: 2.4rem;
   padding: 0 0.6rem;
@@ -28,10 +28,13 @@ const QueryWrapper = styled.div<{ active: boolean }>`
   user-select: none;
 
   ${({ active }) => active && activeStyles};
+
+  > span:not(:last-child) {
+    margin-right: 0.6rem;
+  }
 `
 
 const Query = styled(Text)`
-  margin-left: 0.6rem;
   flex: 1 1 auto;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -63,7 +66,7 @@ const Row = ({ active, hidePicker, onHover, query }: Props) => {
   }, [onHover])
 
   return (
-    <QueryWrapper
+    <Wrapper
       active={active}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
@@ -71,14 +74,16 @@ const Row = ({ active, hidePicker, onHover, query }: Props) => {
     >
       <FileIcon size="12px" />
 
-      <Name color="draculaForeground" size="sm">
-        {query.name}
-      </Name>
+      {query.name && (
+        <Name color="draculaForeground" size="sm">
+          {query.name}
+        </Name>
+      )}
 
-      <Query color="draculaForeground" size="xs">
+      <Query color="draculaForeground" size="sm">
         {query.value}
       </Query>
-    </QueryWrapper>
+    </Wrapper>
   )
 }
 
