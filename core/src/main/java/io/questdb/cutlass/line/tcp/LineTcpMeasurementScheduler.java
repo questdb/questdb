@@ -6,6 +6,7 @@ import java.util.concurrent.locks.LockSupport;
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -312,7 +313,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public void run() {
             LOG.info().$(getName()).$(" starting").$();
-            uninterrupedLoop:
+            uninterruptedLoop:
             while (true) {
                 try {
                     long cursor;
@@ -321,7 +322,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         if (cursor == -1) {
                             if (isInterrupted()) {
                                 LOG.info().$(getName()).$(" interrupted, exiting").$();
-                                break uninterrupedLoop;
+                                break uninterruptedLoop;
                             }
                             if (nWaitIter < 1_000_000) {
                                 nWaitIter++;
@@ -332,11 +333,18 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LineTcpMeasurementEvent event = queue.get(cursor);
+                    boolean eventProcessed;
                     try {
                         if (event.threadId == id) {
-                            processNextEvent(event);
+                            eventProcessed = processNextEvent(event);
+                        } else {
+                            eventProcessed = true;
                         }
-                    } finally {
+                    } catch (RuntimeException ex) {
+                        LOG.error().$(ex);
+                        eventProcessed = true;
+                    }
+                    if (eventProcessed) {
                         sequence.done(cursor);
                     }
                 } catch (RuntimeException ex) {
@@ -369,15 +377,23 @@ class LineTcpMeasurementScheduler implements Closeable {
             LOG.info().$(getName()).$(" finished").$();
         }
 
-        private void processNextEvent(LineTcpMeasurementEvent event) {
+        private boolean processNextEvent(LineTcpMeasurementEvent event) {
             Parser parser = parserCache.get(event.getTableName());
             if (null == parser) {
                 parser = new Parser();
-                parserCache.put(event.getTableName().toString(), parser);
+                try {
+                    parser.processFirstEvent(engine, securityContext, event);
+                } catch (CairoException ex) {
+                    LOG.info().$(getName()).$(" could not create parser [name=").$(event.getTableName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                    parser.close();
+                    return false;
+                }
                 LOG.info().$(getName()).$(" created parser [name=").$(event.getTableName()).$(']').$();
-                parser.processFirstEvent(engine, securityContext, event);
+                parserCache.put(event.getTableName().toString(), parser);
+                return true;
             } else {
                 parser.processEvent(event);
+                return true;
             }
         }
 

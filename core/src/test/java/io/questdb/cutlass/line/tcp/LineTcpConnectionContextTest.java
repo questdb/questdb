@@ -10,8 +10,6 @@ import org.junit.Test;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
@@ -119,6 +117,122 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             }
+            recvBuffer = null;
+            context.handleIO();
+            Assert.assertTrue(disconnected);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFragmentation1() throws Exception {
+        testFragmentation("weat".length());
+    }
+
+    @Test
+    public void testFragmentation2() throws Exception {
+        testFragmentation("weather".length());
+    }
+
+    @Test
+    public void testFragmentation3() throws Exception {
+        testFragmentation("weather,".length());
+    }
+
+    @Test
+    public void testFragmentation4() throws Exception {
+        testFragmentation("weather,locat".length());
+    }
+
+    @Test
+    public void testFragmentation5() throws Exception {
+        testFragmentation("weather,location".length());
+    }
+
+    @Test
+    public void testFragmentation6() throws Exception {
+        testFragmentation("weather,location=".length());
+    }
+
+    @Test
+    public void testFragmentation7() throws Exception {
+        testFragmentation("weather,location=us-midw".length());
+    }
+
+    @Test
+    public void testFragmentation8() throws Exception {
+        testFragmentation("weather,location=us-midwest".length());
+    }
+
+    @Test
+    public void testFragmentation9() throws Exception {
+        testFragmentation("weather,location=us-midwest ".length());
+    }
+
+    @Test
+    public void testFragmentation10() throws Exception {
+        testFragmentation("weather,location=us-midwest tempera".length());
+    }
+
+    @Test
+    public void testFragmentation11() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature".length());
+    }
+
+    @Test
+    public void testFragmentation12() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=".length());
+    }
+
+    @Test
+    public void testFragmentation13() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=8".length());
+    }
+
+    @Test
+    public void testFragmentation14() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=82".length());
+    }
+
+    @Test
+    public void testFragmentation15() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=82 ".length());
+    }
+
+    @Test
+    public void testFragmentation16() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=82 1465839830100400".length());
+    }
+
+    @Test
+    public void testFragmentation17() throws Exception {
+        testFragmentation("weather,location=us-midwest temperature=82 1465839830100400200".length());
+    }
+
+    private void testFragmentation(int breakPos) throws Exception {
+        runInContext(() -> {
+            String allMsgs = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            recvBuffer = allMsgs.substring(0, breakPos);
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            recvBuffer = allMsgs.substring(breakPos);
+            context.handleIO();
+            Assert.assertFalse(disconnected);
             recvBuffer = null;
             context.handleIO();
             Assert.assertTrue(disconnected);
