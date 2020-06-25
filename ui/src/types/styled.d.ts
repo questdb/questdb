@@ -38,6 +38,7 @@ declare module "styled-components" {
     baseFontSize: string
     color: ColorShape
     font: string
+    fontEmoji: string
     fontMonospace: string
     fontSize: FontSizeShape
   }
