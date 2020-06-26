@@ -93,7 +93,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
         } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
+                    configuration.getDispatcherLogName(),
+                    configuration.getBindIPv4Address(),
+                    configuration.getBindPort()
+            );
         }
     }
 

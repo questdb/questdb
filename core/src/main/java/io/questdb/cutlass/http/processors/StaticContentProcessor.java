@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.network.IOOperation;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -64,15 +65,19 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     public void onHeadersReady(HttpConnectionContext context) {
     }
 
+    public LogRecord logInfoWithFd(HttpConnectionContext context) {
+        return LOG.info().$('[').$(context.getFd()).$("] ");
+    }
+
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRequestHeader headers = context.getRequestHeader();
         CharSequence url = headers.getUrl();
-        LOG.info().$("incoming [url=").$(url).$(']').$();
+        logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
         if (Chars.contains(url, "..")) {
-            LOG.info().$("URL abuse: ").$(url).$();
+            logInfoWithFd(context).$("URL abuse: ").$(url).$();
             sendStatusWithDefaultMessage(context, 404);
         } else {
             PrefixedPath path = prefixedPath.rewind();
@@ -88,7 +93,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             if (ff.exists(path)) {
                 send(context, path, headers.getUrlParam("attachment") != null);
             } else {
-                LOG.info().$("not found [path=").$(path).$(']').$();
+                logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
                 sendStatusWithDefaultMessage(context, 404);
             }
         }

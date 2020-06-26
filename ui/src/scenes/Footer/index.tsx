@@ -21,11 +21,16 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-import React from "react"
-import styled from "styled-components"
+import React, { useCallback, useEffect, useState } from "react"
+import { useSelector } from "react-redux"
+import { CSSTransition } from "react-transition-group"
+import styled, { createGlobalStyle } from "styled-components"
 import { Github } from "@styled-icons/remix-fill/Github"
 
-import { Link } from "components"
+import { Link, Text, TransitionDuration } from "components"
+import { selectors } from "store"
+
+import GithubBanner from "../GithubBanner"
 
 const Copyright = styled.div`
   display: flex;
@@ -40,22 +45,69 @@ const Icons = styled.div`
   align-items: center;
 `
 
-const Footer = () => (
-  <>
-    <Copyright>
-      Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
-    </Copyright>
-    <Icons>
-      <Link
-        color="draculaForeground"
-        href="https://github.com/questdb/questdb"
-        rel="noreferrer"
-        target="_blank"
+const GithubBannerTransition = createGlobalStyle`
+  .github-banner-enter {
+    max-height: 0;
+  }
+
+  .github-banner-enter-active {
+    max-height: 4rem;
+    transition: all ${TransitionDuration.REG}ms;
+  }
+
+  .github-banner-exit,
+  .github-banner-enter-done {
+    max-height: 4rem;
+  }
+
+  .github-banner-exit-active {
+    max-height: 0;
+    transition: all ${TransitionDuration.REG}ms;
+  }
+`
+
+const Footer = () => {
+  const [showBanner, setShowBanner] = useState(false)
+  const handleClick = useCallback(() => {
+    setShowBanner(false)
+  }, [])
+  const { githubBanner } = useSelector(selectors.console.getConfiguration)
+
+  useEffect(() => {
+    setTimeout(() => {
+      setShowBanner(true)
+    }, 2e3)
+  }, [])
+
+  return (
+    <>
+      <GithubBannerTransition />
+      <Copyright>
+        <Text color="draculaForeground">
+          Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
+        </Text>
+      </Copyright>
+      <Icons>
+        <Link
+          color="draculaForeground"
+          hoverColor="draculaCyan"
+          href="https://github.com/questdb/questdb"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <Github size="18px" />
+        </Link>
+      </Icons>
+      <CSSTransition
+        classNames="github-banner"
+        in={showBanner && githubBanner}
+        timeout={TransitionDuration.REG}
+        unmountOnExit
       >
-        <Github size="18px" />
-      </Link>
-    </Icons>
-  </>
-)
+        <GithubBanner onClick={handleClick} />
+      </CSSTransition>
+    </>
+  )
+}
 
 export default Footer

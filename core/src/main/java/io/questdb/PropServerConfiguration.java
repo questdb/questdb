@@ -420,8 +420,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.defaultSymbolCapacity = getInt(properties, "cairo.default.symbol.capacity", 256);
         this.fileOperationRetryCount = getInt(properties, "cairo.file.operation.retry.count", 30);
         this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 5 * 60 * 1000L);
-        this.inactiveReaderTTL = getLong(properties, "cairo.inactive.reader.ttl", -10000);
-        this.inactiveWriterTTL = getLong(properties, "cairo.inactive.writer.ttl", -10000);
+        this.inactiveReaderTTL = getLong(properties, "cairo.inactive.reader.ttl", 120_000);
+        this.inactiveWriterTTL = getLong(properties, "cairo.inactive.writer.ttl", 600_000);
         this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, "cairo.index.value.block.size", 256));
         this.maxSwapFileCount = getInt(properties, "cairo.max.swap.file.count", 30);
         this.mkdirMode = getInt(properties, "cairo.mkdir.mode", 509);
