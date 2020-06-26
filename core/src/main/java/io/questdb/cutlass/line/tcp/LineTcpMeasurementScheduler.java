@@ -1,6 +1,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import java.io.Closeable;
+import java.util.Arrays;
 
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.CairoConfiguration;
@@ -30,7 +31,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -41,21 +41,21 @@ import io.questdb.std.str.Path;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
-    private static final int NO_THREAD_ID = -1;
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
     private RingQueue<LineTcpMeasurementEvent> queue;
     private Sequence pubSeq;
     private long nextEventCursor = -1;
-    private final CharSequenceIntHashMap threadIdByTableName;
-    private final WorkerPool writerWorkerPool;
+    private final CharSequenceObjHashMap<TableStats> statsByTableName;
+    private final int[] loadByThreadId;
 
     LineTcpMeasurementScheduler(CairoConfiguration cairoConfiguration, LineTcpReceiverConfiguration lineConfiguration, CairoEngine engine, WorkerPool writerWorkerPool) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = cairoConfiguration;
-        threadIdByTableName = new CharSequenceIntHashMap(8, 0.5, NO_THREAD_ID);
+        statsByTableName = new CharSequenceObjHashMap<>();
+        loadByThreadId = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueSize();
         queue = new RingQueue<>(() -> {
@@ -63,7 +63,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }, queueSize);
         pubSeq = new SPSequence(queueSize);
 
-        this.writerWorkerPool = writerWorkerPool;
         int nWriterThreads = writerWorkerPool.getWorkerCount();
         Sequence[] subSeqById = new Sequence[nWriterThreads];
         if (nWriterThreads > 1) {
@@ -108,14 +107,24 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         assert queue.get(nextEventCursor) == event;
 
-        int threadId = threadIdByTableName.get(event.getTableName());
-        if (threadId == NO_THREAD_ID) {
+        TableStats stats = statsByTableName.get(event.getTableName());
+        if (null == stats) {
             String tableName = event.getTableName().toString();
-            threadId = threadIdByTableName.size() % writerWorkerPool.getWorkerCount();
-            threadIdByTableName.put(tableName, threadId);
+            calcThreadLoad();
+            int leastLoad = Integer.MAX_VALUE;
+            int threadId = 0;
+            for (int n = 0; n < loadByThreadId.length; n++) {
+                if (loadByThreadId[n] < leastLoad) {
+                    leastLoad = loadByThreadId[n];
+                    threadId = n;
+                }
+            }
+            stats = new TableStats(tableName, threadId);
+            statsByTableName.put(tableName, stats);
             LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         }
-        event.threadId = threadId;
+        event.threadId = stats.threadId;
+        stats.nUpdates++;
 
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
@@ -125,12 +134,21 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null == pubSeq;
     }
 
+    private void calcThreadLoad() {
+        Arrays.fill(loadByThreadId, 0);
+        ObjList<CharSequence> tableNames = statsByTableName.keys();
+        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+            TableStats stats = statsByTableName.get(tableNames.get(n));
+            loadByThreadId[stats.threadId] += stats.nUpdates;
+        }
+    }
+
     @Override
     public void close() {
-        // Both the writer and the IO worker pools must have been closed so that their respective cleaners have run
+        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
-            threadIdByTableName.clear();
+            statsByTableName.clear();
             for (int n = 0; n < queue.getCapacity(); n++) {
                 queue.get(n).close();
             }
@@ -549,6 +567,18 @@ class LineTcpMeasurementScheduler implements Closeable {
                 this.columnCount = timestampIndex + 1;
                 return this;
             }
+        }
+    }
+
+    private static class TableStats {
+        private final String tableName;
+        private int threadId;
+        private int nUpdates; // Number of updates since the last load rebalance
+
+        private TableStats(String tableName, int threadId) {
+            super();
+            this.tableName = tableName;
+            this.threadId = threadId;
         }
     }
 }
