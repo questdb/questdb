@@ -63,7 +63,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         this.metadata = metadata;
         this.vafList = new ObjList<>(vafList.size());
         this.vafList.addAll(vafList);
-        this.cursor = new GroupByNotKeyedVectorRecordCursor(vafList);
+        this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
     }
 
     @Override
