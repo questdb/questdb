@@ -29,16 +29,14 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.mp.*;
+import io.questdb.std.*;
+import io.questdb.std.microtime.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -52,7 +50,12 @@ public class CairoEngine implements Closeable {
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
     private final WriterMaintenanceJob writerMaintenanceJob;
+    private final RingQueue<TelemetryRow> telemetryQueue;
+    private final SPSequence telemetryPubSeq;
+    private final MCSequence telemetrySubSeq;
     private final MessageBus messageBus;
+
+    private TelemetryWriterJob telemetryWriterJob;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
@@ -63,6 +66,10 @@ public class CairoEngine implements Closeable {
         this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+        this.telemetryQueue = new RingQueue<>(TelemetryRow::new, configuration.getTelemetryQueueCapacity());
+        this.telemetryPubSeq = new SPSequence(configuration.getTelemetryQueueCapacity());
+        this.telemetrySubSeq = new MCSequence(configuration.getTelemetryQueueCapacity());
+        this.telemetryPubSeq.then(this.telemetrySubSeq).then(this.telemetryPubSeq);
         this.messageBus = messageBus;
     }
 
@@ -72,6 +79,7 @@ public class CairoEngine implements Closeable {
 
     @Override
     public void close() {
+        Misc.free(telemetryWriterJob);
         Misc.free(writerPool);
         Misc.free(readerPool);
     }
@@ -223,15 +231,15 @@ public class CairoEngine implements Closeable {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters () {
+    public boolean releaseAllWriters() {
         return writerPool.releaseAll();
     }
-    
-	public boolean releaseInactive() {
-		boolean useful = writerPool.releaseInactive();
-		useful |= readerPool.releaseInactive();
-		return useful;
-	}
+
+    public boolean releaseInactive() {
+        boolean useful = writerPool.releaseInactive();
+        useful |= readerPool.releaseInactive();
+        return useful;
+    }
 
     public void remove(
             CairoSecurityContext securityContext,
@@ -315,6 +323,108 @@ public class CairoEngine implements Closeable {
             int error = ff.errno();
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");
+        }
+    }
+
+    public final TelemetryWriterJob startTelemetry() {
+        this.telemetryWriterJob = new TelemetryWriterJob(configuration);
+
+        return this.telemetryWriterJob;
+    }
+
+    public final void storeTelemetry(short event) {
+        final MicrosecondClock clock = configuration.getMicrosecondClock();
+        final long cursor = telemetryPubSeq.next();
+        TelemetryRow row = telemetryQueue.get(cursor);
+
+        row.ts = clock.getTicks();
+        row.event = event;
+        telemetryPubSeq.done(cursor);
+    }
+
+    private class TelemetryWriterJob extends SynchronizedJob implements Closeable {
+        private final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
+        private final MicrosecondClock microsecondClock = configuration.getMicrosecondClock();
+        private final CharSequence telemetryTableName = "telemetry";
+        private final QueueConsumer<TelemetryRow> myConsumer = this::toTelemetryTable;
+        private final CharSequence id;
+        private final TableWriter writer;
+
+        public TelemetryWriterJob(CairoConfiguration configuration) {
+            final CharSequence root = configuration.getRoot();
+
+            try(Path path = new Path()) {
+                if (getStatus(AllowAllCairoSecurityContext.INSTANCE, path, telemetryTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                    final TelemetryTableModel telemetry = new TelemetryTableModel(telemetryTableName);
+                    final AppendMemory appendMem = new AppendMemory();
+                    id = toGuid(nanosecondClock.getTicks(), microsecondClock.getTicks());
+
+                    telemetry.addColumn("ts", ColumnType.TIMESTAMP);
+                    telemetry.addColumn("id", ColumnType.STRING);
+                    telemetry.addColumn("event", ColumnType.SHORT);
+
+                    TableUtils.createTable(
+                            configuration.getFilesFacade(),
+                            appendMem,
+                            path,
+                            root,
+                            telemetry,
+                            configuration.getMkDirMode()
+                    );
+                } else {
+                    try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+                        final StringSink sink = new StringSink();
+                        reader.getCursor().getRecord().getStr(1, sink);
+                        id = sink;
+                    }
+                }
+            }
+
+            this.writer = new TableWriter(configuration, telemetryTableName);
+            addEvent(TelemetryEvent.UP);
+        }
+
+        private CharSequence toGuid(long mostSigBits, long leastSigBits) {
+            return (digits(mostSigBits >> 32, 8) + "-" + digits(mostSigBits >> 16, 4) + "-" + digits(mostSigBits, 4)
+                    + "-" + digits(leastSigBits >> 48, 4) + "-" + digits(leastSigBits, 12));
+        }
+
+        private CharSequence digits(long val, int digits) {
+            long hi = 1L << (digits * 4);
+            return Long.toHexString(hi | (val & (hi - 1))).substring(1);
+        }
+
+        private void addEvent(short event) {
+            final TelemetryRow row = new TelemetryRow();
+
+            row.ts = microsecondClock.getTicks();
+            row.id = id;
+            row.event = event;
+            toTelemetryTable(row);
+        }
+
+        private void toTelemetryTable(TelemetryRow telemetryRow) {
+            final TableWriter.Row row = writer.newRow();
+
+            row.putDate(0, telemetryRow.ts);
+            row.putStr(1, id);
+            row.putShort(2, telemetryRow.event);
+            row.append();
+        }
+
+        @Override
+        public boolean runSerially() {
+            telemetrySubSeq.consumeAll(telemetryQueue, myConsumer);
+            writer.commit();
+            return true;
+        }
+
+        @Override
+        public void close() {
+            runSerially();
+            addEvent(TelemetryEvent.DOWN);
+            writer.commit();
+            Misc.free(writer);
         }
     }
 

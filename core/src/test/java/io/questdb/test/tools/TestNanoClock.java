@@ -22,33 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.tools;
 
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.TextLoader;
+import io.questdb.std.NanosecondClock;
 
-public interface CompiledQuery {
-    short SELECT = 0;
-    short INSERT = 1;
-    short TRUNCATE = 2;
-    short ALTER = 3;
-    short REPAIR = 4;
-    short SET = 5;
-    short DROP = 6;
-    short COPY_LOCAL = 7;
-    short CREATE_TABLE = 8;
-    short INSERT_AS_SELECT = 9;
-    short COPY_REMOTE = 10;
-    short RENAME_TABLE = 11;
-    short BACKUP_TABLE = 12;
-    short SHOW = 13;
+public class TestNanoClock implements NanosecondClock {
+    private final long increment;
+    private long nanos;
 
-    RecordCursorFactory getRecordCursorFactory();
+    public TestNanoClock(long micros, long increment) {
+        this.nanos = micros * 1000;
+        this.increment = increment;
+    }
 
-    InsertStatement getInsertStatement();
-
-    TextLoader getTextLoader();
-
-    short getType();
+    @Override
+    public long getTicks() {
+        long result = nanos;
+        nanos += increment;
+        return result;
+    }
 }

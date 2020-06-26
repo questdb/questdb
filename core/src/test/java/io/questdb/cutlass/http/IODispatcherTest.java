@@ -41,6 +41,8 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
+import io.questdb.test.tools.TestMicroClock;
+import io.questdb.test.tools.TestNanoClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -2169,7 +2171,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -2745,7 +2747,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -2906,7 +2908,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -3159,6 +3161,77 @@ public class IODispatcherTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testJsonQueryStoresTelemetryEvent() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                    "\r\n",
+                1,
+                true
+        );
+
+        final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
+                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
+                "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
+        assertTable(expected, "telemetry");
+    }
+
+    @Test
+    public void testJsonQueryStoresTelemetryEventWhenCached() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                    "\r\n",
+                2,
+                true
+        );
+
+        final String expected = "2020-06-19T10:36:16.537310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t100\n" +
+                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
+                "2020-06-19T10:36:16.527310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t0\n" +
+                "2020-06-19T10:36:16.547310Z\t1619eb96-e259-5cb0-0005-a86d767f93ce\t101\n";
+        assertTable(expected, "telemetry");
     }
 
     @Test
@@ -4969,8 +5042,8 @@ public class IODispatcherTest {
                     engine.getConfiguration(),
                     recordCount,
                     new Rnd(),
-                    new TestRecord.ArrayBinarySequence());
-
+                    new TestRecord.ArrayBinarySequence()
+            );
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,
@@ -4979,14 +5052,22 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, telemetry);
+    }
+
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
-        testJsonQuery(recordCount, request, expectedResponse, 100);
+        testJsonQuery(recordCount, request, expectedResponse, 100, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code) throws Exception {
+    private void testJsonQueryWithTelemetry(int recordCount, String request, String expectedResponse) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, 100, true);
+    }
+
+    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
@@ -5009,11 +5090,39 @@ public class IODispatcherTest {
                     return false;
                 }
             });
+            DefaultCairoConfiguration configuration;
+
+            if (telemetry) {
+                configuration = new DefaultCairoConfiguration(baseDir) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        try {
+                            return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
+                        } catch (NumericException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        try {
+                            return new TestNanoClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
+                        } catch (NumericException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                };
+            }  else {
+                configuration = new DefaultCairoConfiguration(baseDir);
+            }
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+                    CairoEngine engine = new CairoEngine(configuration, null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
+                if (telemetry) {
+                    engine.startTelemetry();
+                }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5082,6 +5191,23 @@ public class IODispatcherTest {
                 }
             }
         });
+    }
+
+    private void assertTable(CharSequence expected, CharSequence tableName) {
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            final StringSink sink = new StringSink();
+            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+            sink.clear();
+            printer.print(reader.getCursor(), reader.getMetadata(), false);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.print(reader.getCursor(), reader.getMetadata(), false);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {

@@ -144,6 +144,10 @@ public class ServerMain {
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
+        if (configuration.getCairoConfiguration().getTelemetryEnabled()) {
+            workerPool.assign(cairoEngine.startTelemetry());
+        }
+
         try {
             final HttpServer httpServer = HttpServer.create(
                     configuration.getHttpServerConfiguration(),
