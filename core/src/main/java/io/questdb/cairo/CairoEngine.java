@@ -364,39 +364,59 @@ public class CairoEngine implements Closeable {
         private final TableWriter writer;
         private final TableWriter writerConfig;
 
-        public TelemetryWriterJob(CairoConfiguration configuration) throws SqlException {
+        public TelemetryWriterJob(CairoConfiguration configuration) throws SqlException, CairoException {
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             try(Path path = new Path()) {
-                final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
-                final MicrosecondClock microsecondClock = configuration.getMicrosecondClock();
-
                 if (getStatus(AllowAllCairoSecurityContext.INSTANCE, path, telemetryConfigTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                    final Long256Impl id = new Long256Impl();
-                    id.setLong0(nanosecondClock.getTicks());
-                    id.setLong1(microsecondClock.getTicks());
-                    id.toSink(idSink);
-                    compiler.compile("CREATE TABLE " + telemetryConfigTableName + " (id long256, enabled boolean);", sqlExecutionContext);
-                } else {
-                    try (TableReader reader = new TableReader(configuration, telemetryConfigTableName)) {
-                        reader.getCursor().getRecord().getLong256(0, idSink);
-                    }
-                    compiler.compile("TRUNCATE TABLE " + telemetryConfigTableName + ";", sqlExecutionContext);
+                    compiler.compile("CREATE TABLE " + telemetryConfigTableName + " (id long256, enabled boolean)", sqlExecutionContext);
                 }
 
                 if (getStatus(AllowAllCairoSecurityContext.INSTANCE, path, telemetryTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                    compiler.compile("CREATE TABLE " + telemetryTableName + " (ts timestamp, event short);", sqlExecutionContext);
+                    compiler.compile("CREATE TABLE " + telemetryTableName + " (ts timestamp, event short)", sqlExecutionContext);
                 }
             }
 
-            this.writer = new TableWriter(configuration, telemetryTableName);
-            this.writerConfig = new TableWriter(configuration, telemetryConfigTableName);
+            try {
+                this.writer = new TableWriter(configuration, telemetryConfigTableName);
+            } catch (CairoException ex) {
+                LOG.error().$("could not open [table=").utf8(telemetryTableName).$("]").$();
+                throw ex;
+            }
 
-            final TableWriter.Row row = writerConfig.newRow();
-            row.putLong256(0, idSink);
-            row.putBool(1, telemetryEnabled);
-            row.append();
-            writerConfig.commit();
+            // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
+            // Once we have a permission system, we can use that rather than keeping the writer opened.
+            try {
+                this.writerConfig = new TableWriter(configuration, telemetryConfigTableName);
+            } catch (CairoException ex) {
+                LOG.error().$("could not open [table=").utf8(telemetryConfigTableName).$("]").$();
+                throw ex;
+            }
+
+            try (TableReader reader = new TableReader(configuration, telemetryConfigTableName)) {
+                final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
+                final MicrosecondClock microsecondClock = configuration.getMicrosecondClock();
+
+                if (reader.size() > 0) {
+                    reader.getCursor().getRecord().getLong256(0, idSink);
+                    final boolean enabled = reader.getCursor().getRecord().getBool(1);
+
+                    if (enabled != telemetryEnabled) {
+                        final TableWriter.Row row = writerConfig.newRow();
+                        row.putLong256(0, idSink);
+                        row.putBool(1, telemetryEnabled);
+                        row.append();
+                        writerConfig.commit();
+                    }
+                } else {
+                    final TableWriter.Row row = writerConfig.newRow();
+                    row.putLong256(0, nanosecondClock.getTicks(), microsecondClock.getTicks(), 0, 0);
+                    row.putBool(1, telemetryEnabled);
+                    row.append();
+                    writerConfig.commit();
+                    reader.getCursor().getRecord().getLong256(0, idSink);
+                }
+            }
 
             storeTelemetry(TelemetryEvent.UP);
         }
@@ -410,20 +430,18 @@ public class CairoEngine implements Closeable {
 
         @Override
         public boolean runSerially() {
-            if (!telemetryEnabled) {
-                return true;
+            if (telemetryEnabled) {
+                telemetrySubSeq.consumeAll(telemetryQueue, myConsumer);
+                writer.commit();
             }
 
-            telemetrySubSeq.consumeAll(telemetryQueue, myConsumer);
-            writer.commit();
-            return true;
+            return false;
         }
 
         @Override
         public void close() {
             storeTelemetry(TelemetryEvent.DOWN);
             runSerially();
-            writer.commit();
             Misc.free(writer);
             Misc.free(writerConfig);
         }

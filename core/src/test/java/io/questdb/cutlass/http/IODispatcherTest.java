@@ -1984,7 +1984,7 @@ public class IODispatcherTest {
             } finally {
                 NetworkFacadeImpl.INSTANCE.close(fd);
             }
-        });
+        }, false);
     }
 
     @Test
@@ -5037,7 +5037,7 @@ public class IODispatcherTest {
         }
     }
 
-    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
@@ -5063,10 +5063,6 @@ public class IODispatcherTest {
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
         testJsonQuery(recordCount, request, expectedResponse, 100, false);
-    }
-
-    private void testJsonQueryWithTelemetry(int recordCount, String request, String expectedResponse) throws Exception {
-        testJsonQuery(recordCount, request, expectedResponse, 100, true);
     }
 
     private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
