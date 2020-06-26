@@ -48,14 +48,19 @@ class LineTcpMeasurementScheduler implements Closeable {
     private Sequence pubSeq;
     private long nextEventCursor = -1;
     private final CharSequenceObjHashMap<TableStats> statsByTableName;
-    private final int[] loadByThreadId;
+    private final int[] loadByThread;
+    // TODO
+    private final int nUpdatesPerLoadRebalance = 1000;
+    private final double maxLoadRatio;
+    private int nLoadCheckCycles = 0;
+    private int nRebalances = 0;
 
     LineTcpMeasurementScheduler(CairoConfiguration cairoConfiguration, LineTcpReceiverConfiguration lineConfiguration, CairoEngine engine, WorkerPool writerWorkerPool) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = cairoConfiguration;
         statsByTableName = new CharSequenceObjHashMap<>();
-        loadByThreadId = new int[writerWorkerPool.getWorkerCount()];
+        loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueSize();
         queue = new RingQueue<>(() -> {
@@ -83,6 +88,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             writerWorkerPool.assign(0, writerJob);
             writerWorkerPool.assign(0, writerJob::close);
         }
+
+        maxLoadRatio = 1d + 1d / writerWorkerPool.getWorkerCount();
     }
 
     LineTcpMeasurementEvent getNewEvent() {
@@ -113,9 +120,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             calcThreadLoad();
             int leastLoad = Integer.MAX_VALUE;
             int threadId = 0;
-            for (int n = 0; n < loadByThreadId.length; n++) {
-                if (loadByThreadId[n] < leastLoad) {
-                    leastLoad = loadByThreadId[n];
+            for (int n = 0; n < loadByThread.length; n++) {
+                if (loadByThread[n] < leastLoad) {
+                    leastLoad = loadByThread[n];
                     threadId = n;
                 }
             }
@@ -124,8 +131,22 @@ class LineTcpMeasurementScheduler implements Closeable {
             LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         }
         event.threadId = stats.threadId;
-        stats.nUpdates++;
+        pubSeq.done(nextEventCursor);
+        nextEventCursor = -1;
 
+        if (stats.nUpdates++ > nUpdatesPerLoadRebalance) {
+            loadRebalance();
+        }
+    }
+
+    void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, String tableName) {
+        assert !closed();
+        if (nextEventCursor == -1) {
+            throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
+        }
+
+        assert queue.get(nextEventCursor) == event;
+        event.createRebalanceEvent(fromThreadId, toThreadId, tableName);
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
     }
@@ -134,13 +155,107 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null == pubSeq;
     }
 
+    private void loadRebalance() {
+        LOG.info().$("load check cycle ").$(++nLoadCheckCycles).$();
+        calcThreadLoad();
+        ObjList<CharSequence> tableNames = statsByTableName.keys();
+        int fromThreadId = -1;
+        int toThreadId = -1;
+        String tableNameToMove = null;
+        int maxLoad = Integer.MAX_VALUE;
+        while (true) {
+            int highestLoad = Integer.MIN_VALUE;
+            int highestLoadedThreadId = -1;
+            int lowestLoad = Integer.MAX_VALUE;
+            int lowestLoadedThreadId = -1;
+            for (int n = 0; n < loadByThread.length; n++) {
+                if (loadByThread[n] >= maxLoad) {
+                    continue;
+                }
+
+                if (highestLoad < loadByThread[n]) {
+                    highestLoad = loadByThread[n];
+                    highestLoadedThreadId = n;
+                }
+
+                if (lowestLoad > loadByThread[n]) {
+                    lowestLoad = loadByThread[n];
+                    lowestLoadedThreadId = n;
+                }
+            }
+
+            if (highestLoadedThreadId == -1 || lowestLoadedThreadId == -1 || highestLoadedThreadId == lowestLoadedThreadId) {
+                break;
+            }
+
+            double loadRatio = (double) highestLoad / (double) lowestLoad;
+            if (loadRatio < maxLoadRatio) {
+                // Load is not sufficiently unbalanced
+                break;
+            }
+
+            int nTables = 0;
+            lowestLoad = Integer.MAX_VALUE;
+            String leastLoadedTableName = null;
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                TableStats stats = statsByTableName.get(tableNames.get(n));
+                if (stats.threadId == highestLoadedThreadId && stats.nUpdates > 0) {
+                    nTables++;
+                    if (stats.nUpdates < lowestLoad) {
+                        lowestLoad = stats.nUpdates;
+                        leastLoadedTableName = stats.tableName;
+                    }
+                }
+            }
+
+            if (nTables < 2) {
+                // The most loaded thread only has 1 table with load assigned to it
+                maxLoad = highestLoad;
+                continue;
+            }
+
+            fromThreadId = highestLoadedThreadId;
+            toThreadId = lowestLoadedThreadId;
+            tableNameToMove = leastLoadedTableName;
+            break;
+        }
+
+        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+            TableStats stats = statsByTableName.get(tableNames.get(n));
+            stats.nUpdates = 0;
+        }
+
+        if (null != tableNameToMove) {
+            LineTcpMeasurementEvent event = getNewEvent();
+            if (null == event) {
+                return;
+            }
+            LOG.info().$("rebalance cycle ").$(++nRebalances).$(" moving ").$(tableNameToMove).$(" from ").$(fromThreadId).$(" to ").$(toThreadId).$();
+            commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
+            TableStats stats = statsByTableName.get(tableNameToMove);
+            stats.threadId = toThreadId;
+        }
+    }
+
     private void calcThreadLoad() {
-        Arrays.fill(loadByThreadId, 0);
+        Arrays.fill(loadByThread, 0);
         ObjList<CharSequence> tableNames = statsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableStats stats = statsByTableName.get(tableNames.get(n));
-            loadByThreadId[stats.threadId] += stats.nUpdates;
+            loadByThread[stats.threadId] += stats.nUpdates;
         }
+    }
+
+    int[] getLoadByThread() {
+        return loadByThread;
+    }
+
+    int getnRebalances() {
+        return nRebalances;
+    }
+
+    int getnLoadCheckCycles() {
+        return nLoadCheckCycles;
     }
 
     @Override
@@ -168,6 +283,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int errorCode;
         private int threadId;
         private long timestamp;
+
+        private int rebalanceFromThreadId;
+        private int rebalanceToThreadId;
+        private String rebalanceTableName;
+        private boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
@@ -222,11 +342,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         long parseLine(long bytesPtr, long hi) {
-            measurementNameAddress = 0;
-            addresses.clear();
-            firstFieldIndex = -1;
-            timestampAddress = 0;
-            errorPosition = -1;
+            clear();
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
                 if (!isError() && firstFieldIndex == -1) {
@@ -241,6 +357,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
             return recvBufLineNext;
+        }
+
+        private void clear() {
+            measurementNameAddress = 0;
+            addresses.clear();
+            firstFieldIndex = -1;
+            timestampAddress = 0;
+            errorPosition = -1;
         }
 
         boolean isError() {
@@ -286,6 +410,19 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         int getFirstFieldIndex() {
             return firstFieldIndex;
+        }
+
+        LineTcpMeasurementEvent createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
+            clear();
+            threadId = -1;
+            rebalanceFromThreadId = fromThreadId;
+            rebalanceToThreadId = toThreadId;
+            rebalanceTableName = tableName;
+            return this;
+        }
+
+        boolean isRebalanceEvent() {
+            return threadId == -1;
         }
 
         @Override
@@ -344,7 +481,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (event.threadId == id) {
                         eventProcessed = processNextEvent(event);
                     } else {
-                        eventProcessed = true;
+                        if (event.isRebalanceEvent()) {
+                            eventProcessed = processRebalance(event);
+                        } else {
+                            eventProcessed = true;
+                        }
                     }
                 } catch (RuntimeException ex) {
                     LOG.error().$(ex).$();
@@ -377,6 +518,26 @@ class LineTcpMeasurementScheduler implements Closeable {
                 parser.processEvent(event);
                 return true;
             }
+        }
+
+        private boolean processRebalance(LineTcpMeasurementEvent event) {
+            if (event.rebalanceToThreadId == id) {
+                if (!event.rebalanceReleasedByFromThread) {
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (event.rebalanceFromThreadId == id) {
+                Parser parser = parserCache.get(event.rebalanceTableName);
+                parserCache.remove(event.rebalanceTableName);
+                parser.close();
+                event.rebalanceReleasedByFromThread = true;
+                return true;
+            }
+
+            return true;
         }
 
         private class Parser implements Closeable {

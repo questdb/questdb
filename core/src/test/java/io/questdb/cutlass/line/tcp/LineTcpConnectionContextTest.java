@@ -40,6 +40,10 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private int nWriterThreads;
     private WorkerPool workerPool;
 
+    private int[] rebalanceLoadByThread;
+    private int rebalanceNLoadCheckCycles = 0;
+    private int rebalanceNRebalances = 0;
+
     @Test
     public void testSingleMeasurement() throws Exception {
         runInContext(() -> {
@@ -345,7 +349,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 20_000;
-        testThreading(nTables, nIterations);
+        testThreading(nTables, nIterations, null);
+        Assert.assertEquals(0, rebalanceNRebalances);
     }
 
     @Test
@@ -353,25 +358,59 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 5;
         int nTables = 12;
         int nIterations = 20_000;
-        testThreading(nTables, nIterations);
+        testThreading(nTables, nIterations, null);
     }
 
-    private void testThreading(int nTables, int nIterations) throws Exception {
+    @Test
+    public void testThreadsWithUnbalancedLoad() throws Exception {
+        nWriterThreads = 3;
+        int nTables = 12;
+        int nIterations = 20_000;
+        double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
+        testThreading(nTables, nIterations, loadFactors);
+    }
+
+    private void testThreading(int nTables, int nIterations, double[] lf) throws Exception {
+        if (null == lf) {
+            lf = new double[nTables];
+            Arrays.fill(lf, 1d);
+        } else {
+            assert lf.length == nTables;
+        }
+        for (int n = 1; n < nTables; n++) {
+            lf[n] += lf[n - 1];
+        }
+        final double[] loadFactors = lf;
+        final double accLoadFactors = loadFactors[nTables - 1];
         Random random = new Random(0);
         int countByTable[] = new int[nTables];
         long maxTimestampByTable[] = new long[nTables];
         runInContext(() -> {
+            int nTablesSelected = 0;
             long timestamp = 1465839830100400200l;
+            int nTotalUpdates = 0;
             for (int nIter = 0; nIter < nIterations; nIter++) {
                 int nLines = random.nextInt(50) + 1;
                 recvBuffer = "";
                 for (int nLine = 0; nLine < nLines; nLine++) {
-                    int nTable = random.nextInt(nTables);
+                    int nTable;
+                    if (nTablesSelected < nTables) {
+                        nTable = nTablesSelected++;
+                    } else {
+                        double tableSelector = random.nextDouble() * accLoadFactors;
+                        nTable = nTables;
+                        while (--nTable > 0) {
+                            if (tableSelector > loadFactors[nTable - 1]) {
+                                break;
+                            }
+                        }
+                    }
                     double temperature = 50.0 + (random.nextInt(500) / 10.0);
                     recvBuffer += "weather" + nTable + ",location=us-midwest temperature=" + temperature + " " + timestamp + "\n";
                     countByTable[nTable]++;
                     maxTimestampByTable[nTable] = timestamp;
                     timestamp += 1000;
+                    nTotalUpdates++;
                 }
                 do {
                     context.handleIO();
@@ -379,7 +418,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
-            closeContext();
+            rebalanceNLoadCheckCycles = scheduler.getnLoadCheckCycles();
+            rebalanceNRebalances = scheduler.getnRebalances();
+            rebalanceLoadByThread = scheduler.getLoadByThread();
+            LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
+                    .$(rebalanceNLoadCheckCycles).$(" load checks lead to ").$(rebalanceNRebalances).$(" load rebalancing operations").$();
             for (int nTable = 0; nTable < nTables; nTable++) {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable]);
             }
