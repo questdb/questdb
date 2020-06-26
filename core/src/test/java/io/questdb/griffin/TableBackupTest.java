@@ -26,10 +26,13 @@ package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.PropServerConfiguration;
+import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -45,6 +48,7 @@ import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
+import java.util.Properties;
 
 public class TableBackupTest {
     private static final StringSink sink = new StringSink();
@@ -65,7 +69,7 @@ public class TableBackupTest {
     private int mkdirsErrnoCountDown = 0;
 
     @Before
-    public void setup() throws IOException {
+    public void setup() throws IOException, JsonException, ServerConfigurationException {
         finalBackupPath = new Path();
         CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
         backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
@@ -121,7 +125,10 @@ public class TableBackupTest {
                 return new DateFormatCompiler().compile("ddMMMyyyy");
             }
         };
-        MessageBus mainMessageBus = new MessageBusImpl();
+        final Properties properties = new Properties();
+        TestUtils.copyMimeTypes(root.toString());
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(root.toString(), properties);
+        final MessageBus mainMessageBus = new MessageBusImpl(serverConfiguration);
         mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
         mainCompiler = new SqlCompiler(mainEngine);
         mainSqlExecutionContext = new SqlExecutionContextImpl(mainMessageBus, 1, mainEngine).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null, -1, null);
@@ -502,8 +509,11 @@ public class TableBackupTest {
         SqlExecutionContext sqlExecutionContext;
         try {
             if (backup) {
-                CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
-                MessageBus backupMessageBus = new MessageBusImpl();
+                final Properties properties = new Properties();
+                TestUtils.copyMimeTypes(finalBackupPath.toString());
+                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(finalBackupPath.toString(), properties);
+                final CairoConfiguration backupConfiguration = serverConfiguration.getCairoConfiguration();
+                final MessageBus backupMessageBus = new MessageBusImpl(serverConfiguration);
                 engine = new CairoEngine(backupConfiguration, backupMessageBus);
                 sqlExecutionContext = new SqlExecutionContextImpl(backupMessageBus, 1, engine).with(AllowAllCairoSecurityContext.INSTANCE,
                         new BindVariableService(),

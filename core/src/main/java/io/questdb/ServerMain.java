@@ -139,12 +139,16 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl();
+        final MessageBus messageBus = new MessageBusImpl(configuration);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+
+        if (configuration.getTelemetryConfiguration().getEnabled()) {
+            workerPool.assign(new TelemetryJob(configuration, cairoEngine, messageBus));
+        }
 
         try {
             final HttpServer httpServer = HttpServer.create(

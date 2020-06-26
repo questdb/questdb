@@ -1185,6 +1185,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+            sqlExecutionContext.storeTelemetry(cc.getType());
+
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:
                     currentFactory = cc.getRecordCursorFactory();
@@ -1241,6 +1243,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+            sqlExecutionContext.storeTelemetry(cc.getType());
 
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:

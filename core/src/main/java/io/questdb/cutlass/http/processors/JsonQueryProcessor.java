@@ -211,6 +211,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             if (factory != null) {
                 try {
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT);
                     executeCachedSelect(
                             state,
                             factory,
@@ -320,6 +321,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final long nanos = nanosecondClock.getTicks();
         final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+        sqlExecutionContext.storeTelemetry(cc.getType());
         state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
         queryExecutors.getQuick(cc.getType()).execute(
                 state,

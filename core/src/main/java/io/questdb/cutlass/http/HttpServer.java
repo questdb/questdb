@@ -110,7 +110,8 @@ public class HttpServer implements Closeable {
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
-                configuration, sharedWorkerPool,
+                configuration,
+                sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,

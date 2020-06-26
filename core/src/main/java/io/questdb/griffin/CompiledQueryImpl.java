@@ -32,7 +32,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
     private TextLoader textLoader;
-    private int type;
+    private short type;
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
@@ -50,7 +50,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public int getType() {
+    public short getType() {
         return type;
     }
 
@@ -58,11 +58,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SELECT, recordCursorFactory);
     }
 
-    private CompiledQuery of(int type) {
+    private CompiledQuery of(short type) {
         return of(type, null);
     }
 
-    private CompiledQuery of(int type, RecordCursorFactory factory) {
+    private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
         return this;

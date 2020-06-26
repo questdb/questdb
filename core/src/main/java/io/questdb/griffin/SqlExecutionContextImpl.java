@@ -30,8 +30,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.mp.*;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,6 +45,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoEngine cairoEngine;
     @Nullable
     private final MessageBus messageBus;
+    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final Sequence telemetryPubSeq;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
@@ -58,6 +63,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
+        this.telemetryQueue = messageBus.getTelemetryQueue();
+        this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
     }
 
     @Override
@@ -119,6 +126,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public SqlExecutionInterruptor getSqlExecutionInterruptor() {
         return interruptor;
+    }
+
+    @Override
+    public void storeTelemetry(short event) {
+        final MicrosecondClock clock = cairoConfiguration.getMicrosecondClock();
+        final long cursor = telemetryPubSeq.next();
+        TelemetryTask row = telemetryQueue.get(cursor);
+
+        row.ts = clock.getTicks();
+        row.event = event;
+        telemetryPubSeq.done(cursor);
     }
 
     public SqlExecutionContextImpl with(

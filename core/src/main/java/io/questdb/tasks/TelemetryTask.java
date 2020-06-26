@@ -22,25 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.tasks;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
-
-public interface ServerConfiguration {
-
-    CairoConfiguration getCairoConfiguration();
-
-    HttpServerConfiguration getHttpServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    TelemetryConfiguration getTelemetryConfiguration();
+public final class TelemetryTask {
+    public long ts;
+    public CharSequence id;
+    public short event;
 }

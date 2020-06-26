@@ -22,25 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.test.tools;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.NanosecondClock;
 
-public interface ServerConfiguration {
+public class TestNanoClock implements NanosecondClock {
+    private final long increment;
+    private long nanos;
 
-    CairoConfiguration getCairoConfiguration();
+    public TestNanoClock(long micros, long increment) {
+        this.nanos = micros * 1000;
+        this.increment = increment;
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    TelemetryConfiguration getTelemetryConfiguration();
+    @Override
+    public long getTicks() {
+        long result = nanos;
+        nanos += increment;
+        return result;
+    }
 }
