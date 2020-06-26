@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -235,7 +236,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getMsgBufferSize());
+            Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getNetMsgBufferSize());
             do {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
@@ -426,7 +427,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testOverflow() throws Exception {
         runInContext(() -> {
-            int msgBufferSize = lineTcpConfiguration.getMsgBufferSize();
+            int msgBufferSize = lineTcpConfiguration.getNetMsgBufferSize();
             recvBuffer = "A";
             while (recvBuffer.length() <= msgBufferSize) {
                 recvBuffer += recvBuffer;
@@ -441,11 +442,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
+        // Guard against slow writers on disconnect
         while (maxIterations-- > 0) {
             boolean busy = context.handleIO();
             if (!busy) {
                 break;
             }
+            LockSupport.parkNanos(1_000_000);
         }
         Assert.assertTrue(maxIterations > 0);
         Assert.assertTrue(disconnected);
@@ -514,17 +517,12 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 2;
         lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
             @Override
-            public int getNWriterThreads() {
-                return nWriterThreads;
-            }
-
-            @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
             }
 
             @Override
-            public int getMsgBufferSize() {
+            public int getNetMsgBufferSize() {
                 return 512;
             }
 

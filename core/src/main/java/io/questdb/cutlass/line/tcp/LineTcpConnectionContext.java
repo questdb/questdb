@@ -26,8 +26,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
-        recvBufStart = Unsafe.malloc(configuration.getMsgBufferSize());
-        recvBufEnd = recvBufStart + configuration.getMsgBufferSize();
+        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
+        recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
     }
 
     // returns true if busy

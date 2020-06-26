@@ -269,15 +269,19 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetListenBacklog;
     private int lineTcpNetRcvBufSize;
     private int lineTcpNetSndBufSize;
-    private int[] lineTcpWorkerAffinity;
-    private int lineTcpWorkerCount;
-    private boolean lineTcpHaltOnError;
     private int lineTcpConnectionPoolInitialCapacity;
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpMsgBufferSize;
     private int lineTcpMaxMeasurementSize;
-    private int lineTcpNWriterThreads;
     private int lineTcpWriterQueueSize;
+    private int lineTcpNetWorkerCount;
+    private int[] lineTcpNetWorkerAffinity;
+    private boolean lineTcpNetWorkerPoolHaltOnError;
+    private int lineTcpWriterWorkerCount;
+    private int[] lineTcpWriterWorkerAffinity;
+    private boolean lineTcpWriterWorkerPoolHaltOnError;
+    private final WorkerPoolAwareConfiguration lineTcpNetWorkerPoolConfiguration = new PropLineTcpNetWorkerPoolConfiguration();
+    private final WorkerPoolAwareConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -486,8 +490,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 new TimestampFormatFactory(),
                 TimestampLocaleFactory.INSTANCE,
                 this.dateLocale,
-                this.timestampLocale
-        );
+                this.timestampLocale);
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
@@ -531,19 +534,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
             this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
             this.lineTcpNetSndBufSize = getIntSize(properties, "line.tcp.net.send.buf.size", -1);
-            this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 2);
-            this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
-            this.lineTcpHaltOnError = getBoolean(properties, "line.tcp.halt.on.error", false);
             this.lineTcpConnectionPoolInitialCapacity = getInt(properties, "line.tcp.connection.pool.capacity", 64);
             this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, "line.tcp.timestamp");
             this.lineTcpMsgBufferSize = getIntSize(properties, "line.tcp.msg.buffer.size", 2048);
             this.lineTcpMaxMeasurementSize = getIntSize(properties, "line.tcp.max.measurement.size", 2048);
             if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                 throw new IllegalArgumentException(
-                        "line.tcp.max.measuement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+                        "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
-            this.lineTcpNWriterThreads = getIntSize(properties, "line.tcp.n.writer.threads", 2);
             this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 1024);
+            this.lineTcpNetWorkerCount = getInt(properties, "line.tcp.net.worker.count", 0);
+            this.lineTcpNetWorkerAffinity = getAffinity(properties, "line.tcp.net.worker.affinity", lineTcpNetWorkerCount);
+            this.lineTcpNetWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.net.halt.on.error", false);
+            this.lineTcpWriterWorkerCount = getInt(properties, "line.tcp.writer.worker.count", 0);
+            this.lineTcpWriterWorkerAffinity = getAffinity(properties, "line.tcp.writer.worker.affinity", lineTcpNetWorkerCount);
+            this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.writer.halt.on.error", false);
         }
     }
 
@@ -738,7 +743,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NetworkError e) {
             throw new ServerConfigurationException(key, ipv4Str);
         }
-
 
         final String portStr = bindTo.substring(colonIndex + 1);
         final int port;
@@ -1580,25 +1584,54 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     }
 
-    private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
-        @Override
-        public boolean isEnabled() {
-            return lineTcpEnabled;
-        }
-
+    private class PropLineTcpNetWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
         @Override
         public int[] getWorkerAffinity() {
-            return lineTcpWorkerAffinity;
+            return lineTcpNetWorkerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return lineTcpWorkerCount;
+            return lineTcpNetWorkerCount;
         }
 
         @Override
         public boolean haltOnError() {
-            return lineTcpHaltOnError;
+            return lineTcpNetWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineTcpWriterWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineTcpWriterWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineTcpWriterWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+        @Override
+        public boolean isEnabled() {
+            return lineTcpEnabled;
         }
 
         @Override
@@ -1617,12 +1650,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
+        public IODispatcherConfiguration getNetDispatcherConfiguration() {
             return lineTcpReceiverDispatcherConfiguration;
         }
 
         @Override
-        public int getMsgBufferSize() {
+        public int getNetMsgBufferSize() {
             return lineTcpMsgBufferSize;
         }
 
@@ -1637,11 +1670,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getNWriterThreads() {
-            return lineTcpNWriterThreads;
-        }
-
-        @Override
         public int getWriterQueueSize() {
             return lineTcpWriterQueueSize;
         }
@@ -1649,6 +1677,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration() {
+            return lineTcpNetWorkerPoolConfiguration;
+        }
+
+        @Override
+        public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+            return lineTcpWriterWorkerPoolConfiguration;
         }
     }
 

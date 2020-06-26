@@ -31,24 +31,28 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.microtime.MicrosecondClock;
 
-public interface LineTcpReceiverConfiguration extends WorkerPoolAwareConfiguration {
+public interface LineTcpReceiverConfiguration {
+    boolean isEnabled();
+
     CairoSecurityContext getCairoSecurityContext();
 
     LineProtoTimestampAdapter getTimestampAdapter();
 
     int getConnectionPoolInitialCapacity();
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    IODispatcherConfiguration getNetDispatcherConfiguration();
 
-    int getMsgBufferSize();
+    int getNetMsgBufferSize();
 
     int getMaxMeasurementSize();
 
     NetworkFacade getNetworkFacade();
 
-    int getNWriterThreads();
-
     int getWriterQueueSize();
 
     MicrosecondClock getMicrosecondClock();
+
+    WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration();
+
+    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
 }

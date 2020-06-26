@@ -1,5 +1,6 @@
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
@@ -13,25 +14,9 @@ import io.questdb.std.microtime.MicrosecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
-    private int[] workerAffinity = { -1, -1 };
 
     @Override
     public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
-    public int[] getWorkerAffinity() {
-        return workerAffinity;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return 2;
-    }
-
-    @Override
-    public boolean haltOnError() {
         return true;
     }
 
@@ -51,12 +36,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
+    public IODispatcherConfiguration getNetDispatcherConfiguration() {
         return ioDispatcherConfiguration;
     }
 
     @Override
-    public int getMsgBufferSize() {
+    public int getNetMsgBufferSize() {
         return 2048;
     }
 
@@ -71,11 +56,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getNWriterThreads() {
-        return 2;
-    }
-
-    @Override
     public int getWriterQueueSize() {
         return 64;
     }
@@ -83,5 +63,15 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration() {
+        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    }
+
+    @Override
+    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
     }
 }
