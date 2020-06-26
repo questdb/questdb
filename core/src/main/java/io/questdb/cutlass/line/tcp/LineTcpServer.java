@@ -66,7 +66,8 @@ public class LineTcpServer implements Closeable {
                         .getDispatcherConfiguration(),
                 contextFactory);
         workerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine);
+        // TODO allow seperate worker pool for writers
+        scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine, workerPool);
         final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
             context.handleIO();
         };

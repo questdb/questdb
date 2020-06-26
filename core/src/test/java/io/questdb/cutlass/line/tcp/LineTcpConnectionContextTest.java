@@ -2,6 +2,7 @@ package io.questdb.cutlass.line.tcp;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -17,6 +18,10 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
@@ -25,14 +30,15 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
-    // private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
+    private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
     private static final int FD = 1_000_000;
     private LineTcpConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
     private LineTcpMeasurementScheduler scheduler;
     private boolean disconnected;
     private String recvBuffer;
-    private AtomicInteger nWriterThreads;
+    private int nWriterThreads;
+    private WorkerPool workerPool;
 
     @Test
     public void testSingleMeasurement() throws Exception {
@@ -352,7 +358,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     @Test
     public void testMultiplTablesWithSingleWriterThread() throws Exception {
-        nWriterThreads.set(1);
+        nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 20_000;
         testThreading(nTables, nIterations);
@@ -360,7 +366,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     @Test
     public void testMultiplTablesWithMultipleWriterThreads() throws Exception {
-        nWriterThreads.set(5);
+        nWriterThreads = 5;
         int nTables = 12;
         int nIterations = 20_000;
         testThreading(nTables, nIterations);
@@ -513,11 +519,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 return n;
             }
         };
-        nWriterThreads = new AtomicInteger(2);
+        nWriterThreads = 2;
         lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
             @Override
             public int getNWriterThreads() {
-                return nWriterThreads.get();
+                return nWriterThreads;
             }
 
             @Override
@@ -539,11 +545,35 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         // addTable("test1");
         // addTable("test1234567890");
         // addTable("test12345678901234567890");
-        addTable("test123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890");
+        // addTable("test123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890");
     }
 
     private void setupContext(CairoEngine engine) {
-        scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine);
+        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            private final int workerCount;
+            private final int[] affinityByThread;
+            {
+                workerCount = nWriterThreads;
+                affinityByThread = new int[workerCount];
+                Arrays.fill(affinityByThread, -1);
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return false;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinityByThread;
+            }
+        });
+        scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine, workerPool);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
         disconnected = false;
         recvBuffer = null;
@@ -577,14 +607,16 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
         };
         context.of(FD, dispatcher);
+        workerPool.start(LOG);
     }
 
     private void closeContext() {
         if (null != scheduler) {
-            scheduler.waitUntilClosed();
-            scheduler = null;
+            workerPool.halt();
             context.close();
             context = null;
+            scheduler.close();
+            scheduler = null;
         }
     }
 }
