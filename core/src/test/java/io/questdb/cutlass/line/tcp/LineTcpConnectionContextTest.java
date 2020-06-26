@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -46,9 +45,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
             context.handleIO();
             Assert.assertFalse(disconnected);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -68,9 +65,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             context.handleIO();
             Assert.assertFalse(disconnected);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -98,9 +93,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             context.handleIO();
             Assert.assertFalse(disconnected);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -131,9 +124,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             }
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -249,9 +240,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -279,9 +268,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
@@ -309,9 +296,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
@@ -340,9 +325,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.handleIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -394,9 +377,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     Assert.assertFalse(disconnected);
                 } while (recvBuffer.length() > 0);
             }
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             for (int nTable = 0; nTable < nTables; nTable++) {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable]);
@@ -419,9 +400,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             recvBuffer = allMsgs.substring(breakPos);
             context.handleIO();
             Assert.assertFalse(disconnected);
-            recvBuffer = null;
-            context.handleIO();
-            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -457,6 +436,19 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             Assert.assertTrue(disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
+    }
+
+    private void waitForIOCompletion() {
+        int maxIterations = 256;
+        recvBuffer = null;
+        while (maxIterations-- > 0) {
+            boolean busy = context.handleIO();
+            if (!busy) {
+                break;
+            }
+        }
+        Assert.assertTrue(maxIterations > 0);
+        Assert.assertTrue(disconnected);
     }
 
     private void runInContext(Runnable r) throws Exception {

@@ -20,6 +20,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private long recvBufStart;
     private long recvBufEnd;
     private long recvBufPos;
+    private boolean peerDisconnected;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
@@ -29,25 +30,32 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         recvBufEnd = recvBufStart + configuration.getMsgBufferSize();
     }
 
-    void handleIO() {
+    // returns true if busy
+    boolean handleIO() {
         try {
             LineTcpMeasurementEvent event = scheduler.getNewEvent();
             if (null == event) {
+                // Waiting for writer threads to drain queue, request callback as soon as possible
                 dispatcher.registerChannel(this, IOOperation.READ);
-                return;
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+                return true;
             }
 
+            // Read as much data as possible
             int len = (int) (recvBufEnd - recvBufPos);
-            int nRead = nf.recv(fd, recvBufPos, len);
-            if (nRead < 0) {
-                if (recvBufPos != recvBufStart) {
-                    LOG.info().$('[').$(fd).$("] disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+            if (len > 0 && !peerDisconnected) {
+                int nRead = nf.recv(fd, recvBufPos, len);
+                if (nRead < 0) {
+                    if (recvBufPos != recvBufStart) {
+                        LOG.info().$('[').$(fd).$("] disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                    }
+                    peerDisconnected = true;
+                } else {
+                    recvBufPos += nRead;
                 }
-                dispatcher.disconnect(this);
-                return;
             }
-            recvBufPos += nRead;
 
+            // Process as much data as possible
             long recvBufLineStart = recvBufStart;
             do {
                 long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
@@ -64,6 +72,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 recvBufLineStart = recvBufLineNext;
             } while (recvBufLineStart != recvBufPos && null != event);
 
+            // Compact input buffer
             if (recvBufLineStart != recvBufStart) {
                 len = (int) (recvBufPos - recvBufLineStart);
                 if (len > 0) {
@@ -72,22 +81,40 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 recvBufPos = recvBufStart + len;
             }
 
+            // Check if we are waiting for writer threads
+            if (null == event) {
+                // Waiting for writer threads to drain queue, request callback as soon as possible
+                dispatcher.registerChannel(this, IOOperation.READ);
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+                return true;
+            }
+
+            // Check for buffer overflow
             if (recvBufPos == recvBufEnd) {
                 LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
                 dispatcher.disconnect(this);
-                return;
+                return false;
+            }
+
+            if (peerDisconnected) {
+                // Peer disconnected, we have now finished disconnect our end
+                dispatcher.disconnect(this);
+                return false;
             }
 
             dispatcher.registerChannel(this, IOOperation.READ);
+            return true;
         } catch (RuntimeException ex) {
             LOG.error().$('[').$(fd).$("] Failed to process line data").$(ex).$();
             dispatcher.disconnect(this);
+            return false;
         }
     }
 
     @Override
     public void clear() {
         recvBufPos = recvBufStart;
+        peerDisconnected = false;
     }
 
     @Override
