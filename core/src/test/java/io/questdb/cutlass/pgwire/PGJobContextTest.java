@@ -2282,7 +2282,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
                 LOG.info().$("listening [fd=").$(fd).$(']').$();
 
-                try (PGJobContext PGJobContext = new PGJobContext(configuration, engine)) {
+                try (PGJobContext PGJobContext = new PGJobContext(configuration, engine, messageBus, null)) {
                     SharedRandom.RANDOM.set(new Rnd());
                     try {
                         barrier.await();

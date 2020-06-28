@@ -24,29 +24,22 @@
 
 package io.questdb.cutlass.pgwire;
 
-import java.io.Closeable;
-
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.IOContextFactory;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
 
 public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
@@ -57,7 +50,8 @@ public class PGWireServer implements Closeable {
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         this.contextFactory = new PGConnectionContextFactory(engine, configuration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
@@ -68,7 +62,7 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine);
+            final PGJobContext jobContext = new PGJobContext(configuration, engine, messageBus, functionFactoryCache);
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
@@ -104,15 +98,17 @@ public class PGWireServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log log,
             CairoEngine cairoEngine,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, bus) -> new PGWireServer(conf, cairoEngine, workerPool, bus),
-                messageBus
+                (conf, engine, workerPool, local, bus, functionFactoryCache1) -> new PGWireServer(conf, cairoEngine, workerPool, bus, functionFactoryCache1),
+                messageBus,
+                functionFactoryCache
         );
     }
 
