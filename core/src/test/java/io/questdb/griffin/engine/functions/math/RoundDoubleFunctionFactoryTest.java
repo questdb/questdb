@@ -118,6 +118,11 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(14.7778, 3).andAssert(14.778, 0.0000000001);
     }
 
+    @Test
+    public void testSimpleZeroScale() throws SqlException {
+        call(14.7778, 0).andAssert(15, 0.0000000001);
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new RoundDoubleFunctionFactory();
