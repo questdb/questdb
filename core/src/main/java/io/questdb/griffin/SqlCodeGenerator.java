@@ -53,6 +53,8 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class SqlCodeGenerator implements Mutable {
+    public static final int GKK_VANILLA_INT = 0;
+    public static final int GKK_HOUR_INT = 1;
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
@@ -128,9 +130,9 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempSymbolSkewIndexes = new IntList();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempAggIndex = new IntList();
-    public static final int GKK_VANILLA_INT = 0;
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
+    private final IntList tempKeyKinds = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -522,8 +524,6 @@ public class SqlCodeGenerator implements Mutable {
                 columnSplit
         );
     }
-
-    public static final int GKK_HOUR_INT = 1;
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
@@ -1434,6 +1434,7 @@ public class SqlCodeGenerator implements Mutable {
         if (
                 model.getBottomUpColumns().size() == 1
                         && model.getNestedModel() != null
+                        && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
                         && twoDeepNested.getWhereClause() == null
                         && twoDeepNested.getLatestBy().size() == 0
@@ -1481,8 +1482,6 @@ public class SqlCodeGenerator implements Mutable {
             throw e;
         }
     }
-
-    private final IntList tempKeyKinds = new IntList();
 
     private boolean assembleKeysAndFunctionReferences(
             ObjList<QueryColumn> columns,
