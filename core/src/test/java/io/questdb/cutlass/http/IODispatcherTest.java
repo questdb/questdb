@@ -74,7 +74,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
@@ -93,19 +92,96 @@ public class IODispatcherTest {
             "Accept-Encoding: gzip, deflate, br\r\n" +
             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
             "\r\n";
-    private final String ResponseHeaders = "HTTP/1.1 200 OK\r\n" +
+    private final String ResponseHeaders =
+            "HTTP/1.1 200 OK\r\n" +
+                    "Server: questDB/1.0\r\n" +
+                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                    "Transfer-Encoding: chunked\r\n" +
+                    "Content-Type: application/json; charset=utf-8\r\n" +
+                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                    "\r\n";
+    private static final AtomicInteger N_BYTES_RECIEVED_BY_CLIENT = new AtomicInteger();
+    private static final String ValidImportRequest = "POST /upload HTTP/1.1\r\n" +
+            "Host: localhost:9001\r\n" +
+            "User-Agent: curl/7.64.0\r\n" +
+            "Accept: */*\r\n" +
+            "Content-Length: 437760673\r\n" +
+            "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+            "Expect: 100-continue\r\n" +
+            "\r\n" +
+            "--------------------------27d997ca93d2689d\r\n" +
+            "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "\r\n" +
+            "[\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"date\",\r\n" +
+            "    \"type\": \"DATE\",\r\n" +
+            "    \"pattern\": \"d MMMM y.\",\r\n" +
+            "    \"locale\": \"ru-RU\"\r\n" +
+            "  }\r\n" +
+            "]\r\n" +
+            "\r\n" +
+            "--------------------------27d997ca93d2689d\r\n" +
+            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "\r\n" +
+            "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+            "B00008,2017-02-01 00:30:00,,,\r\n" +
+            "B00008,2017-02-01 00:40:00,,,\r\n" +
+            "B00009,2017-02-01 00:30:00,,,\r\n" +
+            "B00013,2017-02-01 00:11:00,,,\r\n" +
+            "B00013,2017-02-01 00:41:00,,,\r\n" +
+            "B00013,2017-02-01 00:00:00,,,\r\n" +
+            "B00013,2017-02-01 00:53:00,,,\r\n" +
+            "B00013,2017-02-01 00:44:00,,,\r\n" +
+            "B00013,2017-02-01 00:05:00,,,\r\n" +
+            "B00013,2017-02-01 00:54:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "B00014,2017-02-01 00:46:00,,,\r\n" +
+            "B00014,2017-02-01 00:54:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "B00014,2017-02-01 00:26:00,,,\r\n" +
+            "B00014,2017-02-01 00:55:00,,,\r\n" +
+            "B00014,2017-02-01 00:47:00,,,\r\n" +
+            "B00014,2017-02-01 00:05:00,,,\r\n" +
+            "B00014,2017-02-01 00:58:00,,,\r\n" +
+            "B00014,2017-02-01 00:33:00,,,\r\n" +
+            "B00014,2017-02-01 00:45:00,,,\r\n" +
+            "\r\n" +
+            "--------------------------27d997ca93d2689d--";
+    private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
-            "Content-Type: application/json; charset=utf-8\r\n" +
-            "Keep-Alive: timeout=5, max=10000\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "\r\n" +
+            "05d7\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+            "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+            "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "\r\n" +
+            "00\r\n" +
             "\r\n";
-    private static final AtomicInteger N_BYTES_RECIEVED_BY_CLIENT = new AtomicInteger();
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {};
+    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
+    };
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
@@ -365,25 +441,8 @@ public class IODispatcherTest {
         testJsonQuery(
                 20,
                 "GET /chk?f=json&j=clipboard-1580645706714&_=1580598041784 HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
+                        RequestHeaders,
+                ResponseHeaders +
                         "1b\r\n" +
                         "{\"status\":\"Does not exist\"}\r\n" +
                         "00\r\n" +
@@ -576,13 +635,7 @@ public class IODispatcherTest {
         }
     }
 
-    public void testImport(
-            String response,
-            String request,
-            NetworkFacade nf,
-            boolean expectDisconnect,
-            int requestCount
-    ) throws Exception {
+    public void testImport(int workerCount, HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
@@ -597,7 +650,7 @@ public class IODispatcherTest {
 
                 @Override
                 public int getWorkerCount() {
-                    return 2;
+                    return workerCount;
                 }
 
                 @Override
@@ -632,24 +685,55 @@ public class IODispatcherTest {
                     }
                 });
 
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount()
+                        );
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+
                 workerPool.start(LOG);
 
                 long fd = Net.socketTcp(true);
                 try {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            response,
-                            requestCount,
-                            0,
-                            false,
-                            expectDisconnect
-                    );
+                    code.run(engine);
                 } finally {
                     Net.close(fd);
                     workerPool.halt();
                 }
             }
+        });
+    }
+
+    public void testImport(
+            String response,
+            String request,
+            NetworkFacade nf,
+            boolean expectDisconnect,
+            int requestCount
+    ) throws Exception {
+        testImport(2, (engine) -> {
+            sendAndReceive(
+                    nf,
+                    request,
+                    response,
+                    requestCount,
+                    0,
+                    false,
+                    expectDisconnect
+            );
+
         });
     }
 
@@ -926,82 +1010,8 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnection() throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                ,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
+                ValidImportResponse
+                , ValidImportRequest
                 , NetworkFacadeImpl.INSTANCE
                 , false
                 , 1 // todo: we need to fix writer queuing and increase request count
@@ -1011,82 +1021,8 @@ public class IODispatcherTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                ,
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--"
+                ValidImportResponse
+                , ValidImportRequest
                 , NetworkFacadeImpl.INSTANCE
                 , false
                 , 1
@@ -1167,81 +1103,8 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--",
+                ValidImportResponse,
+                ValidImportRequest,
                 new NetworkFacadeImpl() {
                     @Override
                     public int send(long fd, long buffer, int bufferLen) {
@@ -1309,82 +1172,9 @@ public class IODispatcherTest {
                 workerPool.start(LOG);
 
                 // send multipart request to server
-                final String request = "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--";
+                final String request = ValidImportRequest;
 
-                String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n";
+                String expectedResponse = ValidImportResponse;
 
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
@@ -4670,24 +4460,6 @@ public class IODispatcherTest {
             Assert.assertFalse(finished);
 
             writer.close();
-
-            // Since writer closed as a hacky way without any query completion.
-            // Execute a successful query to trigger re-run check.
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                            RequestHeaders,
-                    ResponseHeaders +
-                            "70\r\n" +
-                            "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[0]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    true,
-                    false
-            );
-
             countDownLatch.await();
 
             // check if we have parallelCount x insertCount  records
@@ -4859,6 +4631,83 @@ public class IODispatcherTest {
 
                 }
             }
+        });
+    }
+
+    @Test
+    public void testImportWaitsWhenWriterLocked() throws Exception {
+        final int parallelCount = 1;
+        testImport(2, (engine) -> {
+            // create table and do 1 import
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    ValidImportRequest,
+                    ValidImportResponse,
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "fhv_tripdata_2017-02.csv");
+
+            final int validRequestRecordCount = 24;
+            final int insertCount = 1;
+            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+            for (int i = 0; i < parallelCount; i++) {
+                int finalI = i;
+                new Thread(() -> {
+                    try {
+                        for (int r = 0; r < insertCount; r++) {
+                            // insert one record
+                            try {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        ValidImportRequest,
+                                        ValidImportResponse,
+                                        1,
+                                        0,
+                                        true,
+                                        false
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                            }
+                        }
+                    } finally {
+                        countDownLatch.countDown();
+                    }
+                    LOG.info().$("Stopped thread ").$(finalI).$();
+                }).start();
+            }
+
+            boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+
+            // Cairo engine should not allow second writer to be opened on the same table
+            // Cairo is expected to have finished == false
+            Assert.assertFalse(finished);
+
+            writer.close();
+            if (!countDownLatch.await(100000, TimeUnit.MILLISECONDS)) {
+                Assert.fail("Imports did not finish within reasonable time");
+            }
+
+            // check if we have parallelCount x insertCount  records
+            LOG.info().$("Requesting row count").$();
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22++&count=true HTTP/1.1\r\n" +
+                            RequestHeaders,
+                    ResponseHeaders +
+                            "83\r\n" +
+                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv  \",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false,
+                    false
+            );
         });
     }
 
@@ -5417,7 +5266,7 @@ public class IODispatcherTest {
 
     @FunctionalInterface
     private interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException;
+        void run(CairoEngine engine) throws Exception;
     }
 
     private static class HelloContext implements IOContext {

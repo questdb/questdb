@@ -25,6 +25,8 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.pool.ex.RetryOperationException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Atomicity;
@@ -254,15 +256,30 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
+                transientState.lo = lo;
+                transientState.hi = hi;
                 transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
-            } catch (TextException | CairoException | CairoError e) {
+            } catch (EntryUnavailableException e) {
+                throw RetryOperationException.INSTANCE.putPos(hi);
+            }
+            catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);
+
             }
         }
+    }
+
+    @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        this.transientContext = context;
+        this.transientState = LV.get(context);
+        onChunk(transientState.lo, transientState.hi);
     }
 
     @Override

@@ -57,6 +57,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
     private final HttpSqlExecutionInterruptor execInterruptor;
+    private final MultipartParserState multipartParserState = new MultipartParserState();
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
@@ -98,6 +99,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.error().$("Reused context with retry pending.").$();
         }
         this.pendingRetry = false;
+        this.multipartParserState.multipartRetry = false;
     }
 
     @Override
@@ -232,9 +234,23 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             bufRemaining = recvBufferSize;
         }
 
-        long spinsRemaining = multipartIdleSpinCount;
+        continueConsumeMultipart(fd, start, buf, bufRemaining, false, multipartListener, processor, rescheduleContext);
+    }
 
+    private void continueConsumeMultipart(long fd, long start, long buf, int bufRemaining, boolean retry, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        // do we have anything in the buffer?
+        if (buf > start) {
+            if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                return;
+            }
+
+            buf = start = recvBuffer;
+            bufRemaining = recvBufferSize;
+        }
+
+        long spinsRemaining = multipartIdleSpinCount;
         while (true) {
+            // if this is not a retry.
             final int n = nf.recv(fd, buf, bufRemaining);
             if (n < 0) {
                 dispatcher.disconnect(this);
@@ -254,9 +270,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
                 // do we have anything in the buffer?
                 if (buf > start) {
-                    if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
-                        // request is complete
-                        completeRequest(processor, rescheduleContext);
+                    if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
                         break;
                     }
 
@@ -279,16 +293,33 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             buf += n;
 
             if (bufRemaining == 0) {
-                if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
-                    // request is complete
-                    completeRequest(processor, rescheduleContext);
-                    break;
+                if (buf - start > 1) {
+                    if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                        break;
+                    }
                 }
 
                 buf = start = recvBuffer;
                 bufRemaining = recvBufferSize;
             }
         }
+    }
+
+    private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean parseResult;
+        try {
+            parseResult = multipartContentParser.parse(start, buf, multipartListener);
+        } catch (RetryOperationException e) {
+            this.multipartParserState.saveFdBufferPosition(e.getBuffPosition() + 1, buf, bufRemaining,  multipartContentParser.getPreviousState());
+            throw e;
+        }
+
+        if (parseResult) {
+            // request is complete
+            completeRequest(processor, rescheduleContext);
+            return true;
+        }
+        return false;
     }
 
     private void dumpBuffer(long buffer, int size) {
@@ -437,9 +468,19 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         if (pendingRetry) {
             pendingRetry = false;
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-            
             try {
-                processor.onRequestRetry(this);
+                if (multipartParserState.multipartRetry) {
+                    final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
+
+                    processor.onRequestRetry(this);
+                    multipartContentParser.setState(multipartParserState.state);
+                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, true, multipartListener, processor, retry -> {
+                        throw RetryOperationException.INSTANCE;
+                    });
+                    return true;
+                } else {
+                    processor.onRequestRetry(this);
+                }
             } catch (RetryOperationException e2) {
                 pendingRetry = true;
                 return false;

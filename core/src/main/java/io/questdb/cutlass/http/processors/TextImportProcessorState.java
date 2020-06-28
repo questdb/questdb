@@ -37,6 +37,8 @@ class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_DATA_ERROR = 2;
     final TextLoader textLoader;
     public int columnIndex = 0;
+    long hi;
+    long lo;
     String stateMessage;
     boolean analysed = false;
     int messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
