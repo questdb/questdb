@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.std.*;
 import io.questdb.std.time.MillisecondClockImpl;
 import org.jetbrains.annotations.NotNull;
@@ -4649,7 +4650,18 @@ public class IODispatcherTest {
                     false
             );
 
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "fhv_tripdata_2017-02.csv");
+            TableWriter writer = null;
+            for (int i = 0; i < 10; i++) {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "fhv_tripdata_2017-02.csv");
+                } catch (EntryUnavailableException e) {
+                    Thread.sleep(10);
+                }
+            }
+
+            if (writer == null) {
+                Assert.fail("Cannot lock writer in a reasonable time");
+            }
 
             final int validRequestRecordCount = 24;
             final int insertCount = 1;
@@ -4696,11 +4708,11 @@ public class IODispatcherTest {
             LOG.info().$("Requesting row count").$();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22++&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
                             RequestHeaders,
                     ResponseHeaders +
                             "83\r\n" +
-                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv  \",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
