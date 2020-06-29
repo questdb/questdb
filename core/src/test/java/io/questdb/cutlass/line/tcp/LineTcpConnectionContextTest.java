@@ -368,6 +368,20 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         int nIterations = 20_000;
         double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
         testThreading(nTables, nIterations, loadFactors);
+
+        int maxLoad = Integer.MIN_VALUE;
+        int minLoad = Integer.MAX_VALUE;
+        for (int load : rebalanceLoadByThread) {
+            if (maxLoad < load) {
+                maxLoad = load;
+            }
+            if (minLoad > load) {
+                minLoad = load;
+            }
+        }
+        double loadRatio = (double) maxLoad / (double) minLoad;
+        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
+        Assert.assertTrue(loadRatio < 1.05);
     }
 
     private void testThreading(int nTables, int nIterations, double[] lf) throws Exception {
@@ -575,11 +589,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 return 128;
             }
         };
-        // Adding this table prevents the memory leak detection from breaking when tests are not run individually
-        // addTable("test1");
-        // addTable("test1234567890");
-        // addTable("test12345678901234567890");
-        // addTable("test123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890");
     }
 
     private void setupContext(CairoEngine engine) {
