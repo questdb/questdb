@@ -441,9 +441,8 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final Properties properties = new Properties();
         TestUtils.copyMimeTypes(baseDir);
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, properties);
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties());
         final MessageBus workScheduler = new MessageBusImpl(serverConfiguration);
 
         try (
@@ -512,9 +511,8 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final Properties properties = new Properties();
         TestUtils.copyMimeTypes(baseDir);
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, properties);
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties());
         final MessageBus workScheduler = new MessageBusImpl(serverConfiguration);
 
         try (
@@ -3206,9 +3204,9 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:36:16.527310Z\t100\n" +
-                "2020-06-19T10:36:16.527310Z\t0\n" +
-                "2020-06-19T10:36:16.527310Z\t101\n";
+        final String expected = "2020-06-19T10:00:00.060000Z\t100\n" +
+                "2020-06-19T10:00:00.110000Z\t0\n" +
+                "2020-06-19T10:00:00.130000Z\t101\n";
         assertTable(expected, "telemetry");
     }
 
@@ -3241,10 +3239,10 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:36:16.527310Z\t100\n" +
-                "2020-06-19T10:36:16.527310Z\t0\n" +
-                "2020-06-19T10:36:16.527310Z\t0\n" +
-                "2020-06-19T10:36:16.527310Z\t101\n";
+        final String expected = "2020-06-19T10:00:00.060000Z\t100\n" +
+                "2020-06-19T10:00:00.110000Z\t0\n" +
+                "2020-06-19T10:00:00.130000Z\t0\n" +
+                "2020-06-19T10:00:00.150000Z\t101\n";
         assertTable(expected, "telemetry");
     }
 
@@ -5100,44 +5098,29 @@ public class IODispatcherTest {
                     return false;
                 }
             });
-            DefaultCairoConfiguration configuration;
 
-            if (telemetry) {
-                configuration = new DefaultCairoConfiguration(baseDir) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        try {
-                            return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"),
-                                    10);
-                        } catch (NumericException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-
-
-                    @Override
-                    public NanosecondClock getNanosecondClock() {
-                        try {
-                            return new TestNanoClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
-                        } catch (NumericException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                };
-            }  else {
-                configuration = new DefaultCairoConfiguration(baseDir);
-            }
+            MicrosecondClock clock =  new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:00:00.000000Z"), 10);
+            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
+                @Override
+                public MicrosecondClock getMicrosecondClock() {
+                    return clock;
+                }
+            };
 
             try (
-                    CairoEngine engine = new CairoEngine(configuration, null);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
+                TestUtils.copyMimeTypes(baseDir);
+                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties()) {
+                    @Override
+                    public CairoConfiguration getCairoConfiguration() {
+                        return cairoConfiguration;
+                    }
+                };
+                final MessageBus messageBus = new MessageBusImpl(serverConfiguration);
                 if (telemetry) {
-                    final Properties properties = new Properties();
-                    TestUtils.copyMimeTypes(baseDir);
-                    final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, properties);
-                    final MessageBus messageBus = new MessageBusImpl(serverConfiguration);
                     telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -5158,7 +5141,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
+                                messageBus,
                                 workerPool.getWorkerCount()
                         );
                     }

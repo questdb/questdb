@@ -45,8 +45,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoEngine cairoEngine;
     @Nullable
     private final MessageBus messageBus;
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private final Sequence telemetryPubSeq;
+    private final MicrosecondClock clock;
+    private RingQueue<TelemetryTask> telemetryQueue;
+    private Sequence telemetryPubSeq;
+    private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
@@ -63,8 +65,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
-        this.telemetryQueue = messageBus.getTelemetryQueue();
-        this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
+        this.clock = cairoConfiguration.getMicrosecondClock();
+
+        if(messageBus != null) {
+            this.telemetryQueue = messageBus.getTelemetryQueue();
+            this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
+            this.telemetryMethod = this::doStoreTelemetry;
+        }
     }
 
     @Override
@@ -130,13 +137,24 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void storeTelemetry(short event) {
-        final MicrosecondClock clock = cairoConfiguration.getMicrosecondClock();
+        telemetryMethod.store(event);
+    }
+
+    private void doStoreTelemetry(short event) {
         final long cursor = telemetryPubSeq.next();
         TelemetryTask row = telemetryQueue.get(cursor);
 
         row.ts = clock.getTicks();
         row.event = event;
         telemetryPubSeq.done(cursor);
+    }
+
+    private void storeTelemetryNoop(short event) {
+    }
+
+    @FunctionalInterface
+    private interface TelemetryMethod {
+        void store(short event);
     }
 
     public SqlExecutionContextImpl with(

@@ -25,17 +25,16 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.*;
 
-import java.util.Properties;
-
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Properties;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
@@ -71,32 +70,30 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
                 @Override
-                public MicrosecondClock getMicrosecondClock() {
-                    try {
-                        return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
-                    } catch (NumericException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-
-                @Override
-                public NanosecondClock getNanosecondClock() {
-                    try {
-                        return new TestNanoClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:36:16.527310Z"), 10);
-                    } catch (NumericException e) {
-                        throw new RuntimeException(e);
-                    }
+                public CairoConfiguration getCairoConfiguration() {
+                    return new DefaultCairoConfiguration(root) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            try {
+                                return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:10:00.000000Z"), 10);
+                            } catch (NumericException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    };
                 }
             };
+            configuration = serverConfiguration.getCairoConfiguration();
+            messageBus = new MessageBusImpl(serverConfiguration);
             CairoEngine engine = new CairoEngine(configuration, null);
             TelemetryJob telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
             Misc.free(engine);
             Misc.free(telemetryJob);
 
-            final String expected = "2020-06-19T10:36:16.527310Z\t100\n" +
-                    "2020-06-19T10:36:16.527310Z\t101\n";
+            final String expected = "2020-06-19T10:10:00.010000Z\t100\n" +
+                    "2020-06-19T10:10:00.020000Z\t101\n";
             assertTable(expected, "telemetry");
         });
     }

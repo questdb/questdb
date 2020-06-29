@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -81,9 +80,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
                 compiler.compile("CREATE TABLE " + configTableName + " (id long256, enabled boolean)", sqlExecutionContext);
             }
-
-            engine.unlockWriter(tableName);
-            engine.unlockWriter(configTableName);
         }
 
         try {
@@ -120,8 +116,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 final TableWriter.Row row = writerConfig.newRow();
                 row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
                 row.putBool(1, enabled);
-
+                row.append();
                 writerConfig.commit();
+                reader.reload();
                 reader.getCursor().getRecord().getLong256(0, idSink);
             }
         }
@@ -168,8 +165,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        newRow(TelemetryEvent.DOWN);
         runSerially();
+        newRow(TelemetryEvent.DOWN);
+        writer.commit();
         Misc.free(writer);
         Misc.free(writerConfig);
     }

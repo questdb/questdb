@@ -182,7 +182,7 @@ public final class TestUtils {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
             final File target = new File(targetDir, "conf/mime.types");
-            Assert.assertTrue(target.getParentFile().mkdirs());
+            target.getParentFile().mkdirs();
             try (FileOutputStream fos = new FileOutputStream(target)) {
                 byte[] buffer = new byte[1024 * 1204];
                 int len;

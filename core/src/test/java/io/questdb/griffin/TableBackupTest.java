@@ -125,9 +125,13 @@ public class TableBackupTest {
                 return new DateFormatCompiler().compile("ddMMMyyyy");
             }
         };
-        final Properties properties = new Properties();
-        TestUtils.copyMimeTypes(root.toString());
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(root.toString(), properties);
+        TestUtils.copyMimeTypes(temp.toString());
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                return mainConfiguration;
+            }
+        };
         final MessageBus mainMessageBus = new MessageBusImpl(serverConfiguration);
         mainEngine = new CairoEngine(mainConfiguration, mainMessageBus);
         mainCompiler = new SqlCompiler(mainEngine);
@@ -509,10 +513,13 @@ public class TableBackupTest {
         SqlExecutionContext sqlExecutionContext;
         try {
             if (backup) {
-                final Properties properties = new Properties();
-                TestUtils.copyMimeTypes(finalBackupPath.toString());
-                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(finalBackupPath.toString(), properties);
-                final CairoConfiguration backupConfiguration = serverConfiguration.getCairoConfiguration();
+                final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
+                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+                    @Override
+                    public CairoConfiguration getCairoConfiguration() {
+                        return backupConfiguration;
+                    }
+                };
                 final MessageBus backupMessageBus = new MessageBusImpl(serverConfiguration);
                 engine = new CairoEngine(backupConfiguration, backupMessageBus);
                 sqlExecutionContext = new SqlExecutionContextImpl(backupMessageBus, 1, engine).with(AllowAllCairoSecurityContext.INSTANCE,

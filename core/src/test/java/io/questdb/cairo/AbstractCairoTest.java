@@ -66,9 +66,13 @@ public class AbstractCairoTest {
         // created mid-test
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
-        final Properties properties = new Properties();
-        TestUtils.copyMimeTypes(root.toString());
-        serverConfiguration = new PropServerConfiguration(root.toString(), properties);
+        TestUtils.copyMimeTypes(temp.toString());
+        serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                return new DefaultCairoConfiguration(root);
+            }
+        };
         configuration = serverConfiguration.getCairoConfiguration();
         messageBus = new MessageBusImpl(serverConfiguration);
     }

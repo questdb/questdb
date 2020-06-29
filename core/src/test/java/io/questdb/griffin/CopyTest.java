@@ -100,9 +100,8 @@ public class CopyTest extends AbstractCairoTest {
                 return path;
             }
         };
-        final Properties properties = new Properties();
         TestUtils.copyMimeTypes(path);
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(path, properties);
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(path, new Properties());
         messageBus = new MessageBusImpl(serverConfiguration);
         engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
