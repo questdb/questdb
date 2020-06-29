@@ -4636,8 +4636,20 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportWaitsWhenWriterLockedLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWaitsWhenWriterLocked();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
     public void testImportWaitsWhenWriterLocked() throws Exception {
-        final int parallelCount = 1;
+        final int parallelCount = 2;
         testImport(2, (engine) -> {
             // create table and do 1 import
             sendAndReceive(
@@ -4654,6 +4666,7 @@ public class IODispatcherTest {
             for (int i = 0; i < 10; i++) {
                 try {
                     writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "fhv_tripdata_2017-02.csv");
+                    break;
                 } catch (EntryUnavailableException e) {
                     Thread.sleep(10);
                 }
@@ -4679,7 +4692,7 @@ public class IODispatcherTest {
                                         ValidImportResponse,
                                         1,
                                         0,
-                                        true,
+                                        false,
                                         false
                                 );
                             } catch (Exception e) {
@@ -4700,7 +4713,7 @@ public class IODispatcherTest {
             Assert.assertFalse(finished);
 
             writer.close();
-            if (!countDownLatch.await(100000, TimeUnit.MILLISECONDS)) {
+            if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
                 Assert.fail("Imports did not finish within reasonable time");
             }
 
