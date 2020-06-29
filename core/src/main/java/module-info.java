@@ -376,6 +376,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastSymbolToCharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory,
+            // cast helpers
+            io.questdb.griffin.engine.functions.cast.VarcharCastHelperFunctionFactory,
 //                  'in'
             io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,

@@ -197,4 +197,15 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testShowTransactionIsolationLevelErr4() throws Exception {
         assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
     }
+
+    @Test
+    public void testVarcharCast() throws SqlException {
+        assertQuery("anon_1\n" +
+                        "test plain returns\n", "SELECT CAST('test plain returns' AS VARCHAR(60)) AS anon_1",
+                null,
+                true,
+                sqlExecutionContext,
+                false
+        );
+    }
 }
