@@ -44,20 +44,24 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function scale = args.getQuick(1);
+        final Function arg = args.getQuick(0);
+        final Function scale = args.getQuick(1);
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
             if (scaleValue != Numbers.INT_NaN) {
+                if (scaleValue == 0) {
+                    return new RoundDoubleZeroScaleFunctionFactory.RoundDoubleZeroScaleFunction(position, arg);
+                }
                 if (scaleValue > -1 && scaleValue + 2 < Numbers.pow10max) {
-                    return new FuncPosConst(position, args.getQuick(0), scaleValue);
+                    return new FuncPosConst(position, arg, scaleValue);
                 }
                 if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
-                    return new FuncNegConst(position, args.getQuick(0), -scaleValue);
+                    return new FuncNegConst(position, arg, -scaleValue);
                 }
             }
             return new DoubleConstant(position, Double.NaN);
         }
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, arg, args.getQuick(1));
     }
 
     private static class Func extends DoubleFunction implements BinaryFunction {

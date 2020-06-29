@@ -414,6 +414,7 @@ open module io.questdb {
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
 //                  round()
+            io.questdb.griffin.engine.functions.math.RoundDoubleZeroScaleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundDownDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundUpDoubleFunctionFactory,
