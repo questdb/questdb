@@ -1395,9 +1395,6 @@ public class SqlCodeGenerator implements Mutable {
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
             int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
-            if (index < 0) {
-                System.out.println("fook");
-            }
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 
