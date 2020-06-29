@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
@@ -41,11 +42,8 @@ import io.questdb.std.time.Dates;
 import sun.misc.Signal;
 
 import java.io.*;
-import java.net.URL;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Properties;
-import java.util.ServiceLoader;
+import java.net.*;
+import java.util.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -190,6 +188,9 @@ public class ServerMain {
             }
 
             startQuestDb(workerPool, lineProtocolReceiver, log);
+            logWebConsoleUrls(log, configuration);
+
+            System.gc();
 
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
@@ -206,6 +207,26 @@ public class ServerMain {
             log.error().$(e.getMessage()).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
+        }
+    }
+
+    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
+        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
+        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        if (httpBindIP == 0) {
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface netint : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
+                    if (inetAddress instanceof Inet4Address) {
+                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
+                    }
+                }
+            }
+            record.$('\n').$();
+        } else {
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n');
         }
     }
 
