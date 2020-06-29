@@ -29,10 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.BaseFunctionFactoryTest;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
@@ -758,7 +755,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         String expression;
 
         private Function $() throws SqlException {
-            return parseFunction(expression, metadata, new FunctionParser(configuration, functions));
+            return parseFunction(expression, metadata, new FunctionParser(configuration, new FunctionFactoryCache(configuration, functions)));
         }
 
         Record getRecord() {

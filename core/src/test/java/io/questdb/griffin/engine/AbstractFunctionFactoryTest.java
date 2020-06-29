@@ -218,7 +218,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         addExtraFunctions();
 
-        FunctionParser functionParser = new FunctionParser(configuration, functions);
+        FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, functions));
         return new Invocation(
                 parseFunction(expression1, metadata, functionParser),
                 parseFunction(expression2, metadata, functionParser),

@@ -24,25 +24,16 @@
 
 package io.questdb.cutlass.http.processors;
 
-import java.io.Closeable;
-
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
-import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -57,6 +48,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.time.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Factory cache is thread local due to possibility of factory being
@@ -75,15 +69,31 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            MessageBus messageBus,
+            @Nullable MessageBus messageBus,
             int workerCount
     ) {
+        this(configuration, engine, messageBus, workerCount, null);
+    }
+
+    public TextQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            @Nullable MessageBus messageBus,
+            int workerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine);
+        this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
         this.doubleScale = configuration.getDoubleScale();
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
     }
 
     @Override
@@ -283,12 +293,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         TextQueryProcessorState state = LV.get(context);
         if (state != null) {
             state.rnd = sqlExecutionContext.getRandom();
-        }
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
         }
     }
 

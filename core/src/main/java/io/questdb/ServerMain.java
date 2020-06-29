@@ -30,6 +30,8 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -43,6 +45,7 @@ import java.net.URL;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Properties;
+import java.util.ServiceLoader;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -139,6 +142,7 @@ public class ServerMain {
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final MessageBus messageBus = new MessageBusImpl();
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
@@ -150,7 +154,8 @@ public class ServerMain {
                     workerPool,
                     log,
                     cairoEngine,
-                    messageBus
+                    messageBus,
+                    functionFactoryCache
             );
 
             final PGWireServer pgWireServer;
@@ -161,7 +166,8 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        messageBus
+                        messageBus,
+                        functionFactoryCache
                 );
             } else {
                 pgWireServer = null;
