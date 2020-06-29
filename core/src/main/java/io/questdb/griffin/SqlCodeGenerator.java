@@ -614,12 +614,14 @@ public class SqlCodeGenerator implements Mutable {
 
                     switch (joinType) {
                         case QueryModel.JOIN_CROSS:
-                            return new CrossJoinRecordCursorFactory(
+                            master = new CrossJoinRecordCursorFactory(
                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                     master,
                                     slave,
                                     masterMetadata.getColumnCount()
                             );
+                            masterAlias = null;
+                            break;
                         case QueryModel.JOIN_ASOF:
                             validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
@@ -1393,6 +1395,9 @@ public class SqlCodeGenerator implements Mutable {
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
             int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+            if (index < 0) {
+                System.out.println("fook");
+            }
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 

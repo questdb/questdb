@@ -26,10 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1867,6 +1871,25 @@ public class JoinTest extends AbstractGriffinTest {
 
             // filter is applied to final join result
             assertQuery(expected, "select * from x cross join y", "k");
+        });
+    }
+
+    @Test
+    public void testCrossTripleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
+            final RecordCursorFactory factory = cq.getRecordCursorFactory();
+            try {
+                Assert.assertNotNull(factory);
+                sink.clear();
+                printer.printHeader(factory.getMetadata());
+                TestUtils.assertEquals("x\tx1\tx2\n", sink);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
+                }
+            } finally {
+                Misc.free(factory);
+            }
         });
     }
 

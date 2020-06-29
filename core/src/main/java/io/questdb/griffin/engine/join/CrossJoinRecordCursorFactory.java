@@ -109,7 +109,8 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (sizeA == -1 || sizeB == -1) {
                 return -1;
             }
-            return sizeA * sizeB;
+            final long result = sizeA * sizeB;
+            return result < sizeA ? Long.MAX_VALUE : result;
         }
 
         @Override
