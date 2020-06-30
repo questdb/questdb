@@ -45,7 +45,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private final long bufB;
     private final long sockaddr;
     private final long fd;
-    private final NetworkFacade nf;
+    protected final NetworkFacade nf;
 
     private long lo;
     private long hi;
@@ -74,7 +74,20 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     ) {
         this.nf = nf;
         this.capacity = capacity;
-        fd = nf.socketUdp();
+        sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);
+        fd = createSocket(interfaceIPv4Address, ttl, sockaddr);
+
+        bufA = Unsafe.malloc(capacity);
+        bufB = Unsafe.malloc(capacity);
+
+        lo = bufA;
+        hi = lo + capacity;
+        ptr = lo;
+        lineStart = lo;
+    }
+
+    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
+        long fd = nf.socketUdp();
 
         if (fd == -1) {
             throw NetworkError.instance(nf.errno()).put("could not create UDP socket");
@@ -92,14 +105,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
         }
 
-        sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);
-        bufA = Unsafe.malloc(capacity);
-        bufB = Unsafe.malloc(capacity);
-
-        lo = bufA;
-        hi = lo + capacity;
-        ptr = lo;
-        lineStart = lo;
+        return fd;
     }
 
     public void $(long timestamp) {
@@ -241,9 +247,13 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private void send() {
         if (lo < lineStart) {
             int len = (int) (lineStart - lo);
-            if (nf.sendTo(fd, lo, len, sockaddr) != len) {
-                throw NetworkError.instance(nf.errno()).put("send error");
-            }
+            sendToSocket(fd, lo, sockaddr, len);
+        }
+    }
+
+    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
+        if (nf.sendTo(fd, lo, len, sockaddr) != len) {
+            throw NetworkError.instance(nf.errno()).put("send error");
         }
     }
 

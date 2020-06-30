@@ -22,29 +22,29 @@
  *
  ******************************************************************************/
 
-package org.questdb;
+package io.questdb.cutlass.line.udp;
 
-import io.questdb.cutlass.line.udp.LineProtoSender;
-import io.questdb.network.Net;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.network.NetworkError;
 
-public class LineUDPSenderMain {
-    public static void main(String[] args) {
-        final long count = 50_000_000;
-        String hostIPv4 = "127.0.0.1";
-        int port = 9009; // 8089 influx
-        int ttl = 1;
-        int bufferCapacity = 1024; // 1024 max
+public class LineTCPProtoSender extends LineProtoSender {
 
-        final Rnd rnd = new Rnd();
-        long start = System.nanoTime();
-        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity, ttl)) {
-            for (int i = 0; i < count; i++) {
-                sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
-            }
-            sender.flush();
+    public LineTCPProtoSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
+        super(interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, 0);
+    }
+
+    @Override
+    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
+        long fd = nf.socketTcp(true);
+        if (nf.connect(fd, sockaddr) != 0) {
+            throw NetworkError.instance(nf.errno(), "failed to connect");
         }
-        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
+        return fd;
+    }
+
+    @Override
+    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
+        if (nf.send(fd, lo, len) != len) {
+            throw NetworkError.instance(nf.errno()).put("send error");
+        }
     }
 }
