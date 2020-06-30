@@ -464,17 +464,28 @@ final class WhereClauseParser implements Mutable {
                             // check if we are limited by preferred column
                             if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
                                 return false;
+                            } else {
+                                CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
+                                model.keyColumn = column;
+                                model.keyExcludedValues.clear();
+                                model.keyExcludedValuePositions.clear();
+                                model.keyExcludedValues.add(value);
+                                model.keyExcludedValuePositions.add(b.position);
+                                for (int n = 0, k = keyNodes.size(); n < k; n++) {
+                                    keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+                                }
+                                keyExclNodes.clear();
+                                keyExclNodes.add(node);
+                                node.intrinsicValue = IntrinsicModel.TRUE;
+                                return true;
                             }
-
-                            keyExclNodes.add(node);
-                            return false;
                         }
-                        break;
+                        keyExclNodes.add(node);
+                        return false;
                     default:
                         break;
                 }
             }
-
         }
         return false;
     }

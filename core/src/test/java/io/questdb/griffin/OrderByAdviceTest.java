@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class OrderByAdviceTest extends AbstractGriffinTest {
@@ -550,7 +549,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true
-
         );
     }
 
@@ -1066,6 +1064,96 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNotEquals1SymbolsNonExistent() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n" +
+                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
+                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where sym != 'AAA'",
+                "create table x (\n" +
+                        "    sym symbol cache index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testNotEquals2Symbols() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where sym != 'HBC' or sym != 'AAA'",
+                "create table x (\n" +
+                        "    sym symbol cache index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testNotEqualsSingleSymbol() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where sym != 'HBC'",
+                "create table x (\n" +
+                        "    sym symbol cache index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
     public void testOrderBy2Columns() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
@@ -1097,4 +1185,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         );
     }
+
+
 }
