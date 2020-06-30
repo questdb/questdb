@@ -32,6 +32,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
@@ -121,7 +122,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableStats stats;
         int keyIndex = statsByTableName.keyIndex(event.getTableName());
         if (keyIndex > -1) {
-            String tableName = event.getTableName().toString();
+            String tableName = Chars.toString(event.getTableName());
             calcThreadLoad();
             int leastLoad = Integer.MAX_VALUE;
             int threadId = 0;
@@ -520,7 +521,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return false;
                 }
                 LOG.info().$(name).$(" created parser [name=").$(event.getTableName()).$(']').$();
-                parserCache.put(event.getTableName().toString(), parser);
+                parserCache.put(Chars.toString(event.getTableName()).toString(), parser);
                 return true;
             } else {
                 parser.processEvent(event);
