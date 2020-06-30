@@ -3204,10 +3204,10 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:00:00.060000Z\t100\n" +
-                "2020-06-19T10:00:00.110000Z\t0\n" +
-                "2020-06-19T10:00:00.130000Z\t101\n";
-        assertTable(expected, "telemetry");
+        final String expected = "100\n" +
+                "1\n" +
+                "101\n";
+        assertColumn(expected, "telemetry", 1);
     }
 
     @Test
@@ -3239,11 +3239,11 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "2020-06-19T10:00:00.060000Z\t100\n" +
-                "2020-06-19T10:00:00.110000Z\t0\n" +
-                "2020-06-19T10:00:00.130000Z\t0\n" +
-                "2020-06-19T10:00:00.150000Z\t101\n";
-        assertTable(expected, "telemetry");
+        final String expected = "100\n" +
+                "1\n" +
+                "1\n" +
+                "101\n";
+        assertColumn(expected, "telemetry", 1);
     }
 
     @Test
@@ -5197,7 +5197,7 @@ public class IODispatcherTest {
         });
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) {
+    private void assertColumn(CharSequence expected, CharSequence tableName, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
@@ -5205,11 +5205,11 @@ public class IODispatcherTest {
             final StringSink sink = new StringSink();
             final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
             sink.clear();
-            printer.print(reader.getCursor(), reader.getMetadata(), false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
             TestUtils.assertEquals(expected, sink);
             reader.getCursor().toTop();
             sink.clear();
-            printer.print(reader.getCursor(), reader.getMetadata(), false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
             TestUtils.assertEquals(expected, sink);
         }
     }

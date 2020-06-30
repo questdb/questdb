@@ -125,7 +125,7 @@ public class TableBackupTest {
                 return new DateFormatCompiler().compile("ddMMMyyyy");
             }
         };
-        TestUtils.copyMimeTypes(temp.toString());
+        TestUtils.copyMimeTypes(temp.getRoot().getAbsolutePath());
         final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
             @Override
             public CairoConfiguration getCairoConfiguration() {
