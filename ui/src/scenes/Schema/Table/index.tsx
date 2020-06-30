@@ -85,8 +85,6 @@ const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
           setLoading(loading)
         }
       })
-    } else {
-      setColumns(undefined)
     }
   }, [expanded, refresh, quest, table])
 
