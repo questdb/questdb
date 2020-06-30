@@ -57,5 +57,5 @@ public interface SqlExecutionContext {
 
     SqlExecutionInterruptor getSqlExecutionInterruptor();
 
-    void storeTelemetry(short event);
+    void storeTelemetry(short event, short origin);
 }

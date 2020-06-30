@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.time.MillisecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,7 +50,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
     private final StringSink idSink = new StringSink();
 
-    private final MicrosecondClock clock;
+    private final MillisecondClock clock;
     private final PropServerConfiguration configuration;
     private final boolean enabled;
     private final TableWriter writer;
@@ -60,7 +61,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     public TelemetryJob(PropServerConfiguration configuration, CairoEngine engine, @Nullable MessageBus messageBus) throws SqlException, CairoException {
         final CairoConfiguration cairoConfig = configuration.getCairoConfiguration();
 
-        this.clock = cairoConfig.getMicrosecondClock();
+        this.clock = cairoConfig.getMillisecondClock();
         this.configuration = configuration;
         this.enabled = configuration.getTelemetryConfiguration().getEnabled();
         this.queue = messageBus.getTelemetryQueue();
@@ -74,7 +75,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                compiler.compile("CREATE TABLE " + tableName + " (ts timestamp, event short)", sqlExecutionContext);
+                compiler.compile("CREATE TABLE " + tableName + " (ts timestamp, event short, origin short)", sqlExecutionContext);
             }
 
             if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -94,6 +95,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         try {
             this.writerConfig = new TableWriter(cairoConfig, configTableName);
         } catch (CairoException ex) {
+            Misc.free(writer);
             LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
             throw ex;
         }
@@ -113,6 +115,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                     writerConfig.commit();
                 }
             } else {
+                final MicrosecondClock clock = cairoConfig.getMicrosecondClock();
                 final TableWriter.Row row = writerConfig.newRow();
                 row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
                 row.putBool(1, enabled);
@@ -142,6 +145,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             final TableWriter.Row row = writer.newRow();
             row.putDate(0, clock.getTicks());
             row.putShort(1, event);
+            row.putShort(2, TelemetryOrigin.INTERNAL);
             row.append();
         }
     }
@@ -150,6 +154,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         final TableWriter.Row row = writer.newRow();
         row.putDate(0, telemetryRow.ts);
         row.putShort(1, telemetryRow.event);
+        row.putShort(2, telemetryRow.origin);
         row.append();
     }
 

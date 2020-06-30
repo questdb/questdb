@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -1185,7 +1186,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType());
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
 
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:
@@ -1243,7 +1244,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType());
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
 
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:

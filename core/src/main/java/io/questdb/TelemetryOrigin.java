@@ -22,23 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.tools;
+package io.questdb;
 
-import io.questdb.std.NanosecondClock;
-
-public class TestNanoClock implements NanosecondClock {
-    private final long increment;
-    private long nanos;
-
-    public TestNanoClock(long micros, long increment) {
-        this.nanos = micros * 1000;
-        this.increment = increment;
-    }
-
-    @Override
-    public long getTicks() {
-        long result = nanos;
-        nanos += increment;
-        return result;
-    }
+public final class TelemetryOrigin {
+    public static final short INTERNAL = 1;
+    public static final short HTTP = 2;
+    public static final short PG_WIRE = 3;
 }

@@ -26,8 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.*;
 
@@ -73,28 +71,24 @@ public class TelemetryTest extends AbstractCairoTest {
             serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
                 @Override
                 public CairoConfiguration getCairoConfiguration() {
-                    return new DefaultCairoConfiguration(root) {
-                        @Override
-                        public MicrosecondClock getMicrosecondClock() {
-                            try {
-                                return new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:10:00.000000Z"), 10);
-                            } catch (NumericException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
-                    };
+                    return new DefaultCairoConfiguration(root);
                 }
             };
             configuration = serverConfiguration.getCairoConfiguration();
             messageBus = new MessageBusImpl(serverConfiguration);
-            CairoEngine engine = new CairoEngine(configuration, null);
+            CairoEngine engine = new CairoEngine(configuration, messageBus);
             TelemetryJob telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
-            Misc.free(engine);
             Misc.free(telemetryJob);
 
-            final String expected = "2020-06-19T10:10:00.010000Z\t100\n" +
-                    "2020-06-19T10:10:00.020000Z\t101\n";
-            assertTable(expected, "telemetry");
+            final String expectedEvent = "100\n" +
+                    "101\n";
+            assertColumn(expectedEvent, "telemetry", 1);
+
+            final String expectedOrigin = "1\n" +
+                    "1\n";
+            assertColumn(expectedOrigin, "telemetry", 2);
+
+            Misc.free(engine);
         });
     }
 

@@ -28,4 +28,5 @@ public final class TelemetryTask {
     public long ts;
     public CharSequence id;
     public short event;
+    public short origin;
 }

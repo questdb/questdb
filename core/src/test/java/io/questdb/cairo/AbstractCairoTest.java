@@ -105,4 +105,20 @@ public class AbstractCairoTest {
         cursor.toTop();
         assertOnce(expected, cursor, metadata, header);
     }
+
+    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            final StringSink sink = new StringSink();
+            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+        }
+    }
 }

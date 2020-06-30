@@ -41,14 +41,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
-import io.questdb.test.tools.TestMicroClock;
-import io.questdb.test.tools.TestNanoClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -3204,10 +3200,15 @@ public class IODispatcherTest {
                 true
         );
 
-        final String expected = "100\n" +
+        final String expectedEvent = "100\n" +
                 "1\n" +
                 "101\n";
-        assertColumn(expected, "telemetry", 1);
+        assertColumn(expectedEvent, "telemetry", 1);
+
+        final String expectedOrigin = "1\n" +
+                "2\n" +
+                "1\n";
+        assertColumn(expectedOrigin, "telemetry", 2);
     }
 
     @Test
@@ -3244,6 +3245,12 @@ public class IODispatcherTest {
                 "1\n" +
                 "101\n";
         assertColumn(expected, "telemetry", 1);
+
+        final String expectedOrigin = "1\n" +
+                "2\n" +
+                "2\n" +
+                "1\n";
+        assertColumn(expectedOrigin, "telemetry", 2);
     }
 
     @Test
@@ -5099,13 +5106,7 @@ public class IODispatcherTest {
                 }
             });
 
-            MicrosecondClock clock =  new TestMicroClock(TimestampFormatUtils.parseDateTime("2020-06-19T10:00:00.000000Z"), 10);
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
-                @Override
-                public MicrosecondClock getMicrosecondClock() {
-                    return clock;
-                }
-            };
+            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, null);
