@@ -113,8 +113,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        this.cursor.of(dataFrameCursor, executionContext);
         this.recalculateIncludedValues(dataFrameCursor.getTableReader());
+        this.cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(this.cursor, executionContext);
         }

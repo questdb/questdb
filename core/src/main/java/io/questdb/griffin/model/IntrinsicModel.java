@@ -52,6 +52,7 @@ public class IntrinsicModel implements Mutable {
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
     public CharSequence keyColumn;
+    public CharSequence keyExcludedColumn;
     public ExpressionNode filter;
     public LongList intervals;
     public int intrinsicValue = UNDEFINED;
@@ -587,6 +588,7 @@ public class IntrinsicModel implements Mutable {
     @Override
     public void clear() {
         keyColumn = null;
+        keyExcludedColumn = null;
         keyValues.clear();
         keyExcludedValues.clear();
         keyValuePositions.clear();

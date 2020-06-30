@@ -160,7 +160,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC' or sym != 'AAA'",
+                "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
