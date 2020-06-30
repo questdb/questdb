@@ -58,6 +58,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     private int consumedBoundaryLen;
     private int state;
     private int preiviousState;
+    private long ptr;
 
     public HttpMultipartContentParser(HttpHeaderParser headerParser) {
         this.headerParser = headerParser;
@@ -79,6 +80,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
     public int getPreviousState() {
         return preiviousState;
+    }
+
+    public long getNextTokenPtr() {
+        return ptr;
     }
 
     public void setState(int state) {
@@ -103,7 +108,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = Long.MAX_VALUE;
-        long ptr = lo;
+        ptr = lo;
         while (ptr < hi) {
             switch (state) {
                 case BODY_BROKEN:

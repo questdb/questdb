@@ -264,7 +264,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
             } catch (EntryUnavailableException e) {
-                throw RetryOperationException.INSTANCE.putPos(hi);
+                throw RetryOperationException.INSTANCE;
             }
             catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);

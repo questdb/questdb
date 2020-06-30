@@ -29,19 +29,9 @@ import io.questdb.network.PeerDisconnectedException;
 
 public class RetryOperationException extends CairoException {
     public static final RetryOperationException INSTANCE;
-    private long buffPosition;
 
     static {
         INSTANCE = new RetryOperationException();
         INSTANCE.put("resource is busy");
-    }
-
-    public RetryOperationException putPos(long position) {
-        this.buffPosition = position;
-        return this;
-    }
-
-    public long getBuffPosition() {
-        return buffPosition;
     }
 }

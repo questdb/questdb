@@ -234,10 +234,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             bufRemaining = recvBufferSize;
         }
 
-        continueConsumeMultipart(fd, start, buf, bufRemaining, false, multipartListener, processor, rescheduleContext);
+        continueConsumeMultipart(fd, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);
     }
 
-    private void continueConsumeMultipart(long fd, long start, long buf, int bufRemaining, boolean retry, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private void continueConsumeMultipart(long fd, long start, long buf, int bufRemaining, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         // do we have anything in the buffer?
         if (buf > start) {
             if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
@@ -310,7 +310,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         try {
             parseResult = multipartContentParser.parse(start, buf, multipartListener);
         } catch (RetryOperationException e) {
-            this.multipartParserState.saveFdBufferPosition(e.getBuffPosition() + 1, buf, bufRemaining,  multipartContentParser.getPreviousState());
+            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getNextTokenPtr(), buf, bufRemaining,  multipartContentParser.getPreviousState());
             throw e;
         }
 
@@ -467,30 +467,43 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     public boolean tryRerun(HttpRequestProcessorSelector selector) {
         if (pendingRetry) {
             pendingRetry = false;
+            long thread = Thread.currentThread().getId();
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
             try {
                 if (multipartParserState.multipartRetry) {
-                    final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
-
                     processor.onRequestRetry(this);
+                    LOG.info().$("Multipart chunked retry success, part 1. [thread=").$(thread).$(']').$();
                     multipartContentParser.setState(multipartParserState.state);
-                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, true, multipartListener, processor, retry -> {
-                        throw RetryOperationException.INSTANCE;
-                    });
-                    return true;
+                    try {
+                        LOG.info().$("Multipart chunked retry starting part2. [thread=").$(thread).$(",state=").$(multipartParserState.state).$(",start=").$(multipartParserState.start)
+                                .$(",buf=").$(multipartParserState.buf).$(",bufRemaining=").$(multipartParserState.bufRemaining).$(']').$();
+                        continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retry -> {
+                            LOG.info().$("Multipart chunked retry fail, [thread=").$(thread).$(']').$();
+                            throw RetryOperationException.INSTANCE;
+                        });
+                    } finally {
+                        LOG.info().$("Exit chunked retry part 2, [thread=").$(thread).$(']').$();
+                    }
+                    LOG.info().$("Multipart chunked retry success, part 2, [thread=").$(thread).$(']').$();
                 } else {
                     processor.onRequestRetry(this);
                 }
             } catch (RetryOperationException e2) {
+                LOG.info().$("RetryOperationException, [thread=").$(thread).$(']').$();
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
+                LOG.info().$("PeerDisconnectedException").$();
                 dispatcher.disconnect(this);
             } catch (PeerIsSlowToReadException e2) {
+                LOG.info().$("PeerIsSlowToReadException").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this);
+            } catch (Exception e) {
+                LOG.info().$("Retry exit ").$(e.getClass().getName()).$(" [thread=").$(thread).$(']').$();
+                throw  e;
             }
         }
         return true;

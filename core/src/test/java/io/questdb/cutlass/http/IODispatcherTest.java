@@ -4420,7 +4420,7 @@ public class IODispatcherTest {
                     false
             );
 
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
+            TableWriter writer = lockWriter(engine, "balances_x");
 
             final int insertCount = 10;
             CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
@@ -4569,7 +4569,7 @@ public class IODispatcherTest {
                     false
             );
 
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "balances_x");
+            TableWriter writer = lockWriter(engine, "balances_x");
             CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
             Thread[] threads = new Thread[parallelCount];
             for (int i = 0; i < parallelCount; i++) {
@@ -4636,6 +4636,7 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testImportWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 100; i++) {
             System.out.println("*************************************************************************************");
@@ -4662,20 +4663,7 @@ public class IODispatcherTest {
                     false
             );
 
-            TableWriter writer = null;
-            for (int i = 0; i < 10; i++) {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "fhv_tripdata_2017-02.csv");
-                    break;
-                } catch (EntryUnavailableException e) {
-                    Thread.sleep(10);
-                }
-            }
-
-            if (writer == null) {
-                Assert.fail("Cannot lock writer in a reasonable time");
-            }
-
+            TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
             final int validRequestRecordCount = 24;
             final int insertCount = 1;
             CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
@@ -4706,7 +4694,7 @@ public class IODispatcherTest {
                 }).start();
             }
 
-            boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+            boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
 
             // Cairo engine should not allow second writer to be opened on the same table
             // Cairo is expected to have finished == false
@@ -4733,7 +4721,123 @@ public class IODispatcherTest {
                     false,
                     false
             );
+
         });
+    }
+
+    @Test
+    @Ignore
+    public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportProcessedWhenClientDisconnected();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    public void testImportProcessedWhenClientDisconnected() throws Exception {
+        final int parallelCount = 2;
+        testImport(2, (engine) -> {
+            // create table and do 1 import
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    ValidImportRequest,
+                    ValidImportResponse,
+                    1,
+                    0,
+                    false,
+                    false
+            );
+
+            TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
+
+            final int validRequestRecordCount = 24;
+            final int insertCount = 1;
+            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+            for (int i = 0; i < parallelCount; i++) {
+                int finalI = i;
+                new Thread(() -> {
+                    try {
+                        for (int r = 0; r < insertCount; r++) {
+                            // insert one record
+                            try {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        ValidImportRequest,
+                                        "",
+                                        1,
+                                        0,
+                                        false,
+                                        false
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                            }
+                        }
+                    } finally {
+                        countDownLatch.countDown();
+                    }
+                    LOG.info().$("Stopped thread ").$(finalI).$();
+                }).start();
+            }
+
+            countDownLatch.await();
+
+            // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
+            writer.close();
+
+            for (int i = 0; i < 20; i++) {
+
+                try {
+                    // check if we have parallelCount x insertCount  records
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "83\r\n" +
+                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            false
+                    );
+                    return;
+                } catch (ComparisonFailure e) {
+                    if (i < 9) {
+                        Thread.sleep(50);
+                    } else {
+                        throw e;
+                    }
+
+                }
+            }
+
+        });
+    }
+
+    @NotNull
+    private TableWriter lockWriter(CairoEngine engine, String tableName) throws InterruptedException {
+        TableWriter writer = null;
+        for (int i = 0; i < 10; i++) {
+            try {
+                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                break;
+            } catch (EntryUnavailableException e) {
+                Thread.sleep(10);
+            }
+        }
+
+        if (writer == null) {
+            Assert.fail("Cannot lock writer in a reasonable time");
+        }
+        return writer;
     }
 
     @Test
