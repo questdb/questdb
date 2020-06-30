@@ -588,7 +588,9 @@ public class IntrinsicModel implements Mutable {
     public void clear() {
         keyColumn = null;
         keyValues.clear();
+        keyExcludedValues.clear();
         keyValuePositions.clear();
+        keyExcludedValuePositions.clear();
         clearInterval();
         filter = null;
         intervals = null;

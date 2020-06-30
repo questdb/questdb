@@ -2128,7 +2128,7 @@ public class SqlCodeGenerator implements Mutable {
                                 columnIndexes
                         );
 
-                    } else {
+                    } else if (intrinsicModel.keyExcludedValues.size() > 0) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
                             symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
