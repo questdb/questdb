@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class OrderByAdviceTest extends AbstractGriffinTest {
@@ -38,7 +37,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testExpressionSearchOrderByAlias() throws Exception {
         final String expected = "sym\tspread\n" +
                 "HBC\t-1912873112\n" +
@@ -73,7 +72,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testFunctionSearchOrderByAlias() throws Exception {
         final String expected = "sym\tmaxp\n" +
                 "DXR\t0.97613283653158\n" +
@@ -100,7 +99,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testFunctionSearchOrderByAlias2() throws Exception {
         final String expected = "sym\tmaxp\n" +
                 "DXR\t0.008134052047644613\n" +
@@ -126,7 +125,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testNoKeyGroupBy() throws Exception {
         assertQuery(
                 "column\n",
@@ -148,7 +147,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testNotEquals2Symbols() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
@@ -178,7 +177,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testOrderByMultipleColumns() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
@@ -209,7 +208,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -243,7 +242,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSelectWithOrderByTimestampDesc() throws Exception {
         final String expected = "sym\tbid\task\tts\n" +
                 "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
@@ -278,7 +277,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSingleSymbolSearchOrderByAliasAndTimestamp() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
@@ -331,7 +330,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSingleSymbolSearchOrderByAliasAndTimestampDesc() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
@@ -383,7 +382,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderBy() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
@@ -473,7 +472,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderByAlias() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
@@ -563,7 +562,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderByAliasAndTimestamp() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
@@ -653,7 +652,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderByAliasAndTimestampDesc() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z\n" +
@@ -743,7 +742,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderByIndex() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "ABB\t0.33046819455237\t1970-01-04T00:00:00.000000Z\n" +
@@ -865,7 +864,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testSymbolSearchOrderByIndexDesc() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z\n" +
@@ -954,7 +953,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testTimestampLessThan() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
@@ -1110,7 +1109,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+
     public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
         final String expected = "sym\tspread\n" +
                 "AA\t4171981\n" +
