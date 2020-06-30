@@ -36,8 +36,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             LineTcpMeasurementEvent event = scheduler.getNewEvent();
             if (null == event) {
                 // Waiting for writer threads to drain queue, request callback as soon as possible
-                dispatcher.registerChannel(this, IOOperation.READ);
-                dispatcher.registerChannel(this, IOOperation.WRITE);
+                LOG.info().$('[').$(fd).$("] queue full, could not start reading new records, consider increasing queue size or number of writer jobs").$();
                 return true;
             }
 
@@ -47,7 +46,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 int nRead = nf.recv(fd, recvBufPos, len);
                 if (nRead < 0) {
                     if (recvBufPos != recvBufStart) {
-                        LOG.info().$('[').$(fd).$("] disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                        LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                    } else {
+                        LOG.info().$('[').$(fd).$("] peer disconnected").$();
                     }
                     peerDisconnected = true;
                 } else {
@@ -84,8 +85,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             // Check if we are waiting for writer threads
             if (null == event) {
                 // Waiting for writer threads to drain queue, request callback as soon as possible
-                dispatcher.registerChannel(this, IOOperation.READ);
-                dispatcher.registerChannel(this, IOOperation.WRITE);
+                LOG.info().$('[').$(fd).$("] queue full, could not drain input buffer, consider increasing queue size or number of writer jobs").$();
                 return true;
             }
 
@@ -103,7 +103,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             }
 
             dispatcher.registerChannel(this, IOOperation.READ);
-            return true;
+            return false;
         } catch (RuntimeException ex) {
             LOG.error().$('[').$(fd).$("] Failed to process line data").$(ex).$();
             dispatcher.disconnect(this);

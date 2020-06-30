@@ -20,6 +20,7 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
 
@@ -42,18 +43,19 @@ public class LineTcpServer implements Closeable {
         WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
         ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, netWorkerPool, local,
                 bus) -> new LineTcpServer(
-                cairoConfiguration,
-                lineConfiguration,
-                cairoEngine,
+                        cairoConfiguration,
+                        lineConfiguration,
+                        cairoEngine,
                         netWorkerPool,
                         writerWorkerPool,
-                bus);
+                        bus);
         return WorkerPoolAwareConfiguration.create(lineConfiguration.getNetWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
     }
 
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
+    private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
 
     public LineTcpServer(
             CairoConfiguration cairoConfiguration,
@@ -71,11 +73,20 @@ public class LineTcpServer implements Closeable {
         netWorkerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine, writerWorkerPool);
         final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
-            context.handleIO();
+            if (context.handleIO()) {
+                busyContexts.add(context);
+            }
         };
         netWorkerPool.assign(new SynchronizedJob() {
             @Override
             protected boolean runSerially() {
+                int n = busyContexts.size();
+                while (n > 0) {
+                    n--;
+                    if (!busyContexts.getQuick(n).handleIO()) {
+                        busyContexts.remove(n);
+                    }
+                }
                 return dispatcher.processIOQueue(processor);
             }
         });
