@@ -145,9 +145,10 @@ public class ServerMain {
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus);
 
         if (configuration.getTelemetryConfiguration().getEnabled()) {
-            workerPool.assign(new TelemetryJob(configuration, cairoEngine, messageBus));
+            workerPool.assign(telemetryJob);
         }
 
         try {
@@ -204,7 +205,14 @@ public class ServerMain {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.err.println(new Date() + " QuestDB is shutting down");
-                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
+                shutdownQuestDb(
+                        workerPool,
+                        cairoEngine,
+                        httpServer,
+                        pgWireServer,
+                        lineProtocolReceiver,
+                        telemetryJob
+                );
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
@@ -371,9 +379,11 @@ public class ServerMain {
                                           final CairoEngine cairoEngine,
                                           final HttpServer httpServer,
                                           final PGWireServer pgWireServer,
-                                          final AbstractLineProtoReceiver lineProtocolReceiver
+                                          final AbstractLineProtoReceiver lineProtocolReceiver,
+                                          final TelemetryJob telemetryJob
     ) {
         lineProtocolReceiver.halt();
+        Misc.free(telemetryJob);
         workerPool.halt();
         Misc.free(pgWireServer);
         Misc.free(httpServer);
