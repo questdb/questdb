@@ -126,7 +126,7 @@ public class TableBackupTest {
             }
         };
         TestUtils.copyMimeTypes(temp.getRoot().getAbsolutePath());
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
             @Override
             public CairoConfiguration getCairoConfiguration() {
                 return mainConfiguration;
@@ -514,7 +514,7 @@ public class TableBackupTest {
         try {
             if (backup) {
                 final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
-                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
                     @Override
                     public CairoConfiguration getCairoConfiguration() {
                         return backupConfiguration;

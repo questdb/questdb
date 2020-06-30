@@ -67,7 +67,7 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
         TestUtils.copyMimeTypes(temp.getRoot().getAbsolutePath());
-        serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+        serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
             @Override
             public CairoConfiguration getCairoConfiguration() {
                 return new DefaultCairoConfiguration(root);

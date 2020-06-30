@@ -70,7 +70,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            serverConfiguration = new PropServerConfiguration(temp.toString(), new Properties()) {
+            serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
                 @Override
                 public CairoConfiguration getCairoConfiguration() {
                     return new DefaultCairoConfiguration(root) {
