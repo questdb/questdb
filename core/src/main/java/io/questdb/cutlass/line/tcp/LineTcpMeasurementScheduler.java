@@ -94,15 +94,19 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     LineTcpMeasurementEvent getNewEvent() {
         assert !closed();
-        if (nextEventCursor == -1) {
-            do {
-                nextEventCursor = pubSeq.next();
-            } while (nextEventCursor == -2);
-            if (nextEventCursor < 0) {
-                nextEventCursor = -1;
-                return null;
-            }
+        if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
+            return queue.get(nextEventCursor);
         }
+
+        while (nextEventCursor == -2) {
+            nextEventCursor = pubSeq.next();
+        }
+
+        if (nextEventCursor < 0) {
+            nextEventCursor = -1;
+            return null;
+        }
+
         return queue.get(nextEventCursor);
     }
 
@@ -114,8 +118,9 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         assert queue.get(nextEventCursor) == event;
 
-        TableStats stats = statsByTableName.get(event.getTableName());
-        if (null == stats) {
+        TableStats stats;
+        int keyIndex = statsByTableName.keyIndex(event.getTableName());
+        if (keyIndex > -1) {
             String tableName = event.getTableName().toString();
             calcThreadLoad();
             int leastLoad = Integer.MAX_VALUE;
@@ -127,9 +132,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
             stats = new TableStats(tableName, threadId);
-            statsByTableName.put(tableName, stats);
+            statsByTableName.putAt(keyIndex, tableName, stats);
             LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
+        } else {
+            stats = statsByTableName.valueAt(keyIndex);
         }
+
         event.threadId = stats.threadId;
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
@@ -534,7 +542,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 parserCache.remove(event.rebalanceTableName);
                 parser.close();
                 event.rebalanceReleasedByFromThread = true;
-                return true;
             }
 
             return true;
@@ -591,7 +598,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
                     }
                     row.append();
-                } catch (BadCastException ignore) {
+                } catch (CairoException | BadCastException ignore) {
                     row.cancel();
                 }
                 writer.commit();

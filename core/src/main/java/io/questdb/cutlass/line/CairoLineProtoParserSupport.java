@@ -57,8 +57,7 @@ public class CairoLineProtoParserSupport {
     }
 
     private static boolean isTrue(CharSequence value) {
-        final char firstChar = value.charAt(0);
-        return firstChar == 't' || firstChar == 'T';
+        return (value.charAt(0) | 32) == 't';
     }
 
     public static void putSymbol(TableWriter.Row row, int index, CharSequence value) {
