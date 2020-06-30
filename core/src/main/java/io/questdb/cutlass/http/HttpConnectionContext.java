@@ -467,43 +467,28 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     public boolean tryRerun(HttpRequestProcessorSelector selector) {
         if (pendingRetry) {
             pendingRetry = false;
-            long thread = Thread.currentThread().getId();
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
             try {
                 if (multipartParserState.multipartRetry) {
                     processor.onRequestRetry(this);
-                    LOG.info().$("Multipart chunked retry success, part 1. [thread=").$(thread).$(']').$();
                     multipartContentParser.setState(multipartParserState.state);
-                    try {
-                        LOG.info().$("Multipart chunked retry starting part2. [thread=").$(thread).$(",state=").$(multipartParserState.state).$(",start=").$(multipartParserState.start)
-                                .$(",buf=").$(multipartParserState.buf).$(",bufRemaining=").$(multipartParserState.bufRemaining).$(']').$();
                         continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retry -> {
-                            LOG.info().$("Multipart chunked retry fail, [thread=").$(thread).$(']').$();
+                            LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
                             throw RetryOperationException.INSTANCE;
                         });
-                    } finally {
-                        LOG.info().$("Exit chunked retry part 2, [thread=").$(thread).$(']').$();
-                    }
-                    LOG.info().$("Multipart chunked retry success, part 2, [thread=").$(thread).$(']').$();
                 } else {
                     processor.onRequestRetry(this);
                 }
             } catch (RetryOperationException e2) {
-                LOG.info().$("RetryOperationException, [thread=").$(thread).$(']').$();
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
-                LOG.info().$("PeerDisconnectedException").$();
                 dispatcher.disconnect(this);
             } catch (PeerIsSlowToReadException e2) {
-                LOG.info().$("PeerIsSlowToReadException").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this);
-            } catch (Exception e) {
-                LOG.info().$("Retry exit ").$(e.getClass().getName()).$(" [thread=").$(thread).$(']').$();
-                throw  e;
             }
         }
         return true;
