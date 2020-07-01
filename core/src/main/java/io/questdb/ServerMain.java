@@ -29,10 +29,16 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.net.URL;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Properties;
+import java.util.ServiceLoader;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -46,8 +52,11 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -148,6 +157,7 @@ public class ServerMain {
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final MessageBus messageBus = new MessageBusImpl();
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
@@ -159,7 +169,8 @@ public class ServerMain {
                     workerPool,
                     log,
                     cairoEngine,
-                    messageBus
+                    messageBus,
+                    functionFactoryCache
             );
 
             final PGWireServer pgWireServer;
@@ -170,7 +181,8 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        messageBus
+                        messageBus,
+                        functionFactoryCache
                 );
             } else {
                 pgWireServer = null;
@@ -194,6 +206,9 @@ public class ServerMain {
 
             LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine, messageBus);
             startQuestDb(workerPool, lineProtocolReceiver, log);
+            logWebConsoleUrls(log, configuration);
+
+            System.gc();
 
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
@@ -210,6 +225,26 @@ public class ServerMain {
             log.error().$(e.getMessage()).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
+        }
+    }
+
+    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
+        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
+        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        if (httpBindIP == 0) {
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface netint : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
+                    if (inetAddress instanceof Inet4Address) {
+                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
+                    }
+                }
+            }
+            record.$('\n').$();
+        } else {
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n');
         }
     }
 
@@ -260,7 +295,9 @@ public class ServerMain {
                 log.error().$("could not find site [resource=").$(publicZip).$(']').$();
             }
         }
+        copyConfResource(dir, false, buffer, "conf/date.formats", log);
         copyConfResource(dir, force, buffer, "conf/mime.types", log);
+        copyConfResource(dir, false, buffer, "conf/server.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

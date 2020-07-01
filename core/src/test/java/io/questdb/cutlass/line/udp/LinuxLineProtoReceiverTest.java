@@ -43,10 +43,10 @@ import java.util.concurrent.locks.LockSupport;
 public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1) -> new LineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache) -> new LineProtoReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -207,7 +207,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
             try {
-                factory.create(receiverCfg, engine, null, true, null);
+                factory.create(receiverCfg, engine, null, true, null, null);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -241,7 +241,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
 
 
-                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null)) {
+                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null)) {
 
                     // create table
 

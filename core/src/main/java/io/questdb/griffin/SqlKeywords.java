@@ -360,10 +360,10 @@ public class SqlKeywords {
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 'h'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'u'
-                && (tok.charAt(i) | 32) == 'r';
+        return (tok.charAt(i++)) == 'h'
+                && (tok.charAt(i++)) == 'o'
+                && (tok.charAt(i++)) == 'u'
+                && (tok.charAt(i)) == 'r';
     }
 
     public static boolean isIndexKeyword(CharSequence tok) {
@@ -842,7 +842,7 @@ public class SqlKeywords {
                 ;
     }
 
-    public static boolean isValidColumnName(CharSequence seq) {
+    public static boolean isInvalidColumnName(CharSequence seq) {
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
@@ -864,11 +864,11 @@ public class SqlKeywords {
                 case '%':
                 case '~':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
+                    return true;
                 default:
 
             }
         }
-        return true;
+        return false;
     }
 }

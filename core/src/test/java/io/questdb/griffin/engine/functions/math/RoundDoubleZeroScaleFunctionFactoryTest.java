@@ -22,11 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions.math;
 
-public interface SqlExecutionInterruptor {
-    SqlExecutionInterruptor NOP_INTERRUPTOR = () -> {
-    };
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-    void checkInterrupted();
+public class RoundDoubleZeroScaleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testNegScaleNegValue() throws SqlException {
+        call(-106.1).andAssert(-106, 0.0000000001);
+    }
+
+    @Test
+    public void testNegScalePosValue() throws SqlException {
+        call(104.9).andAssert(105, 0.0000000001);
+    }
+
+    @Test
+    public void testNan() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0.0000000001);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new RoundDoubleZeroScaleFunctionFactory();
+    }
 }

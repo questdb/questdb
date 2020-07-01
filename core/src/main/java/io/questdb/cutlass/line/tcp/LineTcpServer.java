@@ -40,15 +40,14 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
-        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool,
-                local,
-                bus) -> new LineTcpServer(
+        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool, local, bus,
+                functionfactory) -> new LineTcpServer(
                         cairoConfiguration,
                         lineConfiguration,
                         cairoEngine,
                         workerPool,
                         bus);
-        LineTcpServer server = WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
+        LineTcpServer server = WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus, null);
         return server;
     }
 
