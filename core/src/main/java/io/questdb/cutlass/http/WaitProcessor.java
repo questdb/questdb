@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.PriorityQueue;
 import java.util.concurrent.locks.LockSupport;
 
-public class WaitProcessor implements RescheduleContext {
+public class WaitProcessor extends  SynchronizedJob implements RescheduleContext {
 
     private static final int retryQueueLength = 4096;
     private final RingQueue<RetryHolder> inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
@@ -46,18 +46,18 @@ public class WaitProcessor implements RescheduleContext {
     private final long maxWaitCapMs;
     private final double exponentialWaitMultiplier;
 
-    public WaitProcessor(JobRunner pool, WaitProcessorConfiguration configuration) {
+    public WaitProcessor(WaitProcessorConfiguration configuration) {
         this.clock = configuration.getClock();
         this.maxWaitCapMs = configuration.getMaxWaitCapMs();
         this.exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
 
         inPubSequence.then(inSubSequence).then(inPubSequence);
         outPubSequence.then(outSubSequence).then(outPubSequence);
+    }
 
-        if (pool.getWorkerCount() > 0) {
-            int workerId = pool.getWorkerCount() - 1; // Last one lucky.
-            pool.assign(workerId, workerId1 -> processInQueue() || sendToOutQueue());
-        }
+    @Override
+    protected boolean runSerially() {
+        return processInQueue() || sendToOutQueue();
     }
 
     @Override
@@ -66,13 +66,16 @@ public class WaitProcessor implements RescheduleContext {
         reschedule(retry, 0, 0);
     }
 
-    public void reschedule(Retry retry, int attempt, long waitStartMs) {
+    private void reschedule(Retry retry, int attempt, long waitStartMs) {
         long now = clock.getTicks();
+        retry.getAttemptDetails().attempt = attempt;
+        retry.getAttemptDetails().lastRunTimestamp = now;
+        retry.getAttemptDetails().waitStartTimestamp = attempt == 0 ? now : waitStartMs;
+
         while (true) {
             long cursor = inPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
-                LockSupport.parkNanos(1);
                 continue;
             }
 
@@ -83,12 +86,7 @@ public class WaitProcessor implements RescheduleContext {
             }
 
             try {
-                RetryHolder retryHolder = inQueue.get(cursor);
-                retryHolder.retry = retry;
-                retryHolder.attempt = attempt;
-                retryHolder.lastRunTimestamp = now;
-                retryHolder.waitStartTimestamp = attempt == 0 ? now : waitStartMs;
-
+                inQueue.get(cursor).retry = retry;;
                 return;
             } finally {
                 inPubSequence.done(cursor);
@@ -99,7 +97,6 @@ public class WaitProcessor implements RescheduleContext {
     // This hijacks http execution thread / job and runs retries in it.
     public boolean runReruns(HttpRequestProcessorSelector selector) {
         boolean useful = false;
-        long now = 0;
 
         while (true) {
             RetryHolder retryHolder = getNextRerun();
@@ -107,7 +104,7 @@ public class WaitProcessor implements RescheduleContext {
                 useful = true;
                 if (!retryHolder.retry.tryRerun(selector)) {
                     // Need more attempts
-                    reschedule(retryHolder.retry, retryHolder.attempt + 1, retryHolder.waitStartTimestamp);
+                    reschedule(retryHolder.retry, retryHolder.retry.getAttemptDetails().attempt + 1, retryHolder.retry.getAttemptDetails().waitStartTimestamp);
                 }
             } else {
                 return useful;
@@ -131,17 +128,17 @@ public class WaitProcessor implements RescheduleContext {
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
     private boolean processInQueue() {
+        boolean any = false;
         while (true) {
             long cursor = inSubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
-                LockSupport.parkNanos(1);
                 continue;
             }
 
             // -1 = queue is empty. All done.
             if (cursor < 0) {
-                return false;
+                return any;
             }
 
             RetryHolder toRun;
@@ -151,26 +148,22 @@ public class WaitProcessor implements RescheduleContext {
                 inSubSequence.done(cursor);
             }
 
-            RetryHolder copy = new RetryHolder();
-            copy.retry = toRun.retry;
-            copy.waitStartTimestamp = toRun.waitStartTimestamp;
-            copy.attempt = toRun.attempt;
-            copy.lastRunTimestamp = toRun.lastRunTimestamp;
-            copy.nextRunTimestamp = calculateNextTimestamp(toRun.attempt, toRun.waitStartTimestamp, toRun.lastRunTimestamp);
+            toRun.retry.getAttemptDetails().nextRunTimestamp = calculateNextTimestamp(toRun.retry.getAttemptDetails());
 
-            nextRerun.add(copy);
+            nextRerun.add(toRun);
+            any = true;
         }
     }
 
-    private long calculateNextTimestamp(int attempt, long startTimestamp, long lastRunTimestamp) {
-        if (attempt == 0) {
+    private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
+        if (attemptAttributes.attempt == 0) {
             // First retry after fixed time of 2ms
-            return lastRunTimestamp + 2;
+            return attemptAttributes.lastRunTimestamp + 2;
         }
 
         // 'exponentialWaitMultiplier' times wait time starting until it is 'maxWaitCapMs' sec
-        long totalWait = lastRunTimestamp - startTimestamp;
-        return Math.min(maxWaitCapMs, Math.max(4L, (long)(totalWait * exponentialWaitMultiplier))) + lastRunTimestamp;
+        long totalWait = attemptAttributes.lastRunTimestamp - attemptAttributes.waitStartTimestamp;
+        return Math.min(maxWaitCapMs, Math.max(4L, (long)(totalWait * exponentialWaitMultiplier))) + attemptAttributes.lastRunTimestamp;
     }
 
     private boolean sendToOutQueue() {
@@ -178,7 +171,7 @@ public class WaitProcessor implements RescheduleContext {
         final long now = clock.getTicks();
         while (nextRerun.size() > 0) {
             RetryHolder next = nextRerun.peek();
-            if (next.nextRunTimestamp <= now) {
+            if (next.retry.getAttemptDetails().nextRunTimestamp <= now) {
                 useful = true;
                 if (!sendToOutQueue(nextRerun.poll())) {
                     return true;
@@ -209,9 +202,6 @@ public class WaitProcessor implements RescheduleContext {
             try {
                 RetryHolder retryHolderOut = outQueue.get(cursor);
                 retryHolderOut.retry = retryHolder.retry;
-                retryHolderOut.lastRunTimestamp = retryHolder.lastRunTimestamp;
-                retryHolderOut.attempt = retryHolder.attempt;
-                retryHolderOut.waitStartTimestamp = retryHolder.waitStartTimestamp;
                 return true;
             } finally {
                 outPubSequence.done(cursor);

@@ -9,13 +9,6 @@ public class MultipartParserState {
     public long buf;
     public int bufRemaining;
     public int state;
-//
-//    public void saveHttpContextState(long headerEnd, int read, boolean newRequest) {
-//        this.multipartRetry = true;
-//        this.headerEnd = headerEnd;
-//        this.read = read;
-//        this.newRequest = newRequest;
-//    }
 
     public void saveFdBufferPosition(long start, long buf, int bufRemaining, int state) {
         this.state = state;

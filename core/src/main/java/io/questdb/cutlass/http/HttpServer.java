@@ -75,7 +75,8 @@ public class HttpServer implements Closeable {
                 httpContextFactory
         );
         pool.assign(dispatcher);
-        this.rescheduleContext = new WaitProcessor(pool, configuration.getWaitProcessorConfiguration());
+        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
+        pool.assign(this.rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;

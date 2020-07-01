@@ -54,6 +54,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final boolean allowDeflateBeforeSend;
     private final HttpSqlExecutionInterruptor execInterruptor;
     private final MultipartParserState multipartParserState = new MultipartParserState();
+    private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
@@ -492,5 +493,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             }
         }
         return true;
+    }
+
+    @Override
+    public RetryAttemptAttributes getAttemptDetails() {
+        return retryAttemptAttributes;
     }
 }

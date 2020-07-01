@@ -28,13 +28,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class RetryHolder implements Comparable<RetryHolder> {
     public Retry retry;
-    public long nextRunTimestamp;
-    public long lastRunTimestamp;
-    public long waitStartTimestamp;
-    public int attempt;
 
     @Override
     public int compareTo(@NotNull RetryHolder o) {
-        return nextRunTimestamp > o.nextRunTimestamp ? 1 : (nextRunTimestamp < o.nextRunTimestamp ? -1 : 0);
+        RetryAttemptAttributes a1 = retry.getAttemptDetails();
+        RetryAttemptAttributes a2 = o.retry.getAttemptDetails();
+        return a1.nextRunTimestamp > a2.nextRunTimestamp ? 1 : (a1.nextRunTimestamp < a2.nextRunTimestamp ? -1 : 0);
     }
 }

@@ -39,7 +39,6 @@ public class WaitProcessorTests {
     private long currentTimeMs;
     private int job1Attempts = 0;
     private HttpRequestProcessorSelector emptySelector = createEmptySelector();
-    final TestWorkerPool workerPool = new TestWorkerPool();
 
     @Test
     public void testRescheduleNotHappensImmediately() {
@@ -47,15 +46,12 @@ public class WaitProcessorTests {
         WaitProcessor processor = createProcessor();
         job1Attempts = 0;
 
-        processor.reschedule((selector) -> {
-            job1Attempts++;
-            return false;
-        });
+        processor.reschedule(createRetry());
 
         // Do not move currentTimeMs, all calls happens at same ms
         for (int i = 0; i < 10; i++) {
             processor.runReruns(emptySelector);
-            workerPool.runJobs();
+            processor.runSerially();
         }
         Assert.assertEquals(0, job1Attempts);
     }
@@ -64,17 +60,13 @@ public class WaitProcessorTests {
     public void testRescheduleHappensInFirstSecond() {
         WaitProcessor processor = createProcessor();
         job1Attempts = 0;
-
-        processor.reschedule((selector) -> {
-            job1Attempts++;
-            return false;
-        });
+        processor.reschedule(createRetry());
 
         // Do not move currentTimeMs, all calls happens at same ms
         for (int i = 0; i < 5000; i++) {
             currentTimeMs++;
             processor.runReruns(emptySelector);
-            workerPool.runJobs();
+            processor.runSerially();
         }
 
         System.out.println("Rerun attempts: " + job1Attempts);
@@ -86,34 +78,63 @@ public class WaitProcessorTests {
         WaitProcessor processor = createProcessor();
         int[] jobAttempts = new int[10];
 
-        for(int i = 0; i < jobAttempts.length; i++) {
+        for (int i = 0; i < jobAttempts.length; i++) {
             int index = i;
 
-            processor.reschedule((selector) -> {
-                jobAttempts[index]++;
-                return false;
-            });
+            processor.reschedule(
+                    new Retry() {
+                        private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+                        @Override
+                        public boolean tryRerun(HttpRequestProcessorSelector selector) {
+                            jobAttempts[index]++;
+                            return false;
+                        }
+
+                        @Override
+                        public RetryAttemptAttributes getAttemptDetails() {
+                            return attemptAttributes;
+                        }
+                    });
         }
 
         // Do not move currentTimeMs, all calls happens at same ms
         for (int i = 0; i < 5000; i++) {
             currentTimeMs++;
             processor.runReruns(emptySelector);
-            workerPool.runJobs();
+            processor.runSerially();
         }
 
         int attempt0 = jobAttempts[0];
         System.out.println("Rerun attempts: " + attempt0);
         Assert.assertTrue(attempt0 > 0);
 
-        for(int i = 1; i < jobAttempts.length; i++) {
+        for (int i = 1; i < jobAttempts.length; i++) {
             Assert.assertEquals(attempt0, jobAttempts[0]);
         }
     }
 
     @NotNull
+    private Retry createRetry() {
+        return new Retry() {
+            private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+            @Override
+            public boolean tryRerun(HttpRequestProcessorSelector selector) {
+                job1Attempts++;
+                return false;
+            }
+
+            @Override
+            public RetryAttemptAttributes getAttemptDetails() {
+                return attemptAttributes;
+            }
+        };
+    }
+
+    @NotNull
     private WaitProcessor createProcessor() {
-        return new WaitProcessor(workerPool, new WaitProcessorConfiguration() {
+        return new WaitProcessor(new WaitProcessorConfiguration() {
             @Override
             public MillisecondClock getClock() {
                 return () -> currentTimeMs;
@@ -155,7 +176,7 @@ public class WaitProcessorTests {
         private List<Job> jobs = new ArrayList<Job>();
 
         public void runJobs() {
-            for (Job job: jobs) {
+            for (Job job : jobs) {
                 job.run(0);
             }
         }

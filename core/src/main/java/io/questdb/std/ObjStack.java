@@ -24,46 +24,93 @@
 
 package io.questdb.std;
 
+import java.util.Arrays;
+
 public class ObjStack<T> implements Mutable {
-    private final ObjArrayDequeue<T> dequeue;
+    private static final int MIN_INITIAL_CAPACITY = 8;
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private T[] elements;
+    private int head;
+    private int tail;
+    private int mask;
 
     public ObjStack() {
-        dequeue = new ObjArrayDequeue<>();
+        this(DEFAULT_INITIAL_CAPACITY);
     }
 
     public ObjStack(int initialCapacity) {
-        dequeue = new ObjArrayDequeue<>(initialCapacity);
+        allocateElements(initialCapacity);
     }
 
     public void clear() {
-        dequeue.clear();
+        if (head != tail) {
+            head = tail = 0;
+            Arrays.fill(elements, null);
+        }
     }
 
     public boolean notEmpty() {
-        return dequeue.notEmpty();
+        return head != tail;
     }
 
     public T peek() {
-        return dequeue.peekLast();
+        return elements[head];
     }
 
     public T peek(int n) {
-        return dequeue.peekLast(n);
+        return elements[(head + n) & mask];
     }
 
     public T pop() {
-        return dequeue.popLast();
+        final int h = head;
+        final T result = elements[h];
+        if (result == null) {
+            return null;
+        }
+        elements[h] = null;
+        head = (h + 1) & mask;
+        return result;
     }
 
     public void push(T e) {
-        dequeue.push(e);
+        elements[head = (head - 1) & mask] = e;
+        if (head == tail) {
+            doubleCapacity();
+        }
     }
 
     public int size() {
-        return dequeue.size();
+        return (tail - head) & mask;
     }
 
     public void update(T e) {
-        dequeue.update(e);
+        elements[head] = e;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void allocateElements(int capacity) {
+        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
+        elements = (T[]) new Object[capacity];
+        mask = capacity - 1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void doubleCapacity() {
+        assert head == tail;
+        int h = head;
+        int n = elements.length;
+        int r = n - h;
+        int newCapacity = n << 1;
+        if (newCapacity < 0) {
+            throw new IllegalStateException("Stack is too big");
+        }
+        T[] next = (T[]) new Object[newCapacity];
+        System.arraycopy(elements, h, next, 0, r);
+        System.arraycopy(elements, 0, next, r, h);
+        Arrays.fill(next, r + h, newCapacity, null);
+        elements = next;
+        head = 0;
+        tail = n;
+        mask = newCapacity - 1;
     }
 }
