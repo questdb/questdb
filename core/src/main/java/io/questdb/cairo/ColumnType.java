@@ -100,7 +100,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[ColumnType.LONG] = 3;
         TYPE_SIZE_POW2[ColumnType.DATE] = 3;
         TYPE_SIZE_POW2[ColumnType.TIMESTAMP] = 3;
-        TYPE_SIZE_POW2[ColumnType.LONG256] = 8;
+        TYPE_SIZE_POW2[ColumnType.LONG256] = 5;
 
         TYPE_SIZE[ColumnType.BOOLEAN] = Byte.BYTES;
         TYPE_SIZE[ColumnType.BYTE] = Byte.BYTES;
