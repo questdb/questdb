@@ -40,7 +40,7 @@ import java.io.Closeable;
 public class LineProtoSender extends AbstractCharSink implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
 
-    private final int capacity;
+    protected final int capacity;
     private final long bufA;
     private final long bufB;
     private final long sockaddr;

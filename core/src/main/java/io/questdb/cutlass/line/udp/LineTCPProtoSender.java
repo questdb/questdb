@@ -24,9 +24,12 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 
 public class LineTCPProtoSender extends LineProtoSender {
+    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
 
     public LineTCPProtoSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, 0);
@@ -38,6 +41,10 @@ public class LineTCPProtoSender extends LineProtoSender {
         if (nf.connect(fd, sockaddr) != 0) {
             throw NetworkError.instance(nf.errno(), "failed to connect");
         }
+        int orgSndBufSz = nf.getSndBuf(fd);
+        nf.setSndBuf(fd, 2 * capacity);
+        int newSndBufSz = nf.getSndBuf(fd);
+        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
         return fd;
     }
 
