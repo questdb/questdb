@@ -113,7 +113,8 @@ public class LineTcpServer implements Closeable {
 
         public LineTcpConnectionContextFactory(CairoEngine engine, LineTcpReceiverConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
             this.contextPool = new ThreadLocal<>(
-                    () -> new WeakObjectPool<>(() -> new LineTcpConnectionContext(configuration, scheduler), configuration.getConnectionPoolInitialCapacity()));
+                    () -> new WeakObjectPool<>(() -> new LineTcpConnectionContext(configuration, scheduler, engine.getConfiguration().getMillisecondClock()),
+                            configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

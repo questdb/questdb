@@ -10,11 +10,14 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.time.MillisecondClock;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
+    private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     private final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
+    private final MillisecondClock milliClock;
     private long fd;
     private IODispatcher<LineTcpConnectionContext> dispatcher;
     private long recvBufStart;
@@ -22,10 +25,12 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private long recvBufPos;
     private boolean peerDisconnected;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private long lastQueueFullLogMillis = 0;
 
-    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
+    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, MillisecondClock clock) {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
+        this.milliClock = clock;
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
     }
@@ -36,7 +41,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             LineTcpMeasurementEvent event = scheduler.getNewEvent();
             if (null == event) {
                 // Waiting for writer threads to drain queue, request callback as soon as possible
-                LOG.info().$('[').$(fd).$("] queue full, could not start reading new records, consider increasing queue size or number of writer jobs").$();
+                if (checkQueueFullLogHysteresis()) {
+                    LOG.info().$('[').$(fd).$("] queue full, could not start reading new records, consider increasing queue size or number of writer jobs").$();
+                }
                 return true;
             }
 
@@ -85,7 +92,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             // Check if we are waiting for writer threads
             if (null == event) {
                 // Waiting for writer threads to drain queue, request callback as soon as possible
-                LOG.info().$('[').$(fd).$("] queue full, could not drain input buffer, consider increasing queue size or number of writer jobs").$();
+                if (checkQueueFullLogHysteresis()) {
+                    LOG.info().$('[').$(fd).$("] queue full, could not drain input buffer, consider increasing queue size or number of writer jobs").$();
+                }
                 return true;
             }
 
@@ -109,6 +118,15 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             dispatcher.disconnect(this);
             return false;
         }
+    }
+
+    private boolean checkQueueFullLogHysteresis() {
+        long millis = milliClock.getTicks();
+        if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
+            lastQueueFullLogMillis = millis;
+            return true;
+        }
+        return false;
     }
 
     @Override

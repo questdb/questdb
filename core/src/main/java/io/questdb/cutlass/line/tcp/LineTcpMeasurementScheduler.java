@@ -39,20 +39,27 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.time.MillisecondClock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
+    private final MillisecondClock milliClock;
     private RingQueue<LineTcpMeasurementEvent> queue;
     private Sequence pubSeq;
     private long nextEventCursor = -1;
     private final CharSequenceObjHashMap<TableStats> statsByTableName;
     private final int[] loadByThread;
+
     // TODO
     private final int nUpdatesPerLoadRebalance = 1000;
     private final double maxLoadRatio;
+    private final long maxWriterCommitDelayInMs = 5_000;
+    private final int maxUncommittedRows = 10000;
+    private final long maintenanceJobHysteresisInMs = 100;
+
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
@@ -60,6 +67,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = cairoConfiguration;
+        this.milliClock = cairoConfiguration.getMillisecondClock();
         statsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
@@ -449,6 +457,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final Path path = new Path();
         private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
         private final String name;
+        private long lastMaintenanceJobMillis = 0;
 
         private WriterJob(int id, Sequence sequence) {
             super();
@@ -477,36 +486,59 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public boolean run(int workerId) {
             assert workerId == id;
-            try {
-                long cursor;
-                while ((cursor = sequence.next()) < 0) {
-                    if (cursor == -1) {
-                        return false;
-                    }
-                }
-                LineTcpMeasurementEvent event = queue.get(cursor);
-                boolean eventProcessed;
+            boolean busy = drainQueue();
+            doMaintenance();
+            return busy;
+        }
+
+        private boolean drainQueue() {
+            boolean busy = false;
+            while (true) {
                 try {
-                    if (event.threadId == id) {
-                        eventProcessed = processNextEvent(event);
-                    } else {
-                        if (event.isRebalanceEvent()) {
-                            eventProcessed = processRebalance(event);
-                        } else {
-                            eventProcessed = true;
+                    long cursor;
+                    while ((cursor = sequence.next()) < 0) {
+                        if (cursor == -1) {
+                            return busy;
                         }
+                    }
+                    busy = true;
+                    LineTcpMeasurementEvent event = queue.get(cursor);
+                    boolean eventProcessed;
+                    try {
+                        if (event.threadId == id) {
+                            eventProcessed = processNextEvent(event);
+                        } else {
+                            if (event.isRebalanceEvent()) {
+                                eventProcessed = processRebalance(event);
+                            } else {
+                                eventProcessed = true;
+                            }
+                        }
+                    } catch (RuntimeException ex) {
+                        LOG.error().$(ex).$();
+                        eventProcessed = true;
+                    }
+                    if (eventProcessed) {
+                        sequence.done(cursor);
                     }
                 } catch (RuntimeException ex) {
                     LOG.error().$(ex).$();
-                    eventProcessed = true;
                 }
-                if (eventProcessed) {
-                    sequence.done(cursor);
-                }
-            } catch (RuntimeException ex) {
-                LOG.error().$(ex).$();
             }
-            return true;
+        }
+
+        private void doMaintenance() {
+            long millis = milliClock.getTicks();
+            if ((millis = lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
+                return;
+            }
+
+            lastMaintenanceJobMillis = millis;
+            ObjList<CharSequence> tableNames = parserCache.keys();
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                Parser parser = parserCache.get(tableNames.get(n));
+                parser.doMaintenance(millis);
+            }
         }
 
         private boolean processNextEvent(LineTcpMeasurementEvent event) {
@@ -552,6 +584,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             private TableWriter writer;
             private final IntList colTypes = new IntList();
             private final IntList colIndexMappings = new IntList();
+            private int nUncommitted = 0;
+            private long lastCommitMillis = 0;
 
             private transient int nMeasurementValues;
             private transient boolean error;
@@ -602,7 +636,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                 } catch (CairoException | BadCastException ignore) {
                     row.cancel();
                 }
+                nUncommitted++;
+                if (nUncommitted > maxUncommittedRows) {
+                    commit();
+                }
+            }
+
+            private void commit() {
                 writer.commit();
+                nUncommitted = 0;
+                lastCommitMillis = milliClock.getTicks();
             }
 
             private void preprocessEvent(LineTcpMeasurementEvent event) {
@@ -651,9 +694,22 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return colTypes.getQuick(i);
             }
 
+            void doMaintenance(long millis) {
+                if (nUncommitted == 0) {
+                    return;
+                }
+
+                if ((millis - lastCommitMillis + maintenanceJobHysteresisInMs) > maxWriterCommitDelayInMs) {
+                    commit();
+                }
+            }
+
             @Override
             public void close() {
                 if (null != writer) {
+                    if (nUncommitted > 0) {
+                        commit();
+                    }
                     LOG.info().$(name).$(" closed parser [name=").$(writer.getName()).$(']').$();
                     writer.close();
                     writer = null;

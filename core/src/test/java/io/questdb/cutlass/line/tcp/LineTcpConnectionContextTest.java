@@ -27,6 +27,7 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Unsafe;
+import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
@@ -617,7 +618,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
         });
         scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine, workerPool);
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, MillisecondClockImpl.INSTANCE);
         disconnected = false;
         recvBuffer = null;
         IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<LineTcpConnectionContext>() {
