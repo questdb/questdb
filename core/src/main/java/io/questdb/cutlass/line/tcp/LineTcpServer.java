@@ -40,19 +40,15 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
-        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, netWorkerPool, local,
+        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool,
+                local,
                 bus) -> new LineTcpServer(
                         cairoConfiguration,
                         lineConfiguration,
                         cairoEngine,
-                        netWorkerPool,
-                        writerWorkerPool,
+                        workerPool,
                         bus);
-        LineTcpServer server = WorkerPoolAwareConfiguration.create(lineConfiguration.getNetWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(log);
-        }
+        LineTcpServer server = WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
         return server;
     }
 
@@ -65,23 +61,22 @@ public class LineTcpServer implements Closeable {
             CairoConfiguration cairoConfiguration,
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool netWorkerPool,
-            WorkerPool writerWorkerPool,
+            WorkerPool workerPool,
             MessageBus messageBus
     ) {
-        this.contextFactory = new LineTcpConnectionContextFactory(engine, lineConfiguration, messageBus, netWorkerPool.getWorkerCount());
+        this.contextFactory = new LineTcpConnectionContextFactory(engine, lineConfiguration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 lineConfiguration
                         .getNetDispatcherConfiguration(),
                 contextFactory);
-        netWorkerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine, writerWorkerPool);
+        workerPool.assign(dispatcher);
+        scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine, workerPool);
         final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
             if (context.handleIO()) {
                 busyContexts.add(context);
             }
         };
-        netWorkerPool.assign(new SynchronizedJob() {
+        workerPool.assign(new SynchronizedJob() {
             @Override
             protected boolean runSerially() {
                 int n = busyContexts.size();
@@ -95,10 +90,10 @@ public class LineTcpServer implements Closeable {
             }
         });
 
-        for (int i = 0, n = netWorkerPool.getWorkerCount(); i < n; i++) {
+        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            netWorkerPool.assign(i, () -> {
+            workerPool.assign(i, () -> {
                 contextFactory.closeContextPool();
             });
         }

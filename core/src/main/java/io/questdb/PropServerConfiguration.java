@@ -274,14 +274,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpMsgBufferSize;
     private int lineTcpMaxMeasurementSize;
     private int lineTcpWriterQueueSize;
-    private int lineTcpNetWorkerCount;
-    private int[] lineTcpNetWorkerAffinity;
-    private boolean lineTcpNetWorkerPoolHaltOnError;
-    private int lineTcpWriterWorkerCount;
-    private int[] lineTcpWriterWorkerAffinity;
-    private boolean lineTcpWriterWorkerPoolHaltOnError;
-    private final WorkerPoolAwareConfiguration lineTcpNetWorkerPoolConfiguration = new PropLineTcpNetWorkerPoolConfiguration();
-    private final WorkerPoolAwareConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private int lineTcpWorkerCount;
+    private int[] lineTcpWorkerAffinity;
+    private boolean lineTcpWorkerPoolHaltOnError;
+    private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -542,13 +538,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
-            this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 1024);
-            this.lineTcpNetWorkerCount = getInt(properties, "line.tcp.net.worker.count", 0);
-            this.lineTcpNetWorkerAffinity = getAffinity(properties, "line.tcp.net.worker.affinity", lineTcpNetWorkerCount);
-            this.lineTcpNetWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.net.halt.on.error", false);
-            this.lineTcpWriterWorkerCount = getInt(properties, "line.tcp.writer.worker.count", 0);
-            this.lineTcpWriterWorkerAffinity = getAffinity(properties, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
-            this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.writer.halt.on.error", false);
+            this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 128);
+            this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 0);
+            this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
+            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, "line.net.halt.on.error", false);
         }
     }
 
@@ -1584,42 +1577,20 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     }
 
-    private class PropLineTcpNetWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+    private class PropLineTcpWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
         @Override
         public int[] getWorkerAffinity() {
-            return lineTcpNetWorkerAffinity;
+            return lineTcpWorkerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return lineTcpNetWorkerCount;
+            return lineTcpWorkerCount;
         }
 
         @Override
         public boolean haltOnError() {
-            return lineTcpNetWorkerPoolHaltOnError;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
-    }
-
-    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
-        @Override
-        public int[] getWorkerAffinity() {
-            return lineTcpWriterWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return lineTcpWriterWorkerCount;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return lineTcpWriterWorkerPoolHaltOnError;
+            return lineTcpWorkerPoolHaltOnError;
         }
 
         @Override
@@ -1680,13 +1651,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration() {
-            return lineTcpNetWorkerPoolConfiguration;
-        }
-
-        @Override
-        public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
-            return lineTcpWriterWorkerPoolConfiguration;
+        public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
+            return lineTcpWorkerPoolConfiguration;
         }
     }
 

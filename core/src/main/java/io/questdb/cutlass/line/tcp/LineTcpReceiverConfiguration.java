@@ -52,7 +52,5 @@ public interface LineTcpReceiverConfiguration {
 
     MicrosecondClock getMicrosecondClock();
 
-    WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration();
-
-    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
+    WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
 }

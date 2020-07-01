@@ -66,12 +66,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getNetWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
-    }
-
-    @Override
-    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+    public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
         return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
     }
 }
