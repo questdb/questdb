@@ -27,22 +27,50 @@ package io.questdb;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.VectorAggregateTask;
 
 public class MessageBusImpl implements MessageBus {
-    private final RingQueue<ColumnIndexerTask> indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
-    private final MPSequence indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
-    private final MCSequence indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
+    private final RingQueue<ColumnIndexerTask> indexerQueue;
+    private final MPSequence indexerPubSeq;
+    private final MCSequence indexerSubSeq;
 
-    private final RingQueue<VectorAggregateTask> vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
-    private final MPSequence vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
-    private final MCSequence vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
+    private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
+    private final MPSequence vectorAggregatePubSeq;
+    private final MCSequence vectorAggregateSubSeq;
 
-    public MessageBusImpl() {
-        this.indexerPubSeq.then(this.indexerSubSeq).then(this.indexerPubSeq);
-        this.vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
+    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final MPSequence telemetryPubSeq;
+    private final SCSequence telemetrySubSeq;
+
+    private final PropServerConfiguration configuration;
+
+    public MessageBusImpl(PropServerConfiguration configuration) {
+        this.configuration = configuration;
+
+        this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
+        this.indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
+        this.indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
+
+        this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
+        this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
+        this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
+
+        this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
+        this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
+        this.telemetrySubSeq = new SCSequence();
+
+        indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
+        vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
+        telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+    }
+
+    @Override
+    public PropServerConfiguration getConfiguration() {
+        return configuration;
     }
 
     @Override
@@ -73,5 +101,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSequence() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public RingQueue<TelemetryTask> getTelemetryQueue() {
+        return telemetryQueue;
+    }
+
+    @Override
+    public Sequence getTelemetryPubSequence() {
+        return telemetryPubSeq;
+    }
+
+    @Override
+    public SCSequence getTelemetrySubSequence() {
+        return telemetrySubSeq;
     }
 }

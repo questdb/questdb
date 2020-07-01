@@ -74,6 +74,18 @@ public class RecordCursorPrinter {
         sink.put('\n');
     }
 
+    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header) {
+        if (header) {
+            printHeader(metadata);
+        }
+
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            printColumn(record, metadata, i);
+            sink.put('\n');
+        }
+    }
+
     protected void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnType(i)) {
             case ColumnType.DATE:

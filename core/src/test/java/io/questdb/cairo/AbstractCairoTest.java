@@ -26,8 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.PropServerConfiguration;
+import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -41,6 +44,7 @@ import org.junit.ClassRule;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
+import java.util.Properties;
 
 public class AbstractCairoTest {
 
@@ -51,10 +55,11 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static PropServerConfiguration serverConfiguration;
     protected static MessageBus messageBus;
 
     @BeforeClass
-    public static void setUp() throws IOException {
+    public static void setUp() throws IOException, JsonException, ServerConfigurationException {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
@@ -62,7 +67,15 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
-        messageBus = new MessageBusImpl();
+        TestUtils.copyMimeTypes(temp.getRoot().getAbsolutePath());
+        serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                return configuration;
+            }
+        };
+        configuration = serverConfiguration.getCairoConfiguration();
+        messageBus = new MessageBusImpl(serverConfiguration);
     }
 
     @Before
@@ -92,5 +105,19 @@ public class AbstractCairoTest {
         assertOnce(expected, cursor, metadata, header);
         cursor.toTop();
         assertOnce(expected, cursor, metadata, header);
+    }
+
+    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            final StringSink sink = new StringSink();
+            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 }
