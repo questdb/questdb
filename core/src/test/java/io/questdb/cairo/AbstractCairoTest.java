@@ -66,11 +66,12 @@ public class AbstractCairoTest {
         // created mid-test
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
+        configuration = new DefaultCairoConfiguration(root);
         TestUtils.copyMimeTypes(temp.getRoot().getAbsolutePath());
         serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
             @Override
             public CairoConfiguration getCairoConfiguration() {
-                return new DefaultCairoConfiguration(root);
+                return configuration;
             }
         };
         configuration = serverConfiguration.getCairoConfiguration();
@@ -107,8 +108,6 @@ public class AbstractCairoTest {
     }
 
     protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
-
         try (TableReader reader = new TableReader(configuration, tableName)) {
             final StringSink sink = new StringSink();
             final RecordCursorPrinter printer = new RecordCursorPrinter(sink);

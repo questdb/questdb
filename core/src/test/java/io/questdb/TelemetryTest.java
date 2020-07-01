@@ -40,11 +40,9 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryDisabledByDefault() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                try (Path path = new Path()) {
-                    Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
-                    Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
-                }
+            try (Path path = new Path()) {
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
             }
         });
     }
@@ -71,7 +69,7 @@ public class TelemetryTest extends AbstractCairoTest {
             serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
                 @Override
                 public CairoConfiguration getCairoConfiguration() {
-                    return new DefaultCairoConfiguration(root);
+                    return configuration;
                 }
             };
             configuration = serverConfiguration.getCairoConfiguration();
@@ -90,11 +88,5 @@ public class TelemetryTest extends AbstractCairoTest {
 
             Misc.free(engine);
         });
-    }
-
-    private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), false);
-        }
     }
 }

@@ -26,6 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -38,7 +41,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.tasks.TelemetryTask;
-import org.jetbrains.annotations.Nullable;
+
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -48,7 +52,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final CharSequence tableName = "telemetry";
     private final CharSequence configTableName = "telemetry_config";
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
-    private final StringSink idSink = new StringSink();
 
     private final MillisecondClock clock;
     private final PropServerConfiguration configuration;
@@ -58,7 +61,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
 
-    public TelemetryJob(PropServerConfiguration configuration, CairoEngine engine, @Nullable MessageBus messageBus) throws SqlException, CairoException {
+    public TelemetryJob(PropServerConfiguration configuration, CairoEngine engine, @NotNull MessageBus messageBus) throws SqlException, CairoException {
         final CairoConfiguration cairoConfig = configuration.getCairoConfiguration();
 
         this.clock = cairoConfig.getMillisecondClock();
@@ -67,66 +70,67 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queue = messageBus.getTelemetryQueue();
         this.subSeq = messageBus.getTelemetrySubSequence();
 
-        try (
-                Path path = new Path();
-                SqlCompiler compiler = new SqlCompiler(engine)
-        ) {
+        try (final SqlCompiler compiler = new SqlCompiler(engine)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine);
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
-            if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                compiler.compile("CREATE TABLE " + tableName + " (ts timestamp, event short, origin short)", sqlExecutionContext);
+            try (final Path path = new Path()) {
+
+                if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                    compiler.compile("CREATE TABLE " + tableName + " (ts timestamp, event short, origin short)", sqlExecutionContext);
+                }
+
+                if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                    compiler.compile("CREATE TABLE " + configTableName + " (id long256, enabled boolean)", sqlExecutionContext);
+                }
             }
 
-            if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                compiler.compile("CREATE TABLE " + configTableName + " (id long256, enabled boolean)", sqlExecutionContext);
+            try {
+                this.writer = new TableWriter(cairoConfig, tableName);
+            } catch (CairoException ex) {
+                LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
+                throw ex;
             }
-        }
 
-        try {
-            this.writer = new TableWriter(cairoConfig, tableName);
-        } catch (CairoException ex) {
-            LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
-            throw ex;
-        }
+            // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
+            // Once we have a permission system, we can use that instead.
+            try {
+                this.writerConfig = new TableWriter(cairoConfig, configTableName);
+            } catch (CairoException ex) {
+                Misc.free(writer);
+                LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
+                throw ex;
+            }
 
-        // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
-        // Once we have a permission system, we can use that instead.
-        try {
-            this.writerConfig = new TableWriter(cairoConfig, configTableName);
-        } catch (CairoException ex) {
-            Misc.free(writer);
-            LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
-            throw ex;
-        }
+            final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
 
-        try (TableReader reader = new TableReader(cairoConfig, configTableName)) {
-            final NanosecondClock nanosecondClock = cairoConfig.getNanosecondClock();
+            try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    final Record record = cursor.getRecord();
+                    final boolean _enabled = record.getBool(1);
 
-            if (reader.size() > 0) {
-                reader.getCursor().getRecord().getLong256(0, idSink);
-                final boolean _enabled = reader.getCursor().getRecord().getBool(1);
-
-                if (enabled != _enabled) {
+                    if (enabled != _enabled) {
+                        final StringSink sink = new StringSink();
+                        final TableWriter.Row row = writerConfig.newRow();
+                        record.getLong256(0, sink);
+                        row.putLong256(0, sink);
+                        row.putBool(1, enabled);
+                        row.append();
+                        writerConfig.commit();
+                    }
+                } else {
+                    final MicrosecondClock clock = cairoConfig.getMicrosecondClock();
+                    final NanosecondClock nanosecondClock = cairoConfig.getNanosecondClock();
                     final TableWriter.Row row = writerConfig.newRow();
-                    row.putLong256(0, idSink);
+                    row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
                     row.putBool(1, enabled);
                     row.append();
                     writerConfig.commit();
                 }
-            } else {
-                final MicrosecondClock clock = cairoConfig.getMicrosecondClock();
-                final TableWriter.Row row = writerConfig.newRow();
-                row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
-                row.putBool(1, enabled);
-                row.append();
-                writerConfig.commit();
-                reader.reload();
-                reader.getCursor().getRecord().getLong256(0, idSink);
             }
-        }
 
-        newRow(TelemetryEvent.UP);
+            newRow(TelemetryEvent.UP);
+        }
     }
 
     public int getTableStatus(Path path, CharSequence tableName) {

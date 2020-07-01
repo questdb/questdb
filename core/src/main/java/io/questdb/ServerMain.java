@@ -145,6 +145,8 @@ public class ServerMain {
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
+        // updating the telemetry_config table.
         final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus);
 
         if (configuration.getTelemetryConfiguration().getEnabled()) {
