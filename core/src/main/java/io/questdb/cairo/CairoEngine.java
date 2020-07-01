@@ -223,15 +223,15 @@ public class CairoEngine implements Closeable {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters () {
+    public boolean releaseAllWriters() {
         return writerPool.releaseAll();
     }
-    
-	public boolean releaseInactive() {
-		boolean useful = writerPool.releaseInactive();
-		useful |= readerPool.releaseInactive();
-		return useful;
-	}
+
+    public boolean releaseInactive() {
+        boolean useful = writerPool.releaseInactive();
+        useful |= readerPool.releaseInactive();
+        return useful;
+    }
 
     public void remove(
             CairoSecurityContext securityContext,

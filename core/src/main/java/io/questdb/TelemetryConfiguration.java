@@ -22,40 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
-import io.questdb.std.Rnd;
-import org.jetbrains.annotations.Nullable;
+interface TelemetryConfiguration {
+    boolean getEnabled();
 
-public interface SqlExecutionContext {
-
-    BindVariableService getBindVariableService();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    @Nullable MessageBus getMessageBus();
-
-    boolean isTimestampRequired();
-
-    void popTimestampRequiredFlag();
-
-    void pushTimestampRequiredFlag(boolean flag);
-
-    int getWorkerCount();
-
-    Rnd getRandom();
-
-    void setRandom(Rnd rnd);
-
-    CairoEngine getCairoEngine();
-
-    long getRequestFd();
-
-    SqlExecutionInterruptor getSqlExecutionInterruptor();
-
-    void storeTelemetry(short event, short origin);
+    int getQueueCapacity();
 }

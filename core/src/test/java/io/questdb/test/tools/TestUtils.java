@@ -34,6 +34,7 @@ import org.junit.Assert;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.IOException;
 
 public final class TestUtils {
@@ -174,6 +175,21 @@ public final class TestUtils {
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    public static void copyMimeTypes(String targetDir) throws IOException {
+        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
+            Assert.assertNotNull(stream);
+            final File target = new File(targetDir, "conf/mime.types");
+            target.getParentFile().mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[1024 * 1204];
+                int len;
+                while ((len = stream.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+            }
         }
     }
 

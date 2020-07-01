@@ -139,12 +139,19 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl();
+        final MessageBus messageBus = new MessageBusImpl(configuration);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
+        // updating the telemetry_config table.
+        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus);
+
+        if (configuration.getTelemetryConfiguration().getEnabled()) {
+            workerPool.assign(telemetryJob);
+        }
 
         try {
             final HttpServer httpServer = HttpServer.create(
@@ -200,7 +207,14 @@ public class ServerMain {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.err.println(new Date() + " QuestDB is shutting down");
-                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
+                shutdownQuestDb(
+                        workerPool,
+                        cairoEngine,
+                        httpServer,
+                        pgWireServer,
+                        lineProtocolReceiver,
+                        telemetryJob
+                );
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
@@ -367,9 +381,11 @@ public class ServerMain {
                                           final CairoEngine cairoEngine,
                                           final HttpServer httpServer,
                                           final PGWireServer pgWireServer,
-                                          final AbstractLineProtoReceiver lineProtocolReceiver
+                                          final AbstractLineProtoReceiver lineProtocolReceiver,
+                                          final TelemetryJob telemetryJob
     ) {
         lineProtocolReceiver.halt();
+        Misc.free(telemetryJob);
         workerPool.halt();
         Misc.free(pgWireServer);
         Misc.free(httpServer);
