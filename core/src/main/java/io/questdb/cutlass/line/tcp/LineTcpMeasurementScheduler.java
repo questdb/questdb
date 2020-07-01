@@ -56,7 +56,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     // TODO
     private final int nUpdatesPerLoadRebalance = 1000;
     private final double maxLoadRatio;
-    private final long maxWriterCommitDelayInMs = 5_000;
     private final int maxUncommittedRows = 10000;
     private final long maintenanceJobHysteresisInMs = 100;
 
@@ -487,7 +486,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         public boolean run(int workerId) {
             assert workerId == id;
             boolean busy = drainQueue();
-            doMaintenance();
+            doMaintenance(busy);
             return busy;
         }
 
@@ -527,9 +526,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        private void doMaintenance() {
+        private void doMaintenance(boolean busy) {
             long millis = milliClock.getTicks();
-            if ((millis = lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
+            if (busy && (millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
                 return;
             }
 
@@ -537,7 +536,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             ObjList<CharSequence> tableNames = parserCache.keys();
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                 Parser parser = parserCache.get(tableNames.get(n));
-                parser.doMaintenance(millis);
+                parser.doMaintenance();
             }
         }
 
@@ -694,22 +693,17 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return colTypes.getQuick(i);
             }
 
-            void doMaintenance(long millis) {
+            void doMaintenance() {
                 if (nUncommitted == 0) {
                     return;
                 }
-
-                if ((millis - lastCommitMillis + maintenanceJobHysteresisInMs) > maxWriterCommitDelayInMs) {
-                    commit();
-                }
+                commit();
             }
 
             @Override
             public void close() {
                 if (null != writer) {
-                    if (nUncommitted > 0) {
-                        commit();
-                    }
+                    doMaintenance();
                     LOG.info().$(name).$(" closed parser [name=").$(writer.getName()).$(']').$();
                     writer.close();
                     writer = null;
