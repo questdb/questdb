@@ -268,7 +268,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetInterestQueueCapacity;
     private int lineTcpNetListenBacklog;
     private int lineTcpNetRcvBufSize;
-    private int lineTcpNetSndBufSize;
     private int lineTcpConnectionPoolInitialCapacity;
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpMsgBufferSize;
@@ -521,8 +520,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.lineTcpEnabled = getBoolean(properties, "line.tcp.enabled", true);
         if (lineTcpEnabled) {
-            lineTcpNetActiveConnectionLimit = getInt(properties, "pg.net.active.connection.limit", 10);
-            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:9009", (a, p) -> {
+            lineTcpNetActiveConnectionLimit = getInt(properties, "line.tcp.net.active.connection.limit", 10);
+            parseBindTo(properties, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
                 lineTcpNetBindIPv4Address = a;
                 lineTcpNetBindPort = p;
             });
@@ -533,7 +532,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpNetInterestQueueCapacity = getInt(properties, "line.tcp.net.interest.queue.capacity", 1024);
             this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
             this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
-            this.lineTcpNetSndBufSize = getIntSize(properties, "line.tcp.net.send.buf.size", -1);
             this.lineTcpConnectionPoolInitialCapacity = getInt(properties, "line.tcp.connection.pool.capacity", 64);
             this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, "line.tcp.timestamp");
             this.lineTcpMsgBufferSize = getIntSize(properties, "line.tcp.msg.buffer.size", 2048);
@@ -554,7 +552,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
-        final String lineUdpTimestampSwitch = getString(properties, "line.udp.timestamp", "n");
+        final String lineUdpTimestampSwitch = getString(properties, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
                 return LineProtoMicroTimestampAdapter.INSTANCE;
@@ -1580,7 +1578,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSndBufSize() {
-            return lineTcpNetSndBufSize;
+            return -1;
         }
 
     }
