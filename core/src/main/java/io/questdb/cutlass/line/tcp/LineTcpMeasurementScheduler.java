@@ -43,6 +43,8 @@ import io.questdb.std.time.MillisecondClock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private static int REBALANCE_EVENT_ID = -1;
+    private static int INCOMPLETE_EVENT_ID = -2;
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -50,7 +52,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private RingQueue<LineTcpMeasurementEvent> queue;
     private Sequence pubSeq;
     private long nextEventCursor = -1;
-    private final CharSequenceObjHashMap<TableStats> statsByTableName;
+    private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final int[] loadByThread;
 
     // TODO
@@ -67,7 +69,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = cairoConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
-        statsByTableName = new CharSequenceObjHashMap<>();
+        tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueSize();
@@ -118,7 +120,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return queue.get(nextEventCursor);
     }
 
-    void commitNewEvent(LineTcpMeasurementEvent event) {
+    void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
         assert !closed();
         if (nextEventCursor == -1) {
             throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
@@ -126,31 +128,36 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         assert queue.get(nextEventCursor) == event;
 
-        TableStats stats;
-        int keyIndex = statsByTableName.keyIndex(event.getTableName());
-        if (keyIndex > -1) {
-            String tableName = Chars.toString(event.getTableName());
-            calcThreadLoad();
-            int leastLoad = Integer.MAX_VALUE;
-            int threadId = 0;
-            for (int n = 0; n < loadByThread.length; n++) {
-                if (loadByThread[n] < leastLoad) {
-                    leastLoad = loadByThread[n];
-                    threadId = n;
+        TableUpdateDetails tableUpdateDetails;
+        if (complete) {
+            int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
+            if (keyIndex > -1) {
+                String tableName = Chars.toString(event.getTableName());
+                calcThreadLoad();
+                int leastLoad = Integer.MAX_VALUE;
+                int threadId = 0;
+                for (int n = 0; n < loadByThread.length; n++) {
+                    if (loadByThread[n] < leastLoad) {
+                        leastLoad = loadByThread[n];
+                        threadId = n;
+                    }
                 }
+                tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
+                tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
+                LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
+            } else {
+                tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
             }
-            stats = new TableStats(tableName, threadId);
-            statsByTableName.putAt(keyIndex, tableName, stats);
-            LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
-        } else {
-            stats = statsByTableName.valueAt(keyIndex);
-        }
 
-        event.threadId = stats.threadId;
+            event.threadId = tableUpdateDetails.threadId;
+        } else {
+            tableUpdateDetails = null;
+            event.threadId = INCOMPLETE_EVENT_ID;
+        }
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
 
-        if (stats.nUpdates++ > nUpdatesPerLoadRebalance) {
+        if (null != tableUpdateDetails && tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
             loadRebalance();
         }
     }
@@ -174,7 +181,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private void loadRebalance() {
         LOG.info().$("load check cycle ").$(++nLoadCheckCycles).$();
         calcThreadLoad();
-        ObjList<CharSequence> tableNames = statsByTableName.keys();
+        ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
         int toThreadId = -1;
         String tableNameToMove = null;
@@ -214,7 +221,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             lowestLoad = Integer.MAX_VALUE;
             String leastLoadedTableName = null;
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                TableStats stats = statsByTableName.get(tableNames.get(n));
+                TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
                 if (stats.threadId == highestLoadedThreadId && stats.nUpdates > 0) {
                     nTables++;
                     if (stats.nUpdates < lowestLoad) {
@@ -237,7 +244,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            TableStats stats = statsByTableName.get(tableNames.get(n));
+            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
             stats.nUpdates = 0;
         }
 
@@ -248,16 +255,16 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
             LOG.info().$("rebalance cycle ").$(++nRebalances).$(" moving ").$(tableNameToMove).$(" from ").$(fromThreadId).$(" to ").$(toThreadId).$();
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
-            TableStats stats = statsByTableName.get(tableNameToMove);
+            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
         }
     }
 
     private void calcThreadLoad() {
         Arrays.fill(loadByThread, 0);
-        ObjList<CharSequence> tableNames = statsByTableName.keys();
+        ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            TableStats stats = statsByTableName.get(tableNames.get(n));
+            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
             loadByThread[stats.threadId] += stats.nUpdates;
         }
     }
@@ -279,7 +286,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
-            statsByTableName.clear();
+            tableUpdateDetailsByTableName.clear();
             for (int n = 0; n < queue.getCapacity(); n++) {
                 queue.get(n).close();
             }
@@ -430,7 +437,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         LineTcpMeasurementEvent createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
             clear();
-            threadId = -1;
+            threadId = REBALANCE_EVENT_ID;
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
             rebalanceTableName = tableName;
@@ -438,7 +445,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         boolean isRebalanceEvent() {
-            return threadId == -1;
+            return threadId == REBALANCE_EVENT_ID;
         }
 
         @Override
@@ -789,12 +796,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    private static class TableStats {
+    private static class TableUpdateDetails {
         private final String tableName;
         private int threadId;
         private int nUpdates; // Number of updates since the last load rebalance
 
-        private TableStats(String tableName, int threadId) {
+        private TableUpdateDetails(String tableName, int threadId) {
             super();
             this.tableName = tableName;
             this.threadId = threadId;

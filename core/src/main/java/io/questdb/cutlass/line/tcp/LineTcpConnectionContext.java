@@ -38,15 +38,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     // returns true if busy
     boolean handleIO() {
         try {
-            LineTcpMeasurementEvent event = scheduler.getNewEvent();
-            if (null == event) {
-                // Waiting for writer threads to drain queue, request callback as soon as possible
-                if (checkQueueFullLogHysteresis()) {
-                    LOG.info().$('[').$(fd).$("] queue full, could not start reading new records, consider increasing queue size or number of writer jobs").$();
-                }
-                return true;
-            }
-
             // Read as much data as possible
             int len = (int) (recvBufEnd - recvBufPos);
             if (len > 0 && !peerDisconnected) {
@@ -65,20 +56,34 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
             // Process as much data as possible
             long recvBufLineStart = recvBufStart;
+            boolean queueFull = false;
             do {
-                long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
-                if (recvBufLineNext == -1) {
+                LineTcpMeasurementEvent event = scheduler.getNewEvent();
+                if (null == event) {
+                    // Waiting for writer threads to drain queue, request callback as soon as possible
+                    if (checkQueueFullLogHysteresis()) {
+                        LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
+                    }
+                    queueFull = true;
                     break;
                 }
-                if (!event.isError()) {
-                    scheduler.commitNewEvent(event);
-                    event = scheduler.getNewEvent();
-                } else {
-                    LOG.error().$('[').$(fd).$("] failed to parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
-                            .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
+                boolean complete = false;
+                try {
+                    long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
+                    if (recvBufLineNext == -1) {
+                        break;
+                    }
+                    if (!event.isError()) {
+                        complete = true;
+                    } else {
+                        LOG.error().$('[').$(fd).$("] failed to parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
+                                .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
+                    }
+                    recvBufLineStart = recvBufLineNext;
+                } finally {
+                    scheduler.commitNewEvent(event, complete);
                 }
-                recvBufLineStart = recvBufLineNext;
-            } while (recvBufLineStart != recvBufPos && null != event);
+            } while (recvBufLineStart != recvBufPos);
 
             // Compact input buffer
             if (recvBufLineStart != recvBufStart) {
@@ -89,12 +94,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 recvBufPos = recvBufStart + len;
             }
 
-            // Check if we are waiting for writer threads
-            if (null == event) {
-                // Waiting for writer threads to drain queue, request callback as soon as possible
-                if (checkQueueFullLogHysteresis()) {
-                    LOG.info().$('[').$(fd).$("] queue full, could not drain input buffer, consider increasing queue size or number of writer jobs").$();
-                }
+            if (queueFull) {
                 return true;
             }
 
