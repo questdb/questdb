@@ -53,4 +53,12 @@ public interface LineTcpReceiverConfiguration {
     MicrosecondClock getMicrosecondClock();
 
     WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
+
+    int getnUpdatesPerLoadRebalance();
+
+    double getMaxLoadRatio();
+
+    int getMaxUncommittedRows();
+
+    long getMaintenanceJobHysteresisInMs();
 }

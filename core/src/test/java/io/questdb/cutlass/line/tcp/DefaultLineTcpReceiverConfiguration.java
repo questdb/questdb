@@ -69,4 +69,24 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
         return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
     }
+
+    @Override
+    public int getnUpdatesPerLoadRebalance() {
+        return 1000;
+    }
+
+    @Override
+    public double getMaxLoadRatio() {
+        return 1.1;
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return 1000;
+    }
+
+    @Override
+    public long getMaintenanceJobHysteresisInMs() {
+        return 100;
+    }
 }

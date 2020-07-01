@@ -55,11 +55,10 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final int[] loadByThread;
 
-    // TODO
-    private final int nUpdatesPerLoadRebalance = 1000;
+    private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
-    private final int maxUncommittedRows = 10000;
-    private final long maintenanceJobHysteresisInMs = 100;
+    private final int maxUncommittedRows;
+    private final long maintenanceJobHysteresisInMs;
 
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
@@ -99,7 +98,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             writerWorkerPool.assign(0, writerJob::close);
         }
 
-        maxLoadRatio = 1d + 1d / writerWorkerPool.getWorkerCount();
+        nUpdatesPerLoadRebalance = lineConfiguration.getnUpdatesPerLoadRebalance();
+        maxLoadRatio = lineConfiguration.getMaxLoadRatio();
+        maxUncommittedRows = lineConfiguration.getMaxUncommittedRows();
+        maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
     }
 
     LineTcpMeasurementEvent getNewEvent() {

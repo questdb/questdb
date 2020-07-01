@@ -277,6 +277,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpWorkerCount;
     private int[] lineTcpWorkerAffinity;
     private boolean lineTcpWorkerPoolHaltOnError;
+    private int lineTcpNUpdatesPerLoadRebalance;
+    private double lineTcpMaxLoadRatio;
+    private int lineTcpMaxUncommittedRows;
+    private long lineTcpMaintenanceJobHysteresisInMs;
     private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
@@ -541,7 +545,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 128);
             this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 0);
             this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
-            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, "line.net.halt.on.error", false);
+            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.halt.on.error", false);
+            this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, "line.tcp.n.updates.per.load.balance", 10_000);
+            this.lineTcpMaxLoadRatio = getDouble(properties, "line.tcp.max.load.ratio", 1.9);
+            this.lineTcpMaxUncommittedRows = getInt(properties, "line.tcp.max.uncommitted.rows", 1000);
+            this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
         }
     }
 
@@ -1653,6 +1661,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
             return lineTcpWorkerPoolConfiguration;
+        }
+
+        @Override
+        public int getnUpdatesPerLoadRebalance() {
+            return lineTcpNUpdatesPerLoadRebalance;
+        }
+
+        @Override
+        public double getMaxLoadRatio() {
+            return lineTcpMaxLoadRatio;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return lineTcpMaxUncommittedRows;
+        }
+
+        @Override
+        public long getMaintenanceJobHysteresisInMs() {
+            return lineTcpMaintenanceJobHysteresisInMs;
         }
     }
 
