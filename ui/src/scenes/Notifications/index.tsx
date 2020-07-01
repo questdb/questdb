@@ -9,7 +9,7 @@ import { selectors } from "store"
 import Notification from "./Notification"
 
 const NotificationsStyles = createGlobalStyle`
-  .notifications{
+  .notifications {
     position: fixed;
     top: 4rem;
     right: 1rem;

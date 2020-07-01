@@ -56,10 +56,10 @@ meaning that the data is safe, yet instantly accessible.
 Number operations per second **per thread**. Writes are durable and written to
 disk.
 
-| Operation | 64-bit double  | 32-bit int      |
-| --------- | -------------- | --------------- |
-| Read      | 120 Million /s | 240 Million /s  |
-| Write     | 240 Million /s | 480M Million /s |
+| Operation | 64-bit double  | 32-bit int     |
+| --------- | -------------- | -------------- |
+| Read      | 120 Million /s | 240 Million /s |
+| Write     | 240 Million /s | 480 Million /s |
 
 On a CPU with 6 memory channels, QuestDB can scan through **117GB of data per
 second**.
