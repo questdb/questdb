@@ -472,10 +472,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 if (multipartParserState.multipartRetry) {
                     processor.onRequestRetry(this);
                     multipartContentParser.setState(multipartParserState.state);
-                        continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retry -> {
-                            LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
-                            throw RetryOperationException.INSTANCE;
-                        });
+                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retry -> {
+                        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
+                        throw RetryOperationException.INSTANCE;
+                    });
                 } else {
                     processor.onRequestRetry(this);
                 }

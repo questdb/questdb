@@ -265,8 +265,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
-            }
-            catch (TextException | CairoException | CairoError e) {
+            } catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);
 
             }
