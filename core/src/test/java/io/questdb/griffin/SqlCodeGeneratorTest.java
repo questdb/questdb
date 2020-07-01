@@ -442,6 +442,64 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctFunctionColumn() throws Exception {
+        final String expected = "v\n" +
+                "8.0\n" +
+                "1.0\n" +
+                "7.0\n" +
+                "2.0\n" +
+                "3.0\n" +
+                "4.0\n" +
+                "0.0\n" +
+                "6.0\n" +
+                "9.0\n" +
+                "5.0\n" +
+                "10.0\n";
+
+        assertQuery(expected,
+                "select distinct round(val*10, 0) v from prices",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " rnd_double(0) val\n" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testDistinctOperatorColumn() throws Exception {
+        final String expected = "v\n" +
+                "10.0\n" +
+                "3.0\n" +
+                "9.0\n" +
+                "4.0\n" +
+                "5.0\n" +
+                "6.0\n" +
+                "2.0\n" +
+                "8.0\n" +
+                "11.0\n" +
+                "7.0\n" +
+                "12.0\n";
+
+        assertQuery(expected,
+                "select distinct 2+round(val*10,0) v from prices",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " rnd_double(0) val\n" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctSymbolColumnWithFilter() throws Exception {
         final String expected = "pair\n" +
                 "A\n" +

@@ -30,18 +30,21 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.time.Dates;
 import sun.misc.Signal;
 
 import java.io.*;
-import java.net.URL;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Properties;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -137,62 +140,94 @@ public class ServerMain {
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final MessageBus messageBus = new MessageBusImpl();
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
 
-        final HttpServer httpServer = HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                messageBus
-        );
-
-        final PGWireServer pgWireServer;
-
-        if (configuration.getPGWireConfiguration().isEnabled()) {
-            pgWireServer = PGWireServer.create(
-                    configuration.getPGWireConfiguration(),
+        try {
+            final HttpServer httpServer = HttpServer.create(
+                    configuration.getHttpServerConfiguration(),
                     workerPool,
                     log,
                     cairoEngine,
-                    messageBus
+                    messageBus,
+                    functionFactoryCache
             );
+
+            final PGWireServer pgWireServer;
+
+            if (configuration.getPGWireConfiguration().isEnabled()) {
+                pgWireServer = PGWireServer.create(
+                        configuration.getPGWireConfiguration(),
+                        workerPool,
+                        log,
+                        cairoEngine,
+                        messageBus,
+                        functionFactoryCache
+                );
+            } else {
+                pgWireServer = null;
+            }
+
+            final AbstractLineProtoReceiver lineProtocolReceiver;
+
+            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+                lineProtocolReceiver = new LinuxMMLineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            } else {
+                lineProtocolReceiver = new LineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            }
+
+            startQuestDb(workerPool, lineProtocolReceiver, log);
+            logWebConsoleUrls(log, configuration);
+
+            System.gc();
+
+            if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
+                // suppress HUP signal
+                Signal.handle(new Signal("HUP"), signal -> {
+                });
+            }
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.err.println(new Date() + " QuestDB is shutting down");
+                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
+                System.err.println(new Date() + " QuestDB is down");
+            }));
+        } catch (NetworkError e) {
+            log.error().$(e.getMessage()).$();
+            LockSupport.parkNanos(10000000L);
+            System.exit(55);
+        }
+    }
+
+    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
+        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
+        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        if (httpBindIP == 0) {
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface netint : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
+                    if (inetAddress instanceof Inet4Address) {
+                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
+                    }
+                }
+            }
+            record.$('\n').$();
         } else {
-            pgWireServer = null;
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n');
         }
-
-        final AbstractLineProtoReceiver lineProtocolReceiver;
-
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            lineProtocolReceiver = new LinuxMMLineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        } else {
-            lineProtocolReceiver = new LineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        }
-
-        startQuestDb(workerPool, lineProtocolReceiver, log);
-
-        if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
-            // suppress HUP signal
-            Signal.handle(new Signal("HUP"), signal -> {
-            });
-        }
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.err.println(new Date() + " QuestDB is shutting down");
-            shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
-            System.err.println(new Date() + " QuestDB is down");
-        }));
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
@@ -242,9 +277,9 @@ public class ServerMain {
                 log.error().$("could not find site [resource=").$(publicZip).$(']').$();
             }
         }
-        copyConfResource(dir, force, buffer, "conf/date.formats", log);
+        copyConfResource(dir, false, buffer, "conf/date.formats", log);
         copyConfResource(dir, force, buffer, "conf/mime.types", log);
-        copyConfResource(dir, force, buffer, "conf/server.conf", log);
+        copyConfResource(dir, false, buffer, "conf/server.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

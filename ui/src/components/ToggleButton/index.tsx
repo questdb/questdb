@@ -42,6 +42,7 @@ const baseStyles = css<Props>`
   ${({ direction }) =>
     `border-${direction || defaultProps.direction}: 2px solid transparent;`};
   ${bezierTransition};
+  ${({ disabled }) => disabled && "pointer-events: none;"};
 
   svg + span {
     margin-left: 1rem;

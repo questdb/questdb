@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -34,8 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import static io.questdb.griffin.CompiledQuery.ALTER;
 
 public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTest {
 
@@ -47,6 +47,11 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x alter column z", 28, "'add index' or 'cache' or 'nocache' expected");
+    }
+
+    @Test
+    public void testAlterFlagInNonSymbolColumn() throws Exception {
+        assertFailure("alter table x alter column b cache", 29, "Invalid column type - Column should be of type symbol");
     }
 
     @Test

@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -48,7 +49,8 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         final T server;
         if (configuration.isEnabled()) {
@@ -57,7 +59,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             final boolean local = localPool != sharedWorkerPool;
             final MessageBus bus = local ? new MessageBusImpl() : messageBus;
 
-            server = factory.create(configuration, cairoEngine, localPool, local, bus);
+            server = factory.create(configuration, cairoEngine, localPool, local, bus, functionFactoryCache);
 
             if (local) {
                 localPool.start(log);
@@ -72,6 +74,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
     @FunctionalInterface
     interface ServerFactory<T extends Closeable, C> {
-        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus);
+        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache);
     }
 }

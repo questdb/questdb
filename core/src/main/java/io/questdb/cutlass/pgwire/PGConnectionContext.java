@@ -66,6 +66,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
+    public static final String TAG_SELECT = "SELECT";
+    public static final String TAG_OK = "OK";
+    public static final String TAG_COPY = "COPY";
+    public static final String TAG_INSERT = "INSERT";
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -114,6 +118,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private InsertStatement currentInsertStatement = null;
     private long fd;
     private CharSequence queryText;
+    private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
     private long transientCopyBuffer = 0;
@@ -909,7 +914,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     void prepareCommandComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
         long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8(queryText).put((char) 0);
+        responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
         responseAsciiSink.putLen(addr);
     }
 
@@ -944,6 +949,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareParams(sink, "application_name", "QuestDB");
         prepareParams(sink, "server_version", serverVersion);
         prepareParams(sink, "integer_datetimes", "on");
+        prepareParams(sink, "client_encoding", "UTF8");
         prepareReadyForQuery(sink);
     }
 
@@ -1179,25 +1185,36 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            if (cc.getType() == CompiledQuery.SELECT) {
-                currentFactory = cc.getRecordCursorFactory();
-                factoryCache.put(queryText, currentFactory);
-            } else if (cc.getType() == CompiledQuery.INSERT) {
-                currentInsertStatement = cc.getInsertStatement();
-                factoryCache.put(queryText, currentInsertStatement);
-            } else if (cc.getType() == CompiledQuery.COPY_LOCAL) {
-                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-            } else {
-                // DDL SQL
-                prepareParseComplete();
-                prepareReadyForQuery(responseAsciiSink);
-                LOG.info().$("executed DDL").$();
-                send();
+            switch (cc.getType()) {
+                case CompiledQuery.SELECT:
+                    currentFactory = cc.getRecordCursorFactory();
+                    queryTag = TAG_SELECT;
+                    factoryCache.put(queryText, currentFactory);
+                    break;
+                case CompiledQuery.INSERT:
+                    currentInsertStatement = cc.getInsertStatement();
+                    queryTag = TAG_INSERT;
+                    factoryCache.put(queryText, currentInsertStatement);
+                    break;
+                case CompiledQuery.COPY_LOCAL:
+                    queryTag = TAG_COPY;
+                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                    break;
+                default:
+                    // DDL SQL
+                    queryTag = TAG_OK;
+                    prepareParseComplete();
+                    prepareReadyForQuery(responseAsciiSink);
+                    LOG.info().$("executed DDL").$();
+                    send();
+                    break;
             }
         } else {
             if (statement instanceof RecordCursorFactory) {
+                queryTag = TAG_SELECT;
                 currentFactory = (RecordCursorFactory) statement;
             } else if (statement instanceof InsertStatement) {
+                queryTag = TAG_INSERT;
                 currentInsertStatement = (InsertStatement) statement;
             } else {
                 assert false;
@@ -1216,32 +1233,43 @@ public class PGConnectionContext implements IOContext, Mutable {
         parseQueryText(lo, limit - 1);
 
         if (SqlKeywords.isSemicolon(queryText)) {
+            queryTag = TAG_OK;
             sendExecuteTail(TAIL_SUCCESS);
             return;
         }
 
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
-            CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
 
-            if (cc.getType() == CompiledQuery.SELECT) {
-                final RecordCursorFactory factory = cc.getRecordCursorFactory();
-                factoryCache.put(queryText, factory);
-                executeSelect(factory);
-            } else if (cc.getType() == CompiledQuery.COPY_REMOTE) {
-                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-            } else if (cc.getType() == CompiledQuery.INSERT) {
-                // todo: we are throwing away insert model here
-                //    we know what this is INSERT without parameters, we should
-                //    execute it as we parse without generating models etc.
-                currentInsertStatement = cc.getInsertStatement();
-                executeInsert();
-            } else {
-                // DDL SQL
-                sendExecuteTail(TAIL_SUCCESS);
+            switch (cc.getType()) {
+                case CompiledQuery.SELECT:
+                    final RecordCursorFactory factory = cc.getRecordCursorFactory();
+                    factoryCache.put(queryText, factory);
+                    queryTag = TAG_SELECT;
+                    executeSelect(factory);
+                    break;
+                case CompiledQuery.COPY_LOCAL:
+                    queryTag = TAG_COPY;
+                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                    break;
+                case CompiledQuery.INSERT:
+                    // todo: we are throwing away insert model here
+                    //    we know what this is INSERT without parameters, we should
+                    //    execute it as we parse without generating models etc.
+                    queryTag = TAG_INSERT;
+                    currentInsertStatement = cc.getInsertStatement();
+                    executeInsert();
+                    break;
+                default:
+                    // DDL SQL
+                    queryTag = TAG_OK;
+                    sendExecuteTail(TAIL_SUCCESS);
+                    break;
             }
         } else {
             if (statement instanceof RecordCursorFactory) {
+                queryTag = TAG_SELECT;
                 executeSelect((RecordCursorFactory) statement);
             }
         }

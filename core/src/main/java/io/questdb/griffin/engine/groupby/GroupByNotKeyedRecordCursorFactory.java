@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
@@ -40,7 +41,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
     private final SimpleMapValue simpleMapValue;
     private final VirtualRecord virtualRecordA;
-    private final VirtualRecord virtualRecordB;
 
     public GroupByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -55,10 +55,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         this.groupByFunctions = groupByFunctions;
         this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
         this.virtualRecordA.of(simpleMapValue);
-
-        this.virtualRecordB = new VirtualRecordNoRowid(recordFunctions);
-        this.virtualRecordB.of(simpleMapValue);
-
         this.cursor = new GroupByNotKeyedRecordCursor();
     }
 
@@ -70,6 +66,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             final Record baseRecord = baseCursor.getRecord();
@@ -82,6 +79,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             }
 
             while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
                 GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
             }
 
@@ -117,11 +115,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         @Override
         public Record getRecord() {
             return virtualRecordA;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return virtualRecordB;
         }
 
         @Override

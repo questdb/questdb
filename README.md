@@ -13,7 +13,7 @@
   <a href="https://circleci.com/gh/questdb/questdb">
     <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
   </a>
-  <a href="https://github.com/questdb/questdb/releases/tag/5.0.0">
+  <a href="https://github.com/questdb/questdb/releases/tag/5.0.1">
     <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
@@ -119,7 +119,7 @@ psql -h localhost -p 8812 -U admin -W -d qdb
 ```shell script
 java --version
 mvn --version
-npm --version
+node --version
 ```
 
 #### (b) Clone the Repository
@@ -143,7 +143,7 @@ The build should take around 2 minutes. You can remove `-DskipTests` to run the
 ```shell script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/core-5.0.1-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/core-5.0.2-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources

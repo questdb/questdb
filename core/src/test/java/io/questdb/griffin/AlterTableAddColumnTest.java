@@ -53,6 +53,21 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddBadColumnNameBackSlash() throws Exception {
+        assertFailure("alter table x add column \\", 25, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testAddBadColumnNameDot() throws Exception {
+        assertFailure("alter table x add column .", 25, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testAddBadColumnNameFwdSlash() throws Exception {
+        assertFailure("alter table x add column /", 25, "new column name contains invalid characters");
+    }
+
+    @Test
     public void testAddBusyTable() throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
@@ -446,12 +461,12 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' expected");
+        assertFailure("alter x", 6, "'table' or 'system' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' expected");
+        assertFailure("alter", 5, "'table' or 'system' expected");
     }
 
     @Test

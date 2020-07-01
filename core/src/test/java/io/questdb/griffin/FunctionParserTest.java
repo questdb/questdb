@@ -977,7 +977,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                         };
                     }
                 },
-                functions);
+                new FunctionFactoryCache(configuration, functions));
 
         Function function = parseFunction("to_str(sysdate(), 'EE, dd-MMM-yyyy HH:mm:ss')",
                 new GenericRecordMetadata(),

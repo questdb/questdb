@@ -26,10 +26,11 @@ import { color } from "utils"
 
 import QueryPicker from "../QueryPicker"
 
-const Wrapper = styled(PaneMenu)`
+const Wrapper = styled(PaneMenu)<{ _display: string }>`
   z-index: 15;
 
   .algolia-autocomplete {
+    display: ${({ _display }) => _display} !important;
     flex: 0 1 168px;
   }
 `
@@ -38,8 +39,7 @@ const Separator = styled.div`
   flex: 1;
 `
 
-const DocsearchInput = styled(Input)<{ _display: string }>`
-  display: ${({ _display }) => _display};
+const DocsearchInput = styled(Input)`
   width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -61,7 +61,6 @@ const CloseIcon = styled(_CloseIcon)`
 
 const SideMenuMenuButton = styled(TransparentButton)`
   padding: 0;
-  margin-left: 1rem;
 
   .fade-enter {
     opacity: 0;
@@ -133,7 +132,7 @@ const Menu = () => {
   }, [dispatch, opened, sm])
 
   return (
-    <Wrapper>
+    <Wrapper _display={sm ? "none" : "inline"}>
       {running && (
         <ErrorButton onClick={handleClick}>
           <Stop size="18px" />
@@ -167,7 +166,6 @@ const Menu = () => {
       <Separator />
 
       <DocsearchInput
-        _display={sm ? "none" : "inline"}
         id="docsearch-input"
         placeholder="Search documentation"
         title="Search..."

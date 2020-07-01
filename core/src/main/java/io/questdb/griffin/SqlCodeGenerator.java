@@ -53,6 +53,8 @@ import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class SqlCodeGenerator implements Mutable {
+    public static final int GKK_VANILLA_INT = 0;
+    public static final int GKK_HOUR_INT = 1;
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
@@ -128,9 +130,9 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempSymbolSkewIndexes = new IntList();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempAggIndex = new IntList();
-    public static final int GKK_VANILLA_INT = 0;
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
+    private final IntList tempKeyKinds = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -523,8 +525,6 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
-    public static final int GKK_HOUR_INT = 1;
-
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (isSingleColumnFunction(ast, "sum")) {
@@ -566,6 +566,7 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode filter = model.getWhereClause();
         if (filter != null) {
+            model.setWhereClause(null);
             return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
         }
         return factory;
@@ -613,12 +614,14 @@ public class SqlCodeGenerator implements Mutable {
 
                     switch (joinType) {
                         case QueryModel.JOIN_CROSS:
-                            return new CrossJoinRecordCursorFactory(
+                            master = new CrossJoinRecordCursorFactory(
                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                     master,
                                     slave,
                                     masterMetadata.getColumnCount()
                             );
+                            masterAlias = null;
+                            break;
                         case QueryModel.JOIN_ASOF:
                             validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
@@ -1433,6 +1436,7 @@ public class SqlCodeGenerator implements Mutable {
         if (
                 model.getBottomUpColumns().size() == 1
                         && model.getNestedModel() != null
+                        && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
                         && twoDeepNested.getWhereClause() == null
                         && twoDeepNested.getLatestBy().size() == 0
@@ -1480,8 +1484,6 @@ public class SqlCodeGenerator implements Mutable {
             throw e;
         }
     }
-
-    private final IntList tempKeyKinds = new IntList();
 
     private boolean assembleKeysAndFunctionReferences(
             ObjList<QueryColumn> columns,
@@ -1562,7 +1564,7 @@ public class SqlCodeGenerator implements Mutable {
             arrayColumnTypes.clear();
             tempKeyKinds.clear();
 
-            boolean pageFramingSupported;
+            boolean pageFramingSupported = false;
             boolean specialCaseKeys = false;
 
             // check for special case time function aggregations
@@ -1570,7 +1572,6 @@ public class SqlCodeGenerator implements Mutable {
             assert nested != null;
             // check if underlying model has reference to hour(column) function
             if (nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-//                    && (columns = nested.getBottomUpColumns()).size() == 1
                     && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
                     && isHourKeyword(columnExpr.token)
                     && columnExpr.paramCount == 1
@@ -1578,34 +1579,37 @@ public class SqlCodeGenerator implements Mutable {
             ) {
                 specialCaseKeys = true;
                 factory = generateSubQuery(nested, executionContext);
-                // todo: check that base query for hour() is actually a table and not sub-query
-                //      factory will have supported page framing
                 pageFramingSupported = factory.supportPageFrameCursor();
-                assert pageFramingSupported;
+                if (pageFramingSupported) {
 
-                // find position of the hour() argument in the factory meta
-                tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
+                    // find position of the hour() argument in the factory meta
+                    tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
 
-                // find position of hour() alias in selected columns
-                // also make sure there are no other literal column than our function reference
-                final CharSequence functionColumnName = columns.getQuick(0).getName();
-                columns = model.getBottomUpColumns();
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    columnExpr = columns.getQuick(i).getAst();
-                    if (columnExpr.type == LITERAL) {
-                        if (Chars.equals(columnExpr.token, functionColumnName)) {
-                            tempKeyIndex.add(i);
-                            // storage dimension for Rosti is INT when we use hour(). This function produces INT.
-                            tempKeyKinds.add(GKK_HOUR_INT);
-                            arrayColumnTypes.add(ColumnType.INT);
-                        } else {
-                            // there is something else here, fallback to default implementation
-                            pageFramingSupported = false;
-                            break;
+                    // find position of hour() alias in selected columns
+                    // also make sure there are no other literal column than our function reference
+                    final CharSequence functionColumnName = columns.getQuick(0).getName();
+                    columns = model.getBottomUpColumns();
+                    for (int i = 0, n = columns.size(); i < n; i++) {
+                        columnExpr = columns.getQuick(i).getAst();
+                        if (columnExpr.type == LITERAL) {
+                            if (Chars.equals(columnExpr.token, functionColumnName)) {
+                                tempKeyIndex.add(i);
+                                // storage dimension for Rosti is INT when we use hour(). This function produces INT.
+                                tempKeyKinds.add(GKK_HOUR_INT);
+                                arrayColumnTypes.add(ColumnType.INT);
+                            } else {
+                                // there is something else here, fallback to default implementation
+                                pageFramingSupported = false;
+                                break;
+                            }
                         }
                     }
+                } else {
+                    factory = Misc.free(factory);
                 }
-            } else {
+            }
+
+            if (factory == null) {
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
@@ -1644,7 +1648,7 @@ public class SqlCodeGenerator implements Mutable {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
                     tempVaf.add(vaf);
                     meta.add(indexInThis, new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), vaf.getType()));
                 }

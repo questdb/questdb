@@ -73,9 +73,33 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "1\t36000\t13359838134\t-997\t889948\t444350.36699261627\n" +
                         "2\t28000\t10444993989\t-992\t889982\t445586.53594129946\n",
                 "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
-// todo: this SQL fails, investigate and fix
-//                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true
+        );
+    }
+
+    @Test
+    public void testHourPossibleBugfix() throws Exception {
+        assertQuery(
+                "hour\tsum\tksum\tnsum\tmin\tmax\tavg\n" +
+                        "0\t13265789485\t-5.597664489165837E22\t-5.597664489165837E22\t-988\t889951\t-1.55490680254637466E18\n" +
+                        "1\t13359838134\t-5.473148966668288E22\t-5.473148966668288E22\t-997\t889948\t-1.52031915740816614E18\n" +
+                        "2\t10444993989\t-4.204935311601048E22\t-4.204935311601048E22\t-992\t889982\t-1.50176261128637747E18\n",
+                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true
+        );
+    }
+
+    @Test
+    public void testHourFiltered() throws Exception {
+        assertQuery(
+                "hour\tcount\n" +
+                        "0\t36000\n" +
+                        "1\t36000\n" +
+                        "2\t28000\n",
+                "select hour(ts), count() from tab where val < 0.5",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
                 null, true
         );
     }

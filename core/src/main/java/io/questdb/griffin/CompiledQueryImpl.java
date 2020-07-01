@@ -55,82 +55,66 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        this.type = SELECT;
-        this.recordCursorFactory = recordCursorFactory;
+        return of(SELECT, recordCursorFactory);
+    }
+
+    private CompiledQuery of(int type) {
+        return of(type, null);
+    }
+
+    private CompiledQuery of(int type, RecordCursorFactory factory) {
+        this.type = type;
+        this.recordCursorFactory = factory;
         return this;
     }
 
     CompiledQuery ofAlter() {
-        this.type = ALTER;
-        return this;
+        return of(ALTER);
     }
 
     CompiledQuery ofCopyLocal() {
-        this.type = COPY_LOCAL;
-        return this;
+        return of(COPY_LOCAL);
     }
 
     CompiledQuery ofCopyRemote(TextLoader textLoader) {
         this.textLoader = textLoader;
-        this.type = COPY_REMOTE;
-        return this;
+        return of(COPY_REMOTE);
     }
 
     CompiledQuery ofCreateTable() {
-        this.type = CREATE_TABLE;
-        return this;
+        return of(CREATE_TABLE);
     }
 
     CompiledQuery ofDrop() {
-        this.type = DROP;
-        return this;
+        return of(DROP);
     }
 
     CompiledQuery ofInsert(InsertStatement insertStatement) {
         this.insertStatement = insertStatement;
-        this.type = INSERT;
-        return this;
+        return of(INSERT);
     }
 
     CompiledQuery ofInsertAsSelect() {
-        this.type = INSERT_AS_SELECT;
-        return this;
+        return of(INSERT_AS_SELECT);
     }
 
     CompiledQuery ofRepair() {
-        this.type = REPAIR;
-        return this;
+        return of(REPAIR);
     }
 
     CompiledQuery ofSet() {
-        this.type = SET;
-        return this;
+        return of(SET);
     }
 
     CompiledQuery ofTruncate() {
-        this.type = TRUNCATE;
-        return this;
+        return of(TRUNCATE);
     }
 
     CompiledQuery ofRenameTable() {
-        this.type = RENAME_TABLE;
-        return this;
+        return of(RENAME_TABLE);
     }
 
     CompiledQuery ofBackupTable() {
-        this.type = BACKUP_TABLE;
-        return this;
-    }
-
-    CompiledQuery ofShowTables(RecordCursorFactory recordCursorFactory) {
-        this.type = SHOW_TABLES;
-        this.recordCursorFactory = recordCursorFactory;
-        return this;
-    }
-
-    CompiledQuery ofShowColumns(RecordCursorFactory recordCursorFactory) {
-        this.type = SHOW_COLUMNS;
-        this.recordCursorFactory = recordCursorFactory;
-        return this;
+        return of(BACKUP_TABLE);
     }
 }

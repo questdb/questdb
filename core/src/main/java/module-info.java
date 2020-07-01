@@ -376,6 +376,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastSymbolToCharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory,
+            // cast helpers
+            io.questdb.griffin.engine.functions.cast.VarcharCastHelperFunctionFactory,
 //                  'in'
             io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,
@@ -414,6 +416,7 @@ open module io.questdb {
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
 //                  round()
+            io.questdb.griffin.engine.functions.math.RoundDoubleZeroScaleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundDownDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundUpDoubleFunctionFactory,
@@ -423,10 +426,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
 //                  avg()

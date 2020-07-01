@@ -130,8 +130,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
         Assert.assertEquals(300000, configuration.getCairoConfiguration().getIdleCheckInterval());
-        Assert.assertEquals(-10_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
-        Assert.assertEquals(-10_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
+        Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
+        Assert.assertEquals(600_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());

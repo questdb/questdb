@@ -53,6 +53,6 @@ public class BaseFunctionFactoryTest extends AbstractGriffinTest {
 
     @NotNull
     protected FunctionParser createFunctionParser() {
-        return new FunctionParser(configuration, functions);
+        return new FunctionParser(configuration, new FunctionFactoryCache(configuration, functions));
     }
 }

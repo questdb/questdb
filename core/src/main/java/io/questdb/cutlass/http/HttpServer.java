@@ -29,6 +29,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -108,37 +109,35 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            MessageBus messageBus
+            MessageBus messageBus,
+            @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration, sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                messageBus
+                messageBus,
+                functionFactoryCache
         );
     }
 
-    public void bind(HttpRequestProcessorFactory factory) {
-        final String url = factory.getUrl();
-        assert url != null;
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
-            } else {
-                selector.processorMap.put(url, factory.newInstance());
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        if (workerPool != null) {
-            workerPool.halt();
-        }
-        Misc.free(httpContextFactory);
-        Misc.free(dispatcher);
+    @Nullable
+    public static HttpServer create(
+            HttpServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
+            MessageBus messageBus
+    ) {
+        return create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                messageBus,
+                null
+        );
     }
 
     private static HttpServer create0(
@@ -146,7 +145,8 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean localPool,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         final HttpServer s = new HttpServer(configuration, workerPool, localPool);
         QueryCache.configure(configuration);
@@ -158,8 +158,8 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         messageBus,
-                        workerPool.getWorkerCount()
-
+                        workerPool.getWorkerCount(),
+                        functionFactoryCache
                 );
             }
 
@@ -188,7 +188,8 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         messageBus,
-                        workerPool.getWorkerCount()
+                        workerPool.getWorkerCount(),
+                        functionFactoryCache
                 );
             }
 
@@ -227,6 +228,28 @@ public class HttpServer implements Closeable {
         workerPool.assign(new GroupByNotKeyedJob(messageBus));
         return s;
 
+    }
+
+    public void bind(HttpRequestProcessorFactory factory) {
+        final String url = factory.getUrl();
+        assert url != null;
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                selector.defaultRequestProcessor = factory.newInstance();
+            } else {
+                selector.processorMap.put(url, factory.newInstance());
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (workerPool != null) {
+            workerPool.halt();
+        }
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {

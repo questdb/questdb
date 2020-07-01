@@ -70,18 +70,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
-    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> booleanFactories = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<ObjList<FunctionFactory>> commutativeBooleanFactories = new CharSequenceObjHashMap<>();
-    private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
+    private final FunctionFactoryCache functionFactoryCache;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
 
-    public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
+    public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
-        loadFunctionFactories(functionFactories, configuration.enableTestFactories());
+        this.functionFactoryCache = functionFactoryCache;
     }
 
     public static int getArgType(char c) {
@@ -263,10 +260,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.$(0, "bind variable service is not provided");
         }
         return bindVariableService;
-    }
-
-    public boolean isGroupBy(CharSequence name) {
-        return groupByFunctionNames.contains(name);
     }
 
     /**
@@ -514,9 +507,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             ExpressionNode node,
             @Transient ObjList<Function> args
     ) throws SqlException {
-        ObjList<FunctionFactory> overload = factories.get(node.token);
-        boolean isNegated = booleanFactories.get(node.token) != null;
-        boolean isFlipped = commutativeBooleanFactories.get(node.token) != null;
+        ObjList<FunctionFactory> overload = functionFactoryCache.getOverloadList(node.token);
+        boolean isNegated = functionFactoryCache.isNegated(node.token);
+        boolean isFlipped = functionFactoryCache.isFlipped(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);
         }
@@ -793,66 +786,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    int getFunctionCount() {
-        return factories.size();
+    public boolean isGroupBy(CharSequence token) {
+        return functionFactoryCache.isGroupBy(token);
     }
 
-    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactory>> list, String name, FunctionFactory factory) {
-        int index = list.keyIndex(name);
-        ObjList<FunctionFactory> overload;
-        if (index < 0) {
-            overload = list.valueAtQuick(index);
-        } else {
-            overload = new ObjList<>(4);
-            list.putAt(index, name, overload);
-        }
-        overload.add(factory);
-    }
-
-    // Add a factory to `factories` and optionally `extraList`
-    private void addFactory(CharSequenceObjHashMap<ObjList<FunctionFactory>> extraList, String name, FunctionFactory factory) {
-        addFactoryToList(factories, name, factory);
-        addFactoryToList(extraList, name, factory);
-    }
-
-    private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories, boolean enableTestFactories) {
-        LOG.info().$("loading functions [test=").$(enableTestFactories).$(']').$();
-        for (FunctionFactory factory : functionFactories) {
-            if (!factory.getClass().getName().contains("test") || enableTestFactories) {
-                final String sig = factory.getSignature();
-                final int openBraceIndex;
-                try {
-                    openBraceIndex = validateSignatureAndGetNameSeparator(sig);
-                } catch (SqlException e) {
-                    LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
-                    continue;
-                }
-
-                final String name = sig.substring(0, openBraceIndex);
-                addFactoryToList(factories, name, factory);
-
-                // Add != counterparts to equality function factories
-                if (factory instanceof AbstractBooleanFunctionFactory) {
-                    switch (name) {
-                        case "=":
-                            addFactory(booleanFactories, "!=", factory);
-                            break;
-                        case "<":
-                            // `a < b` == `a >= b`
-                            addFactory(booleanFactories, ">=", factory);
-                            if (sig.charAt(2) == sig.charAt(3)) {
-                                // `a < b` == `b > a`
-                                addFactory(commutativeBooleanFactories, ">", factory);
-                                // `a < b` == `b > a` == `b <= a`
-                                addFactory(booleanFactories, "<=", factory);
-                                addFactory(commutativeBooleanFactories, "<=", factory);
-                            }
-                            break;
-                    }
-                } else if (factory.isGroupBy()) {
-                    groupByFunctionNames.add(name);
-                }
-            }
-        }
+    public int getFunctionCount() {
+        return functionFactoryCache.getFunctionCount();
     }
 }
