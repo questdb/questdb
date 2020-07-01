@@ -49,7 +49,11 @@ public class LineTcpServer implements Closeable {
                         netWorkerPool,
                         writerWorkerPool,
                         bus);
-        return WorkerPoolAwareConfiguration.create(lineConfiguration.getNetWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
+        LineTcpServer server = WorkerPoolAwareConfiguration.create(lineConfiguration.getNetWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus);
+        if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.start(log);
+        }
+        return server;
     }
 
     private final IODispatcher<LineTcpConnectionContext> dispatcher;

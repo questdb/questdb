@@ -547,7 +547,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpNetWorkerAffinity = getAffinity(properties, "line.tcp.net.worker.affinity", lineTcpNetWorkerCount);
             this.lineTcpNetWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.net.halt.on.error", false);
             this.lineTcpWriterWorkerCount = getInt(properties, "line.tcp.writer.worker.count", 0);
-            this.lineTcpWriterWorkerAffinity = getAffinity(properties, "line.tcp.writer.worker.affinity", lineTcpNetWorkerCount);
+            this.lineTcpWriterWorkerAffinity = getAffinity(properties, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
             this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.writer.halt.on.error", false);
         }
     }
