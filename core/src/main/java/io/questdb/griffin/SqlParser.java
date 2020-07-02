@@ -807,12 +807,30 @@ public final class SqlParser {
             }
         }
 
+        //expect [group by]
+
+        if (tok != null && isGroupKeyword(tok)) {
+            expectTok(lexer, "by");
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparse();
+                ExpressionNode n = expr(lexer, model);
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
+                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                }
+
+                model.addGroupBy(n);
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
+        }
+
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
             expectTok(lexer, "by");
             do {
-                tokIncludingLocalBrace(lexer, "literal expected");
+                tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparse();
 
                 ExpressionNode n = expr(lexer, model);
@@ -1111,6 +1129,14 @@ public final class SqlParser {
                     do {
                         partitionBy.add(expectLiteral(lexer));
                         tok = tok(lexer, "'order' or ')'");
+                    } while (Chars.equals(tok, ','));
+                }
+
+                if (isGroupKeyword(tok)) {
+                    expectTok(lexer, "by");
+                    do {
+                        ExpressionNode e = expectLiteral(lexer);
+                        tok = tok(lexer, "column name");
                     } while (Chars.equals(tok, ','));
                 }
 

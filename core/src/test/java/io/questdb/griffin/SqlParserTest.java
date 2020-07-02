@@ -4974,6 +4974,77 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testNoopGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts) where sym in ('AA','BB'))",
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
+        assertFailure(
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
+                "create table x (\n" +
+                        "    sym symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                71,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
+        assertFailure(
+                "select sym1, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                73,
+                "Group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupBy() throws Exception {
+        assertFailure(
+                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                79,
+                "Group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenUsingInvalidColumn() throws Exception {
+        assertFailure(
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn",
+                "create table x (\n" +
+                        "    sym symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                71,
+                "Group by column does not match key column is select statement "
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }

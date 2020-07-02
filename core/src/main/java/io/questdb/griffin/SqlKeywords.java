@@ -392,6 +392,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
+    public static boolean isGroupKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i) | 32) == 'p';
+    }
+
     public static boolean isOrderKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
