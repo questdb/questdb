@@ -24,16 +24,10 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.mp.Job;
-import io.questdb.mp.JobRunner;
 import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.io.Closeable;
-import java.util.ArrayList;
-import java.util.List;
 
 public class WaitProcessorTests {
     private long currentTimeMs;
@@ -170,34 +164,5 @@ public class WaitProcessorTests {
 
             }
         };
-    }
-
-    public class TestWorkerPool implements JobRunner {
-        private List<Job> jobs = new ArrayList<Job>();
-
-        public void runJobs() {
-            for (Job job : jobs) {
-                job.run(0);
-            }
-        }
-
-        @Override
-        public void assign(Job job) {
-            jobs.add(job);
-        }
-
-        @Override
-        public void assign(int worker, Job job) {
-            jobs.add(job);
-        }
-
-        @Override
-        public void assign(int worker, Closeable cleaner) {
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return 4;
-        }
     }
 }

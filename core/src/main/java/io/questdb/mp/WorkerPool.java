@@ -33,7 +33,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool implements JobRunner {
+public class WorkerPool {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;
