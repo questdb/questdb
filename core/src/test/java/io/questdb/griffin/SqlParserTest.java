@@ -5030,9 +5030,24 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupBy() throws Exception {
+    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV1() throws Exception {
         assertFailure(
                 "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV2() throws Exception {
+        assertFailure(
+                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
