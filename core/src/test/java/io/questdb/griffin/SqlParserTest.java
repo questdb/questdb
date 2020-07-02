@@ -5002,6 +5002,19 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoopGroupByAfterFrom() throws Exception {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
+                "select sym, avg(bid) avgBid from x group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
         assertFailure(
                 "select sym1, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
@@ -5011,8 +5024,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")  partition by NONE",
-                73,
-                "Group by column does not match key column is select statement "
+                0,
+                "group by column does not match key column is select statement "
         );
     }
 
@@ -5026,8 +5039,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")  partition by NONE",
-                79,
-                "Group by column does not match key column is select statement "
+                0,
+                "group by column does not match key column is select statement "
         );
     }
 
@@ -5040,8 +5053,22 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")  partition by NONE",
-                71,
-                "Group by column does not match key column is select statement "
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWith2Syms() throws Exception {
+        assertQuery(
+                "select-group-by sym1, sym2, avg(bid) avgBid from (select [sym1, sym2, bid] from x timestamp (ts) where sym1 in ('AA','BB'))",
+                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
+                modelOf("x")
+                        .col("sym1", ColumnType.SYMBOL)
+                        .col("sym2", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 

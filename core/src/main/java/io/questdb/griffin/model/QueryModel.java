@@ -62,7 +62,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
-    private final ObjList<ExpressionNode> groupBy = new ObjList<>();
+    private final ObjList<CharSequence> groupBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
@@ -153,7 +153,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.latestBy.add(latestBy);
     }
 
-    public void addGroupBy(ExpressionNode node) {
+    public void addGroupBy(CharSequence node) {
         groupBy.add(node);
     }
 
@@ -407,7 +407,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderBy;
     }
 
-    public ObjList<ExpressionNode> getGroupBy() {
+    public ObjList<CharSequence> getGroupBy() {
         return groupBy;
     }
 

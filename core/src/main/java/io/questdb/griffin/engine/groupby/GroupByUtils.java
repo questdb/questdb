@@ -96,7 +96,7 @@ public class GroupByUtils {
         // map key columns.
 
         final ObjList<QueryColumn> columns = model.getColumns();
-        final ObjList<ExpressionNode> groupBy = model.getNestedModel().getGroupBy();
+        final ObjList<CharSequence> groupBy = model.getNestedModel().getGroupBy();
         IntList symbolTableSkewIndex = null;
         int valueColumnIndex = 0;
 
@@ -115,8 +115,8 @@ public class GroupByUtils {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
 
-                if (groupBy.size() > 0 && groupBy.indexOf(node) < 0) {
-                    throw SqlException.$(groupBy.get(0).position, "Group by column does not match key column is select statement ");
+                if (groupBy.size() > 0 && groupBy.indexOf(node.token) < 0) {
+                    throw SqlException.$(node.position, "group by column does not match key column is select statement ");
                 }
 
                 type = metadata.getColumnType(index);
@@ -220,7 +220,13 @@ public class GroupByUtils {
                         )
                 );
             }
+        }
 
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            CharSequence groupByColumnName = groupBy.get(i);
+            if (groupByMetadata.getColumnIndex(groupByColumnName) < 1) {
+                throw SqlException.$(0, "group by column does not match key column is select statement ");
+            }
         }
 
         return symbolTableSkewIndex;
