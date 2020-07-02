@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 public final class TelemetryTask {
-    public long ts;
+    public long created;
     public CharSequence id;
     public short event;
     public short origin;

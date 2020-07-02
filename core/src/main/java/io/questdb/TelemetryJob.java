@@ -77,7 +77,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             try (final Path path = new Path()) {
 
                 if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                    compiler.compile("CREATE TABLE " + tableName + " (ts timestamp, event short, origin short)", sqlExecutionContext);
+                    compiler.compile("CREATE TABLE " + tableName + " (created date, event short, origin short)", sqlExecutionContext);
                 }
 
                 if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -156,7 +156,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private void newRowConsumer(TelemetryTask telemetryRow) {
         final TableWriter.Row row = writer.newRow();
-        row.putDate(0, telemetryRow.ts);
+        row.putDate(0, telemetryRow.created);
         row.putShort(1, telemetryRow.event);
         row.putShort(2, telemetryRow.origin);
         row.append();
