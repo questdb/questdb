@@ -45,6 +45,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final ObjList<CharSequence> includedValues = new ObjList<>();
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
+    private final int maxSymbolNotEqualsCount;
 
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -56,10 +57,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             int orderByMnemonic,
             boolean followedOrderByAdvice,
             int indexDirection,
-            @NotNull IntList columnIndexes
-    ) {
+            @NotNull IntList columnIndexes,
+            int maxSymbolNotEqualsCount) {
         super(metadata, dataFrameCursorFactory);
         this.indexDirection = indexDirection;
+        this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         final int nKeyValues = keyValues.size();
         this.keyExcludedValues.addAll(keyValues);
         this.columnIndex = columnIndex;
@@ -113,6 +115,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
+        try (TableReader reader = dataFrameCursor.getTableReader()) {
+            if (reader.getSymbolMapReader(columnIndex).size() > maxSymbolNotEqualsCount) {
+                throw ReaderOutOfDateException.INSTANCE;
+            }
+        }
         this.recalculateIncludedValues(dataFrameCursor.getTableReader());
         this.cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {

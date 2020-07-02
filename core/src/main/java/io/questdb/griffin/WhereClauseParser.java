@@ -65,6 +65,7 @@ final class WhereClauseParser implements Mutable {
         this.models.clear();
         this.stack.clear();
         this.keyNodes.clear();
+        this.keyExclNodes.clear();
         this.csPool.clear();
     }
 

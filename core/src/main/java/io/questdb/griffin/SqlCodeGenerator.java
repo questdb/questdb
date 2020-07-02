@@ -2128,7 +2128,7 @@ public class SqlCodeGenerator implements Mutable {
                                 columnIndexes
                         );
 
-                    } else if (intrinsicModel.keyExcludedValues.size() > 0) {
+                    } else if (intrinsicModel.keyExcludedValues.size() > 0 && reader.getSymbolMapReader(keyColumnIndex).isCached() && reader.getSymbolMapReader(keyColumnIndex).size() < configuration.getMaxSymbolNotEqualsCount()) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
                             symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
@@ -2143,7 +2143,8 @@ public class SqlCodeGenerator implements Mutable {
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
                                 indexDirection,
-                                columnIndexes
+                                columnIndexes,
+                                configuration.getMaxSymbolNotEqualsCount()
                         );
                     }
                 }
