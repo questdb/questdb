@@ -224,7 +224,8 @@ public class GroupByUtils {
 
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             CharSequence groupByColumnName = groupBy.get(i);
-            if (groupByMetadata.getColumnIndex(groupByColumnName) < 1) {
+            int columnIndex = metadata.getColumnIndexQuiet(groupByColumnName);
+            if (columnIndex < 0 || listColumnFilter.getQuiet(columnIndex) < 0) {
                 throw SqlException.$(0, "group by column does not match key column is select statement ");
             }
         }

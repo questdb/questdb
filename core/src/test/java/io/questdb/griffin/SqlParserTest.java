@@ -4975,6 +4975,19 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoopGroupByAfterFrom() throws Exception {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
+                "select sym, avg(bid) avgBid from x group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testNoopGroupBy() throws SqlException {
         assertQuery(
                 "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts) where sym in ('AA','BB'))",
@@ -4998,92 +5011,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         ")  partition by NONE",
                 71,
                 "literal expected"
-        );
-    }
-
-    @Test
-    public void testNoopGroupByAfterFrom() throws Exception {
-        assertQuery(
-                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
-                "select sym, avg(bid) avgBid from x group by sym",
-                modelOf("x")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.INT)
-                        .col("ask", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
-        assertFailure(
-                "select sym1, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")  partition by NONE",
-                0,
-                "group by column does not match key column is select statement "
-        );
-    }
-
-    @Test
-    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV1() throws Exception {
-        assertFailure(
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")  partition by NONE",
-                0,
-                "group by column does not match key column is select statement "
-        );
-    }
-
-    @Test
-    public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV2() throws Exception {
-        assertFailure(
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")  partition by NONE",
-                0,
-                "group by column does not match key column is select statement "
-        );
-    }
-
-    @Test
-    public void testNoopGroupByFailureWhenUsingInvalidColumn() throws Exception {
-        assertFailure(
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")  partition by NONE",
-                0,
-                "group by column does not match key column is select statement "
-        );
-    }
-
-    @Test
-    public void testNoopGroupByWith2Syms() throws Exception {
-        assertQuery(
-                "select-group-by sym1, sym2, avg(bid) avgBid from (select [sym1, sym2, bid] from x timestamp (ts) where sym1 in ('AA','BB'))",
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
-                modelOf("x")
-                        .col("sym1", ColumnType.SYMBOL)
-                        .col("sym2", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.INT)
-                        .col("ask", ColumnType.INT)
-                        .timestamp("ts")
         );
     }
 
