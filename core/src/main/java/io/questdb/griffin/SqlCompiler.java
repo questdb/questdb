@@ -1019,7 +1019,7 @@ public class SqlCompiler implements Closeable {
             CharSequence existingName = GenericLexer.immutableOf(tok);
 
             tok = expectToken(lexer, "'to' expected");
-            if (!SqlKeywords.isToKeyboard(tok)) {
+            if (!SqlKeywords.isToKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
             }
 

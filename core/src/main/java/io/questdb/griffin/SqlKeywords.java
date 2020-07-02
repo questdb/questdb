@@ -318,7 +318,17 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
-    public static boolean isToKeyboard(CharSequence tok) {
+    public static boolean isByKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'b'
+                && (tok.charAt(i) | 32) == 'y';
+    }
+
+    public static boolean isToKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;
         }
