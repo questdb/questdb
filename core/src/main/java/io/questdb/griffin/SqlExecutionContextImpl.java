@@ -149,7 +149,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         if (cursor > -1) {
             TelemetryTask row = telemetryQueue.get(cursor);
 
-            row.ts = clock.getTicks();
+            row.created = clock.getTicks();
             row.event = event;
             row.origin = origin;
             telemetryPubSeq.done(cursor);
