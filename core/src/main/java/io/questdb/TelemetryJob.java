@@ -34,14 +34,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.tasks.TelemetryTask;
-
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -49,8 +52,8 @@ import java.io.Closeable;
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
 
-    private final CharSequence tableName = "telemetry";
-    private final CharSequence configTableName = "telemetry_config";
+    private final static CharSequence tableName = "telemetry";
+    private final static CharSequence configTableName = "telemetry_config";
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
 
     private final MillisecondClock clock;

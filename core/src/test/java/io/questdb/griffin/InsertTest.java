@@ -504,10 +504,6 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testSimpleCannedInsert() {
-    }
-
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction

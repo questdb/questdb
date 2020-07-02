@@ -628,11 +628,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, String key, String defaultPattern) {
-        String pattern = properties.getProperty(key);
-        if (null == pattern) {
-            pattern = defaultPattern;
-        }
+    private TimestampFormat getTimestampFormat(Properties properties, String key, final String defaultPattern) {
+        final String pattern = properties.getProperty(key);
         DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);

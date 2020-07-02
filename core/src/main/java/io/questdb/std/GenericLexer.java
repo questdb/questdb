@@ -307,7 +307,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    private static class LenComparator implements Comparator<CharSequence> {
+    public static class LenComparator implements Comparator<CharSequence> {
         @Override
         public int compare(CharSequence o1, CharSequence o2) {
             return o2.length() - o1.length();

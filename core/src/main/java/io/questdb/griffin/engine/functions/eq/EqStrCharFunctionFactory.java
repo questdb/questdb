@@ -71,7 +71,7 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         return new Func(position, strFunc, charFunc, isNegated);
     }
 
-    private class ConstChrFunc extends BooleanFunction implements UnaryFunction {
+    private static class ConstChrFunc extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final Function strFunc;
         private final char chrConst;
@@ -94,7 +94,7 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         }
     }
 
-    private class ConstStrFunc extends BooleanFunction implements UnaryFunction {
+    private static class ConstStrFunc extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final Function chrFunc;
         private final char chrConst;
@@ -117,7 +117,7 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         }
     }
 
-    private class Func extends BooleanFunction implements BinaryFunction {
+    private static class Func extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         private final Function strFunc;
         private final Function chrFunc;

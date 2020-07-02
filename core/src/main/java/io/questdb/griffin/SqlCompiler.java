@@ -1829,7 +1829,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    @SuppressWarnings("resource")
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {

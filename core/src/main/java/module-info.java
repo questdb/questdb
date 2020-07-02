@@ -27,7 +27,6 @@ import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFac
 
 open module io.questdb {
     requires transitive jdk.unsupported;
-    requires java.base;
     requires static org.jetbrains.annotations;
     requires static java.sql;
 
@@ -442,5 +441,4 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
             ;
-
 }

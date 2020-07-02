@@ -47,7 +47,6 @@ public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
     protected static SqlExecutionContext sqlExecutionContext;
-    private static MessageBus messageBus;
 
     private static final LongList rows = new LongList();
     private static CairoEngine engine;
@@ -102,7 +101,7 @@ public class CopyTest extends AbstractCairoTest {
         };
         TestUtils.copyMimeTypes(path);
         final PropServerConfiguration serverConfiguration = new PropServerConfiguration(path, new Properties());
-        messageBus = new MessageBusImpl(serverConfiguration);
+        MessageBus messageBus = new MessageBusImpl(serverConfiguration);
         engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)

@@ -71,7 +71,7 @@ public class EqSymCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         return new Func(position, symFunc, chrFunc, isNegated);
     }
 
-    private class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final Function arg;
         private final char constant;
@@ -94,7 +94,7 @@ public class EqSymCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         }
     }
 
-    private class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
+    private static class ConstCheckColumnFunc extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final SymbolFunction arg;
         private final char constant;
@@ -126,7 +126,7 @@ public class EqSymCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         }
     }
 
-    private class Func extends BooleanFunction implements BinaryFunction {
+    private static class Func extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         private final Function symFunc;
         private final Function chrFunc;

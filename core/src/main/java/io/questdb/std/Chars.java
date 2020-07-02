@@ -674,17 +674,7 @@ public final class Chars {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
 
-        if (isMalformed3(b1, b2, b3)) {
-            return utf8error();
-        }
-
-        char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
-        if (Character.isSurrogate(c)) {
-            return utf8error();
-        }
-
-        sink.put(c);
-        return 3;
+        return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
     private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
@@ -698,6 +688,10 @@ public final class Chars {
             return utf8error();
         }
 
+        return utf8Decode3Byte0(b1, sink, b2, b3);
+    }
+
+    private static int utf8Decode3Byte0(int b1, CharSink sink, byte b2, byte b3) {
         if (isMalformed3(b1, b2, b3)) {
             return utf8error();
         }

@@ -92,7 +92,8 @@ public class IntPriorityQueue {
             else if (midVal > v)
                 high = mid;
             else {
-                for (; ++mid < high && buffer[mid] == v; ) ;
+                while (++mid < high && buffer[mid] == v) {
+                }
                 return mid;
             }
         }

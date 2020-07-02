@@ -116,7 +116,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-        Assert.assertEquals(true, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
         Assert.assertEquals(2_000_000, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
@@ -340,7 +340,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-            Assert.assertEquals(false, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+            Assert.assertFalse(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
             Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
@@ -444,7 +444,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-            Assert.assertEquals(true, configuration.getTelemetryConfiguration().getEnabled());
+            Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
         }
     }

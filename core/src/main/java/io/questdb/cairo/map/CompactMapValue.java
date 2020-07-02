@@ -26,7 +26,7 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.VirtualMemory;
 
-class CompactMapValue implements MapValue {
+public class CompactMapValue implements MapValue {
 
     private final VirtualMemory entries;
     private final long[] columnOffsets;
