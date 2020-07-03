@@ -89,12 +89,11 @@ public class LineTcpServer implements Closeable {
             }
         });
 
+        final Closeable cleaner = () -> contextFactory.closeContextPool();
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assign(i, () -> {
-                contextFactory.closeContextPool();
-            });
+            workerPool.assign(i, cleaner);
         }
     }
 
@@ -121,7 +120,7 @@ public class LineTcpServer implements Closeable {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             closed = true;
         }
 

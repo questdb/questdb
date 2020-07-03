@@ -204,7 +204,8 @@ public class ServerMain {
                 );
             }
 
-            LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine, messageBus);
+            LineTcpServer lineTcpServer = LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine,
+                    messageBus);
             startQuestDb(workerPool, lineProtocolReceiver, log);
             logWebConsoleUrls(log, configuration);
 
@@ -218,7 +219,7 @@ public class ServerMain {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.err.println(new Date() + " QuestDB is shutting down");
-                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
+                shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver, lineTcpServer);
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
@@ -385,7 +386,8 @@ public class ServerMain {
                                           final CairoEngine cairoEngine,
                                           final HttpServer httpServer,
                                           final PGWireServer pgWireServer,
-                                          final AbstractLineProtoReceiver lineProtocolReceiver
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final LineTcpServer lineTcpServer
     ) {
         lineProtocolReceiver.halt();
         workerPool.halt();
@@ -393,6 +395,7 @@ public class ServerMain {
         Misc.free(httpServer);
         Misc.free(cairoEngine);
         Misc.free(lineProtocolReceiver);
+        Misc.free(lineTcpServer);
     }
 
     protected static void startQuestDb(
