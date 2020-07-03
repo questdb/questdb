@@ -39,7 +39,7 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineProtoSender sender = new LineTCPProtoSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (LineProtoSender sender = new LineTCPProtoSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
                 // if ((i & 0x1) == 0) {
                     sender.metric("weather1");

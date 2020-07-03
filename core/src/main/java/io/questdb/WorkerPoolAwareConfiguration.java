@@ -53,7 +53,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
         @Override
         public boolean isEnabled() {
-            throw new UnsupportedOperationException();
+            return true;
         }
 
     };

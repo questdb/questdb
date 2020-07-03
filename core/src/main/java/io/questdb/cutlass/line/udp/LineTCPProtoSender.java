@@ -31,8 +31,8 @@ import io.questdb.network.NetworkError;
 public class LineTCPProtoSender extends LineProtoSender {
     private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
 
-    public LineTCPProtoSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, 0);
+    public LineTCPProtoSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
+        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0);
     }
 
     @Override
