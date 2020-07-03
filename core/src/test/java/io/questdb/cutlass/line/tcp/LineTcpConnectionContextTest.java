@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
@@ -554,6 +555,34 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFailure() throws Exception {
+        final AtomicInteger nCommitedLines = new AtomicInteger(4);
+        Runnable onCommitNewEvent = () -> {
+            if (nCommitedLines.decrementAndGet() <= 0) {
+                throw new RuntimeException("Failed");
+            }
+        };
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertTrue(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n";
+            assertTable(expected, "weather");
+        }, onCommitNewEvent);
+    }
+
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
@@ -570,9 +599,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     private void runInContext(Runnable r) throws Exception {
+        runInContext(r, null);
+    }
+
+    private void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                setupContext(engine);
+                setupContext(engine, onCommitNewEvent);
                 try {
                     r.run();
                 } finally {
@@ -648,7 +681,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         };
     }
 
-    private void setupContext(CairoEngine engine) {
+    private void setupContext(CairoEngine engine, Runnable onCommitNewEvent) {
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int workerCount;
             private final int[] affinityByThread;
@@ -673,7 +706,15 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 return affinityByThread;
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine, workerPool);
+        scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine, workerPool) {
+            @Override
+            void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
+                if (null != onCommitNewEvent) {
+                    onCommitNewEvent.run();
+                }
+                super.commitNewEvent(event, complete);
+            }
+        };
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, MillisecondClockImpl.INSTANCE);
         disconnected = false;
         recvBuffer = null;
@@ -706,14 +747,26 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 disconnected = true;
             }
         };
+        Assert.assertTrue(context.invalid());
+        Assert.assertEquals(-1, context.getFd());
+        Assert.assertNull(context.getDispatcher());
         context.of(FD, dispatcher);
+        Assert.assertFalse(context.invalid());
+        Assert.assertEquals(FD, context.getFd());
+        Assert.assertEquals(dispatcher, context.getDispatcher());
         workerPool.start(LOG);
     }
 
     private void closeContext() {
         if (null != scheduler) {
             workerPool.halt();
+            Assert.assertFalse(context.invalid());
+            Assert.assertEquals(FD, context.getFd());
+            Assert.assertNotNull(context.getDispatcher());
             context.close();
+            Assert.assertTrue(context.invalid());
+            Assert.assertEquals(-1, context.getFd());
+            Assert.assertNull(context.getDispatcher());
             context = null;
             scheduler.close();
             scheduler = null;
