@@ -392,6 +392,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory,
 //                  'last' group by function
+            io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
 //                  'max' group
