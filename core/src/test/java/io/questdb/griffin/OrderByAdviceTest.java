@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class OrderByAdviceTest extends AbstractGriffinTest {

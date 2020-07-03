@@ -44,7 +44,7 @@ public class LtDoubleVVFunctionFactory extends AbstractBooleanFunctionFactory im
         return new FuncVV(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
-    private class FuncVV extends BooleanFunction implements BinaryFunction {
+    private static class FuncVV extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         private final Function left;
         private final Function right;

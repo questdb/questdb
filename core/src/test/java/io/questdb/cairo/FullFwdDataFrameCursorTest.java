@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
-import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.sql.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,7 +35,9 @@ import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.*;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;

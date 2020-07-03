@@ -89,7 +89,7 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
 
     }
 
-    private class Func extends BooleanFunction implements UnaryFunction {
+    private static class Func extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final Function arg;
         private final long long0;

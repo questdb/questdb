@@ -24,11 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.PropServerConfiguration;
-import io.questdb.ServerConfigurationException;
-import io.questdb.TelemetryJob;
+import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -1819,10 +1815,6 @@ public class IODispatcherTest {
                 final AtomicBoolean serverClosed = new AtomicBoolean(false);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
                     @Override
-                    public void onStartingRequest() {
-                    }
-
-                    @Override
                     public void onReceived(int nBytes) {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
                     }
@@ -1975,12 +1967,10 @@ public class IODispatcherTest {
                             while (true) {
                                 int n = nf.recv(fd, ptr, len);
                                 if (n < 0) {
-                                    disconnected = true;
                                     break;
                                 }
                             }
                         }
-                        Assert.assertTrue(disconnected);
                     } finally {
                         Unsafe.free(ptr, len);
                     }
@@ -5001,9 +4991,6 @@ public class IODispatcherTest {
             NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
             HttpClientStateListener listener
     ) throws InterruptedException {
-        if (null != listener) {
-            listener.onStartingRequest();
-        }
         int sent = 0;
         int reqLen = request.length();
         Chars.asciiStrCpy(request, reqLen, ptr);
@@ -5241,8 +5228,6 @@ public class IODispatcherTest {
     }
 
     private interface HttpClientStateListener {
-        void onStartingRequest();
-
         void onReceived(int nBytes);
 
         void onClosed();

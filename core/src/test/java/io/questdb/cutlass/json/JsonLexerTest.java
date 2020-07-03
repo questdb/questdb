@@ -221,13 +221,13 @@ public class JsonLexerTest {
     public void testParseLargeFile() throws Exception {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
         Path p = new Path();
-        if (Os.type == Os.WINDOWS && path.startsWith("/")) {
-            p.of(path.substring(1));
-        } else {
-            p.of(path);
-        }
 
-        try {
+        try (p) {
+            if (Os.type == Os.WINDOWS && path.startsWith("/")) {
+                p.of(path.substring(1));
+            } else {
+                p.of(path);
+            }
             long l = Files.length(p.$());
             long fd = Files.openRO(p);
             JsonParser listener = new NoOpParser();
@@ -259,8 +259,6 @@ public class JsonLexerTest {
             } finally {
                 Files.close(fd);
             }
-        } finally {
-            p.close();
         }
     }
 

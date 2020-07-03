@@ -110,7 +110,7 @@ public class SymbolMapWriter implements Closeable {
 
     public static void createSymbolMapFiles(FilesFacade ff, AppendMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
         int plen = path.length();
-        try {
+        try (mem) {
             mem.of(ff, offsetFileName(path.trimTo(plen), columnName), ff.getPageSize());
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
@@ -126,7 +126,6 @@ public class SymbolMapWriter implements Closeable {
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
             path.trimTo(plen);
-            mem.close();
         }
     }
 

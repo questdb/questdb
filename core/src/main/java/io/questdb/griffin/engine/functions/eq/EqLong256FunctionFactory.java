@@ -45,7 +45,7 @@ public class EqLong256FunctionFactory extends AbstractBooleanFunctionFactory imp
         return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
-    private class Func extends BooleanFunction implements BinaryFunction {
+    private static class Func extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         private final Function left;
         private final Function right;
