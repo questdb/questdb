@@ -395,7 +395,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         if (function.isConstant()) {
-            return functionToConstant(position, function);
+            try (function) {
+                return functionToConstant(position, function);
+            }
         }
         return function;
     }
@@ -499,8 +501,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext)
-        );
+        return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
     }
 
     private Function createFunction(

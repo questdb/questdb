@@ -25,7 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -502,6 +504,24 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
+        TestMatchFunctionFactory.clear();
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                true
+
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+    }
+
+    @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDesc() throws Exception {
         final String expected = "k\tprice\tts\n" +
                 "HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z\n" +
@@ -551,6 +571,26 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 true
 
         );
+    }
+
+    @Test
+    public void testSingleSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
+        TestMatchFunctionFactory.clear();
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                true
+
+        );
+
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
