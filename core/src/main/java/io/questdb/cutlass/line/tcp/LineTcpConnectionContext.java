@@ -40,7 +40,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         try {
             // Read as much data as possible
             int len = (int) (recvBufEnd - recvBufPos);
-            if (len > 0 && !peerDisconnected) {
+            while (len > 0 && !peerDisconnected) {
                 int nRead = nf.recv(fd, recvBufPos, len);
                 if (nRead < 0) {
                     if (recvBufPos != recvBufStart) {
@@ -50,7 +50,12 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                     peerDisconnected = true;
                 } else {
-                    recvBufPos += nRead;
+                    if (nRead > 0) {
+                        recvBufPos += nRead;
+                        len -= nRead;
+                    } else {
+                        break;
+                    }
                 }
             }
 

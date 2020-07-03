@@ -83,9 +83,17 @@ public class LineTcpServer implements Closeable {
                     n--;
                     if (!busyContexts.getQuick(n).handleIO()) {
                         busyContexts.remove(n);
+                    } else {
+                        n++;
+                        break;
                     }
                 }
-                return dispatcher.processIOQueue(processor);
+
+                if (n == 0) {
+                    return dispatcher.processIOQueue(processor);
+                }
+
+                return true;
             }
         });
 
