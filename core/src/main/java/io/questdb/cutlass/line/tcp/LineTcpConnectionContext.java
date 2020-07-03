@@ -18,7 +18,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
-    private long fd = -1;
+    private long fd;
     private IODispatcher<LineTcpConnectionContext> dispatcher;
     private long recvBufStart;
     private long recvBufEnd;
@@ -142,13 +142,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     @Override
     public void close() {
-        if (null != dispatcher) {
-            assert !invalid();
-            this.fd = -1;
-            Unsafe.free(recvBufStart, recvBufEnd - recvBufStart);
-            recvBufStart = recvBufEnd = recvBufPos = 0;
-            dispatcher = null;
-        }
+        this.fd = -1;
+        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart);
+        recvBufStart = recvBufEnd = recvBufPos = 0;
     }
 
     @Override
@@ -167,8 +163,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        assert null != dispatcher;
-        assert invalid();
         this.fd = clientFd;
         this.dispatcher = dispatcher;
         clear();

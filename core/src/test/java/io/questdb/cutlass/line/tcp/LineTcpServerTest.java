@@ -52,7 +52,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
 
         final int bindIp = Net.parseIPv4("127.0.0.1");
-        final int bindPort = 9001;
+        final int bindPort = 9002; // Dont clash with other tests since they may run in parallel
         IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public int getBindIPv4Address() {

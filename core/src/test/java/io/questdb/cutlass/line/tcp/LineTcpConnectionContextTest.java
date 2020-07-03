@@ -747,8 +747,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 disconnected = true;
             }
         };
-        Assert.assertTrue(context.invalid());
-        Assert.assertEquals(-1, context.getFd());
         Assert.assertNull(context.getDispatcher());
         context.of(FD, dispatcher);
         Assert.assertFalse(context.invalid());
@@ -762,11 +760,9 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             workerPool.halt();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
-            Assert.assertNotNull(context.getDispatcher());
             context.close();
             Assert.assertTrue(context.invalid());
             Assert.assertEquals(-1, context.getFd());
-            Assert.assertNull(context.getDispatcher());
             context = null;
             scheduler.close();
             scheduler = null;
