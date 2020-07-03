@@ -245,7 +245,7 @@ public class ServerMain {
             }
             record.$('\n').$();
         } else {
-            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n');
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
         }
     }
 
