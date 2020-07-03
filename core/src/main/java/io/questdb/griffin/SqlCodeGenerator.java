@@ -2138,7 +2138,6 @@ public class SqlCodeGenerator implements Mutable {
                                 dfcFactory,
                                 symbolValueList,
                                 keyColumnIndex,
-                                reader,
                                 filter,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,

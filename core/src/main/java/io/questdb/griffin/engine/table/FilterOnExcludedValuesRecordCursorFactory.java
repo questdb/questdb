@@ -52,7 +52,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull @Transient ObjList<CharSequence> keyValues,
             int columnIndex,
-            @NotNull @Transient TableReader reader,
             @Nullable Function filter,
             int orderByMnemonic,
             boolean followedOrderByAdvice,
