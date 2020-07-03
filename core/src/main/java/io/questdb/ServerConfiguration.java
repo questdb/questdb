@@ -44,4 +44,6 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();
+
+    TelemetryConfiguration getTelemetryConfiguration();
 }

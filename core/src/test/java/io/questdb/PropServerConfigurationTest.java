@@ -43,7 +43,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
@@ -57,7 +56,7 @@ public class PropServerConfigurationTest {
     public void testAllDefaults() throws ServerConfigurationException, IOException, JsonException {
         Properties properties = new Properties();
         File root = new File(temp.getRoot(), "root");
-        copyMimeTypes(root.getAbsolutePath());
+        TestUtils.copyMimeTypes(root.getAbsolutePath());
         PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
@@ -117,7 +116,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-        Assert.assertEquals(true, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
         Assert.assertEquals(2_000_000, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
@@ -239,7 +238,7 @@ public class PropServerConfigurationTest {
             properties.load(is);
 
             File root = new File(temp.getRoot(), "data");
-            copyMimeTypes(root.getAbsolutePath());
+            TestUtils.copyMimeTypes(root.getAbsolutePath());
 
             PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
             Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
@@ -312,7 +311,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("line.udp.join", "12a.990.00");
         File root = new File(temp.getRoot(), "data");
-        copyMimeTypes(root.getAbsolutePath());
+        TestUtils.copyMimeTypes(root.getAbsolutePath());
         new PropServerConfiguration(root.getAbsolutePath(), properties);
     }
 
@@ -335,7 +334,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         File root = new File(temp.getRoot(), "data");
-        copyMimeTypes(root.getAbsolutePath());
+        TestUtils.copyMimeTypes(root.getAbsolutePath());
         new PropServerConfiguration(root.getAbsolutePath(), properties);
     }
 
@@ -346,7 +345,7 @@ public class PropServerConfigurationTest {
             properties.load(is);
 
             File root = new File(temp.getRoot(), "data");
-            copyMimeTypes(root.getAbsolutePath());
+            TestUtils.copyMimeTypes(root.getAbsolutePath());
 
             PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
@@ -366,7 +365,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-            Assert.assertEquals(false, configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
+            Assert.assertFalse(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
             Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
@@ -493,6 +492,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+
+            Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
+            Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
         }
     }
 
@@ -503,25 +505,10 @@ public class PropServerConfigurationTest {
             properties.load(is);
 
             File root = new File(temp.getRoot(), "data");
-            copyMimeTypes(root.getAbsolutePath());
+            TestUtils.copyMimeTypes(root.getAbsolutePath());
 
             PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
-        }
-    }
-
-    private void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = PropServerConfigurationTest.class.getResourceAsStream("/site/conf/mime.types")) {
-            Assert.assertNotNull(stream);
-            final File target = new File(targetDir, "conf/mime.types");
-            Assert.assertTrue(target.getParentFile().mkdirs());
-            try (FileOutputStream fos = new FileOutputStream(target)) {
-                byte[] buffer = new byte[1024 * 1204];
-                int len;
-                while ((len = stream.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-            }
         }
     }
 }

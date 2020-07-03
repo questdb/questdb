@@ -52,7 +52,7 @@ public class EqCharCharFunctionFactory extends AbstractBooleanFunctionFactory im
         return new Func(position, chrFunc1, chrFunc2, isNegated);
     }
 
-    private class Func extends BooleanFunction implements BinaryFunction {
+    private static class Func extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         private final Function chrFunc1;
         private final Function chrFunc2;

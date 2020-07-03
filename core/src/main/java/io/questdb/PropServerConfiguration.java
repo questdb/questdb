@@ -93,6 +93,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
+    private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
     private final int commitMode;
     private final boolean httpServerEnabled;
     private final int createAsSelectRetryCount;
@@ -177,6 +178,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int doubleToStrCastScale;
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final boolean pgEnabled;
+    private final boolean telemetryEnabled;
+    private final int telemetryQueueCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -470,6 +473,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlGroupByMapCapacity = getInt(properties, "cairo.sql.groupby.map.capacity", 1024);
         this.sqlGroupByPoolCapacity = getInt(properties, "cairo.sql.groupby.pool.capacity", 1024);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
+        this.telemetryEnabled = getBoolean(properties, "telemetry.enabled", true);
+        this.telemetryQueueCapacity = getInt(properties, "telemetry.queue.capacity", 512);
 
         final String dateLocale = getString(properties, "cairo.date.locale", "en");
         this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -599,6 +604,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         return pgWireConfiguration;
     }
 
+    @Override
+    public TelemetryConfiguration getTelemetryConfiguration() {
+        return telemetryConfiguration;
+    }
+
     private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
         final int[] result = new int[httpWorkerCount];
         String value = properties.getProperty(key);
@@ -710,11 +720,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, String key, String defaultPattern) {
-        String pattern = properties.getProperty(key);
-        if (null == pattern) {
-            pattern = defaultPattern;
-        }
+    private TimestampFormat getTimestampFormat(Properties properties, String key, final String defaultPattern) {
+        final String pattern = properties.getProperty(key);
         DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
@@ -1934,6 +1941,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
+        }
+    }
+
+    private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public boolean getEnabled() {
+            return telemetryEnabled;
+        }
+
+        @Override
+        public int getQueueCapacity() {
+            return telemetryQueueCapacity;
         }
     }
 }

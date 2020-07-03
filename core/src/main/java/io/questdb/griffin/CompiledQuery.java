@@ -29,20 +29,19 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 
 public interface CompiledQuery {
-    int SELECT = 0;
-    int INSERT = 1;
-    int TRUNCATE = 2;
-    int ALTER = 3;
-    int REPAIR = 4;
-    int SET = 5;
-    int DROP = 6;
-    int COPY_LOCAL = 7;
-    int CREATE_TABLE = 8;
-    int INSERT_AS_SELECT = 9;
-    int COPY_REMOTE = 10;
-    int RENAME_TABLE = 11;
-    int BACKUP_TABLE = 12;
-    int SHOW = 13;
+    short SELECT = 1;
+    short INSERT = 2;
+    short TRUNCATE = 3;
+    short ALTER = 4;
+    short REPAIR = 5;
+    short SET = 6;
+    short DROP = 7;
+    short COPY_LOCAL = 8;
+    short CREATE_TABLE = 9;
+    short INSERT_AS_SELECT = 10;
+    short COPY_REMOTE = 11;
+    short RENAME_TABLE = 12;
+    short BACKUP_TABLE = 13;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -50,5 +49,5 @@ public interface CompiledQuery {
 
     TextLoader getTextLoader();
 
-    int getType();
+    short getType();
 }

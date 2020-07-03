@@ -41,7 +41,7 @@ abstract class AbstractPool implements Closeable {
     private final long inactiveTtlUs;
     private final CairoConfiguration configuration;
     private PoolListener eventListener;
-    @SuppressWarnings("FieldCanBeLocal")
+    @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile int closed = FALSE;
 
     public AbstractPool(CairoConfiguration configuration, long inactiveTtlMillis) {

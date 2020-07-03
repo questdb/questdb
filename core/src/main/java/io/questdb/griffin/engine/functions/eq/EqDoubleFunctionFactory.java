@@ -89,7 +89,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
     }
 
-    protected class Func extends BooleanFunction implements BinaryFunction {
+    protected static class Func extends BooleanFunction implements BinaryFunction {
         private final boolean isNegated;
         protected final Function left;
         protected final Function right;
@@ -119,7 +119,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 
@@ -140,7 +140,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 
@@ -161,7 +161,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 
@@ -182,7 +182,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 
@@ -203,7 +203,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 
@@ -224,7 +224,7 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
+    protected static class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         protected final Function arg;
 

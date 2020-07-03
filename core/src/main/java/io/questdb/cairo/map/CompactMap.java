@@ -24,12 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.VirtualMemory;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -139,7 +134,7 @@ public class CompactMap implements Map {
     private long keyCapacity;
     private long mask;
     private long size;
-    private int nResizes;
+    private final int nResizes;
     private final int maxResizes;
 
     public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {

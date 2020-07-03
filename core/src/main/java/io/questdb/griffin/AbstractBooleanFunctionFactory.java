@@ -24,11 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
-
 public abstract class AbstractBooleanFunctionFactory {
     protected boolean isNegated = false;
 

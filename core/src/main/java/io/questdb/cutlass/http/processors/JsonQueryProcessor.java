@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.MessageBus;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -211,6 +212,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             if (factory != null) {
                 try {
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(
                             state,
                             factory,
@@ -320,6 +322,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final long nanos = nanosecondClock.getTicks();
         final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+        sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
         state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
         queryExecutors.getQuick(cc.getType()).execute(
                 state,

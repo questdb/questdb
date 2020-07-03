@@ -24,13 +24,13 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
+import io.questdb.*;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,8 +49,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -412,7 +414,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testHttpLong256AndCharImport() {
+    public void testHttpLong256AndCharImport() throws IOException, JsonException, ServerConfigurationException {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
         // 0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b
@@ -431,7 +433,9 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final MessageBus workScheduler = new MessageBusImpl();
+        TestUtils.copyMimeTypes(baseDir);
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties());
+        final MessageBus workScheduler = new MessageBusImpl(serverConfiguration);
 
         try (
                 CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);
@@ -480,7 +484,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testHttpLong256AndCharImportLimitColumns() {
+    public void testHttpLong256AndCharImportLimitColumns() throws IOException, ServerConfigurationException, JsonException {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
         // 0x19f1df2c7ee6b464720ad28e903aeda1a5ad8780afc22f0b960827bd4fcf656d,b
@@ -499,7 +503,9 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final MessageBus workScheduler = new MessageBusImpl();
+        TestUtils.copyMimeTypes(baseDir);
+        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties());
+        final MessageBus workScheduler = new MessageBusImpl(serverConfiguration);
 
         try (
                 CairoEngine cairoEngine = new CairoEngine(new DefaultCairoConfiguration(baseDir), workScheduler);
@@ -1809,10 +1815,6 @@ public class IODispatcherTest {
                 final AtomicBoolean serverClosed = new AtomicBoolean(false);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
                     @Override
-                    public void onStartingRequest() {
-                    }
-
-                    @Override
                     public void onReceived(int nBytes) {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
                     }
@@ -1965,12 +1967,10 @@ public class IODispatcherTest {
                             while (true) {
                                 int n = nf.recv(fd, ptr, len);
                                 if (n < 0) {
-                                    disconnected = true;
                                     break;
                                 }
                             }
                         }
-                        Assert.assertTrue(disconnected);
                     } finally {
                         Unsafe.free(ptr, len);
                     }
@@ -1980,7 +1980,7 @@ public class IODispatcherTest {
             } finally {
                 NetworkFacadeImpl.INSTANCE.close(fd);
             }
-        });
+        }, false);
     }
 
     @Test
@@ -2169,7 +2169,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -2745,7 +2745,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -2906,7 +2906,7 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, false);
     }
 
     @Test
@@ -3159,6 +3159,88 @@ public class IODispatcherTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testJsonQueryStoresTelemetryEvent() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                    "\r\n",
+                1,
+                true
+        );
+
+        final String expectedEvent = "100\n" +
+                "1\n" +
+                "101\n";
+        assertColumn(expectedEvent, "telemetry", 1);
+
+        final String expectedOrigin = "1\n" +
+                "2\n" +
+                "1\n";
+        assertColumn(expectedOrigin, "telemetry", 2);
+    }
+
+    @Test
+    public void testJsonQueryStoresTelemetryEventWhenCached() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0185\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                    "\r\n",
+                2,
+                true
+        );
+
+        final String expected = "100\n" +
+                "1\n" +
+                "1\n" +
+                "101\n";
+        assertColumn(expected, "telemetry", 1);
+
+        final String expectedOrigin = "1\n" +
+                "2\n" +
+                "2\n" +
+                "1\n";
+        assertColumn(expectedOrigin, "telemetry", 2);
     }
 
     @Test
@@ -4909,9 +4991,6 @@ public class IODispatcherTest {
             NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
             HttpClientStateListener listener
     ) throws InterruptedException {
-        if (null != listener) {
-            listener.onStartingRequest();
-        }
         int sent = 0;
         int reqLen = request.length();
         Chars.asciiStrCpy(request, reqLen, ptr);
@@ -4962,15 +5041,15 @@ public class IODispatcherTest {
         }
     }
 
-    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
                     engine.getConfiguration(),
                     recordCount,
                     new Rnd(),
-                    new TestRecord.ArrayBinarySequence());
-
+                    new TestRecord.ArrayBinarySequence()
+            );
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,
@@ -4979,14 +5058,18 @@ public class IODispatcherTest {
                     0,
                     false
             );
-        });
+        }, telemetry);
+    }
+
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
-        testJsonQuery(recordCount, request, expectedResponse, 100);
+        testJsonQuery(recordCount, request, expectedResponse, 100, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code) throws Exception {
+    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
@@ -5010,10 +5093,24 @@ public class IODispatcherTest {
                 }
             });
 
+            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), null);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, null);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
+                TelemetryJob telemetryJob = null;
+                TestUtils.copyMimeTypes(baseDir);
+                final PropServerConfiguration serverConfiguration = new PropServerConfiguration(baseDir, new Properties()) {
+                    @Override
+                    public CairoConfiguration getCairoConfiguration() {
+                        return cairoConfiguration;
+                    }
+                };
+                final MessageBus messageBus = new MessageBusImpl(serverConfiguration);
+                if (telemetry) {
+                    telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
+                }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5032,7 +5129,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
+                                messageBus,
                                 workerPool.getWorkerCount()
                         );
                     }
@@ -5079,9 +5176,30 @@ public class IODispatcherTest {
                     code.run(engine);
                 } finally {
                     workerPool.halt();
+
+                    if (telemetryJob != null) {
+                        Misc.free(telemetryJob);
+                    }
                 }
             }
         });
+    }
+
+    private void assertColumn(CharSequence expected, CharSequence tableName, int index) {
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            final StringSink sink = new StringSink();
+            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
@@ -5110,8 +5228,6 @@ public class IODispatcherTest {
     }
 
     private interface HttpClientStateListener {
-        void onStartingRequest();
-
         void onReceived(int nBytes);
 
         void onClosed();

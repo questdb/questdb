@@ -1026,6 +1026,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      *
      * @throws NullPointerException if the specified key is null
      */
+    @SuppressWarnings("unchecked")
     public boolean remove(@NotNull Object key, Object value) {
         return value != null && replaceNode((CharSequence) key, null, (V) value) != null;
     }
@@ -1082,8 +1083,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @since 1.8
      */
     public long mappingCount() {
-        long n = sumCount();
-        return (n < 0L) ? 0L : n; // ignore transient negative values
+        return Math.max(sumCount(), 0L); // ignore transient negative values
     }
 
     /**
@@ -1134,7 +1134,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             Traverser<V> it = getTraverser(t);
             for (Node<V> p; (p = it.advance()) != null; ) {
                 V v;
-                if ((v = p.val) == value || (v != null && value.equals(v)))
+                if ((v = p.val) == value || (value.equals(v)))
                     return true;
             }
         }
@@ -1405,9 +1405,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     (n = tab.length) < MAXIMUM_CAPACITY) {
                 int rs = resizeStamp(n);
                 if (sc < 0) {
-                    if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
-                            sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
-                            transferIndex <= 0)
+                    if (sc >>> RESIZE_STAMP_SHIFT != rs || sc == rs + MAX_RESIZERS || (nt = nextTable) == null || transferIndex <= 0)
                         break;
                     if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, sc + 1))
                         transfer(tab, nt);
@@ -1501,7 +1499,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
-    @SuppressWarnings("unchecked")
     private Traverser<V> getTraverser(Node<V>[] tab) {
         Traverser<V> traverser = tlTraverser.get();
         int len = tab == null ? 0 : tab.length;
@@ -1664,8 +1661,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                         ((ek = e.key) == key ||
                                                 (ek != null && Chars.equals(key, ek)))) {
                                     V ev = e.val;
-                                    if (cv == null || cv == ev ||
-                                            (ev != null && cv.equals(ev))) {
+                                    if (cv == null || cv == ev || (cv.equals(ev))) {
                                         oldVal = ev;
                                         if (value != null)
                                             e.val = value;
@@ -1687,8 +1683,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             if ((r = t.root) != null &&
                                     (p = r.findTreeNode(hash, key, null)) != null) {
                                 V pv = p.val;
-                                if (cv == null || cv == pv ||
-                                        (pv != null && cv.equals(pv))) {
+                                if (cv == null || cv == pv || cv.equals(pv)) {
                                     oldVal = pv;
                                     if (value != null)
                                         p.val = value;
@@ -1904,7 +1899,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             Node<V>[] tab = table;
             int n;
             if (tab == null || (n = tab.length) == 0) {
-                n = (sc > c) ? sc : c;
+                n = Math.max(sc, c);
                 if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, -1)) {
                     try {
                         if (table == tab) {
@@ -3249,6 +3244,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return false;
         }
 
+        @NotNull
         public final Iterator<V> iterator() {
             ValueIterator<V> it = tlValueIterator.get();
             it.of(map);
@@ -3315,6 +3311,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         /**
          * @return an iterator over the entries of the backing map
          */
+        @NotNull
         public Iterator<Map.Entry<CharSequence, V>> iterator() {
             EntryIterator<V> it = tlEntryIterator.get();
             it.of(map);

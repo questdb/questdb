@@ -144,7 +144,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
     }
 
-    private static final class ExpressionNodeFactory implements ObjectFactory<ExpressionNode> {
+    public static final class ExpressionNodeFactory implements ObjectFactory<ExpressionNode> {
         @Override
         public ExpressionNode newInstance() {
             return new ExpressionNode();

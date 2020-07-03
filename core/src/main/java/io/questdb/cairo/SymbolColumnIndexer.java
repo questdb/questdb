@@ -41,7 +41,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private final SlidingWindowMemory mem = new SlidingWindowMemory();
     private long columnTop;
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
     private volatile boolean distressed = false;
 
