@@ -687,6 +687,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBug484() throws Exception {
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("sym\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n",
+                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
+                null
+        );
+
+        // also good numbers, extra top calls are due to symbol column API check
+        // tables without symbol columns will skip this check
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
     public void testFilterOnIntrinsicFalse() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
@@ -844,6 +874,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexedFilteredEmpty() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
+        final String expected = "a\tb\tk\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match() and 1 = 2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                false);
+
+        // these value are also ok because ddl2 is present, there is another round of check for that
+        // this ensures that "init" on filter is invoked
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
@@ -1731,6 +1787,27 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testLatestByKeyValueFilteredEmpty() throws Exception {
+        TestMatchFunctionFactory.clear();
+        assertQuery("a\tb\tk\n",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and 1 = 2 and test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(200)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        // this is good
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test

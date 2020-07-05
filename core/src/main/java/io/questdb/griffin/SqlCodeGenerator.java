@@ -47,6 +47,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
@@ -567,7 +568,15 @@ public class SqlCodeGenerator implements Mutable {
         final ExpressionNode filter = model.getWhereClause();
         if (filter != null) {
             model.setWhereClause(null);
-            return new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
+            final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
+            if (f.isConstant() && !f.getBool(null)) {
+                RecordMetadata m = factory.getMetadata();
+                if (f instanceof GenericRecordMetadata) {
+                    return new EmptyTableRecordCursorFactory(m);
+                }
+                return new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOf(m));
+            }
+            return new FilteredRecordCursorFactory(factory, f);
         }
         return factory;
     }
@@ -1845,6 +1854,24 @@ public class SqlCodeGenerator implements Mutable {
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
+    @Nullable
+    private Function compileFilter(IntrinsicModel intrinsicModel, RecordMetadata readerMeta, SqlExecutionContext executionContext) throws SqlException {
+        if (intrinsicModel.filter != null) {
+            return compileFilter(intrinsicModel.filter, readerMeta, executionContext);
+        }
+        return null;
+    }
+
+    @NotNull
+    public Function compileFilter(ExpressionNode expr, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
+        final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
+        if (filter.getType() == ColumnType.BOOLEAN) {
+            return filter;
+        }
+        Misc.free(filter);
+        throw SqlException.$(expr.position, "boolean expression expected");
+    }
+
     private RecordCursorFactory generateTableQuery(
             QueryModel model,
             SqlExecutionContext executionContext
@@ -1975,38 +2002,21 @@ public class SqlCodeGenerator implements Mutable {
                     return new EmptyTableRecordCursorFactory(myMeta);
                 }
 
-                Function filter;
-
-                if (intrinsicModel.filter != null) {
-                    filter = functionParser.parseFunction(intrinsicModel.filter, readerMeta, executionContext);
-
-                    if (filter.getType() != ColumnType.BOOLEAN) {
-                        throw SqlException.$(intrinsicModel.filter.position, "boolean expression expected");
-                    }
-
-                    if (filter.isConstant()) {
-                        // can pass null to constant function
-                        if (filter.getBool(null)) {
-                            // filter is constant "true", do not evaluate for every row
-                            filter = null;
-                        } else {
-                            return new EmptyTableRecordCursorFactory(myMeta);
-                        }
-                    }
-                } else {
-                    filter = null;
-                }
-
                 DataFrameCursorFactory dfcFactory;
 
                 if (latestByColumnCount > 0) {
+                    Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                    if (f != null && f.isConstant() && !f.getBool(null)) {
+                        return new EmptyTableRecordCursorFactory(myMeta);
+                    }
+
                     return generateLatestByQuery(
                             model,
                             reader,
                             myMeta,
                             tableName,
                             intrinsicModel,
-                            filter,
+                            f,
                             executionContext,
                             readerTimestampIndex,
                             columnIndexes
@@ -2046,12 +2056,16 @@ public class SqlCodeGenerator implements Mutable {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
                         final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
 
+                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        if (f != null && f.isConstant() && !f.getBool(null)) {
+                            return new EmptyTableRecordCursorFactory(myMeta);
+                        }
                         return new FilterOnSubQueryRecordCursorFactory(
                                 myMeta,
                                 dfcFactory,
                                 rcf,
                                 keyColumnIndex,
-                                filter,
+                                f,
                                 func,
                                 columnIndexes
                         );
@@ -2085,20 +2099,25 @@ public class SqlCodeGenerator implements Mutable {
                         final RowCursorFactory rcf;
                         final CharSequence symbol = intrinsicModel.keyValues.get(0);
                         final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
+                        final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        if (f != null && f.isConstant() && !f.getBool(null)) {
+                            return new EmptyTableRecordCursorFactory(myMeta);
+                        }
+
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                            if (filter == null) {
+                            if (f == null) {
                                 rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
                             } else {
-                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true, indexDirection);
+                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection);
                             }
                         } else {
-                            if (filter == null) {
+                            if (f == null) {
                                 rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
                             } else {
-                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection);
+                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, filter, false, columnIndexes, columnSizes);
+                        return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
                     }
 
                     symbolValueList.clear();
@@ -2116,13 +2135,17 @@ public class SqlCodeGenerator implements Mutable {
                         }
                     }
 
+                    final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                    if (f != null && f.isConstant() && !f.getBool(null)) {
+                        return new EmptyTableRecordCursorFactory(myMeta);
+                    }
                     return new FilterOnValuesRecordCursorFactory(
                             myMeta,
                             dfcFactory,
                             symbolValueList,
                             keyColumnIndex,
                             reader,
-                            filter,
+                            f,
                             model.getOrderByAdviceMnemonic(),
                             orderByKeyColumn,
                             indexDirection,
@@ -2130,11 +2153,7 @@ public class SqlCodeGenerator implements Mutable {
                     );
                 }
 
-                // nothing used our filter
-                // time to set "where" clause to the downsized filter (after intrinsic parser pass)
-                model.setWhereClause(intrinsicModel.filter);
-
-                if (intervalHitsOnlyOnePartition && filter == null) {
+                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
                     if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.intervals != null) {
@@ -2171,6 +2190,8 @@ public class SqlCodeGenerator implements Mutable {
                         }
                     }
                 }
+
+                model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(myMeta, dfcFactory, new DataFrameRowCursorFactory(), false, null, framingSupported, columnIndexes, columnSizes);
             }
 
