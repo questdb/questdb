@@ -2668,6 +2668,43 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256WriterReOpen() throws Exception {
+        // we had a bug where size of LONG256 column was incorrectly defined
+        // this caused TableWriter to incorrectly calculate append position in constructor
+        // subsequent records would have been appended to far away from records from first writer instance
+        // and table reader would not be able to read data consistently
+        TestUtils.assertMemoryLeak(() -> {
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.LONG256)) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                TableWriter.Row r = w.newRow();
+                r.putLong256(0, 1, 2, 3, 4);
+                r.append();
+                w.commit();
+            }
+
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                TableWriter.Row r = w.newRow();
+                r.putLong256(0, 5, 6, 7, 8);
+                r.append();
+                w.commit();
+            }
+
+            try (TableReader r = new TableReader(configuration, "x")) {
+                sink.clear();
+                printer.print(r.getCursor(), r.getMetadata(), true);
+            }
+
+            TestUtils.assertEquals("a\n" +
+                    "0x04000000000000000300000000000000020000000000000001\n" +
+                    "0x08000000000000000700000000000000060000000000000005\n", sink);
+        });
+    }
+
+    @Test
     public void testUnsuccessfulFileRename() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
