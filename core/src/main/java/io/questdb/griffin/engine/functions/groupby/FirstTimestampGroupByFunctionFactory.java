@@ -24,40 +24,25 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
-import org.junit.Before;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 
-public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
+public class FirstTimestampGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "first(N)";
     }
 
-    @Test
-    public void testLastDouble() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "10.0\n",
-                "select last(x) x from tab",
-                "create table tab as (select cast(x as double) x from long_sequence(10))",
-                null,
-                false
-        );
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
-    @Test
-    public void testLastDoubleNull() throws Exception {
-        assertQuery(
-                "y\n" +
-                        "NaN\n",
-                "select last(y) y from tab",
-                "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
-                null,
-                false
-        );
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new FirstTimestampGroupByFunction(position, args.getQuick(0));
     }
 }
