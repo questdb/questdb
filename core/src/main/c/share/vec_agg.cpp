@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-#include <cfloat>
 #include <cmath>
 #include "vec_agg.h"
+#include "util.h"
 
 #define MAX_VECTOR_SIZE 512
 
@@ -208,7 +208,7 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
     const int step = 8;
     Vec8q vec;
-    Vec8q vecMax = LLONG_MIN;
+    Vec8q vecMax = L_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
@@ -285,7 +285,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     if (pi < lim) {
         for (; pi < lim; pi++) {
             int32_t v = *pi;
-            if (v != INT_MIN) {
+            if (PREDICT_TRUE(v != INT_MIN)) {
                 result += v;
                 hasData = true;
             }
@@ -393,20 +393,20 @@ double SUM_DOUBLE(double *d, int64_t count) {
         nancount = if_add(bVec, nancount, 1);
     }
 
-    double sum = 0;
-    int n = 0;
+    _mm_prefetch(d, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (std::isfinite(x)) {
+        if (PREDICT_TRUE(std::isfinite(x))) {
             sum += x;
         } else {
             n++;
         }
     }
 
-    const int64_t nans = horizontal_add(nancount) + n;
-    if (nans < count) {
-        return (horizontal_add(vecsum) + sum);
+    if (n < count) {
+        return sum;
     }
     return NAN;
 }
@@ -435,6 +435,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
         sumVec = tVec;
     }
 
+    _mm_prefetch(d, _MM_HINT_T0);
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
     int64_t nans = horizontal_add(nancount);
@@ -481,12 +482,15 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         sumVec = tVec;
     }
 
+    _mm_prefetch(d, _MM_HINT_T0);
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
     int64_t nans = horizontal_add(nancount);
     for (; d < lim; d++) {
         double input = *d;
-        if (input == input) {
+        if (PREDICT_FALSE(std::isnan(input))) {
+            nans++;
+        } else {
             auto t = sum + input;
             if (abs(sum) >= abs(input)) {
                 c += (sum - t) + input;
@@ -494,8 +498,6 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
                 c += (input - t) + sum;
             }
             sum = t;
-        } else {
-            nans++;
         }
     }
 
@@ -503,7 +505,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         return sum + c;
     }
 
-    return NAN;
+    return D_NAN;
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
@@ -521,23 +523,22 @@ double AVG_DOUBLE(double *d, int64_t count) {
         nancount = if_add(bVec, nancount, 1);
     }
 
-    double sum = 0;
-    int n = 0;
+    double sum = horizontal_add(vecsum);
+    int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (x == x) {
+        if (PREDICT_TRUE(std::isfinite(x))) {
             sum += x;
         } else {
             n++;
         }
     }
 
-    const int64_t nans = horizontal_add(nancount) + n;
-    if (nans < count) {
-        return (horizontal_add(vecsum) + sum) / (double) (count - nans);
+    if (n < count) {
+        return sum / (double) (count - n);
     }
 
-    return NAN;
+    return D_NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
@@ -545,7 +546,7 @@ double MIN_DOUBLE(double *d, int64_t count) {
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
-    Vec8d vecMin = INFINITY;
+    Vec8d vecMin = D_MAX;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
@@ -557,12 +558,12 @@ double MIN_DOUBLE(double *d, int64_t count) {
     double min = horizontal_min(vecMin);
     for (; d < lim; d++) {
         double x = *d;
-        if (x == x && x < min) {
+        if (std::isfinite(x) && x < min) {
             min = x;
         }
     }
 
-    if (min < INFINITY) {
+    if (min < D_MAX) {
         return min;
     }
 
@@ -574,7 +575,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
-    Vec8d vecMax = -INFINITY;
+    Vec8d vecMax = D_MIN;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
@@ -586,12 +587,12 @@ double MAX_DOUBLE(double *d, int64_t count) {
     double max = horizontal_max(vecMax);
     for (; d < lim; d++) {
         double x = *d;
-        if (x == x && x > max) {
+        if (std::isfinite(x) && x > max) {
             max = x;
         }
     }
 
-    if (max > -INFINITY) {
+    if (max > D_MIN) {
         return max;
     }
 
@@ -625,5 +626,6 @@ extern "C" {
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
+
 }
 #endif  // INSTRSET == 2

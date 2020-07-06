@@ -29,20 +29,9 @@
 #include <cstring>
 #include <cstdint>
 #include "jni.h"
+#include "util.h"
 
 #include "vcl/vectorclass.h"
-
-#if (defined(__GNUC__) && !defined(__clang__))
-#define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
-#elif defined(_MSC_VER)
-#define ATTRIBUTE_NEVER_INLINE __declspec(noinline)
-#else
-#define ATTRIBUTE_NEVER_INLINE
-#endif
-
-#define PREDICT_FALSE(x) (__builtin_expect(x, 0))
-#define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
-
 
 using ctrl_t = signed char;
 using h2_t = uint8_t;

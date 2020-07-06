@@ -277,5 +277,4 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass
 }\
 \
 }
-
 #endif //VECT_H

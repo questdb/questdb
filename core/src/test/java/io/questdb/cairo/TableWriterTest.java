@@ -3469,26 +3469,23 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
-                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts;
+                long ts1 = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts2 = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
                 int i = 0;
-                long failureCount = 0;
                 while (i < N) {
                     TableWriter.Row r;
                     boolean fail = rnd.nextBoolean();
                     if (fail) {
-                        try {
-                            writer.newRow();
-                            Assert.fail();
-                        } catch (CairoException ignore) {
-                            failureCount++;
-                        }
-                        continue;
+                        ts2 += 60 * 6000L * 1000L;
+                        ts = ts2;
                     } else {
-                        ts += 60 * 6000L * 1000L;
-                        r = writer.newRow(ts);
+                        ts1 += 60 * 6000L * 1000L;
+                        ts = ts1;
                     }
+                    r = writer.newRow(ts);
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
                     r.putSym(2, rnd.nextString(4));
@@ -3499,7 +3496,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(failureCount > 0);
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
