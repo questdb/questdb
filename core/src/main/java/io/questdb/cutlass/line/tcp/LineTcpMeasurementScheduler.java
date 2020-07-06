@@ -43,8 +43,9 @@ import io.questdb.std.time.MillisecondClock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
-    private static int REBALANCE_EVENT_ID = -1;
-    private static int INCOMPLETE_EVENT_ID = -2;
+    private static int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
+    private static int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is not able
+                                                 // to populate it for some reason, the event needs to be committed to the queue incomplete
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -464,14 +465,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final AppendMemory appendMemory = new AppendMemory();
         private final Path path = new Path();
         private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-        private final String name;
+        private final String jobName;
         private long lastMaintenanceJobMillis = 0;
 
         private WriterJob(int id, Sequence sequence) {
             super();
             this.id = id;
             this.sequence = sequence;
-            this.name = "tcp-line-writer-" + id;
+            this.jobName = "tcp-line-writer-" + id;
         }
 
         private void close() {
@@ -552,11 +553,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 try {
                     parser.processFirstEvent(engine, securityContext, event);
                 } catch (CairoException ex) {
-                    LOG.info().$(name).$(" could not create parser [name=").$(event.getTableName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                    LOG.info().$("could not create parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
                     parser.close();
                     return false;
                 }
-                LOG.info().$(name).$(" created parser [name=").$(event.getTableName()).$(']').$();
+                LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
                 parserCache.put(Chars.toString(event.getTableName()).toString(), parser);
                 return true;
             } else {
@@ -714,7 +715,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             public void close() {
                 if (null != writer) {
                     doMaintenance();
-                    LOG.info().$(name).$(" closed parser [name=").$(writer.getName()).$(']').$();
+                    LOG.info().$("closed parser [jobName=").$(jobName).$(" name=").$(writer.getName()).$(']').$();
                     writer.close();
                     writer = null;
                 }
