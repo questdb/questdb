@@ -590,7 +590,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             private final IntList colTypes = new IntList();
             private final IntList colIndexMappings = new IntList();
             private int nUncommitted = 0;
-            private long lastCommitMillis = 0;
 
             private transient int nMeasurementValues;
             private transient boolean error;
@@ -655,7 +654,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             private void commit() {
                 writer.commit();
                 nUncommitted = 0;
-                lastCommitMillis = milliClock.getTicks();
             }
 
             private void preprocessEvent(LineTcpMeasurementEvent event) {
