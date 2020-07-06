@@ -25,23 +25,28 @@
 package org.questdb;
 
 import io.questdb.cutlass.line.udp.LineProtoSender;
+import io.questdb.cutlass.line.udp.LineTCPProtoSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 
-public class LineUDPSenderMain {
+public class LineTCPSenderMain {
     public static void main(String[] args) {
         final long count = 50_000_000;
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
-        int ttl = 1;
-        int bufferCapacity = 1024; // 1024 max
+        int bufferCapacity = 256 * 1024;
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity, ttl)) {
+        try (LineProtoSender sender = new LineTCPProtoSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
-                sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
+                // if ((i & 0x1) == 0) {
+                    sender.metric("weather1");
+                    // } else {
+                    // sender.metric("weather2");
+                    // }
+                sender.tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
             }
             sender.flush();
         }

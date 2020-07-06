@@ -22,29 +22,43 @@
  *
  ******************************************************************************/
 
-package org.questdb;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.udp.LineProtoSender;
-import io.questdb.network.Net;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.microtime.MicrosecondClock;
 
-public class LineUDPSenderMain {
-    public static void main(String[] args) {
-        final long count = 50_000_000;
-        String hostIPv4 = "127.0.0.1";
-        int port = 9009; // 8089 influx
-        int ttl = 1;
-        int bufferCapacity = 1024; // 1024 max
+public interface LineTcpReceiverConfiguration {
+    boolean isEnabled();
 
-        final Rnd rnd = new Rnd();
-        long start = System.nanoTime();
-        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity, ttl)) {
-            for (int i = 0; i < count; i++) {
-                sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
-            }
-            sender.flush();
-        }
-        System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
-    }
+    CairoSecurityContext getCairoSecurityContext();
+
+    LineProtoTimestampAdapter getTimestampAdapter();
+
+    int getConnectionPoolInitialCapacity();
+
+    IODispatcherConfiguration getNetDispatcherConfiguration();
+
+    int getNetMsgBufferSize();
+
+    int getMaxMeasurementSize();
+
+    NetworkFacade getNetworkFacade();
+
+    int getWriterQueueSize();
+
+    MicrosecondClock getMicrosecondClock();
+
+    WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
+
+    int getnUpdatesPerLoadRebalance();
+
+    double getMaxLoadRatio();
+
+    int getMaxUncommittedRows();
+
+    long getMaintenanceJobHysteresisInMs();
 }

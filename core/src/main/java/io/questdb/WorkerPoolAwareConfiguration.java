@@ -24,16 +24,39 @@
 
 package io.questdb;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
+    public static WorkerPoolAwareConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolAwareConfiguration() {
+        @Override
+        public int[] getWorkerAffinity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+    };
 
     static WorkerPool configureWorkerPool(
             WorkerPoolAwareConfiguration configuration,
