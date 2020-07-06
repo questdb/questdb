@@ -1,15 +1,30 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cutlass.line.tcp;
 
-import java.util.Random;
-import java.util.function.Supplier;
-
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.udp.LineProtoSender;
 import io.questdb.cutlass.line.udp.LineTCPProtoSender;
@@ -22,10 +37,15 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.junit.Test;
+
+import java.util.Random;
+import java.util.function.Supplier;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
@@ -51,7 +71,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
         });
 
-        final int bindIp = Net.parseIPv4("127.0.0.1");
+        final int bindIp = 0;
         final int bindPort = 9002; // Dont clash with other tests since they may run in parallel
         IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
@@ -132,7 +152,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             final LineProtoSender[] senders = new LineProtoSender[tables.length];
             for (int n = 0; n < senders.length; n++) {
-                senders[n] = new LineTCPProtoSender(bindIp, bindPort, 4096);
+                senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
                 StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                 sb.append("location\ttemp\ttimestamp\n");
                 expectedSbs[n] = sb;
@@ -185,7 +205,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     }
                 }
             } while (nRowsWritten < nRows);
-            tcpServer.close();
+
+            Misc.free(tcpServer);
         }
         sharedWorkerPool.halt();
 

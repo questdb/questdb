@@ -1,66 +1,63 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-import java.util.Arrays;
-
-import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.line.CachedCharSequence;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.cutlass.line.CharSequenceCache;
-import io.questdb.cutlass.line.LineProtoParser;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.cutlass.line.TruncatedLineProtoLexer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.Job;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SPSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.mp.*;
+import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
 
+import java.io.Closeable;
+import java.util.Arrays;
+
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
-    private static int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
-    private static int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is not able
-                                                 // to populate it for some reason, the event needs to be committed to the queue incomplete
+    private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
+    private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is not able
+    // to populate it for some reason, the event needs to be committed to the queue incomplete
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
     private final MillisecondClock milliClock;
-    private RingQueue<LineTcpMeasurementEvent> queue;
-    private Sequence pubSeq;
-    private long nextEventCursor = -1;
+    private final RingQueue<LineTcpMeasurementEvent> queue;
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final int[] loadByThread;
-
     private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
-
+    private Sequence pubSeq;
+    private long nextEventCursor = -1;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
@@ -73,19 +70,15 @@ class LineTcpMeasurementScheduler implements Closeable {
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueSize();
-        queue = new RingQueue<>(() -> {
-            return new LineTcpMeasurementEvent(maxMeasurementSize, lineConfiguration.getMicrosecondClock(), lineConfiguration.getTimestampAdapter());
-        }, queueSize);
+        queue = new RingQueue<>(() -> new LineTcpMeasurementEvent(maxMeasurementSize, lineConfiguration.getMicrosecondClock(), lineConfiguration.getTimestampAdapter()), queueSize);
         pubSeq = new SPSequence(queueSize);
 
         int nWriterThreads = writerWorkerPool.getWorkerCount();
-        Sequence[] subSeqById = new Sequence[nWriterThreads];
         if (nWriterThreads > 1) {
             FanOut fanOut = new FanOut();
-            for (int n = 0, sz = nWriterThreads; n < sz; n++) {
+            for (int n = 0; n < nWriterThreads; n++) {
                 SCSequence subSeq = new SCSequence();
                 fanOut.and(subSeq);
-                subSeqById[n] = subSeq;
                 WriterJob writerJob = new WriterJob(n, subSeq);
                 writerWorkerPool.assign(n, writerJob);
                 writerWorkerPool.assign(n, writerJob::close);
@@ -106,7 +99,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     LineTcpMeasurementEvent getNewEvent() {
-        assert !closed();
+        assert isOpen();
         if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
             return queue.get(nextEventCursor);
         }
@@ -124,7 +117,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
-        assert !closed();
+        assert isOpen();
         if (nextEventCursor == -1) {
             throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
         }
@@ -166,7 +159,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, String tableName) {
-        assert !closed();
+        assert isOpen();
         if (nextEventCursor == -1) {
             throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
         }
@@ -177,8 +170,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         nextEventCursor = -1;
     }
 
-    private boolean closed() {
-        return null == pubSeq;
+    private boolean isOpen() {
+        return null != pubSeq;
     }
 
     private void loadRebalance() {
@@ -297,12 +290,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     static class LineTcpMeasurementEvent implements Closeable {
-        private TruncatedLineProtoLexer lexer;
         private final CharSequenceCache cache;
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;
-        private long measurementNameAddress;
         private final LongList addresses = new LongList();
+        private TruncatedLineProtoLexer lexer;
+        private long measurementNameAddress;
         private int firstFieldIndex;
         private long timestampAddress;
         private int errorPosition;
@@ -333,7 +326,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             assert measurementNameAddress == 0;
                             measurementNameAddress = token.getCacheAddress();
                             break;
-
                         case EVT_TAG_NAME:
                         case EVT_TAG_VALUE:
                             assert firstFieldIndex == -1;
@@ -351,7 +343,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             assert timestampAddress == 0;
                             timestampAddress = token.getCacheAddress();
                             break;
-
                         default:
                             throw new RuntimeException("Unrecognised type " + type);
 
@@ -371,12 +362,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             clear();
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
-                if (!isError() && firstFieldIndex == -1) {
+                if (isComplete() && firstFieldIndex == -1) {
                     errorPosition = (int) (recvBufLineNext - bytesPtr);
                     errorCode = LineProtoParser.ERROR_EMPTY;
                 }
 
-                if (!isError()) {
+                if (isComplete()) {
                     if (timestampAddress == 0) {
                         timestamp = clock.getTicks();
                     }
@@ -393,8 +384,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             errorPosition = -1;
         }
 
-        boolean isError() {
-            return errorPosition != -1;
+        boolean isComplete() {
+            return errorPosition == -1;
         }
 
         int getErrorPosition() {
@@ -458,6 +449,18 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    private static class TableUpdateDetails {
+        private final String tableName;
+        private int threadId;
+        private int nUpdates; // Number of updates since the last load rebalance
+
+        private TableUpdateDetails(String tableName, int threadId) {
+            super();
+            this.tableName = tableName;
+            this.threadId = threadId;
+        }
+    }
+
     private class WriterJob implements Job {
         private final int id;
         private final Sequence sequence;
@@ -512,19 +515,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                 busy = true;
                 LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
-                try {
-                    if (event.threadId == id) {
-                        eventProcessed = processNextEvent(event);
+                if (event.threadId == id) {
+                    eventProcessed = processNextEvent(event);
+                } else {
+                    if (event.isRebalanceEvent()) {
+                        eventProcessed = processRebalance(event);
                     } else {
-                        if (event.isRebalanceEvent()) {
-                            eventProcessed = processRebalance(event);
-                        } else {
-                            eventProcessed = true;
-                        }
+                        eventProcessed = true;
                     }
-                } catch (RuntimeException ex) {
-                    LOG.error().$(ex).$();
-                    eventProcessed = true;
                 }
                 if (eventProcessed) {
                     sequence.done(cursor);
@@ -567,11 +565,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
-                if (!event.rebalanceReleasedByFromThread) {
-                    return false;
-                }
-
-                return true;
+                return event.rebalanceReleasedByFromThread;
             }
 
             if (event.rebalanceFromThreadId == id) {
@@ -585,9 +579,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         private class Parser implements Closeable {
-            private TableWriter writer;
             private final IntList colTypes = new IntList();
             private final IntList colIndexMappings = new IntList();
+            private TableWriter writer;
             private int nUncommitted = 0;
 
             private transient int nMeasurementValues;
@@ -794,18 +788,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 this.columnCount = timestampIndex + 1;
                 return this;
             }
-        }
-    }
-
-    private static class TableUpdateDetails {
-        private final String tableName;
-        private int threadId;
-        private int nUpdates; // Number of updates since the last load rebalance
-
-        private TableUpdateDetails(String tableName, int threadId) {
-            super();
-            this.tableName = tableName;
-            this.threadId = threadId;
         }
     }
 }
