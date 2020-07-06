@@ -79,9 +79,11 @@ Execution time on a c5.metal instance using 16 of the 96 threads available.
 The easiest way to get started is with Docker:
 
 ```shell script
-docker pull questdb/questdb
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
+
+You can more information about Docker usage
+[here](https://hub.docker.com/repository/docker/questdb/questdb/).
 
 #### Alternative methods
 
