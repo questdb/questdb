@@ -403,6 +403,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
+//                  'first' group by function
+            io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstTimestampGroupByFunctionFactory,
 //                  'max' group
             io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory,
