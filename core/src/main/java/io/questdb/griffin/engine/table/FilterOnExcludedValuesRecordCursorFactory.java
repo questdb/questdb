@@ -29,10 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -103,7 +100,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 } else {
                     rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection);
                 }
-                includedValues.add(symbol);
+                includedValues.add(Chars.toString(symbol));
                 cursorFactories.add(rowCursorFactory);
             }
         }
