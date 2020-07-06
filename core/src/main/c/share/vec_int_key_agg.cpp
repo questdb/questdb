@@ -87,14 +87,6 @@ void kIntMaxInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
 
 extern "C" {
 
-constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
-constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
-constexpr jint I_MAX = std::numeric_limits<jint>::max();
-constexpr jint I_MIN = std::numeric_limits<jint>::min();
-constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
-constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
-constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
-
 // SUM double
 
 JNIEXPORT void JNICALL

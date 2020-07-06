@@ -43,6 +43,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
+import java.io.Closeable;
+
 public class VirtualMemory implements Closeable {
     static final int STRING_LENGTH_BYTES = 4;
     private static final Log LOG = LogFactory.getLog(VirtualMemory.class);
@@ -104,6 +106,21 @@ public class VirtualMemory implements Closeable {
     @Override
     public void close() {
         clearPages();
+        appendPointer = -1;
+        pageHi = -1;
+        pageLo = -1;
+        baseOffset = 1;
+        clearHotPage();
+    }
+
+    public void clear() {
+        int n = pages.size();
+        if (n > 1) {
+            for (int i = 1; i < n; i++) {
+                release(i, pages.getQuick(i));
+                pages.set(i, 0);
+            }
+        }
         appendPointer = -1;
         pageHi = -1;
         pageLo = -1;

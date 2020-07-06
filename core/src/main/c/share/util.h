@@ -22,43 +22,27 @@
  *
  ******************************************************************************/
 
-#include "vec_agg.h"
+#ifndef UTIL_H
+#define UTIL_H
+#include <cmath>
 
-#define MAX_VECTOR_SIZE 512
-
-#if INSTRSET >= 10
-
-//#define HOUR_COUNT F_AVX512(keyedHourCount)
-
-#elif INSTRSET >= 8
-
-//#define HOUR_COUNT F_AVX2(keyedHourCount)
-
-#elif INSTRSET >= 5
-
-//#define HOUR_COUNT F_SSE41(keyedHourCount)
-
-#elif INSTRSET >= 2
-
-//#define HOUR_COUNT F_SSE2(keyedHourCount)
-
+#if (defined(__GNUC__) && !defined(__clang__))
+#define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define ATTRIBUTE_NEVER_INLINE __declspec(noinline)
 #else
-
+#define ATTRIBUTE_NEVER_INLINE
 #endif
 
+#define PREDICT_FALSE(x) (__builtin_expect(x, 0))
+#define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 
-#if INSTRSET < 5
+constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
+constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
+constexpr jint I_MAX = std::numeric_limits<jint>::max();
+constexpr jint I_MIN = std::numeric_limits<jint>::min();
+constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
+constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
+constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
 
-// Dispatchers
-//ROSTI_DISPATCHER(keyedHourCount)
-
-#define HOUR_MICROS  3600000000L
-#define DAY_HOURS  24
-
-extern "C" {
-
-
-
-}
-
-#endif
+#endif //UTIL_H
