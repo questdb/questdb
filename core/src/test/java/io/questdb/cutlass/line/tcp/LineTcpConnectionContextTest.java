@@ -28,6 +28,8 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 
@@ -45,6 +47,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private int[] rebalanceLoadByThread;
     private int rebalanceNLoadCheckCycles = 0;
     private int rebalanceNRebalances = 0;
+
+    private long microSecondTicks;
 
     @Test
     public void testSingleMeasurement() throws Exception {
@@ -583,6 +587,133 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }, onCommitNewEvent);
     }
 
+    @Test
+    public void testUseReceivedTimestamp1() throws Exception {
+        runInContext(() -> {
+            microSecondTicks = 0;
+            recvBuffer = "weather,location=us-midwest temperature=82\n" +
+                    "weather,location=us-midwest temperature=83\n" +
+                    "weather,location=us-eastcoast temperature=81\n" +
+                    "weather,location=us-midwest temperature=85\n" +
+                    "weather,location=us-eastcoast temperature=89\n" +
+                    "weather,location=us-eastcoast temperature=80\n" +
+                    "weather,location=us-westcost temperature=82\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testBadTimestamp() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 146583983x102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testBadLineSyntax1() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 a=146583983102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testBadLineSyntax2() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast,broken temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testBadLineSyntax3() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast broken=23 temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
@@ -663,6 +794,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
         };
         nWriterThreads = 2;
+        microSecondTicks = -1;
         lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
@@ -677,6 +809,19 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             @Override
             public int getMaxMeasurementSize() {
                 return 128;
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return new MicrosecondClockImpl() {
+                    @Override
+                    public long getTicks() {
+                        if (microSecondTicks >= 0) {
+                            return microSecondTicks;
+                        }
+                        return super.getTicks();
+                    }
+                };
             }
         };
     }

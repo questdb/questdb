@@ -408,7 +408,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             return cache.get(measurementNameAddress);
         }
 
-        long getTimestamp() {
+        long getTimestamp() throws NumericException {
             if (timestampAddress != 0) {
                 try {
                     timestamp = timestampAdapter.getMicros(cache.get(timestampAddress));
@@ -416,6 +416,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 } catch (NumericException e) {
                     LOG.info().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
                     timestamp = Long.MIN_VALUE;
+                    throw e;
                 }
             }
             return timestamp;
@@ -437,13 +438,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             return firstFieldIndex;
         }
 
-        LineTcpMeasurementEvent createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
+        void createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
             clear();
             threadId = REBALANCE_EVENT_ID;
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
             rebalanceTableName = tableName;
-            return this;
         }
 
         boolean isRebalanceEvent() {
@@ -502,35 +502,31 @@ class LineTcpMeasurementScheduler implements Closeable {
         private boolean drainQueue() {
             boolean busy = false;
             while (true) {
+                long cursor;
+                while ((cursor = sequence.next()) < 0) {
+                    if (cursor == -1) {
+                        return busy;
+                    }
+                }
+                busy = true;
+                LineTcpMeasurementEvent event = queue.get(cursor);
+                boolean eventProcessed;
                 try {
-                    long cursor;
-                    while ((cursor = sequence.next()) < 0) {
-                        if (cursor == -1) {
-                            return busy;
-                        }
-                    }
-                    busy = true;
-                    LineTcpMeasurementEvent event = queue.get(cursor);
-                    boolean eventProcessed;
-                    try {
-                        if (event.threadId == id) {
-                            eventProcessed = processNextEvent(event);
+                    if (event.threadId == id) {
+                        eventProcessed = processNextEvent(event);
+                    } else {
+                        if (event.isRebalanceEvent()) {
+                            eventProcessed = processRebalance(event);
                         } else {
-                            if (event.isRebalanceEvent()) {
-                                eventProcessed = processRebalance(event);
-                            } else {
-                                eventProcessed = true;
-                            }
+                            eventProcessed = true;
                         }
-                    } catch (RuntimeException ex) {
-                        LOG.error().$(ex).$();
-                        eventProcessed = true;
-                    }
-                    if (eventProcessed) {
-                        sequence.done(cursor);
                     }
                 } catch (RuntimeException ex) {
                     LOG.error().$(ex).$();
+                    eventProcessed = true;
+                }
+                if (eventProcessed) {
+                    sequence.done(cursor);
                 }
             }
         }
@@ -632,17 +628,22 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (error) {
                     return;
                 }
-                long timestamp = event.getTimestamp();
-                Row row = writer.newRow(timestamp);
+                Row row = null;
                 try {
+                    long timestamp = event.getTimestamp();
+                    row = writer.newRow(timestamp);
                     for (int i = 0; i < nMeasurementValues; i++) {
                         int columnType = colTypes.getQuick(i);
                         int columnIndex = colIndexMappings.getQuick(i);
                         CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
                     }
                     row.append();
-                } catch (CairoException | BadCastException ignore) {
-                    row.cancel();
+                } catch (NumericException | CairoException | BadCastException ignore) {
+                    // These excaptions are logged elsewhere
+                    if (null != row) {
+                        row.cancel();
+                    }
+                    return;
                 }
                 nUncommitted++;
                 if (nUncommitted > maxUncommittedRows) {
