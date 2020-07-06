@@ -558,12 +558,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return false;
                 }
                 LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
-                parserCache.put(Chars.toString(event.getTableName()).toString(), parser);
-                return true;
+                parserCache.put(Chars.toString(event.getTableName()), parser);
             } else {
                 parser.processEvent(event);
-                return true;
             }
+            return true;
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
@@ -639,7 +638,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                     row.append();
                 } catch (NumericException | CairoException | BadCastException ignore) {
-                    // These excaptions are logged elsewhere
+                    // These exceptions are logged elsewhere
                     if (null != row) {
                         row.cancel();
                     }
