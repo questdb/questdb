@@ -11,9 +11,7 @@ const quest = new QuestDB.Client()
 
 const start = async () => {
   const weekOffset = 24 * 60 * 60 * 1000 * 7
-  const result = await quest.query<ConfigShape>(`
-    SELECT * FROM ${Table.CONFIG}
-  `)
+  const result = await quest.query<ConfigShape>(Table.CONFIG)
   let lastUpdated: string | undefined
 
   // If the user enabled telemetry then we start the webworker

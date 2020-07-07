@@ -7,11 +7,9 @@ import * as QuestDB from "utils/questdb"
 const start = async (payload: WorkerPayloadShape) => {
   const quest = new QuestDB.Client(payload.host)
 
-  const result = await quest.queryRaw(`
-    SELECT *
-      FROM ${Table.MAIN}
-      WHERE created > to_date('${payload.lastUpdated}', 'yyyy-MM-ddTHH:mm:ss.SSSZ')
-  `)
+  const result = await quest.queryRaw(
+    `${Table.MAIN} WHERE created > '${payload.lastUpdated}'`,
+  )
 
   if (result.type === QuestDB.Type.DQL && result.count > 0) {
     const response = await fetchApi<void>(`${API}/add`, {

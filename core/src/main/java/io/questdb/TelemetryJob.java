@@ -43,7 +43,6 @@ import io.questdb.std.NanosecondClock;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.time.MillisecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,7 +55,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final static CharSequence configTableName = "telemetry_config";
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
 
-    private final MillisecondClock clock;
+    private final MicrosecondClock clock;
     private final PropServerConfiguration configuration;
     private final boolean enabled;
     private final TableWriter writer;
@@ -67,7 +66,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     public TelemetryJob(PropServerConfiguration configuration, CairoEngine engine, @NotNull MessageBus messageBus) throws SqlException, CairoException {
         final CairoConfiguration cairoConfig = configuration.getCairoConfiguration();
 
-        this.clock = cairoConfig.getMillisecondClock();
+        this.clock = cairoConfig.getMicrosecondClock();
         this.configuration = configuration;
         this.enabled = configuration.getTelemetryConfiguration().getEnabled();
         this.queue = messageBus.getTelemetryQueue();
@@ -80,7 +79,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             try (final Path path = new Path()) {
 
                 if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                    compiler.compile("CREATE TABLE " + tableName + " (created date, event short, origin short)", sqlExecutionContext);
+                    compiler.compile("CREATE TABLE " + tableName + " (created timestamp, event short, origin short) timestamp(created)", sqlExecutionContext);
                 }
 
                 if (getTableStatus(path, configTableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -149,8 +148,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private void newRow(short event) {
         if (enabled) {
-            final TableWriter.Row row = writer.newRow();
-            row.putDate(0, clock.getTicks());
+            final TableWriter.Row row = writer.newRow(clock.getTicks());
             row.putShort(1, event);
             row.putShort(2, TelemetryOrigin.INTERNAL);
             row.append();
@@ -158,8 +156,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     }
 
     private void newRowConsumer(TelemetryTask telemetryRow) {
-        final TableWriter.Row row = writer.newRow();
-        row.putDate(0, telemetryRow.created);
+        final TableWriter.Row row = writer.newRow(telemetryRow.created);
         row.putShort(1, telemetryRow.event);
         row.putShort(2, telemetryRow.origin);
         row.append();
