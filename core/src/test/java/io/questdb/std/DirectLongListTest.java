@@ -22,33 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.TelemetryTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface MessageBus {
-    Sequence getIndexerPubSequence();
+public class DirectLongListTest {
 
-    RingQueue<ColumnIndexerTask> getIndexerQueue();
+    private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
 
-    Sequence getIndexerSubSequence();
-
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
-
-    Sequence getVectorAggregatePubSequence();
-
-    Sequence getVectorAggregateSubSequence();
-
-    RingQueue<TelemetryTask> getTelemetryQueue();
-
-    Sequence getTelemetryPubSequence();
-
-    SCSequence getTelemetrySubSequence();
-
-    ServerConfiguration getConfiguration();
+    @Test
+    public void testResizeMemLeak() {
+        // use logger so that static memory allocation happens before our control measurement
+        LOG.info().$("testResizeMemLeak").$();
+        long expected = Unsafe.getMemUsed();
+        try (DirectLongList list = new DirectLongList(1024)) {
+            for (int i = 0; i < 1_000_000; i++) {
+                list.add(i);
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
 }

@@ -36,7 +36,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
 
-class DefaultHttpServerConfiguration implements HttpServerConfiguration {
+public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {

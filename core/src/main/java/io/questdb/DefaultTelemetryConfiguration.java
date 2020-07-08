@@ -24,31 +24,14 @@
 
 package io.questdb;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.TelemetryTask;
-import io.questdb.tasks.VectorAggregateTask;
+public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
+    @Override
+    public boolean getEnabled() {
+        return false;
+    }
 
-public interface MessageBus {
-    Sequence getIndexerPubSequence();
-
-    RingQueue<ColumnIndexerTask> getIndexerQueue();
-
-    Sequence getIndexerSubSequence();
-
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
-
-    Sequence getVectorAggregatePubSequence();
-
-    Sequence getVectorAggregateSubSequence();
-
-    RingQueue<TelemetryTask> getTelemetryQueue();
-
-    Sequence getTelemetryPubSequence();
-
-    SCSequence getTelemetrySubSequence();
-
-    ServerConfiguration getConfiguration();
+    @Override
+    public int getQueueCapacity() {
+        return 16;
+    }
 }
