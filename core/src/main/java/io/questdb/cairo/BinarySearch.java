@@ -22,37 +22,30 @@
  *
  ******************************************************************************/
 
-#ifndef VECT_VANILLA_H
-#define VECT_VANILLA_H
+package io.questdb.cairo;
 
-double sumDouble_Vanilla(double *d, int64_t count);
+public class BinarySearch {
+    public static final int SCAN_UP = -1;
+    public static final int SCAN_DOWN = 1;
 
-double sumDoubleKahan_Vanilla(double *d, int64_t count);
+    public static long search(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
+        while (low < high) {
+            long mid = (low + high - 1) >>> 1;
+            long midVal = column.getLong(mid * 8);
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
-
-double avgDouble_Vanilla(double *d, int64_t count);
-
-double minDouble_Vanilla(double *d, int64_t count);
-
-double maxDouble_Vanilla(double *d, int64_t count);
-
-int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
-
-double avgInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t minInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t minLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-double avgLong_Vanilla(int64_t *pl, int64_t count);
-
-bool hasNull_Vanilla(int32_t *pi, int64_t count);
-
-#endif //VECT_VANILLA_H
+            if (midVal < value)
+                low = mid + 1;
+            else if (midVal > value)
+                high = mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += scanDirection;
+                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
+                    mid += scanDirection;
+                }
+                return mid - scanDirection;
+            }
+        }
+        return -(low + 1);
+    }
+}
