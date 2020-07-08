@@ -24,20 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.FullFwdDataFrameCursorFactory;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
 public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
@@ -107,7 +95,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     columnIndexes.add(i);
                 }
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null, false, columnIndexes, null);
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {

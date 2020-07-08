@@ -30,7 +30,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.mp.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.time.MillisecondClock;
@@ -56,18 +57,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
 
     public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
-        this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
-    }
-
-    public SqlExecutionContextImpl(CairoConfiguration cairoConfiguration, @Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
-        this.cairoConfiguration = cairoConfiguration;
+        this.cairoConfiguration = cairoEngine.getConfiguration();
         this.messageBus = messageBus;
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
         this.clock = cairoConfiguration.getMillisecondClock();
 
-        if(messageBus != null) {
+        if (messageBus != null) {
             this.telemetryQueue = messageBus.getTelemetryQueue();
             this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
@@ -159,11 +156,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private void storeTelemetryNoop(short event, short origin) {
     }
 
-    @FunctionalInterface
-    private interface TelemetryMethod {
-        void store(short event, short origin);
-    }
-
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,
@@ -195,5 +187,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
         this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
+    }
+
+    @FunctionalInterface
+    private interface TelemetryMethod {
+        void store(short event, short origin);
     }
 }

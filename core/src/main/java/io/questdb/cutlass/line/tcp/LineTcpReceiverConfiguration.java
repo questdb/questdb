@@ -32,6 +32,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.microtime.MicrosecondClock;
 
 public interface LineTcpReceiverConfiguration {
+
     boolean isEnabled();
 
     CairoSecurityContext getCairoSecurityContext();

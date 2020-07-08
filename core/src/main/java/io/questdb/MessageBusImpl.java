@@ -24,14 +24,11 @@
 
 package io.questdb;
 
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnIndexerTask> indexerQueue;
@@ -46,9 +43,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
 
-    private final PropServerConfiguration configuration;
+    private final ServerConfiguration configuration;
 
-    public MessageBusImpl(PropServerConfiguration configuration) {
+    public MessageBusImpl(@NotNull ServerConfiguration configuration) {
         this.configuration = configuration;
 
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
@@ -69,7 +66,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public PropServerConfiguration getConfiguration() {
+    public ServerConfiguration getConfiguration() {
         return configuration;
     }
 
