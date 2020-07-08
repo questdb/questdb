@@ -147,7 +147,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testMultipleMeasurements4() throws Exception {
         runInContext(() -> {
-            recvBuffer = "t_ilp21 temperature=82,pressure=100i 1465839830100400200\n" +
+            recvBuffer = "weather temperature=82,pressure=100i 1465839830100400200\n" +
                     "weather temperature=83,pressure=100i 1465839830100500200\n" +
                     "weather temperature=81,pressure=102i 1465839830101400200\n" +
                     "weather temperature=85,pressure=103i 1465839830102300200\n" +

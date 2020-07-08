@@ -50,6 +50,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     static {
         ALLOWED_LONG_CONVERSIONS.add(ColumnType.SHORT);
         ALLOWED_LONG_CONVERSIONS.add(ColumnType.LONG256);
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.TIMESTAMP);
     }
 
     private final CairoEngine engine;
