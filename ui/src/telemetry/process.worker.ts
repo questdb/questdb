@@ -8,7 +8,10 @@ const start = async (payload: WorkerPayloadShape) => {
   const quest = new QuestDB.Client(payload.host)
 
   const result = await quest.queryRaw(
-    `${Table.MAIN} WHERE created > '${payload.lastUpdated}'`,
+    `SELECT cast(created as long), event, origin
+        FROM ${Table.MAIN}
+        WHERE created > '${new Date(payload.lastUpdated).toISOString()}'
+    `,
   )
 
   if (result.type === QuestDB.Type.DQL && result.count > 0) {
