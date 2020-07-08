@@ -43,8 +43,16 @@ import java.util.Arrays;
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
-    private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is not able
-    // to populate it for some reason, the event needs to be committed to the queue incomplete
+    private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
+                                                       // not able to populate it for some reason, the event needs to be committed to the
+                                                       // queue incomplete
+    private static final IntHashSet ALLOWED_LONG_CONVERSIONS = new IntHashSet();
+    static {
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.SHORT);
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.LONG256);
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.TIMESTAMP);
+    }
+
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -673,18 +681,24 @@ class LineTcpMeasurementScheduler implements Closeable {
                 RecordMetadata metadata = writer.getMetadata();
                 for (int n = 0; n < nMeasurementValues; n++) {
                     int colIndex = metadata.getColumnIndexQuiet(event.getName(n));
+                    int colType = colTypes.getQuick(n);
                     if (colIndex == -1) {
                         colIndex = metadata.getColumnCount();
-                        writer.addColumn(event.getName(n), colTypes.getQuick(n));
+                        writer.addColumn(event.getName(n), colType);
                     } else {
-                        if (metadata.getColumnType(colIndex) != colTypes.getQuick(n)) {
-                            LOG.error().$("mismatched column and value types [table=").$(writer.getName())
-                                    .$(", column=").$(metadata.getColumnName(colIndex))
-                                    .$(", columnType=").$(ColumnType.nameOf(metadata.getColumnType(colIndex)))
-                                    .$(", valueType=").$(ColumnType.nameOf(colTypes.getQuick(n)))
-                                    .$(']').$();
-                            error = true;
-                            return;
+                        int tableColType = metadata.getColumnType(colIndex);
+                        if (tableColType != colType) {
+                            if (colType == ColumnType.LONG && ALLOWED_LONG_CONVERSIONS.contains(tableColType)) {
+                                colTypes.setQuick(n, tableColType);
+                            } else {
+                                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                                        .$(", column=").$(metadata.getColumnName(colIndex))
+                                        .$(", columnType=").$(ColumnType.nameOf(metadata.getColumnType(colIndex)))
+                                        .$(", valueType=").$(ColumnType.nameOf(colTypes.getQuick(n)))
+                                        .$(']').$();
+                                error = true;
+                                return;
+                            }
                         }
                     }
                     colIndexMappings.add(n, colIndex);

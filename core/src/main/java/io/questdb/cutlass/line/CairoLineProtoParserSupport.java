@@ -18,6 +18,9 @@ public class CairoLineProtoParserSupport {
         writers.extendAndSet(ColumnType.STRING, CairoLineProtoParserSupport::putStr);
         writers.extendAndSet(ColumnType.SYMBOL, CairoLineProtoParserSupport::putSymbol);
         writers.extendAndSet(ColumnType.DOUBLE, CairoLineProtoParserSupport::putDouble);
+        writers.extendAndSet(ColumnType.SHORT, CairoLineProtoParserSupport::putShort);
+        writers.extendAndSet(ColumnType.LONG256, CairoLineProtoParserSupport::putLong256);
+        writers.extendAndSet(ColumnType.TIMESTAMP, CairoLineProtoParserSupport::putTimestamp);
     }
 
     public interface ColumnWriter {
@@ -84,6 +87,65 @@ public class CairoLineProtoParserSupport {
     public static void putLong(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
         try {
             row.putLong(index, Numbers.parseLong(value, 0, value.length() - 1));
+        } catch (NumericException e) {
+            LOG.error().$("not an INT: ").$(value).$();
+            throw BadCastException.INSTANCE;
+        }
+    }
+
+    public static void putShort(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
+        try {
+            row.putShort(index, Numbers.parseShort(value, 0, value.length() - 1));
+        } catch (NumericException e) {
+            LOG.error().$("not a short INT: ").$(value).$();
+            throw BadCastException.INSTANCE;
+        }
+    }
+
+    public static void putLong256(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
+        try {
+            if (value.charAt(0) != '0') {
+                throw NumericException.INSTANCE;
+            }
+            if (value.charAt(1) != 'x') {
+                throw NumericException.INSTANCE;
+            }
+
+            int lim = value.length() - 1;
+            int p = lim - 16;
+            long l0 = parseLong256Bit(value, p, lim);
+            lim = p;
+            p = lim - 16;
+            long l1 = parseLong256Bit(value, p, lim);
+            lim = p;
+            p -= 16;
+            long l2 = parseLong256Bit(value, p, lim);
+            lim = p;
+            p -= 16;
+            long l3 = parseLong256Bit(value, p, lim);
+
+            row.putLong256(index, l0, l1, l2, l3);
+        } catch (NumericException e) {
+            LOG.error().$("not a LONG256: ").$(value).$();
+            throw BadCastException.INSTANCE;
+        }
+    }
+
+    private static long parseLong256Bit(CharSequence value, int p, int lim) throws NumericException {
+        if (p > 1) {
+            return Numbers.parseHexLong(value, p, lim);
+        }
+
+        if (p > -6) {
+            return Numbers.parseHexLong(value, 2, lim);
+        }
+
+        return 0;
+    }
+
+    public static void putTimestamp(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
+        try {
+            row.putTimestamp(index, Numbers.parseLong(value, 0, value.length() - 1));
         } catch (NumericException e) {
             LOG.error().$("not an INT: ").$(value).$();
             throw BadCastException.INSTANCE;
