@@ -213,6 +213,30 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         }
         throw CairoException.instance(0).put("metric expected");
     }
+    
+    public LineProtoSender tagEscaped(CharSequence tag, CharSequence value) {
+        if (hasMetric) {
+            put(',').putUtf8Escaped(tag).put('=').putUtf8Escaped(value);
+            return this;
+        }
+        throw CairoException.instance(0).put("metric expected");
+    }
+
+    private LineProtoSender putUtf8Escaped(CharSequence cs) {
+        for (int i = 0, n = cs.length(); i < n; i++) {
+            char c = cs.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                    put('\\');
+                default:
+                    putUtf8(c);
+                    break;
+            }
+        }
+        return this;
+    }
 
     private CharSink field(CharSequence name) {
         if (hasMetric) {
