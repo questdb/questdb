@@ -145,6 +145,32 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleMeasurements4() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "t_ilp21 temperature=82,pressure=100i 1465839830100400200\n" +
+                    "weather temperature=83,pressure=100i 1465839830100500200\n" +
+                    "weather temperature=81,pressure=102i 1465839830101400200\n" +
+                    "weather temperature=85,pressure=103i 1465839830102300200\n" +
+                    "weather temperature=89,pressure=101i 1465839830102400200\n" +
+                    "weather temperature=80,pressure=100i 1465839830102400200\n" +
+                    "weather temperature=82,pressure=100i 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "temperature\tpressure\ttimestamp\n" +
+                    "82.0\t100\t2016-06-13T17:43:50.100400Z\n" +
+                    "83.0\t100\t2016-06-13T17:43:50.100500Z\n" +
+                    "81.0\t102\t2016-06-13T17:43:50.101400Z\n" +
+                    "85.0\t103\t2016-06-13T17:43:50.102300Z\n" +
+                    "89.0\t101\t2016-06-13T17:43:50.102400Z\n" +
+                    "80.0\t100\t2016-06-13T17:43:50.102400Z\n" +
+                    "82.0\t100\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
     public void testExtremeFragmentation() throws Exception {
         runInContext(() -> {
             String allMsgs = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -737,6 +763,26 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testColumnConversion1() throws Exception {
+        runInContext(() -> {
+            try (@SuppressWarnings("resource")
+            TableModel model = new TableModel(configuration, "t_ilp21",
+                    PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).timestamp()) {
+                CairoTestUtils.create(model);
+            }
+            microSecondTicks = 1465839830102800l;
+            recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "event\tid\tts\ttimestamp\n" +
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t2016-06-13T17:43:50.102800Z\n";
+            assertTable(expected, "t_ilp21");
         });
     }
 
