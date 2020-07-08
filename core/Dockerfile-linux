@@ -42,4 +42,4 @@ EXPOSE 9000/tcp
 EXPOSE 8812/tcp
 
 # Run questdb when the container launches
-CMD ["/app/bin/java", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb"]
+CMD ["/app/bin/java", "--add-exports", "java.base/jdk.internal.math=io.questdb", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb"]
