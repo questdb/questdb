@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-#include <cmath>
-#include <algorithm>
 #include "rosti.h"
 
 #define HOUR_MICROS  3600000000L
