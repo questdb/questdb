@@ -127,8 +127,19 @@ final class WhereClauseParser implements Mutable {
                                         model.keyValuePositions.add(b.position);
                                     }
                                 } else {
-                                    model.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
+                                    if (model.keyExcludedValues.contains(value)) {
+                                        if (model.keyExcludedValues.size() > 1) {
+                                            model.keyExcludedValues.remove(value);
+                                            //TODO
+                                            model.keyExcludedValuePositions.remove(b.position);
+                                        } else {
+                                            model.keyExcludedValues.clear();
+                                            model.keyExcludedValuePositions.clear();
+                                        }
+                                    } else {
+                                        model.intrinsicValue = IntrinsicModel.FALSE;
+                                        return false;
+                                    }
                                 }
                             } else {
                                 model.keyColumn = column;
@@ -141,7 +152,6 @@ final class WhereClauseParser implements Mutable {
                                 }
                                 keyNodes.clear();
                             }
-
                             keyNodes.add(node);
                             node.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
@@ -150,9 +160,7 @@ final class WhereClauseParser implements Mutable {
                     default:
                         return false;
                 }
-
             }
-
         }
         return false;
     }
@@ -416,6 +424,11 @@ final class WhereClauseParser implements Mutable {
                 model.keyValues.addAll(tempKeys);
                 model.keyValuePositions.addAll(tempPos);
                 return revertProcessedNodes(model, columnName, node);
+            } else {
+                if (model.keyValues.size() == 0) {
+                    model.keyValues.addAll(tempKeys);
+                    model.keyValuePositions.addAll(tempPos);
+                }
             }
 
             if (model.keySubQuery == null) {
@@ -461,18 +474,54 @@ final class WhereClauseParser implements Mutable {
                     case ColumnType.LONG:
                     case ColumnType.INT:
                         if (m.isColumnIndexed(index)) {
-                            // check if we are limited by preferred column
-                            if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
-                                return false;
-                            } else {
+                            final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
+                            final boolean indexed = m.isColumnIndexed(index);
+                            if (indexed && preferredKeyColumn == null) {
                                 CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                                model.keyExcludedColumn = column;
-                                model.keyExcludedValues.clear();
-                                model.keyExcludedValuePositions.clear();
-                                model.keyExcludedValues.add(value);
-                                model.keyExcludedValuePositions.add(b.position);
+                                if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
+                                    if (model.keyExcludedValues.contains(value)) {
+                                        // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
+                                        // so we have to clear all other key values
+                                        if (model.keyExcludedValues.size() > 1) {
+                                            model.keyExcludedValues.clear();
+                                            model.keyExcludedValuePositions.clear();
+                                            model.keyExcludedValues.add(value);
+                                            model.keyExcludedValuePositions.add(b.position);
+                                            return true;
+                                        }
+                                    } else {
+                                        if (model.keyValues.contains(value)) {
+                                            if (model.keyValues.size() > 1) {
+                                                model.keyValues.clear();
+                                                model.keyValuePositions.clear();
+                                                model.keyValues.add(value);
+                                                model.keyValuePositions.add(b.position);
+                                            } else {
+                                                model.keyValues.clear();
+                                                model.keyValuePositions.clear();
+                                            }
+                                        } else {
+                                            model.intrinsicValue = IntrinsicModel.FALSE;
+                                            return false;
+                                        }
+                                    }
+                                } else {
+                                    model.keyColumn = column;
+                                    model.keyExcludedValues.clear();
+                                    model.keyExcludedValuePositions.clear();
+                                    model.keyExcludedValues.add(value);
+                                    model.keyExcludedValuePositions.add(b.position);
+                                    for (int n = 0, k = keyExclNodes.size(); n < k; n++) {
+                                        keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+                                    }
+                                    keyExclNodes.clear();
+                                }
                                 keyExclNodes.add(node);
+                                node.intrinsicValue = IntrinsicModel.TRUE;
                                 return true;
+                            } else if (preferred) {
+                                keyExclNodes.add(node);
+                                return false;
                             }
                         }
                         return false;
@@ -575,7 +624,6 @@ final class WhereClauseParser implements Mutable {
             OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
                 ExpressionNode parent = keyExclNodes.getQuick(i);
-
 
                 ExpressionNode node = isNotKeyword(parent.token) ? parent.rhs : parent;
                 // this could either be '=' or 'in'

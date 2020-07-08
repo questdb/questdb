@@ -2035,9 +2035,9 @@ public class SqlCodeGenerator implements Mutable {
                     intervalHitsOnlyOnePartition = false;
                 }
 
-                if (intrinsicModel.keyColumn != null || intrinsicModel.keyExcludedColumn != null) {
+                if (intrinsicModel.keyColumn != null) {
                     // existence of column would have been already validated
-                    final int keyColumnIndex = intrinsicModel.keyColumn != null ? reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn) : reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyExcludedColumn);
+                    final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
                     final int nKeyValues = intrinsicModel.keyValues.size();
                     final int nKeyExcludedValues = intrinsicModel.keyExcludedValues.size();
 

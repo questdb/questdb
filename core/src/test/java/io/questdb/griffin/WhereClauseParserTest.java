@@ -989,9 +989,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testOrNullSearch() throws Exception {
         IntrinsicModel m = modelOf("sym = null or sym != null and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=nullsym!=nullsym=orand");
+        assertFilter(m, "nullsym!=nullsym=or");
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[blah]", m.keyExcludedValues.toString());
+        Assert.assertEquals("[36]", m.keyExcludedValuePositions.toString());
+    }
+
+    @Test
+    public void testOrNullSearch2() throws Exception {
+        IntrinsicModel m = modelOf("sym = null or sym != null and ex = 'blah'");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "nullsym!=nullsym=or");
+        Assert.assertEquals("[blah]", m.keyValues.toString());
+        Assert.assertEquals("[35]", m.keyValuePositions.toString());
     }
 
     @Test
