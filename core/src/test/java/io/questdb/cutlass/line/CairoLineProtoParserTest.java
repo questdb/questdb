@@ -520,6 +520,14 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         assertThat(expected, lines, "tab");
     }
 
+    @Test
+    public void testNoTag() throws Exception {
+        String expected = "uptime_format\ttimestamp\n" +
+                " 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String lines = "system uptime_format=\" 1:18\" 1575990360000000000";
+        assertThat(expected, lines, "system");
+    }
+
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override

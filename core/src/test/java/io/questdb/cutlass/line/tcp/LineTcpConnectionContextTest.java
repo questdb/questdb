@@ -119,6 +119,32 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleMeasurements3() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather temperature=82,pressure=100i 1465839830100400200\n" +
+                    "weather temperature=83,pressure=100i 1465839830100500200\n" +
+                    "weather temperature=81,pressure=102i 1465839830101400200\n" +
+                    "weather temperature=85,pressure=103i 1465839830102300200\n" +
+                    "weather temperature=89,pressure=101i 1465839830102400200\n" +
+                    "weather temperature=80,pressure=100i 1465839830102400200\n" +
+                    "weather temperature=82,pressure=100i 1465839830102500200\n";
+            context.handleIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "temperature\tpressure\ttimestamp\n" +
+                    "82.0\t100\t2016-06-13T17:43:50.100400Z\n" +
+                    "83.0\t100\t2016-06-13T17:43:50.100500Z\n" +
+                    "81.0\t102\t2016-06-13T17:43:50.101400Z\n" +
+                    "85.0\t103\t2016-06-13T17:43:50.102300Z\n" +
+                    "89.0\t101\t2016-06-13T17:43:50.102400Z\n" +
+                    "80.0\t100\t2016-06-13T17:43:50.102400Z\n" +
+                    "82.0\t100\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
     public void testExtremeFragmentation() throws Exception {
         runInContext(() -> {
             String allMsgs = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
