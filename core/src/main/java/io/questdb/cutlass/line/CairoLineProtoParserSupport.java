@@ -13,6 +13,7 @@ public class CairoLineProtoParserSupport {
     public static final ObjList<ColumnWriter> writers = new ObjList<>();
 
     static {
+        writers.extendAndSet(ColumnType.LONG, CairoLineProtoParserSupport::putLong);
         writers.extendAndSet(ColumnType.BOOLEAN, CairoLineProtoParserSupport::putBoolean);
         writers.extendAndSet(ColumnType.STRING, CairoLineProtoParserSupport::putStr);
         writers.extendAndSet(ColumnType.SYMBOL, CairoLineProtoParserSupport::putSymbol);
