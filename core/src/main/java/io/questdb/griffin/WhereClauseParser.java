@@ -51,6 +51,7 @@ final class WhereClauseParser implements Mutable {
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
+    private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
@@ -136,10 +137,21 @@ final class WhereClauseParser implements Mutable {
                                             model.keyExcludedValues.clear();
                                             model.keyExcludedValuePositions.clear();
                                         }
-                                    } else {
-                                        model.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
+                                        tempNodes.clear();
+                                        for (int i = 0; i < keyExclNodes.size(); i++) {
+                                            ExpressionNode expressionNode = keyExclNodes.get(i);
+                                            if (Chars.equals(expressionNode.lhs.token, b.token) || Chars.equals(expressionNode.rhs.token, b.token)) {
+                                                expressionNode.intrinsicValue = IntrinsicModel.TRUE;
+                                                tempNodes.add(expressionNode);
+                                            }
+                                        }
+                                        for (int i = 0; i < tempNodes.size(); i++) {
+                                            keyExclNodes.remove(tempNodes.get(i));
+                                        }
                                     }
+                                    node.intrinsicValue = IntrinsicModel.TRUE;
+                                    model.intrinsicValue = IntrinsicModel.FALSE;
+                                    return false;
                                 }
                             } else {
                                 model.keyColumn = column;
@@ -490,20 +502,8 @@ final class WhereClauseParser implements Mutable {
                                             return true;
                                         }
                                     } else {
-                                        if (model.keyValues.contains(value)) {
-                                            if (model.keyValues.size() > 1) {
-                                                model.keyValues.clear();
-                                                model.keyValuePositions.clear();
-                                                model.keyValues.add(value);
-                                                model.keyValuePositions.add(b.position);
-                                            } else {
-                                                model.keyValues.clear();
-                                                model.keyValuePositions.clear();
-                                            }
-                                        } else {
-                                            model.intrinsicValue = IntrinsicModel.FALSE;
-                                            return false;
-                                        }
+                                        model.intrinsicValue = IntrinsicModel.FALSE;
+                                        return false;
                                     }
                                 } else {
                                     model.keyColumn = column;
@@ -620,7 +620,7 @@ final class WhereClauseParser implements Mutable {
     }
 
     private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {
-        if (model.keyColumn != null && keyExclNodes.size() > 0) {
+        if (model.keyColumn != null && model.keyValues.size() > 0 && keyExclNodes.size() > 0) {
             OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
                 ExpressionNode parent = keyExclNodes.getQuick(i);
