@@ -34,7 +34,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,7 +46,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoEngine cairoEngine;
     @Nullable
     private final MessageBus messageBus;
-    private final MillisecondClock clock;
+    private final MicrosecondClock clock;
     private RingQueue<TelemetryTask> telemetryQueue;
     private Sequence telemetryPubSeq;
     private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
@@ -62,7 +62,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
-        this.clock = cairoConfiguration.getMillisecondClock();
+        this.clock = cairoConfiguration.getMicrosecondClock();
 
         if (messageBus != null) {
             this.telemetryQueue = messageBus.getTelemetryQueue();

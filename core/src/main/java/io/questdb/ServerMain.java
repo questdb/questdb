@@ -164,7 +164,7 @@ public class ServerMain {
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
         // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
         // updating the telemetry_config table.
-        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus);
+        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus, functionFactoryCache);
 
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
