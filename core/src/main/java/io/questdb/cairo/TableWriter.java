@@ -106,6 +106,8 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullers;
     private final ObjList<VirtualMemory> mergeColumns;
+    private final ReadOnlyColumn timestampSearchColumn = new ReadOnlyMemory();
+    private VirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -135,6 +137,8 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
+    private long mergeRowIndex;
+    private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -588,6 +592,10 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
+            if (mergeRowIndex > 0) {
+                mergeOutOfOrderRecords();
+            }
+
             if (commitMode != CommitMode.NOSYNC) {
                 syncColumns(commitMode);
             }
@@ -621,6 +629,62 @@ public class TableWriter implements Closeable {
             }
             txPrevTransientRowCount = transientRowCount;
         }
+    }
+
+    private void mergeOutOfOrderRecords() {
+/*        final int timestampIndex = metadata.getTimestampIndex();
+        long index = mergeRowIndex;
+        long i = 0;
+        Vect.radixSort(timestampMergeMem.getPageAddress(0), timestampMergeMem.getPageSize(0) / 16);
+
+        final long prevHi = this.partitionHi;
+
+        while (true) {
+            // top of the timestamps
+
+            long ts = timestampMergeMem.getLong(i);
+            // check if this timestamp lands into latest partition
+            // find position in this partition where we need to insert timestamp
+            path.trimTo(rootLen);
+            setStateForTimestamp(ts, true);
+            // this will configure path
+            dFile(path, metadata.getColumnName(timestampIndex));
+
+            if (ff.exists(path)) {
+
+            }
+
+            // check if partition exists
+            if (ff.exists(path)) {
+                timestampSearchColumn.of(ff, path, ff.getMapPageSize(), transientRowCount * Long.BYTES);
+                long pos = BinarySearch.search(timestampSearchColumn, ts, 0, transientRowCount, BinarySearch.SCAN_UP);
+                if (pos < 0) {
+                    pos = -pos - 1;
+                }
+            } else {
+                // cool, need to create new partition ahead of everything
+                // append here until timestamp changes
+                openPartition(ts);
+                // work out where to stop appending
+                while (ts < partitionHi) {
+                    final long row = timestampMergeMem.getLong(i * 16 + 8);
+                    for (int j = 0; j < columnCount; j++) {
+                        switch (metadata.getColumnType(j)) {
+                            case ColumnType.INT:
+                                columns.getQuick(getPrimaryColumnIndex(j)).putInt(mergeColumns.getQuick(getPrimaryColumnIndex(j)).getInt(row * Integer.BYTES));
+                                break;
+                            case ColumnType.STRING:
+
+                        }
+                    }
+                }
+
+
+            }
+
+
+        }*/
+        this.mergeRowIndex = 0;
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -1395,6 +1459,11 @@ public class TableWriter implements Closeable {
             if (metadata.isColumnIndexed(i)) {
                 indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
+        }
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex != -1) {
+            // todo: when column is removed we need to update this again to reflect shifted columns
+            timestampMergeMem = mergeColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
         populateDenseIndexerList();
     }
@@ -2761,6 +2830,11 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void mergeTimestampSetter(long timestamp) {
+        timestampMergeMem.putLong(timestamp);
+        timestampMergeMem.putLong(mergeRowIndex++);
+    }
+
     @FunctionalInterface
     private interface RemoveFileLambda {
         void remove(FilesFacade ff, LPSZ name);
@@ -2825,19 +2899,25 @@ public class TableWriter implements Closeable {
                 // Before partition can be switched we need to index records
                 // added so far. Index writers will start point to different
                 // files after switch.
-                updateIndexes();
+//                updateIndexes();
 
                 // We need to store reference on partition so that archive
                 // file can be created in appropriate directory.
                 // For simplicity use partitionLo, which can be
                 // translated to directory name when needed
-                if (txPartitionCount++ > 0) {
-                    txPendingPartitionSizes.putLong128(transientRowCount, maxTimestamp);
-                }
-                fixedRowCount += transientRowCount;
-                txPrevTransientRowCount = transientRowCount;
-                transientRowCount = 0;
+
+//                if (txPartitionCount++ > 0) {
+//                    txPendingPartitionSizes.putLong128(transientRowCount, maxTimestamp);
+//                }
+//                fixedRowCount += transientRowCount;
+//                txPrevTransientRowCount = transientRowCount;
+//                transientRowCount = 0;
+
                 openMergePartition();
+                TableWriter.this.mergeRowIndex = 0;
+                assert timestampMergeMem != null;
+                timestampSetter = mergeTimestampMethodRef;
+                timestampSetter.accept(timestamp);
                 TableWriter.this.rowFunction = mergePartitionFunction;
                 return row;
             }
@@ -2854,6 +2934,8 @@ public class TableWriter implements Closeable {
     public class Row {
         private ObjList<? extends VirtualMemory> rowColumns;
 
+        // ISO 27001
+        // todo: configure nullers for the merge columns
         public void append() {
             if ((masterRef & 1) != 0) {
                 for (int i = 0; i < columnCount; i++) {

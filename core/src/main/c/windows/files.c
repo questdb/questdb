@@ -25,12 +25,8 @@
 #define _WIN32_WINNT 0x600 /* GetFileInformationByHandleEx is Vista+ */
 
 #include <shlwapi.h>
-#include <unistd.h>
-#include <sys/stat.h>
 #include <minwindef.h>
 #include <fileapi.h>
-
-//typedef HANDLE HWND;
 
 #include <winbase.h>
 #include <direct.h>
