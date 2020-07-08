@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -45,6 +46,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -63,7 +65,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
 
-    public TelemetryJob(PropServerConfiguration configuration, CairoEngine engine, @NotNull MessageBus messageBus) throws SqlException, CairoException {
+    public TelemetryJob(
+            PropServerConfiguration configuration,
+            CairoEngine engine,
+            @NotNull MessageBus messageBus,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) throws SqlException, CairoException {
         final CairoConfiguration cairoConfig = configuration.getCairoConfiguration();
 
         this.clock = cairoConfig.getMicrosecondClock();
@@ -72,7 +79,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queue = messageBus.getTelemetryQueue();
         this.subSeq = messageBus.getTelemetrySubSequence();
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine)) {
+        try (final SqlCompiler compiler = new SqlCompiler(engine, messageBus, functionFactoryCache)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine);
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 

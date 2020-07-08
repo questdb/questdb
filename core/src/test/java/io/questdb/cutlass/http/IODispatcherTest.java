@@ -5109,7 +5109,7 @@ public class IODispatcherTest {
                 };
                 final MessageBus messageBus = new MessageBusImpl(serverConfiguration);
                 if (telemetry) {
-                    telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
+                    telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus, null);
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
