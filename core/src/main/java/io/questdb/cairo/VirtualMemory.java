@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import java.io.Closeable;
 
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -490,6 +492,14 @@ public class VirtualMemory implements Closeable {
             stradlingPageLong256Decoder.putLong256(hexString);
         } else {
             inPageLong256Decoder.putLong256(hexString);
+        }
+    }
+
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            stradlingPageLong256Decoder.putLong256(hexString, start, end);
+        } else {
+            inPageLong256Decoder.putLong256(hexString, start, end);
         }
     }
 
@@ -1161,12 +1171,17 @@ public class VirtualMemory implements Closeable {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
                 putLong256Null();
+                appendPointer += Long256.BYTES;
             } else {
-                try {
-                    inPageLong256Decoder.decode(hexString, 2, len);
-                } catch (NumericException e) {
-                    throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-                }
+                putLong256(hexString, 2, len);
+            }
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                inPageLong256Decoder.decode(hexString, start, end);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
             }
             appendPointer += Long256.BYTES;
         }
@@ -1189,11 +1204,15 @@ public class VirtualMemory implements Closeable {
                 putLong(Long256Impl.NULL_LONG256.getLong2());
                 putLong(Long256Impl.NULL_LONG256.getLong3());
             } else {
-                try {
-                    decode(hexString, 2, len);
-                } catch (NumericException e) {
-                    throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-                }
+                putLong256(hexString, 2, len);
+            }
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                decode(hexString, start, end);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
             }
         }
 
@@ -1204,6 +1223,5 @@ public class VirtualMemory implements Closeable {
             putLong(l2);
             putLong(l3);
         }
-
     }
 }

@@ -1,5 +1,6 @@
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
@@ -105,42 +106,18 @@ public class CairoLineProtoParserSupport {
     public static void putLong256(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
         try {
             if (value.charAt(0) != '0') {
-                throw NumericException.INSTANCE;
+                throw CairoException.instance(0);
             }
+
             if (value.charAt(1) != 'x') {
-                throw NumericException.INSTANCE;
+                throw CairoException.instance(0);
             }
 
-            int lim = value.length() - 1;
-            int p = lim - 16;
-            long l0 = parseLong256Bit(value, p, lim);
-            lim = p;
-            p = lim - 16;
-            long l1 = parseLong256Bit(value, p, lim);
-            lim = p;
-            p -= 16;
-            long l2 = parseLong256Bit(value, p, lim);
-            lim = p;
-            p -= 16;
-            long l3 = parseLong256Bit(value, p, lim);
-
-            row.putLong256(index, l0, l1, l2, l3);
-        } catch (NumericException e) {
+            row.putLong256(index, value, 2, value.length() - 1);
+        } catch (CairoException e) {
             LOG.error().$("not a LONG256: ").$(value).$();
             throw BadCastException.INSTANCE;
         }
-    }
-
-    private static long parseLong256Bit(CharSequence value, int p, int lim) throws NumericException {
-        if (p > 1) {
-            return Numbers.parseHexLong(value, p, lim);
-        }
-
-        if (p > -6) {
-            return Numbers.parseHexLong(value, 2, lim);
-        }
-
-        return 0;
     }
 
     public static void putTimestamp(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
