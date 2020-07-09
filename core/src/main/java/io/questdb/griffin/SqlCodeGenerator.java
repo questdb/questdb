@@ -566,19 +566,23 @@ public class SqlCodeGenerator implements Mutable {
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode filter = model.getWhereClause();
-        if (filter != null) {
-            model.setWhereClause(null);
-            final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
-            if (f.isConstant() && !f.getBool(null)) {
-                RecordMetadata m = factory.getMetadata();
-                if (f instanceof GenericRecordMetadata) {
-                    return new EmptyTableRecordCursorFactory(m);
+        return filter == null ? factory : generateFilter0(factory, model, executionContext, filter);
+    }
+
+    @NotNull
+    private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
+        model.setWhereClause(null);
+        final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
+        if (f.isConstant()) {
+            try (f) {
+                if (f.getBool(null)) {
+                    return factory;
                 }
-                return new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOf(m));
+                // metadata is always a GenericRecordMetadata instance
+                return new EmptyTableRecordCursorFactory(factory.getMetadata());
             }
-            return new FilteredRecordCursorFactory(factory, f);
         }
-        return factory;
+        return new FilteredRecordCursorFactory(factory, f);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -2101,9 +2105,15 @@ public class SqlCodeGenerator implements Mutable {
                             final RowCursorFactory rcf;
                             final CharSequence symbol = intrinsicModel.keyValues.get(0);
                             final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
-                            final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
-                            if (f != null && f.isConstant() && !f.getBool(null)) {
-                                return new EmptyTableRecordCursorFactory(myMeta);
+                            Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                            if (f != null && f.isConstant()) {
+                                try {
+                                    if (!f.getBool(null)) {
+                                        return new EmptyTableRecordCursorFactory(myMeta);
+                                    }
+                                } finally {
+                                    f = Misc.free(f);
+                                }
                             }
 
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
