@@ -848,6 +848,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiteralNotInListOfValues() throws Exception {
+        IntrinsicModel m = modelOf("not sym in ('a', z) and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        Assert.assertNull(m.keyColumn);
+        assertFilter(m, "z'a'syminnot");
+    }
+
+    @Test
     public void testLessInvalidDate() {
         try {
             modelOf("timestamp < '2014-0x-01T12:30:00.000Z'");
@@ -941,6 +949,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         Assert.assertNull(m.keyColumn);
         assertFilter(m, "z'a'symin");
+    }
+
+    @Test
+    public void testNotInLambdaVsConst() throws Exception {
+        IntrinsicModel m = modelOf("not (sym in (select a from xyz)) and not (ex in (1,2))");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[1,2]", m.keyExcludedValues.toString());
+        assertFilter(m, "(select-choose a from (xyz))syminnot");
     }
 
     @Test
