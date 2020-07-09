@@ -163,6 +163,10 @@ final class WhereClauseParser implements Mutable {
                                     keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                 }
                                 keyNodes.clear();
+                                for (int n = 0, k = keyExclNodes.size(); n < k; n++) {
+                                    keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+                                }
+                                keyExclNodes.clear();
                             }
                             keyNodes.add(node);
                             node.intrinsicValue = IntrinsicModel.TRUE;
@@ -502,6 +506,28 @@ final class WhereClauseParser implements Mutable {
                                             return true;
                                         }
                                     } else {
+                                        if (model.keyValues.contains(value)) {
+                                            if (model.keyValues.size() > 1) {
+                                                model.keyValues.remove(value);
+                                                //TODO
+                                                model.keyValuePositions.remove(b.position);
+                                            } else {
+                                                model.keyValues.clear();
+                                                model.keyValuePositions.clear();
+                                            }
+                                            tempNodes.clear();
+                                            for (int i = 0; i < keyNodes.size(); i++) {
+                                                ExpressionNode expressionNode = keyNodes.get(i);
+                                                if (Chars.equals(expressionNode.lhs.token, b.token) || Chars.equals(expressionNode.rhs.token, b.token)) {
+                                                    expressionNode.intrinsicValue = IntrinsicModel.TRUE;
+                                                    tempNodes.add(expressionNode);
+                                                }
+                                            }
+                                            for (int i = 0; i < tempNodes.size(); i++) {
+                                                keyNodes.remove(tempNodes.get(i));
+                                            }
+                                        }
+                                        node.intrinsicValue = IntrinsicModel.TRUE;
                                         model.intrinsicValue = IntrinsicModel.FALSE;
                                         return false;
                                     }
@@ -515,6 +541,10 @@ final class WhereClauseParser implements Mutable {
                                         keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                     }
                                     keyExclNodes.clear();
+                                    for (int n = 0, k = keyNodes.size(); n < k; n++) {
+                                        keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+                                    }
+                                    keyNodes.clear();
                                 }
                                 keyExclNodes.add(node);
                                 node.intrinsicValue = IntrinsicModel.TRUE;
