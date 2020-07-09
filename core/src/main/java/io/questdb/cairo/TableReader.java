@@ -590,7 +590,7 @@ public class TableReader implements Closeable {
             int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
             columns.remove(2, getColumnBase(delta) + 1);
             prevMinTimestamp = minTimestamp;
-            partitionCount -= delta;
+            partitionCount = Math.max(0, partitionCount - delta);
         }
     }
 
