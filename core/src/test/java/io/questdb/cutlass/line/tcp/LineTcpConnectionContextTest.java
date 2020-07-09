@@ -775,12 +775,14 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800l;
-            recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n";
+            recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n";
             context.handleIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "event\tid\tts\ttimestamp\n" +
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t2016-06-13T17:43:50.102800Z\n" +
                     "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t2016-06-13T17:43:50.102800Z\n";
             assertTable(expected, "t_ilp21");
         });

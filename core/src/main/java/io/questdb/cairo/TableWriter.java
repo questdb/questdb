@@ -2870,6 +2870,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putLong256(int index, @NotNull CharSequence hexString, int start, int end) {
+            getPrimaryColumn(index).putLong256(hexString, start, end);
+            notNull(index);
+        }
+
         public void putShort(int index, short value) {
             getPrimaryColumn(index).putShort(value);
             notNull(index);
