@@ -108,6 +108,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterConstantTrue() throws Exception {
+        final String expected = "sum\n" +
+                "551.3822454600645\n";
+
+        assertQuery(expected,
+                "(select sum(a) from x) where 1=1",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(12)" +
+                        ") timestamp(k)",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testAvgDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 

@@ -176,6 +176,8 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    int getMaxSymbolNotEqualsCount();
+
     int getGroupByMapCapacity();
 
     boolean enableTestFactories();

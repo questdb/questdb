@@ -45,7 +45,9 @@ public class IntrinsicModel implements Mutable {
     }
 
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
+    public final CharSequenceHashSet keyExcludedValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
+    public final IntList keyExcludedValuePositions = new IntList();
     private final LongList intervalsA = new LongList();
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
@@ -586,7 +588,9 @@ public class IntrinsicModel implements Mutable {
     public void clear() {
         keyColumn = null;
         keyValues.clear();
+        keyExcludedValues.clear();
         keyValuePositions.clear();
+        keyExcludedValuePositions.clear();
         clearInterval();
         filter = null;
         intervals = null;
