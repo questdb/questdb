@@ -2101,20 +2101,20 @@ public class SqlCodeGenerator implements Mutable {
                     }
 
                     if (intrinsicModel.keyExcludedValues.size() == 0) {
+                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        if (f != null && f.isConstant()) {
+                            try {
+                                if (!f.getBool(null)) {
+                                    return new EmptyTableRecordCursorFactory(myMeta);
+                                }
+                            } finally {
+                                f = Misc.free(f);
+                            }
+                        }
                         if (nKeyValues == 1) {
                             final RowCursorFactory rcf;
                             final CharSequence symbol = intrinsicModel.keyValues.get(0);
                             final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
-                            Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
-                            if (f != null && f.isConstant()) {
-                                try {
-                                    if (!f.getBool(null)) {
-                                        return new EmptyTableRecordCursorFactory(myMeta);
-                                    }
-                                } finally {
-                                    f = Misc.free(f);
-                                }
-                            }
 
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
@@ -2147,10 +2147,6 @@ public class SqlCodeGenerator implements Mutable {
                             }
                         }
 
-                        final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
-                        if (f != null && f.isConstant() && !f.getBool(null)) {
-                            return new EmptyTableRecordCursorFactory(myMeta);
-                        }
                         return new FilterOnValuesRecordCursorFactory(
                                 myMeta,
                                 dfcFactory,
@@ -2169,9 +2165,15 @@ public class SqlCodeGenerator implements Mutable {
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
                             symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
                         }
-                        final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
-                        if (f != null && f.isConstant() && !f.getBool(null)) {
-                            return new EmptyTableRecordCursorFactory(myMeta);
+                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        if (f != null && f.isConstant()) {
+                            try {
+                                if (!f.getBool(null)) {
+                                    return new EmptyTableRecordCursorFactory(myMeta);
+                                }
+                            } finally {
+                                f = Misc.free(f);
+                            }
                         }
 
                         return new FilterOnExcludedValuesRecordCursorFactory(
