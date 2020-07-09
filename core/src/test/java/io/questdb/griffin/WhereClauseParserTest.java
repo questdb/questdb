@@ -404,6 +404,42 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearch11() throws Exception {
+        IntrinsicModel m = modelOf("sym = null and null != sym and ex = 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'ex=");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch12() throws Exception {
+        IntrinsicModel m = modelOf("sym != 'ho' and sym in (null, 'ho')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[null]", m.keyValues.toString());
+        Assert.assertEquals("[30]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch13() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'ho' and not sym in (null, 'ho')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch14() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'ho' and not ex in ('blah') and not sym in (null, 'ho')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'exinnot");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -495,6 +531,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("'y'sym='y''x'syminand", toRpn(m.filter));
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testNotEqualsOverlapWithNotIn() throws Exception {
+        IntrinsicModel m = modelOf("sym != 'y' and not sym in ('x','y')");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[y]", m.keyExcludedValues.toString());
+        Assert.assertEquals("[7]", m.keyExcludedValuePositions.toString());
     }
 
     @Test
