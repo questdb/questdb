@@ -2110,7 +2110,7 @@ public class SqlCodeGenerator implements Mutable {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
                                 } else {
-                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true, indexDirection);
+                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection);
                                 }
                             } else {
                                 if (f == null) {
@@ -2159,12 +2159,17 @@ public class SqlCodeGenerator implements Mutable {
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
                             symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
                         }
+                        final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        if (f != null && f.isConstant() && !f.getBool(null)) {
+                            return new EmptyTableRecordCursorFactory(myMeta);
+                        }
+
                         return new FilterOnExcludedValuesRecordCursorFactory(
                                 myMeta,
                                 dfcFactory,
                                 symbolValueList,
                                 keyColumnIndex,
-                                filter,
+                                f,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
                                 indexDirection,
