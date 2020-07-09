@@ -38,7 +38,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     public SequentialRowCursorFactory(ObjList<RowCursorFactory> cursorFactories) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
-        this.cursor = new SequentialRowCursor(cursorFactories.size() - 1);
+        this.cursor = new SequentialRowCursor();
     }
 
     @Override
@@ -61,20 +61,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     private class SequentialRowCursor implements RowCursor {
-        private final int cursorIndexLimit;
         private int cursorIndex = 0;
         private RowCursor currentCursor;
-
-        public SequentialRowCursor(int cursorIndexLimit) {
-            this.cursorIndexLimit = cursorIndexLimit;
-        }
-
-        private void init() {
-            this.cursorIndex = 0;
-            if (cursorIndex < cursorIndexLimit) {
-                currentCursor = cursors.getQuick(cursorIndex);
-            }
-        }
 
         @Override
         public boolean hasNext() {
@@ -83,7 +71,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
                 return true;
             }
 
-            while (cursorIndex < cursorIndexLimit) {
+            while (cursorIndex < cursorFactories.size() - 1) {
                 currentCursor = cursors.getQuick(++cursorIndex);
                 if (currentCursor.hasNext()) {
                     return true;
@@ -91,6 +79,13 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
             }
 
             return false;
+        }
+
+        private void init() {
+            this.cursorIndex = 0;
+            if (cursorIndex < cursorFactories.size() - 1) {
+                currentCursor = cursors.getQuick(cursorIndex);
+            }
         }
 
         @Override

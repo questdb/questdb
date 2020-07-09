@@ -296,6 +296,78 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearch3() throws Exception {
+        IntrinsicModel m = modelOf("sym = null and ex = 'blah' and sym != null");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'ex=");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingNullSearch4() throws Exception {
+        IntrinsicModel m = modelOf("sym != null and sym = null and ex != 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'ex!=");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch1() throws Exception {
+        IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch2() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'blah' and sym != 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch3() throws Exception {
+        IntrinsicModel m = modelOf("sym != 'blah' and sym in ('blah')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch4() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('blah') and sym != 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch5() throws Exception {
+        IntrinsicModel m = modelOf("not (sym in ('blah')) and sym = 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch6() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'blah' and not (sym in ('blah'))");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -989,9 +1061,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testOrNullSearch() throws Exception {
         IntrinsicModel m = modelOf("sym = null or sym != null and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=nullsym!=nullsym=orand");
+        assertFilter(m, "nullsym!=nullsym=or");
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[blah]", m.keyExcludedValues.toString());
+        Assert.assertEquals("[36]", m.keyExcludedValuePositions.toString());
+    }
+
+    @Test
+    public void testOrNullSearch2() throws Exception {
+        IntrinsicModel m = modelOf("sym = null or sym != null and ex = 'blah'");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "nullsym!=nullsym=or");
+        Assert.assertEquals("[blah]", m.keyValues.toString());
+        Assert.assertEquals("[35]", m.keyValuePositions.toString());
     }
 
     @Test

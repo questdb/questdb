@@ -385,6 +385,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxSymbolNotEqualsCount() {
+        return 100;
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return 1024;
     }

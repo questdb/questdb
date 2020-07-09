@@ -2051,6 +2051,7 @@ public class SqlCodeGenerator implements Mutable {
                     // existence of column would have been already validated
                     final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
                     final int nKeyValues = intrinsicModel.keyValues.size();
+                    final int nKeyExcludedValues = intrinsicModel.keyExcludedValues.size();
 
                     if (intrinsicModel.keySubQuery != null) {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
@@ -2070,7 +2071,7 @@ public class SqlCodeGenerator implements Mutable {
                                 columnIndexes
                         );
                     }
-                    assert nKeyValues > 0;
+                    assert nKeyValues > 0 || nKeyExcludedValues > 0;
 
                     boolean orderByKeyColumn = false;
                     int indexDirection = BitmapIndexReader.DIR_FORWARD;
@@ -2095,62 +2096,82 @@ public class SqlCodeGenerator implements Mutable {
                         }
                     }
 
-                    if (nKeyValues == 1) {
-                        final RowCursorFactory rcf;
-                        final CharSequence symbol = intrinsicModel.keyValues.get(0);
-                        final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
+                    if (intrinsicModel.keyExcludedValues.size() == 0) {
+                        if (nKeyValues == 1) {
+                            final RowCursorFactory rcf;
+                            final CharSequence symbol = intrinsicModel.keyValues.get(0);
+                            final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
+                            final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                            if (f != null && f.isConstant() && !f.getBool(null)) {
+                                return new EmptyTableRecordCursorFactory(myMeta);
+                            }
+
+                            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                if (f == null) {
+                                    rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
+                                } else {
+                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true, indexDirection);
+                                }
+                            } else {
+                                if (f == null) {
+                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
+                                } else {
+                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection);
+                                }
+                            }
+                            return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
+                        }
+
+                        symbolValueList.clear();
+
+                        for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
+                            symbolValueList.add(intrinsicModel.keyValues.get(i));
+                        }
+
+                        if (orderByKeyColumn) {
+                            myMeta.setTimestampIndex(-1);
+                            if (model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                                symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR);
+                            } else {
+                                symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR_DESC);
+                            }
+                        }
+
                         final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
                         if (f != null && f.isConstant() && !f.getBool(null)) {
                             return new EmptyTableRecordCursorFactory(myMeta);
                         }
+                        return new FilterOnValuesRecordCursorFactory(
+                                myMeta,
+                                dfcFactory,
+                                symbolValueList,
+                                keyColumnIndex,
+                                reader,
+                                f,
+                                model.getOrderByAdviceMnemonic(),
+                                orderByKeyColumn,
+                                indexDirection,
+                                columnIndexes
+                        );
 
-                        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                            if (f == null) {
-                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
-                            } else {
-                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection);
-                            }
-                        } else {
-                            if (f == null) {
-                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
-                            } else {
-                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection);
-                            }
+                    } else if (intrinsicModel.keyExcludedValues.size() > 0 && reader.getSymbolMapReader(keyColumnIndex).size() < configuration.getMaxSymbolNotEqualsCount()) {
+                        symbolValueList.clear();
+                        for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
+                            symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
                         }
-                        return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
+                        return new FilterOnExcludedValuesRecordCursorFactory(
+                                myMeta,
+                                dfcFactory,
+                                symbolValueList,
+                                keyColumnIndex,
+                                filter,
+                                model.getOrderByAdviceMnemonic(),
+                                orderByKeyColumn,
+                                indexDirection,
+                                columnIndexes,
+                                configuration.getMaxSymbolNotEqualsCount()
+                        );
                     }
-
-                    symbolValueList.clear();
-
-                    for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
-                        symbolValueList.add(intrinsicModel.keyValues.get(i));
-                    }
-
-                    if (orderByKeyColumn) {
-                        myMeta.setTimestampIndex(-1);
-                        if (model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
-                            symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR);
-                        } else {
-                            symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR_DESC);
-                        }
-                    }
-
-                    final Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
-                    if (f != null && f.isConstant() && !f.getBool(null)) {
-                        return new EmptyTableRecordCursorFactory(myMeta);
-                    }
-                    return new FilterOnValuesRecordCursorFactory(
-                            myMeta,
-                            dfcFactory,
-                            symbolValueList,
-                            keyColumnIndex,
-                            reader,
-                            f,
-                            model.getOrderByAdviceMnemonic(),
-                            orderByKeyColumn,
-                            indexDirection,
-                            columnIndexes
-                    );
                 }
 
                 if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
