@@ -337,7 +337,7 @@ final class WhereClauseParser implements Mutable {
             model.keySubQuery = node.rhs.queryModel;
 
             // revert previously processed nodes
-            return revertProcessedNodes(model, columnName, node);
+            return revertProcessedNodes(keyNodes, model, columnName, node);
         }
         return false;
     }
@@ -442,7 +442,7 @@ final class WhereClauseParser implements Mutable {
                 model.keyValuePositions.clear();
                 model.keyValues.addAll(tempKeys);
                 model.keyValuePositions.addAll(tempPos);
-                return revertProcessedNodes(model, columnName, node);
+                return revertProcessedNodes(keyNodes, model, columnName, node);
             } else {
                 if (model.keyValues.size() == 0) {
                     model.keyValues.addAll(tempKeys);
@@ -452,7 +452,7 @@ final class WhereClauseParser implements Mutable {
 
             if (model.keySubQuery == null) {
                 // calculate overlap of values
-                replaceAllWithOverlap(model);
+                replaceAllWithOverlap(model, true);
 
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -593,7 +593,7 @@ final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(column, m, notNode);
+            analyzeNotListOfValues(model, column, m, notNode);
         }
 
         return ok;
@@ -638,16 +638,79 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private void analyzeNotListOfValues(CharSequence columnName, RecordMetadata m, ExpressionNode notNode) {
-        final int columnIndex = m.getColumnIndex(columnName);
+    private void analyzeNotListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) {
+        final int columnIndex = meta.getColumnIndex(columnName);
 
-        switch (m.getColumnType(columnIndex)) {
+        switch (meta.getColumnType(columnIndex)) {
             case ColumnType.SYMBOL:
             case ColumnType.STRING:
             case ColumnType.LONG:
             case ColumnType.INT:
-                if (m.isColumnIndexed(columnIndex) && (preferredKeyColumn == null || Chars.equals(preferredKeyColumn, columnName))) {
-                    keyExclNodes.add(notNode);
+
+                boolean newColumn = true;
+
+                if (model.keyColumn != null
+                        && (newColumn = !Chars.equals(model.keyColumn, columnName))
+                        && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
+                    return;
+                }
+
+
+                int i = node.paramCount - 1;
+                tempKeys.clear();
+                tempPos.clear();
+
+                // collect and analyze values of indexed field
+                // if any of values is not an indexed constant - bail out
+                if (i == 1) {
+                    if (node.rhs == null || node.rhs.type != ExpressionNode.CONSTANT) {
+                        return;
+                    }
+                    if (tempKeys.add(unquote(node.rhs.token))) {
+                        tempPos.add(node.position);
+                    }
+                } else {
+                    for (i--; i > -1; i--) {
+                        ExpressionNode c = node.args.getQuick(i);
+                        if (c.type != ExpressionNode.CONSTANT) {
+                            return;
+                        }
+
+                        if (isNullKeyword(c.token)) {
+                            if (tempKeys.add(null)) {
+                                tempPos.add(c.position);
+                            }
+                        } else {
+                            if (tempKeys.add(unquote(c.token))) {
+                                tempPos.add(c.position);
+                            }
+                        }
+                    }
+                }
+
+                // clear values if this is new column
+                // and reset intrinsic values on nodes associated with old column
+                if (newColumn) {
+                    model.keyExcludedValues.clear();
+                    model.keyExcludedValuePositions.clear();
+                    model.keyExcludedValues.addAll(tempKeys);
+                    model.keyExcludedValuePositions.addAll(tempPos);
+                    revertProcessedNodes(keyExclNodes, model, columnName, node);
+                    return;
+                } else {
+                    if (model.keyExcludedValues.size() == 0) {
+                        model.keyExcludedValues.addAll(tempKeys);
+                        model.keyExcludedValuePositions.addAll(tempPos);
+                    }
+                }
+
+                if (model.keySubQuery == null) {
+                    // calculate overlap of values
+                    replaceAllWithOverlap(model, false);
+
+                    keyExclNodes.add(node);
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return;
                 }
                 break;
             default:
@@ -796,32 +859,41 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
-    private void replaceAllWithOverlap(IntrinsicModel model) {
+    private void replaceAllWithOverlap(IntrinsicModel model, boolean includedValues) {
+        CharSequenceHashSet values;
+        IntList positions;
+        if (includedValues) {
+            values = model.keyValues;
+            positions = model.keyValuePositions;
+        } else {
+            values = model.keyExcludedValues;
+            positions = model.keyExcludedValuePositions;
+        }
         tempK.clear();
         tempP.clear();
         for (int i = 0, k = tempKeys.size(); i < k; i++) {
-            if (model.keyValues.contains(tempKeys.get(i)) && tempK.add(tempKeys.get(i))) {
+            if (values.contains(tempKeys.get(i)) && tempK.add(tempKeys.get(i))) {
                 tempP.add(tempPos.get(i));
             }
         }
 
         if (tempK.size() > 0) {
-            model.keyValues.clear();
-            model.keyValuePositions.clear();
-            model.keyValues.addAll(tempK);
-            model.keyValuePositions.addAll(tempP);
+            values.clear();
+            positions.clear();
+            values.addAll(tempK);
+            positions.addAll(tempP);
         } else {
             model.intrinsicValue = IntrinsicModel.FALSE;
         }
     }
 
-    private boolean revertProcessedNodes(IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
-        for (int n = 0, k = keyNodes.size(); n < k; n++) {
-            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+    private boolean revertProcessedNodes(ObjList<ExpressionNode> nodes, IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
+        for (int n = 0, k = nodes.size(); n < k; n++) {
+            nodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
         }
-        keyNodes.clear();
+        nodes.clear();
         model.keyColumn = columnName;
-        keyNodes.add(node);
+        nodes.add(node);
         node.intrinsicValue = IntrinsicModel.TRUE;
         return true;
     }
