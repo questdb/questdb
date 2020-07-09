@@ -68,6 +68,7 @@ final class WhereClauseParser implements Mutable {
         this.keyNodes.clear();
         this.keyExclNodes.clear();
         this.csPool.clear();
+        this.tempNodes.clear();
     }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
@@ -143,7 +144,7 @@ final class WhereClauseParser implements Mutable {
                                         tempNodes.clear();
                                         for (int i = 0; i < keyExclNodes.size(); i++) {
                                             ExpressionNode expressionNode = keyExclNodes.get(i);
-                                            if (Chars.equals(expressionNode.lhs.token, b.token) || Chars.equals(expressionNode.rhs.token, b.token)) {
+                                            if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
                                                 expressionNode.intrinsicValue = IntrinsicModel.TRUE;
                                                 tempNodes.add(expressionNode);
                                             }
@@ -524,7 +525,7 @@ final class WhereClauseParser implements Mutable {
                                             tempNodes.clear();
                                             for (int i = 0; i < keyNodes.size(); i++) {
                                                 ExpressionNode expressionNode = keyNodes.get(i);
-                                                if (Chars.equals(expressionNode.lhs.token, b.token) || Chars.equals(expressionNode.rhs.token, b.token)) {
+                                                if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
                                                     expressionNode.intrinsicValue = IntrinsicModel.TRUE;
                                                     tempNodes.add(expressionNode);
                                                 }

@@ -368,6 +368,33 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingSearch7() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'ho' and sym != 'blah' and sym != 'ho'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch8() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'ho' and not sym in ('blah', 'ho')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testContradictingSearch9() throws Exception {
+        IntrinsicModel m = modelOf("sym != 'ho' and sym in ('blah', 'ho')");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[blah]", m.keyValues.toString());
+        Assert.assertEquals("[32]", m.keyValuePositions.toString());
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
