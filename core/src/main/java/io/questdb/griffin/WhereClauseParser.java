@@ -142,14 +142,14 @@ final class WhereClauseParser implements Mutable {
                                             model.keyExcludedValuePositions.clear();
                                         }
                                         tempNodes.clear();
-                                        for (int i = 0; i < keyExclNodes.size(); i++) {
+                                        for (int i = 0, size = keyExclNodes.size(); i < size; i++) {
                                             ExpressionNode expressionNode = keyExclNodes.get(i);
                                             if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
                                                 expressionNode.intrinsicValue = IntrinsicModel.TRUE;
                                                 tempNodes.add(expressionNode);
                                             }
                                         }
-                                        for (int i = 0; i < tempNodes.size(); i++) {
+                                        for (int i = 0, size = tempNodes.size(); i < size; i++) {
                                             keyExclNodes.remove(tempNodes.get(i));
                                         }
                                     }
@@ -161,6 +161,8 @@ final class WhereClauseParser implements Mutable {
                                 model.keyColumn = column;
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
+                                model.keyExcludedValues.clear();
+                                model.keyExcludedValuePositions.clear();
                                 model.keyValues.add(value);
                                 model.keyValuePositions.add(b.position);
                                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
@@ -523,14 +525,14 @@ final class WhereClauseParser implements Mutable {
                                                 model.keyValuePositions.clear();
                                             }
                                             tempNodes.clear();
-                                            for (int i = 0; i < keyNodes.size(); i++) {
+                                            for (int i = 0, size = keyNodes.size(); i < size; i++) {
                                                 ExpressionNode expressionNode = keyNodes.get(i);
                                                 if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
                                                     expressionNode.intrinsicValue = IntrinsicModel.TRUE;
                                                     tempNodes.add(expressionNode);
                                                 }
                                             }
-                                            for (int i = 0; i < tempNodes.size(); i++) {
+                                            for (int i = 0, size = tempNodes.size(); i < size; i++) {
                                                 keyNodes.remove(tempNodes.get(i));
                                             }
                                         }
@@ -540,6 +542,8 @@ final class WhereClauseParser implements Mutable {
                                     }
                                 } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
                                     model.keyColumn = column;
+                                    model.keyValues.clear();
+                                    model.keyValuePositions.clear();
                                     model.keyExcludedValues.clear();
                                     model.keyExcludedValuePositions.clear();
                                     model.keyExcludedValues.add(value);

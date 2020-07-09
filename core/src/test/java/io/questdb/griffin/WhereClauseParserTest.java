@@ -395,6 +395,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearch10() throws Exception {
+        IntrinsicModel m = modelOf("sym = null and sym != null and ex = 'blah'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'ex=");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);

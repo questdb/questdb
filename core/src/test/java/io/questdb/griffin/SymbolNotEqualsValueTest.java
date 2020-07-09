@@ -126,7 +126,31 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNotEquals1SymbolsWithFilteer() throws Exception {
+    public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
+        final String expected = "k\tj\tprice\tts\n";
+
+        assertQuery(
+                "k\tj\tprice\tts\n",
+                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
+                "create table x (\n" +
+                        "    sym symbol cache index,\n" +
+                        "    sym2 symbol cache index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "        from long_sequence(10)) timestamp (ts)",
+                expected,
+                false
+        );
+    }
+
+    @Test
+    public void testNotEquals1SymbolsWithFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n" +
                 "HBC\tE\t0.9856290845874263\t1970-01-03T00:18:00.000000Z\n" +
                 "HBC\tD\t0.7611029514995744\t1970-01-03T00:30:00.000000Z\n" +
