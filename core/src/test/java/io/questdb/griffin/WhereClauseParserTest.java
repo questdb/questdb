@@ -358,7 +358,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[]", m.keyValuePositions.toString());
     }
 
-
     @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");

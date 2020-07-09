@@ -127,12 +127,15 @@ final class WhereClauseParser implements Mutable {
                                         model.keyValues.add(value);
                                         model.keyValuePositions.add(b.position);
                                     }
+                                    node.intrinsicValue = IntrinsicModel.TRUE;
                                 } else {
                                     if (model.keyExcludedValues.contains(value)) {
                                         if (model.keyExcludedValues.size() > 1) {
                                             model.keyExcludedValues.remove(value);
-                                            //TODO
-                                            model.keyExcludedValuePositions.remove(b.position);
+                                            int removedIndex = model.keyExcludedValues.remove(value);
+                                            if (removedIndex > -1) {
+                                                model.keyExcludedValuePositions.removeIndex(index);
+                                            }
                                         } else {
                                             model.keyExcludedValues.clear();
                                             model.keyExcludedValuePositions.clear();
@@ -153,7 +156,7 @@ final class WhereClauseParser implements Mutable {
                                     model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
-                            } else {
+                            } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
                                 model.keyColumn = column;
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
@@ -167,9 +170,9 @@ final class WhereClauseParser implements Mutable {
                                     keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                 }
                                 keyExclNodes.clear();
+                                node.intrinsicValue = IntrinsicModel.TRUE;
                             }
                             keyNodes.add(node);
-                            node.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
                         }
                         //fall through
@@ -505,11 +508,14 @@ final class WhereClauseParser implements Mutable {
                                             model.keyExcludedValuePositions.add(b.position);
                                             return true;
                                         }
+                                        node.intrinsicValue = IntrinsicModel.TRUE;
                                     } else {
                                         if (model.keyValues.contains(value)) {
                                             if (model.keyValues.size() > 1) {
-                                                model.keyValues.remove(value);
-                                                //TODO
+                                                int removedIndex = model.keyValues.remove(value);
+                                                if (removedIndex > -1) {
+                                                    model.keyValuePositions.removeIndex(index);
+                                                }
                                                 model.keyValuePositions.remove(b.position);
                                             } else {
                                                 model.keyValues.clear();
@@ -531,7 +537,7 @@ final class WhereClauseParser implements Mutable {
                                         model.intrinsicValue = IntrinsicModel.FALSE;
                                         return false;
                                     }
-                                } else {
+                                } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
                                     model.keyColumn = column;
                                     model.keyExcludedValues.clear();
                                     model.keyExcludedValuePositions.clear();
@@ -545,9 +551,9 @@ final class WhereClauseParser implements Mutable {
                                         keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                     }
                                     keyNodes.clear();
+                                    node.intrinsicValue = IntrinsicModel.TRUE;
                                 }
                                 keyExclNodes.add(node);
-                                node.intrinsicValue = IntrinsicModel.TRUE;
                                 return true;
                             } else if (preferred) {
                                 keyExclNodes.add(node);
