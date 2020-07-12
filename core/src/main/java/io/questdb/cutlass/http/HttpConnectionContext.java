@@ -44,8 +44,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final long sendBuffer;
-    private final HttpServerConfiguration configuration;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
@@ -61,7 +59,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final boolean serverKeepAlive;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
-        this.configuration = configuration;
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
@@ -69,7 +66,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
-        this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -108,7 +104,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
         LOG.debug().$("closed").$();
     }
 

@@ -25,6 +25,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 #include <cmath>
+#include <cstdint>
 
 #if (defined(__GNUC__) && !defined(__clang__))
 #define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
@@ -44,5 +45,15 @@ constexpr jint I_MIN = std::numeric_limits<jint>::min();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
 constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
 constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
+
+inline uint32_t ceil_pow_2(uint32_t v) {
+    v--;
+    v |= v >> 1u;
+    v |= v >> 2u;
+    v |= v >> 4u;
+    v |= v >> 8u;
+    v |= v >> 16u;
+    return v + 1;
+}
 
 #endif //UTIL_H
