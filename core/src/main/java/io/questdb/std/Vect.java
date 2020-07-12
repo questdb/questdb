@@ -75,5 +75,9 @@ public final class Vect {
 
     public static native long sumLong(long pLong, long count);
 
-    public static native void radixSort(long pLongData, long count);
+    public static native void sortLongIndexAscInPlace(long pLongData, long count);
+
+    public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+
+    public static native void freeMergedIndex(long pIndex);
 }

@@ -98,11 +98,11 @@ public:
 
     int operator*() const { return TrailingZeros(); }
 
-    BitMask begin() const { return *this; }
+    [[nodiscard]] BitMask begin() const { return *this; }
 
-    BitMask end() const { return BitMask(0); }
+    [[nodiscard]] BitMask end() const { return BitMask(0); }
 
-    int TrailingZeros() const {
+    [[nodiscard]] uint32_t TrailingZeros() const {
         return bit_scan_forward(mask_);
     }
 
@@ -122,17 +122,17 @@ struct GroupSse2Impl {
     }
 
     // Returns a bitmask representing the positions of slots that match hash.
-    inline BitMask<uint32_t> Match(h2_t hash) const {
+    [[nodiscard]] inline BitMask<uint32_t> Match(h2_t hash) const {
         return BitMask<uint32_t>(to_bits(Vec16c(hash) == ctrl));
     }
 
     // Returns a bitmask representing the positions of empty slots.
-    inline BitMask<uint32_t> MatchEmpty() const {
+    [[nodiscard]] inline BitMask<uint32_t> MatchEmpty() const {
         return Match(kEmpty);
     }
 
     // Returns a bitmask representing the positions of empty or deleted slots.
-    BitMask<uint32_t> MatchEmptyOrDeleted() const {
+    [[nodiscard]] BitMask<uint32_t> MatchEmptyOrDeleted() const {
         return BitMask<uint32_t>(to_bits(Vec16c(kSentinel) > ctrl));
     }
 
@@ -146,16 +146,6 @@ using Group = GroupSse2Impl;
 rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, uint64_t map_capacity);
 
 static void initialize_slots(rosti_t *map);
-
-static inline int32_t ceil_pow_2(int32_t v) {
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    return v + 1;
-}
 
 // We use 7/8th as maximum load factor.
 // For 16-wide groups, that gives an average of two empty slots per group.
@@ -175,14 +165,14 @@ inline uint64_t HashSeed(const ctrl_t *ctrl) {
     // The low bits of the pointer have little or no entropy because of
     // alignment. We shift the pointer to try to use higher entropy bits. A
     // good number seems to be 12 bits, because that aligns with page size.
-    return reinterpret_cast<uintptr_t>(ctrl) >> 12;
+    return reinterpret_cast<uintptr_t>(ctrl) >> 12u;
 }
 
 inline uint64_t H1(uint64_t hash, const ctrl_t *ctrl) {
-    return (hash >> 7) ^ HashSeed(ctrl);
+    return (hash >> 7u) ^ HashSeed(ctrl);
 }
 
-inline ctrl_t H2(uint64_t hash) { return hash & 0x7F; }
+inline ctrl_t H2(uint64_t hash) { return hash & 0x7Fu; }
 
 template<uint64_t Width>
 class probe_seq {
@@ -193,9 +183,9 @@ public:
     }
 
 
-    inline uint64_t offset() const { return offset_; }
+    [[nodiscard]] inline uint64_t offset() const { return offset_; }
 
-    inline uint64_t offset(uint64_t i) const { return (offset_ + i) & mask_; }
+    [[nodiscard]] inline uint64_t offset(uint64_t i) const { return (offset_ + i) & mask_; }
 
     void next() {
         index_ += Width;
@@ -208,7 +198,7 @@ public:
     }
 
     // 0-based probe index. The i-th probe in the probe sequence.
-    uint64_t index() const { return index_; }
+    [[nodiscard]] uint64_t index() const { return index_; }
 
 private:
     uint64_t mask_;
@@ -357,11 +347,11 @@ inline std::pair<uint64_t, bool> find_or_prepare_insert(
     return {prepare_insert(map, hash, hash_m_f, cpy_f), true};
 }
 
-inline uint64_t hashInt(int32_t v) {
+inline uint64_t hashInt(uint32_t v) {
     uint64_t h = v;
-    h = (h << 5) - h + ((unsigned char) (v >> 8));
-    h = (h << 5) - h + ((unsigned char) (v >> 16));
-    h = (h << 5) - h + ((unsigned char) (v >> 24));
+    h = (h << 5u) - h + ((unsigned char) (v >> 8u));
+    h = (h << 5u) - h + ((unsigned char) (v >> 16u));
+    h = (h << 5u) - h + ((unsigned char) (v >> 24u));
     return h;
 }
 

@@ -25,7 +25,7 @@
 #include "jni.h"
 #include <cstring>
 #include <xmmintrin.h>
-#include "vcl/vectorclass.h"
+#include "util.h"
 
 typedef struct {
     uint64_t c8[256];
@@ -132,7 +132,7 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 }
 #endif
 
-void radixSort(index_t *array, uint64_t size) {
+void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     auto *cpy = (index_t *) malloc(size * sizeof(index_t));
@@ -203,21 +203,6 @@ void radixSort(index_t *array, uint64_t size) {
     free(cpy);
 }
 
-inline void kernel(int64_t *a, int64_t len, int p, int q) {
-    const auto d = 1 << (p - q);
-//    printf("in [len=%lldl, p=%d, q=%d]\n", len, p, q);
-
-    for (uint64_t i = 0; i < len; i++) {
-        bool up = ((i >> p) & 2) == 0;
-
-        if ((i & d) == 0 && (a[i] > a[i | d]) == up) {
-            int t = a[i];
-            a[i] = a[i | d];
-            a[i | d] = t;
-        }
-    }
-}
-
 inline void swap(index_t *a, index_t *b) {
     const auto t = *a;
     *a = *b;
@@ -232,19 +217,19 @@ inline void swap(index_t *a, index_t *b) {
  *  of pivot
  *
  **/
-uint64_t partition(index_t *arr, uint64_t low, uint64_t high) {
-    const auto pivot = arr[high].ts;    // pivot
+uint64_t partition(index_t *index, uint64_t low, uint64_t high) {
+    const auto pivot = index[high].ts;    // pivot
     auto i = (low - 1);  // Index of smaller element
 
     for (uint64_t j = low; j <= high - 1; j++) {
         // If current element is smaller than or
         // equal to pivot
-        if (arr[j].ts <= pivot) {
+        if (index[j].ts <= pivot) {
             i++;    // increment index of smaller element
-            swap(&arr[i], &arr[j]);
+            swap(&index[i], &index[j]);
         }
     }
-    swap(&arr[i + 1], &arr[high]);
+    swap(&index[i + 1], &index[high]);
     return (i + 1);
 }
 
@@ -254,7 +239,7 @@ uint64_t partition(index_t *arr, uint64_t low, uint64_t high) {
  * low  --> Starting index,
  * high  --> Ending index
  **/
-void quickSort(index_t arr[], int64_t low, int64_t high) {
+void quick_sort_long_index_asc_in_place(index_t *arr, int64_t low, int64_t high) {
     if (low < high) {
         /* pi is partitioning index, arr[p] is now
            at right place */
@@ -262,25 +247,159 @@ void quickSort(index_t arr[], int64_t low, int64_t high) {
 
         // Separately sort elements before
         // partition and after partition
-        quickSort(arr, low, pi - 1);
-        quickSort(arr, pi + 1, high);
+        quick_sort_long_index_asc_in_place(arr, low, pi - 1);
+        quick_sort_long_index_asc_in_place(arr, pi + 1, high);
     }
 }
 
-inline void sort(index_t *array, int64_t len) {
-    if (len < 600) {
-        quickSort(array, 0, len);
-    } else {
-        radixSort(array, len);
+inline void sort(index_t *index, int64_t size) {
+//    if (size < 600) {
+//        quick_sort_long_index_asc_in_place(index, 0, size);
+//    } else {
+    radix_sort_long_index_asc_in_place(index, size);
+//    }
+}
+
+typedef struct {
+    uint64_t value;
+    uint32_t index_index;
+} loser_node_t;
+
+typedef struct {
+    index_t *index;
+    uint64_t pos;
+    uint64_t size;
+} index_entry_t;
+
+inline void play_game(loser_node_t *tree, uint32_t player_count) {
+    auto remaining = player_count;
+    uint32_t offset = remaining;
+
+//    printf("gaming %d\n", remaining);
+    // first level
+    while (remaining > 2) {
+        for (uint32_t i = 0; i < remaining; i += 2) {
+            uint32_t winner_index;
+            winner_index = tree[i].value < tree[i + 1].value ? i : i + 1;
+//            printf("winner_index %d, a=%llu, b=%llu\n", winner_index, tree[i].value, tree[i + 1].value);
+            tree[offset + i / 2] = tree[winner_index];
+        }
+        remaining /= 2;
+        offset += remaining;
+    }
+}
+
+void k_way_merge_long_index(
+        index_entry_t *indexes, uint32_t entries_count, uint32_t sentinels_at_start, index_t *dest) {
+
+    // calculate size of the tree
+    auto remaining = entries_count;
+    uint32_t tree_size = 0;
+    while (remaining > 1) {
+        tree_size += remaining;
+        remaining /= 2;
+    }
+
+//    printf("tree_size = %d\n", tree_size);
+    loser_node_t tree[tree_size];
+    uint64_t index_pos[entries_count];
+    std::memset(index_pos, 0, entries_count * sizeof(uint64_t));
+
+    // seed the tree
+    for (uint32_t i = 0; i < entries_count; i++) {
+        if (indexes[i].index != nullptr) {
+            tree[i].value = indexes[i].index->ts;
+        } else {
+            tree[i].value = LLONG_MAX;
+        }
+        tree[i].index_index = i;
+    }
+
+    auto final_node_a = tree + (tree_size - 2);
+    auto final_node_b = tree + (tree_size - 1);
+    uint32_t sentinels_left = entries_count - sentinels_at_start;
+    uint64_t merged_index_pos = 0;
+    while (sentinels_left > 0) {
+//        printf("loop\n");
+        play_game(tree, entries_count);
+        uint32_t index_index;
+//        printf("cmp: %llu vs %llu\n", final_node_a->value, final_node_b->value);
+        if (final_node_a->value < final_node_b->value) {
+            index_index = final_node_a->index_index;
+        } else {
+            index_index = final_node_b->index_index;
+        }
+
+        index_entry_t *winner = indexes + index_index;
+//        printf("%llu, pos=%llu, index=%d, size=%llu\n", winner->index[winner->pos].ts, winner->pos, index_index,
+//               winner->size);
+        dest[merged_index_pos++] = winner->index[winner->pos];
+        if (++winner->pos < winner->size) {
+            index_t next = winner->index[winner->pos];
+            tree[index_index].value = next.ts;
+        } else {
+            // create sentinel
+            tree[index_index].index_index = -1;
+            tree[index_index].value = LLONG_MAX;
+            sentinels_left--;
+//            printf("sentinel down (%d)\n", sentinels_left);
+        }
     }
 }
 
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_radixSort(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
+Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     sort(reinterpret_cast<index_t *>(pLong), len);
 }
 
+typedef struct {
+    index_t *index;
+    int64_t size;
+} java_index_entry_t;
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pIndexStructArray, jint count) {
+    // prepare merge entries
+    // they need to have mutable current position "pos" in index
+
+    if (count < 1) {
+        return 0;
+    }
+
+    const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
+    if (count == 1) {
+        return reinterpret_cast<jlong>(java_entries[0].index);
+    }
+
+    uint32_t size = ceil_pow_2(count);
+    index_entry_t entries[size];
+    uint64_t merged_index_size = 0;
+    for (jint i = 0; i < count; i++) {
+        entries[i].index = java_entries[i].index;
+        entries[i].pos = 0;
+        entries[i].size = java_entries[i].size;
+        merged_index_size += java_entries[i].size;
+    }
+
+//    printf("count=%ld, size=%d, index_size=%llu\n", count, size, merged_index_size);
+    if (count < size) {
+        for (uint32_t i = count; i < size; i++) {
+            entries[i].index = nullptr;
+            entries[i].pos = 0;
+            entries[i].size = -1;
+        }
+    }
+    auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
+    k_way_merge_long_index(entries, size, size - count, merged_index);
+    return reinterpret_cast<jlong>(merged_index);
+//    return 0;
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_freeMergedIndex(JNIEnv *env, jclass cl, jlong pIndex) {
+    free(reinterpret_cast<void *>(pIndex));
+}
 }
 

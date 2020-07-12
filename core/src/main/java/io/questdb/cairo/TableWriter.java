@@ -635,7 +635,7 @@ public class TableWriter implements Closeable {
 /*        final int timestampIndex = metadata.getTimestampIndex();
         long index = mergeRowIndex;
         long i = 0;
-        Vect.radixSort(timestampMergeMem.getPageAddress(0), timestampMergeMem.getPageSize(0) / 16);
+        Vect.radix_sort_long_index_asc_in_place(timestampMergeMem.getPageAddress(0), timestampMergeMem.getPageSize(0) / 16);
 
         final long prevHi = this.partitionHi;
 
