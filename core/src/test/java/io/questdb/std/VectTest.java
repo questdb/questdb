@@ -150,7 +150,7 @@ public class VectTest {
     }
 
     @Test
-    public void testMergeThreeDifferentSizesAB() {
+    public void testMergeThreeDifferentSizes() {
         final int count1 = 1_000_000;
         final int count2 = 500_000;
         final int count3 = 750_000;

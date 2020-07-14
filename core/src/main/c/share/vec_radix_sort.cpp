@@ -253,11 +253,11 @@ void quick_sort_long_index_asc_in_place(index_t *arr, int64_t low, int64_t high)
 }
 
 inline void sort(index_t *index, int64_t size) {
-//    if (size < 600) {
-//        quick_sort_long_index_asc_in_place(index, 0, size);
-//    } else {
-    radix_sort_long_index_asc_in_place(index, size);
-//    }
+    if (size < 600) {
+        quick_sort_long_index_asc_in_place(index, 0, size - 1);
+    } else {
+        radix_sort_long_index_asc_in_place(index, size);
+    }
 }
 
 typedef struct {
@@ -275,7 +275,6 @@ inline void play_game(loser_node_t *tree, uint32_t player_count) {
     auto remaining = player_count;
     uint32_t offset = remaining;
 
-//    printf("gaming %d\n", remaining);
     // first level
     while (remaining > 2) {
         for (uint32_t i = 0; i < remaining; i += 2) {
@@ -290,60 +289,75 @@ inline void play_game(loser_node_t *tree, uint32_t player_count) {
 }
 
 void k_way_merge_long_index(
-        index_entry_t *indexes, uint32_t entries_count, uint32_t sentinels_at_start, index_t *dest) {
+        index_entry_t *indexes,
+        uint32_t entries_count,
+        uint32_t sentinels_at_start,
+        index_t *dest
+) {
 
     // calculate size of the tree
-    auto remaining = entries_count;
-    uint32_t tree_size = 0;
-    while (remaining > 1) {
-        tree_size += remaining;
-        remaining /= 2;
-    }
+    uint32_t tree_size = entries_count * 2;
+    uint64_t merged_index_pos = 0;
+    uint32_t sentinels_left = entries_count - sentinels_at_start;
 
-//    printf("tree_size = %d\n", tree_size);
     loser_node_t tree[tree_size];
-    uint64_t index_pos[entries_count];
-    std::memset(index_pos, 0, entries_count * sizeof(uint64_t));
 
-    // seed the tree
+    // seed the bottom of the tree with index values
     for (uint32_t i = 0; i < entries_count; i++) {
         if (indexes[i].index != nullptr) {
-            tree[i].value = indexes[i].index->ts;
+            tree[entries_count + i].value = indexes[i].index->ts;
         } else {
-            tree[i].value = LLONG_MAX;
+            tree[entries_count + i].value = LLONG_MAX;
         }
-        tree[i].index_index = i;
+        tree[entries_count + i].index_index = entries_count + i;
     }
 
-    auto final_node_a = tree + (tree_size - 2);
-    auto final_node_b = tree + (tree_size - 1);
-    uint32_t sentinels_left = entries_count - sentinels_at_start;
-    uint64_t merged_index_pos = 0;
-    while (sentinels_left > 0) {
-//        printf("loop\n");
-        play_game(tree, entries_count);
-        uint32_t index_index;
-//        printf("cmp: %llu vs %llu\n", final_node_a->value, final_node_b->value);
-        if (final_node_a->value < final_node_b->value) {
-            index_index = final_node_a->index_index;
+    // seed the entire tree from bottom up
+    for (uint32_t i = tree_size - 1; i > 1; i -= 2) {
+        uint32_t winner;
+        if (tree[i].value < tree[i - 1].value) {
+            winner = i;
         } else {
-            index_index = final_node_b->index_index;
+            winner = i - 1;
+        }
+        tree[i / 2] = tree[winner];
+    }
+
+
+    // take the first winner
+    auto winner_index = tree[1].index_index;
+    index_entry_t *winner = indexes + winner_index - entries_count;
+    if (winner->pos < winner->size) {
+        dest[merged_index_pos++] = winner->index[winner->pos];
+    } else {
+        sentinels_left--;
+    }
+
+    // full run
+    while (sentinels_left > 0) {
+        // back fill the winning index
+        if (PREDICT_TRUE(++winner->pos < winner->size)) {
+            tree[winner_index].value = winner->index[winner->pos].ts;
+        } else {
+            tree[winner_index].value = LLONG_MAX;
+            sentinels_left--;
         }
 
-        index_entry_t *winner = indexes + index_index;
-//        printf("%llu, pos=%llu, index=%d, size=%llu\n", winner->index[winner->pos].ts, winner->pos, index_index,
-//               winner->size);
-        dest[merged_index_pos++] = winner->index[winner->pos];
-        if (++winner->pos < winner->size) {
-            index_t next = winner->index[winner->pos];
-            tree[index_index].value = next.ts;
-        } else {
-            // create sentinel
-            tree[index_index].index_index = -1;
-            tree[index_index].value = LLONG_MAX;
-            sentinels_left--;
-//            printf("sentinel down (%d)\n", sentinels_left);
+        _mm_prefetch(tree, _MM_HINT_NTA);
+        while (PREDICT_TRUE(winner_index > 1)) {
+            const auto right_child = winner_index % 2 == 1 ? winner_index - 1 : winner_index + 1;
+            const auto target = winner_index / 2;
+            if (tree[winner_index].value < tree[right_child].value) {
+                tree[target] = tree[winner_index];
+            } else {
+                tree[target] = tree[right_child];
+            }
+            winner_index = target;
         }
+        winner_index = tree[1].index_index;
+        winner = indexes + winner_index - entries_count;
+        _mm_prefetch(winner, _MM_HINT_NTA);
+        dest[merged_index_pos++] = winner->index[winner->pos];
     }
 }
 
@@ -391,10 +405,10 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pInde
             entries[i].size = -1;
         }
     }
+
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     k_way_merge_long_index(entries, size, size - count, merged_index);
     return reinterpret_cast<jlong>(merged_index);
-//    return 0;
 }
 
 JNIEXPORT void JNICALL
