@@ -109,6 +109,23 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
+    public static void createTestTable(CairoConfiguration configuration, int n) {
+        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
+            model
+                    .col("j", ColumnType.SYMBOL);
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "y")) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow();
+                row.putSym(0, "ok\0ok");
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
     @Test
     public void testBiasWrite() throws Exception {
 
@@ -1925,6 +1942,44 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryJsonReplaceZero() throws Exception {
+        testJsonQuery0(2, engine -> {
+            // create table with all column types
+            createTestTable(
+                    engine.getConfiguration(),
+                    20
+            );
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=y HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0101\r\n" +
+                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"]],\"count\":20}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    100,
+                    0,
+                    false
+            );
+        }, false);
+    }
+
+    @Test
     public void testMissingURL() throws Exception {
         testJsonQuery0(2, engine -> {
             long fd = NetworkFacadeImpl.INSTANCE.socketTcp(true);
@@ -3185,7 +3240,7 @@ public class IODispatcherTest {
                         "0185\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
-                    "\r\n",
+                        "\r\n",
                 1,
                 true
         );
@@ -3225,7 +3280,7 @@ public class IODispatcherTest {
                         "0185\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
-                    "\r\n",
+                        "\r\n",
                 2,
                 true
         );

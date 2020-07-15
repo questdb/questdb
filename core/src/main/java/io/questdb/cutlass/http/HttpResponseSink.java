@@ -575,6 +575,8 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         private void escapeSpace(char c) {
             switch (c) {
+                case '\0':
+                    break;
                 case '\b':
                     put("\\b");
                     break;
