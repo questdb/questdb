@@ -29,11 +29,17 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.net.URL;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Properties;
 import java.util.ServiceLoader;
+import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
@@ -42,6 +48,7 @@ import java.util.zip.ZipInputStream;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.line.tcp.LineTcpServer;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
@@ -50,7 +57,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkError;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -79,7 +88,7 @@ public class ServerMain {
     }
 
     public static void main(String[] args) throws Exception {
-       new ServerMain(args);
+        new ServerMain(args);
     }
 
     protected PropServerConfiguration configuration;
@@ -165,64 +174,103 @@ public class ServerMain {
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
         }
-        initQuestDb(workerPool, cairoEngine, log);
 
-        final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine);
+        try {
+            initQuestDb(workerPool, cairoEngine, log);
+            final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine, functionFactoryCache);
 
-        final PGWireServer pgWireServer;
-        if (configuration.getPGWireConfiguration().isEnabled()) {
-            pgWireServer = PGWireServer.create(
-                configuration.getPGWireConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                    messageBus,
-                    functionFactoryCache
-        );
-        } else {
-            pgWireServer = null;
+            final PGWireServer pgWireServer;
+
+            if (configuration.getPGWireConfiguration().isEnabled()) {
+                pgWireServer = PGWireServer.create(
+                        configuration.getPGWireConfiguration(),
+                        workerPool,
+                        log,
+                        cairoEngine,
+                        messageBus,
+                        functionFactoryCache
+                );
+            } else {
+                pgWireServer = null;
+            }
+
+            final AbstractLineProtoReceiver lineProtocolReceiver;
+
+            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+                lineProtocolReceiver = new LinuxMMLineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            } else {
+                lineProtocolReceiver = new LineProtoReceiver(
+                        configuration.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        workerPool
+                );
+            }
+
+            LineTcpServer lineTcpServer = LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine,
+                    messageBus);
+            startQuestDb(workerPool, cairoEngine, lineProtocolReceiver, log);
+            logWebConsoleUrls(log, configuration);
+
+            System.gc();
+
+            if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
+                // suppress HUP signal
+                Signal.handle(new Signal("HUP"), signal -> {
+                });
+            }
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.err.println(new Date() + " QuestDB is shutting down");
+                shutdownQuestDb(
+                        workerPool,
+                        cairoEngine,
+                        httpServer,
+                        pgWireServer,
+                        lineProtocolReceiver,
+                        telemetryJob,
+                        lineTcpServer
+                );
+                System.err.println(new Date() + " QuestDB is down");
+            }));
+        } catch (NetworkError e) {
+            log.error().$(e.getMessage()).$();
+            LockSupport.parkNanos(10000000L);
+            System.exit(55);
         }
-
-        final AbstractLineProtoReceiver lineProtocolReceiver;
-
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            lineProtocolReceiver = new LinuxMMLineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        } else {
-            lineProtocolReceiver = new LineProtoReceiver(
-                    configuration.getLineUdpReceiverConfiguration(),
-                    cairoEngine,
-                    workerPool
-            );
-        }
-
-        startQuestDb(workerPool, cairoEngine, lineProtocolReceiver, log);
-
-        if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
-            // suppress HUP signal
-            Signal.handle(new Signal("HUP"), signal -> {
-            });
-        }
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.err.println(new Date() + " QuestDB is shutting down");
-            shutdownQuestDb(workerPool, cairoEngine, httpServer, pgWireServer, lineProtocolReceiver);
-            System.err.println(new Date() + " QuestDB is down");
-        }));
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final MessageBus messageBus, final Log log, final CairoEngine cairoEngine) {
-        return HttpServer
-                .create(
+    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
+        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
+        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        if (httpBindIP == 0) {
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface netint : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
+                    if (inetAddress instanceof Inet4Address) {
+                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
+                    }
+                }
+            }
+            record.$('\n').$();
+        } else {
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
+        }
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final MessageBus messageBus, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                messageBus
-        );
+                messageBus,
+                functionFactoryCache);
     }
 
     protected void readServerConfiguration(final String rootDirectory, final Properties properties) throws ServerConfigurationException, JsonException {
@@ -276,9 +324,9 @@ public class ServerMain {
                 log.error().$("could not find site [resource=").$(publicZip).$(']').$();
             }
         }
-        copyConfResource(dir, force, buffer, "conf/date.formats", log);
+        copyConfResource(dir, false, buffer, "conf/date.formats", log);
         copyConfResource(dir, force, buffer, "conf/mime.types", log);
-        copyConfResource(dir, force, buffer, "conf/server.conf", log);
+        copyConfResource(dir, false, buffer, "conf/server.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -362,20 +410,23 @@ public class ServerMain {
         return "[DEVELOPMENT]";
     }
 
-    protected static void shutdownQuestDb(final WorkerPool workerPool,
-                                          final CairoEngine cairoEngine,
-                                          final HttpServer httpServer,
-                                          final PGWireServer pgWireServer,
-                                          final AbstractLineProtoReceiver lineProtocolReceiver
+    protected static void shutdownQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final HttpServer httpServer,
+            final PGWireServer pgWireServer,
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final TelemetryJob telemetryJob,
+            final LineTcpServer lineTcpServer
     ) {
         lineProtocolReceiver.halt();
+        Misc.free(telemetryJob);
         workerPool.halt();
-        if (null != pgWireServer) {
-            Misc.free(pgWireServer);
-        }
+        Misc.free(pgWireServer);
         Misc.free(httpServer);
         Misc.free(cairoEngine);
         Misc.free(lineProtocolReceiver);
+        Misc.free(lineTcpServer);
     }
 
     protected void initQuestDb(
