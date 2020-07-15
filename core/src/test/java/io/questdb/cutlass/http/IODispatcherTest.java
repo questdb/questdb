@@ -246,13 +246,6 @@ public class IODispatcherTest {
                     @Override
                     public HttpRequestProcessor getDefaultProcessor() {
                         return new HttpRequestProcessor() {
-                            @Override
-                            public void onHeadersReady(HttpConnectionContext connectionContext) {
-                            }
-
-                            @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext) {
-                            }
                         };
                     }
 
@@ -3488,13 +3481,6 @@ public class IODispatcherTest {
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
                                 return new HttpRequestProcessor() {
-                                    @Override
-                                    public void onHeadersReady(HttpConnectionContext connectionContext) {
-                                    }
-
-                                    @Override
-                                    public void onRequestComplete(HttpConnectionContext connectionContext) {
-                                    }
                                 };
                             }
 
@@ -4081,11 +4067,6 @@ public class IODispatcherTest {
                                         sink.put("\r\n");
                                         requestReceivedLatch.countDown();
                                     }
-
-                                    @Override
-                                    public void onRequestComplete(HttpConnectionContext context) {
-                                        context.getDispatcher().registerChannel(context, IOOperation.READ);
-                                    }
                                 };
                             }
 
@@ -4259,7 +4240,6 @@ public class IODispatcherTest {
                                     @Override
                                     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
                                         context.simpleResponse().sendStatusWithDefaultMessage(200);
-                                        context.getDispatcher().registerChannel(context, IOOperation.READ);
                                     }
                                 };
                             }
@@ -4413,11 +4393,6 @@ public class IODispatcherTest {
                                     sink.put("\r\n");
                                 }
                                 sink.put("\r\n");
-                            }
-
-                            @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext) {
-                                connectionContext.getDispatcher().registerChannel(connectionContext, IOOperation.READ);
                             }
                         };
                     }
@@ -4627,15 +4602,6 @@ public class IODispatcherTest {
                                 requestsReceived.incrementAndGet();
 
                                 nf.send(context.getFd(), responseBuf, 1);
-                            }
-
-                            @Override
-                            public void onRequestComplete(HttpConnectionContext connectionContext) {
-                                connectionContext.clear();
-
-                                // there is interesting situation here, its possible that header is fully
-                                // read and there are either more bytes or disconnect lingering
-                                connectionContext.getDispatcher().disconnect(connectionContext);
                             }
                         };
 

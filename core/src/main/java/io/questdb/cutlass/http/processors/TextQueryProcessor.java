@@ -37,7 +37,6 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.IOOperation;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -149,10 +148,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(context.getChunkedResponseSocket(), e, state);
             readyForNextRequest(context);
         }
-    }
-
-    @Override
-    public void onHeadersReady(HttpConnectionContext context) {
     }
 
     @Override
@@ -453,11 +448,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void readyForNextRequest(HttpConnectionContext context) {
+    private static void readyForNextRequest(HttpConnectionContext context) {
         LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
-        context.clear();
-        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {

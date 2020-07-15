@@ -29,9 +29,11 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
+    default void onHeadersReady(HttpConnectionContext context) {
+    }
 
-    void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
+    default void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    }
 
     default void resumeRecv(HttpConnectionContext context) {
     }

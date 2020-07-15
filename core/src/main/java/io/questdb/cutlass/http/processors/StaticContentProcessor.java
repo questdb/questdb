@@ -28,7 +28,6 @@ import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.IOOperation;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -56,13 +55,13 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.keepAliveHeader = configuration.getKeepAliveHeader();
     }
 
-    @Override
-    public void close() {
-        Misc.free(prefixedPath);
+    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.simpleResponse().sendStatusWithDefaultMessage(code);
     }
 
     @Override
-    public void onHeadersReady(HttpConnectionContext context) {
+    public void close() {
+        Misc.free(prefixedPath);
     }
 
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
@@ -70,10 +69,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void onRequestComplete(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpRequestHeader headers = context.getRequestHeader();
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpRequestHeader headers = context.getRequestHeader();
         CharSequence url = headers.getUrl();
         logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
         if (Chars.contains(url, "..")) {
@@ -121,13 +118,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             state.bytesSent += l;
             socket.send((int) l);
         }
-        // reached the end naturally?
-        readyForNextRequest(context);
-    }
-
-    private void readyForNextRequest(HttpConnectionContext context) {
-        context.clear();
-        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -157,7 +147,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
                     context.simpleResponse().sendStatus(304);
-                    readyForNextRequest(context);
                     return;
                 }
             } catch (NumericException e) {
@@ -218,11 +207,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         } else {
             sendStatusWithDefaultMessage(context, 416);
         }
-    }
-
-    private void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusWithDefaultMessage(code);
-        readyForNextRequest(context);
     }
 
     private void sendVanilla(
