@@ -72,6 +72,7 @@ open module io.questdb {
 
     exports io.questdb.std;
     exports io.questdb.std.str;
+    exports io.questdb.std.time;
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;

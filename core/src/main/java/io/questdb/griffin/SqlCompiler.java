@@ -72,7 +72,7 @@ public class SqlCompiler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    private final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
+    protected final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
     private final TextLoader textLoader;

@@ -74,7 +74,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int workerCount,
             SqlCompiler sqlCompiler
     ) {
-         this.configuration = configuration;
+        this.configuration = configuration;
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
@@ -414,7 +414,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @FunctionalInterface
-    protected interface QueryExecutor {
+    public interface QueryExecutor {
         void execute(
                 JsonQueryProcessorState state,
                 CompiledQuery cc,

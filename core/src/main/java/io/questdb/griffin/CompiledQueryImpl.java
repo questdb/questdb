@@ -121,4 +121,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.type = BACKUP_TABLE;
         return this;
     }
+
+    public CompiledQuery of(int type) {
+        this.type = type;
+        return this;
+    }
 }
