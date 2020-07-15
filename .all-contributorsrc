@@ -55,6 +55,16 @@
         "code",
         "ideas"
       ]
+    },
+    {
+      "login": "mick2004",
+      "name": "Abhishek Pratap Singh",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/2042132?v=4",
+      "profile": "https://github.com/mick2004",
+      "contributions": [
+        "code",
+        "platform"
+      ]
     }
   ],
   "contributorsPerLine": 7,
