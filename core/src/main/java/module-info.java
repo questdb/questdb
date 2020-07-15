@@ -141,6 +141,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    # '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory,
 //                    # 'to_char',
             io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory,
