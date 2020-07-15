@@ -55,7 +55,8 @@ public class MapFactory {
                     valueTypes,
                     configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlMapMaxPages()
             );
         }
         throw CairoException.instance(0).put("unknown map type: ").put(mapType);
@@ -81,7 +82,8 @@ public class MapFactory {
                     null, // todo: test
                     configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlMapMaxPages()
             );
         }
         throw CairoException.instance(0).put("unknown map type: ").put(mapType);

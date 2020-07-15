@@ -35,7 +35,7 @@ import io.questdb.std.time.DateFormatUtils;
 
 public class RecordCursorPrinter {
     private final CharSink sink;
-    private final char delimiter;
+    protected final char delimiter;
 
     public RecordCursorPrinter(CharSink sink) {
         this.sink = sink;
@@ -74,7 +74,19 @@ public class RecordCursorPrinter {
         sink.put('\n');
     }
 
-    private void printColumn(Record r, RecordMetadata m, int i) {
+    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header) {
+        if (header) {
+            printHeader(metadata);
+        }
+
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            printColumn(record, metadata, i);
+            sink.put('\n');
+        }
+    }
+
+    protected void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnType(i)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));

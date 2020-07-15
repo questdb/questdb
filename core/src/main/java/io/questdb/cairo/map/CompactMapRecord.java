@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 
-class CompactMapRecord implements MapRecord {
+public class CompactMapRecord implements MapRecord {
 
     private final VirtualMemory entries;
     private final long[] columnOffsets;

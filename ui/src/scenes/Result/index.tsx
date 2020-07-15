@@ -122,7 +122,7 @@ const Result = () => {
         <ButtonWrapper>
           {count && !sm && (
             <Text color="draculaForeground">
-              {`${count} row${count > 1 ? "s" : ""}`}
+              {`${count.toLocaleString()} row${count > 1 ? "s" : ""}`}
             </Text>
           )}
 

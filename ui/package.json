@@ -47,6 +47,7 @@
     "react-transition-group": "4.4.1",
     "redux": "4.0.5",
     "redux-observable": "1.2.0",
+    "resize-observer-polyfill": "1.5.1",
     "rxjs": "6.5.5",
     "slim-select": "1.26.0",
     "styled-components": "5.1.1",
@@ -104,7 +105,8 @@
     "webpack": "4.43.0",
     "webpack-bundle-analyzer": "3.8.0",
     "webpack-cli": "3.3.11",
-    "webpack-dev-server": "3.11.0"
+    "webpack-dev-server": "3.11.0",
+    "worker-loader": "2.0.0"
   },
   "author": {
     "name": "QuestDB"

@@ -1,5 +1,6 @@
 export * from "./Animation"
 export * from "./Button"
+export * from "./Emoji"
 export * from "./Hooks"
 export * from "./Input"
 export * from "./Link"

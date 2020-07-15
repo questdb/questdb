@@ -324,7 +324,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     }
 
-    private static class Entry {
+    public static class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];

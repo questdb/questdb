@@ -9,6 +9,7 @@ type Transform = "capitalize" | "lowercase" | "uppercase"
 
 export type TextProps = Readonly<{
   _style?: FontStyle
+  align?: "left" | "right" | "center"
   className?: string
   code?: boolean
   color?: Color
@@ -38,6 +39,7 @@ export const textStyles = css<TextProps>`
   font-style: ${({ _style }) => _style || "inherit"};
   font-weight: ${({ weight }) => weight};
   text-transform: ${({ transform }) => transform};
+  ${({ align }) => (align ? `text-align: ${align}` : "")};
   ${({ ellipsis }) => ellipsis && ellipsisStyles};
 `
 

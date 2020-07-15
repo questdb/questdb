@@ -1,7 +1,10 @@
 import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
+import { Rocket } from "@styled-icons/boxicons-regular/Rocket"
+import { CheckboxBlankCircle } from "@styled-icons/remix-line/CheckboxBlankCircle"
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Information } from "@styled-icons/remix-line/Information"
+import { Table as TableIcon } from "@styled-icons/remix-line/Table"
 
 import {
   PopperHover,
@@ -16,9 +19,10 @@ type Props = Readonly<{
   className?: string
   description?: string
   expanded?: boolean
+  indexed?: boolean
+  kind: "column" | "table"
   name: string
   onClick?: (event: MouseEvent) => void
-  prefix?: ReactNode
   suffix?: ReactNode
   tooltip?: boolean
   type?: string
@@ -75,6 +79,23 @@ const InfoIcon = styled(Information)`
   color: ${color("draculaPurple")};
 `
 
+const RocketIcon = styled(Rocket)`
+  color: ${color("draculaOrange")};
+  margin-right: 1rem;
+`
+
+const DotIcon = styled(CheckboxBlankCircle)`
+  color: ${color("gray2")};
+  margin-right: 1rem;
+`
+
+const TitleIcon = styled(TableIcon)`
+  min-height: 18px;
+  min-width: 18px;
+  margin-right: 1rem;
+  color: ${color("draculaCyan")};
+`
+
 const InfoIconWrapper = styled.div`
   display: flex;
   padding: 0 1rem;
@@ -86,9 +107,10 @@ const Row = ({
   className,
   description,
   expanded,
+  kind,
+  indexed,
   name,
   onClick,
-  prefix,
   suffix,
   tooltip,
   type,
@@ -104,7 +126,27 @@ const Row = ({
   return (
     <Wrapper className={className} expanded={expanded} onClick={onClick}>
       <FlexRow>
-        {prefix}
+        {kind === "table" && <TitleIcon size="18px" />}
+
+        {kind === "column" && indexed && (
+          <PopperHover
+            modifiers={[
+              {
+                name: "offset",
+                options: {
+                  offset: [-15, 0],
+                },
+              },
+            ]}
+            placement="top"
+            trigger={<RocketIcon size="13px" />}
+          >
+            <Tooltip>Indexed</Tooltip>
+          </PopperHover>
+        )}
+
+        {kind === "column" && !indexed && <DotIcon size="12px" />}
+
         <Text color="draculaForeground" ellipsis>
           {name}
         </Text>

@@ -24,6 +24,21 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
@@ -31,22 +46,18 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.time.Dates;
 import sun.misc.Signal;
-
-import java.io.*;
-import java.net.URL;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Properties;
-import java.util.jar.Attributes;
-import java.util.jar.Manifest;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     public static void deleteOrException(File file) {
@@ -141,24 +152,32 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl();
+        final MessageBus messageBus = new MessageBusImpl(configuration);
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
+        // updating the telemetry_config table.
+        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus, functionFactoryCache);
+
+        if (configuration.getTelemetryConfiguration().getEnabled()) {
+            workerPool.assign(telemetryJob);
+        }
         initQuestDb(workerPool, cairoEngine, log);
 
         final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine);
 
         final PGWireServer pgWireServer;
-        if (null != configuration.getPGWireConfiguration()) {
-            pgWireServer = PGWireServer
-                    .create(
+        if (configuration.getPGWireConfiguration().isEnabled()) {
+            pgWireServer = PGWireServer.create(
                 configuration.getPGWireConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                messageBus
+                    messageBus,
+                    functionFactoryCache
         );
         } else {
             pgWireServer = null;

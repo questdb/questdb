@@ -24,15 +24,39 @@
 
 package io.questdb;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
+    public static WorkerPoolAwareConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolAwareConfiguration() {
+        @Override
+        public int[] getWorkerAffinity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+    };
 
     static WorkerPool configureWorkerPool(
             WorkerPoolAwareConfiguration configuration,
@@ -48,16 +72,17 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         final T server;
         if (configuration.isEnabled()) {
 
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
             final boolean local = localPool != sharedWorkerPool;
-            final MessageBus bus = local ? new MessageBusImpl() : messageBus;
+            final MessageBus bus = local ? new MessageBusImpl(messageBus.getConfiguration()) : messageBus;
 
-            server = factory.create(configuration, cairoEngine, localPool, local, bus);
+            server = factory.create(configuration, cairoEngine, localPool, local, bus, functionFactoryCache);
 
             if (local) {
                 localPool.start(log);
@@ -72,6 +97,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
     @FunctionalInterface
     interface ServerFactory<T extends Closeable, C> {
-        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus);
+        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache);
     }
 }

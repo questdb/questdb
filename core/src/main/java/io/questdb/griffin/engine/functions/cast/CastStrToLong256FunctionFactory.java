@@ -54,6 +54,30 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
             this.arg = arg;
         }
 
+        private static Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
+            if (Long256Util.isValidString(text, len)) {
+                try {
+                    final long a = Numbers.parseHexLong(text, 2, Math.min(len, 18));
+                    long b = 0;
+                    long c = 0;
+                    long d = 0;
+                    if (len > 18) {
+                        b = Numbers.parseHexLong(text, 18, Math.min(len, 34));
+                    }
+                    if (len > 34) {
+                        c = Numbers.parseHexLong(text, 34, Math.min(len, 42));
+                    }
+                    if (len > 42) {
+                        d = Numbers.parseHexLong(text, 42, Math.min(len, 66));
+                    }
+                    long256.setAll(a, b, c, d);
+                    return long256;
+                } catch (NumericException ignored) {
+                }
+            }
+            return Long256Impl.NULL_LONG256;
+        }
+
         @Override
         public Function getArg() {
             return arg;
@@ -80,53 +104,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink sink) {
             final CharSequence value = arg.getStr(rec);
-            if (value == null) {
-                return;
-            }
-            final int len = value.length();
-            if (Long256Util.isValidString(value, len)) {
-                try {
-                    final long a = Numbers.parseHexLong(value, 2, Math.min(len, 18));
-                    long b = 0;
-                    long c = 0;
-                    long d = 0;
-                    if (len > 18) {
-                        b = Numbers.parseHexLong(value, 18, Math.min(len, 34));
-                    }
-                    if (len > 34) {
-                        c = Numbers.parseHexLong(value, 34, Math.min(len, 42));
-                    }
-                    if (len > 42) {
-                        d = Numbers.parseHexLong(value, 42, Math.min(len, 66));
-                    }
-                    Numbers.appendLong256(a, b, c, d, sink);
-                } catch (NumericException ignored) {
-                }
-            }
-        }
-
-        private static Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
-            if (Long256Util.isValidString(text, len)) {
-                try {
-                    final long a = Numbers.parseHexLong(text, 2, Math.min(len, 18));
-                    long b = 0;
-                    long c = 0;
-                    long d = 0;
-                    if (len > 18) {
-                        b = Numbers.parseHexLong(text, 18, Math.min(len, 34));
-                    }
-                    if (len > 34) {
-                        c = Numbers.parseHexLong(text, 34, Math.min(len, 42));
-                    }
-                    if (len > 42) {
-                        d = Numbers.parseHexLong(text, 42, Math.min(len, 66));
-                    }
-                    long256.setAll(a, b, c, d);
-                    return long256;
-                } catch (NumericException ignored) {
-                }
-            }
-            return Long256Impl.NULL_LONG256;
+            CastSymbolToLong256FunctionFactory.charSequenceToLong256(sink, value);
         }
     }
 }

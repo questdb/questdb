@@ -24,13 +24,24 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Sink;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
-
-import java.io.Closeable;
 
 public class VirtualMemory implements Closeable {
     static final int STRING_LENGTH_BYTES = 4;
@@ -42,6 +53,7 @@ public class VirtualMemory implements Closeable {
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private long pageSize;
+    private final int maxPages;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -51,13 +63,16 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
+    private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
+    private final StradlingPageLong256FromCharSequenceDecoder stradlingPageLong256Decoder = new StradlingPageLong256FromCharSequenceDecoder();
 
-    public VirtualMemory(long pageSize) {
-        this();
+    public VirtualMemory(long pageSize, int maxPages) {
         setPageSize(pageSize);
+        this.maxPages = maxPages;
     }
 
     protected VirtualMemory() {
+        maxPages = Integer.MAX_VALUE;
     }
 
     public static int getStorageLength(CharSequence s) {
@@ -478,24 +493,17 @@ public class VirtualMemory implements Closeable {
 
     public final void putLong256(CharSequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
-            putLong256Bytes(hexString);
+            stradlingPageLong256Decoder.putLong256(hexString);
         } else {
-            final int len;
-            if (hexString == null || (len = hexString.length()) == 0) {
-                putLong256Null();
-            } else {
-                Unsafe.getUnsafe().putLong(appendPointer, 0);
-                Unsafe.getUnsafe().putLong(appendPointer + 8, 0);
-                Unsafe.getUnsafe().putLong(appendPointer + 16, 0);
-                Unsafe.getUnsafe().putLong(appendPointer + 24, 0);
-                long o = 0;
-                for (int i = len / 2 - 1; i > 0; i--) {
-                    final int d1 = Numbers.hexNumbers[hexString.charAt(i * 2)];
-                    final int d2 = Numbers.hexNumbers[hexString.charAt(i * 2 + 1)];
-                    Unsafe.getUnsafe().putByte(appendPointer + o++, (byte) ((d1 << 4) + d2));
-                }
-            }
-            appendPointer += Long256.BYTES;
+            inPageLong256Decoder.putLong256(hexString);
+        }
+    }
+
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            stradlingPageLong256Decoder.putLong256(hexString, start, end);
+        } else {
+            inPageLong256Decoder.putLong256(hexString, start, end);
         }
     }
 
@@ -616,6 +624,9 @@ public class VirtualMemory implements Closeable {
 
     protected long allocateNextPage(int page) {
         LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
+        if (page > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+        }
         return Unsafe.malloc(getMapPageSize());
     }
 
@@ -647,7 +658,8 @@ public class VirtualMemory implements Closeable {
     }
 
     protected void ensurePagesListCapacity(long size) {
-        pages.ensureCapacity(pageIndex(size) + 1);
+        int capacity = pageIndex(size) + 1;
+        pages.ensureCapacity(capacity);
     }
 
     private byte getByte0(long offset) {
@@ -951,27 +963,6 @@ public class VirtualMemory implements Closeable {
         putByte(offset + 3, (byte) ((value >> 24) & 0xff));
     }
 
-    private void putLong256Bytes(CharSequence hexString) {
-        final int len;
-        if (hexString == null || (len = hexString.length()) == 0) {
-            putLong(Long256Impl.NULL_LONG256.getLong0());
-            putLong(Long256Impl.NULL_LONG256.getLong1());
-            putLong(Long256Impl.NULL_LONG256.getLong2());
-            putLong(Long256Impl.NULL_LONG256.getLong3());
-        } else {
-            long offset = getAppendOffset();
-            putLong(0);
-            putLong(0);
-            putLong(0);
-            putLong(0);
-            for (int i = len / 2 - 1; i > 0; i--) {
-                int d1 = Numbers.hexNumbers[hexString.charAt(i * 2)];
-                int d2 = Numbers.hexNumbers[hexString.charAt(i * 2 + 1)];
-                putByte(offset++, (byte) ((d1 << 4) + d2));
-            }
-        }
-    }
-
     private void putLong256Null() {
         Unsafe.getUnsafe().putLong(appendPointer, Long256Impl.NULL_LONG256.getLong0());
         Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, Long256Impl.NULL_LONG256.getLong1());
@@ -1185,6 +1176,65 @@ public class VirtualMemory implements Closeable {
         private byte updatePosAndGet(long index) {
             calculateBlobAddress(this.offset + index);
             return Unsafe.getUnsafe().getByte(readAddress++);
+        }
+    }
+
+    private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+        private void putLong256(CharSequence hexString) {
+            final int len;
+            if (hexString == null || (len = hexString.length()) == 0) {
+                putLong256Null();
+                appendPointer += Long256.BYTES;
+            } else {
+                putLong256(hexString, 2, len);
+            }
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                inPageLong256Decoder.decode(hexString, start, end);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
+            }
+            appendPointer += Long256.BYTES;
+        }
+
+        @Override
+        protected void onDecoded(long l0, long l1, long l2, long l3) {
+            Unsafe.getUnsafe().putLong(appendPointer, l0);
+            Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
+            Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
+        }
+    }
+
+    private class StradlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+        private void putLong256(CharSequence hexString) {
+            final int len;
+            if (hexString == null || (len = hexString.length()) == 0) {
+                putLong(Long256Impl.NULL_LONG256.getLong0());
+                putLong(Long256Impl.NULL_LONG256.getLong1());
+                putLong(Long256Impl.NULL_LONG256.getLong2());
+                putLong(Long256Impl.NULL_LONG256.getLong3());
+            } else {
+                putLong256(hexString, 2, len);
+            }
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                decode(hexString, start, end);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
+            }
+        }
+
+        @Override
+        protected void onDecoded(long l0, long l1, long l2, long l3) {
+            putLong(l0);
+            putLong(l1);
+            putLong(l2);
+            putLong(l3);
         }
     }
 }

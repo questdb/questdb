@@ -222,7 +222,7 @@ public class LogFactory implements Closeable {
 
                         try {
                             Field f = cl.getDeclaredField(p);
-                            if (f != null && f.getType() == String.class) {
+                            if (f.getType() == String.class) {
                                 Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), properties.getProperty(n));
                             }
                         } catch (Exception e) {

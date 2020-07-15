@@ -2329,6 +2329,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnNameWithDot() throws Exception {
+        assertFailure(27, "new column name contains invalid characters",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "`bool.flag` BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
     public void testEmptyQuery() {
         try {
             compiler.compile("                        ", sqlExecutionContext);

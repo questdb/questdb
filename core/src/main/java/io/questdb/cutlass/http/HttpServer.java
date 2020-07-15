@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import java.io.Closeable;
-import java.util.concurrent.Callable;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -40,6 +39,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -116,9 +116,36 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
+            MessageBus messageBus,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                CREATE0,
+                messageBus,
+                functionFactoryCache
+        );
+    }
+
+    @Nullable
+    public static HttpServer create(
+            HttpServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
             MessageBus messageBus
     ) {
-        return create(configuration, sharedWorkerPool, workerPoolLog, cairoEngine, HttpServer.CREATE0, messageBus);
+        return create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                messageBus,
+                null
+        );
     }
 
     @Nullable
@@ -135,32 +162,11 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 factory,
-                messageBus
+                messageBus,
+                null
         );
     }
-
-    public void bind(HttpRequestProcessorFactory factory) {
-        final String url = factory.getUrl();
-        assert url != null;
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
-            } else {
-                selector.processorMap.put(url, factory.newInstance());
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        if (workerPool != null) {
-            workerPool.halt();
-        }
-        Misc.free(httpContextFactory);
-        Misc.free(dispatcher);
-    }
-
+    
     public interface HttpRequestProcessorBuilder {
         HttpRequestProcessor newInstance();
     }
@@ -170,7 +176,8 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean localPool,
-            MessageBus messageBus
+            MessageBus messageBus,
+            FunctionFactoryCache functionFactoryCache
     ) {
         final HttpServer s = new HttpServer(configuration, workerPool, localPool);
         QueryCache.configure(configuration);
@@ -179,9 +186,10 @@ public class HttpServer implements Closeable {
                     configuration.getJsonQueryProcessorConfiguration(),
                     cairoEngine,
                     messageBus,
-                    workerPool.getWorkerCount());
+                    workerPool.getWorkerCount(),
+                    functionFactoryCache);
         };
-        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, localPool, messageBus, jsonQueryProcessorBuilder);
+        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, localPool, messageBus, jsonQueryProcessorBuilder, functionFactoryCache);
         return s;
     }
 
@@ -192,7 +200,8 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             boolean localPool,
             MessageBus messageBus,
-            HttpRequestProcessorBuilder jsonQueryProcessorBuilder
+            HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
+            FunctionFactoryCache functionFactoryCache
     ) {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
@@ -225,7 +234,8 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         messageBus,
-                        workerPool.getWorkerCount()
+                        workerPool.getWorkerCount(),
+                        functionFactoryCache
                 );
             }
 
@@ -262,6 +272,28 @@ public class HttpServer implements Closeable {
         // jobs that help parallel execution of queries
         workerPool.assign(new ColumnIndexerJob(messageBus));
         workerPool.assign(new GroupByNotKeyedJob(messageBus));
+    }
+
+    public void bind(HttpRequestProcessorFactory factory) {
+        final String url = factory.getUrl();
+        assert url != null;
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                selector.defaultRequestProcessor = factory.newInstance();
+            } else {
+                selector.processorMap.put(url, factory.newInstance());
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (workerPool != null) {
+            workerPool.halt();
+        }
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {

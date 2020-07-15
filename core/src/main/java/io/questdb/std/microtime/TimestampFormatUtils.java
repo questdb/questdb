@@ -44,6 +44,7 @@ public class TimestampFormatUtils {
     static int thisCenturyLimit;
     static int thisCenturyLow;
     static int prevCenturyLow;
+    @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
     static {

@@ -36,7 +36,7 @@
         <javac.target>11</javac.target>
     </properties>
 
-    <version>5.0.0</version>
+    <version>5.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
@@ -91,7 +91,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>prepare-package</phase>
+                        <phase>generate-sources</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
@@ -107,7 +107,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>prepare-package</phase>
+                        <phase>generate-sources</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
@@ -258,7 +258,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>2.10.4</version>
+                        <version>3.2.0</version>
                         <executions>
                             <execution>
                                 <id>attach-javadocs</id>
@@ -267,6 +267,14 @@
                                 </goals>
                             </execution>
                         </executions>
+                        <configuration>
+                            <arg>--add-exports</arg>
+                            <arg>java.base/jdk.internal.math=io.questdb</arg>
+                            <additionalJOptions>
+                                <additionalJOption>--add-exports</additionalJOption>
+                                <additionalJOption>java.base/jdk.internal.math=io.questdb</additionalJOption>
+                            </additionalJOptions>
+                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

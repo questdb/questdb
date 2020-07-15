@@ -117,7 +117,8 @@ public class IntLongPriorityQueue {
             else if (midVal > v)
                 high = mid;
             else {
-                for (; ++mid < high && buf.getQuick(mid) == v; ) ;
+                while (++mid < high && buf.getQuick(mid) == v) {
+                }
                 return mid;
             }
         }

@@ -36,6 +36,9 @@ export const theme: DefaultThemeShape = {
   color,
   font:
     '"Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto, sans-serif',
+
+  fontEmoji:
+    '"apple color emoji", "segoe ui emoji", "android emoji", "emojisymbols", "emojione mozilla", "twemoji mozilla", "segoe ui symbol", "noto color emoji"',
   fontMonospace: '"Source Code Pro", monospace',
   fontSize,
 }

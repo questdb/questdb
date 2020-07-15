@@ -30,8 +30,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,6 +46,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoEngine cairoEngine;
     @Nullable
     private final MessageBus messageBus;
+    private final MicrosecondClock clock;
+    private RingQueue<TelemetryTask> telemetryQueue;
+    private Sequence telemetryPubSeq;
+    private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
@@ -49,15 +57,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
 
     public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
-        this(cairoEngine.getConfiguration(), messageBus, workerCount, cairoEngine);
-    }
-
-    public SqlExecutionContextImpl(CairoConfiguration cairoConfiguration, @Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
-        this.cairoConfiguration = cairoConfiguration;
+        this.cairoConfiguration = cairoEngine.getConfiguration();
         this.messageBus = messageBus;
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
+        this.clock = cairoConfiguration.getMicrosecondClock();
+
+        if (messageBus != null) {
+            this.telemetryQueue = messageBus.getTelemetryQueue();
+            this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
+            this.telemetryMethod = this::doStoreTelemetry;
+        }
     }
 
     @Override
@@ -121,6 +132,30 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return interruptor;
     }
 
+    @Override
+    public void storeTelemetry(short event, short origin) {
+        telemetryMethod.store(event, origin);
+    }
+
+    private void doStoreTelemetry(short event, short origin) {
+        long cursor = telemetryPubSeq.next();
+        while (cursor == -2) {
+            cursor = telemetryPubSeq.next();
+        }
+
+        if (cursor > -1) {
+            TelemetryTask row = telemetryQueue.get(cursor);
+
+            row.created = clock.getTicks();
+            row.event = event;
+            row.origin = origin;
+            telemetryPubSeq.done(cursor);
+        }
+    }
+
+    private void storeTelemetryNoop(short event, short origin) {
+    }
+
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,
@@ -152,5 +187,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
         this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
+    }
+
+    @FunctionalInterface
+    private interface TelemetryMethod {
+        void store(short event, short origin);
     }
 }

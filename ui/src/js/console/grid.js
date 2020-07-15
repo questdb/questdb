@@ -88,10 +88,13 @@ $.fn.grid = function (msgBus) {
       if (rowData) {
         var d = rowData[offset]
         if (d) {
+          rowContainer.style.display = "flex"
           for (k = 0; k < columns.length; k++) {
             rowContainer.childNodes[k].innerHTML =
               d[k] !== null ? d[k].toString() : "null"
           }
+        } else {
+          rowContainer.style.display = "none"
         }
         rowContainer.questIndex = n
       } else {

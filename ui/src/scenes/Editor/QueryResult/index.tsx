@@ -29,7 +29,6 @@ const Details = styled.div`
   display: flex;
   margin-top: 0.5rem;
   padding: 1rem;
-  flex-direction: column;
   user-select: none;
   background: ${color("draculaBackground")};
 `
@@ -38,6 +37,15 @@ const DetailsLink = styled(Text)`
   &:hover {
     cursor: pointer;
   }
+`
+
+const Column = styled.div`
+  display: flex;
+  flex-direction: column;
+`
+
+const ColumnLeft = styled(Column)`
+  flex: 1;
 `
 
 const roundTiming = (time: number): number =>
@@ -72,7 +80,7 @@ const formatTiming = (nanos: number) => {
 }
 
 const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const handleClick = useCallback(() => {
     setExpanded(!expanded)
   }, [expanded])
@@ -81,7 +89,7 @@ const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
     <Wrapper _height={95} duration={TransitionDuration.FAST}>
       <div>
         <Text color="draculaForeground">
-          {rowCount} row{rowCount > 1 ? "s" : ""} in&nbsp;
+          {rowCount.toLocaleString()} row{rowCount > 1 ? "s" : ""} in&nbsp;
           {formatTiming(fetch)}&nbsp;
         </Text>
         (
@@ -102,18 +110,28 @@ const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
         unmountOnExit
       >
         <Details>
-          <Text color="draculaForeground">
-            Fetch: {addColor(formatTiming(fetch))}
-          </Text>
-          <Text color="draculaForeground">
-            Execute: {addColor(formatTiming(execute))}
-          </Text>
-          <Text color="draculaForeground">
-            Count: {addColor(formatTiming(count))}
-          </Text>
-          <Text color="draculaForeground">
-            Compile: {addColor(formatTiming(compiler))}
-          </Text>
+          <ColumnLeft>
+            <Text color="draculaForeground">
+              Execute: {addColor(formatTiming(execute))}&nbsp;
+            </Text>
+            <Text color="draculaForeground">
+              Network:&nbsp;
+              {addColor(formatTiming(fetch - execute))}
+            </Text>
+            <Text color="draculaForeground">
+              Total:&nbsp;
+              {addColor(formatTiming(fetch))}
+            </Text>
+          </ColumnLeft>
+
+          <Column>
+            <Text align="right" color="gray2" size="sm">
+              Count: {formatTiming(count)}
+            </Text>
+            <Text align="right" color="gray2" size="sm">
+              Compile: {formatTiming(compiler)}
+            </Text>
+          </Column>
         </Details>
       </CSSTransition>
     </Wrapper>

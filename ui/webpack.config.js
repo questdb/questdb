@@ -90,7 +90,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|jpg|woff|woff2)$/,
+        test: /\.(png|jpg|woff)$/,
         use: ["file-loader"],
       },
       {
@@ -101,6 +101,10 @@ module.exports = {
         test: /\.(ts|js)x?$/,
         exclude: /node_modules/,
         loader: "babel-loader",
+      },
+      {
+        test: /\.worker\.(ts|js)$/,
+        loaders: ["worker-loader", "babel-loader"],
       },
       {
         test: /\.css$/i,

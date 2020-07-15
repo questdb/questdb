@@ -16,11 +16,12 @@ type Props = NotificationShape
 
 type AnimationPlay = "paused" | "running"
 
-const Wrapper = styled(Toast)`
+const Wrapper = styled(Toast)<{ pinned: boolean }>`
   margin-top: 1rem;
   padding-right: 3rem;
   border-right: none;
   box-shadow: ${color("black")} 0 0 4px;
+  ${({ pinned }) => (pinned ? "" : "border-bottom: none;")};
 
   overflow: hidden;
   ${bezierTransition};
@@ -66,10 +67,29 @@ const Out = styled.div<{ animationPlay: AnimationPlay }>`
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 1px;
-  background: ${color("gray2")};
-  animation: ${disappear} 120s linear 0s 1 normal forwards;
-  animation-play-state: ${({ animationPlay }) => animationPlay};
+  height: 2px;
+
+  :before {
+    content: " ";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: ${color("draculaSelection")};
+  }
+
+  :after {
+    content: " ";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: ${color("gray2")};
+    animation: ${disappear} 120s linear 0s 1 normal forwards;
+    animation-play-state: ${({ animationPlay }) => animationPlay};
+  }
 `
 
 const Pin = styled(Pushpin2)`
@@ -124,6 +144,7 @@ const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
         borderColor={getBorderColor(type)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        pinned={pinned}
       >
         <Title color="gray2" hasLine1={!!line1}>
           [{format("HH:mm:ss", createdAt)}]&nbsp;{title}

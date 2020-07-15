@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -53,8 +55,8 @@ public class PGJobContext implements Closeable {
     private final AssociativeCache<Object> factoryCache;
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
 
-    public PGJobContext(PGWireConfiguration configuration, CairoEngine engine) {
-        this.compiler = new SqlCompiler(engine);
+    public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
+        this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
         this.factoryCache = new AssociativeCache<>(
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()

@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useState,
 } from "react"
+import { useSelector } from "react-redux"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled, { css } from "styled-components"
@@ -23,6 +24,7 @@ import {
   Text,
   Tooltip,
 } from "components"
+import { selectors } from "store"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 
@@ -83,6 +85,8 @@ const Schema = ({
   const [loading, setLoading] = useState(false)
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
+  const [refresh, setRefresh] = useState(Date.now())
+  const { readOnly } = useSelector(selectors.console.getConfiguration)
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -96,6 +100,7 @@ const Schema = ({
       if (response && response.type === QuestDB.Type.DQL) {
         setTables(response.data)
         setLoading(false)
+        setRefresh(Date.now())
       } else {
         setLoading(loading)
       }
@@ -114,17 +119,19 @@ const Schema = ({
           Tables
         </Header>
 
-        <PopperHover
-          delay={350}
-          placement="bottom"
-          trigger={
-            <SecondaryButton onClick={fetchTables}>
-              <Refresh size="18px" />
-            </SecondaryButton>
-          }
-        >
-          <Tooltip>Refresh</Tooltip>
-        </PopperHover>
+        {readOnly === false && (
+          <PopperHover
+            delay={350}
+            placement="bottom"
+            trigger={
+              <SecondaryButton onClick={fetchTables}>
+                <Refresh size="18px" />
+              </SecondaryButton>
+            }
+          >
+            <Tooltip>Refresh</Tooltip>
+          </PopperHover>
+        )}
       </Menu>
 
       <Content _loading={loading}>
@@ -136,6 +143,7 @@ const Schema = ({
               expanded={table === opened}
               key={table}
               onChange={handleChange}
+              refresh={refresh}
               table={table}
             />
           ))}

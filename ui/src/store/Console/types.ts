@@ -1,10 +1,11 @@
 export type QueryShape = Readonly<{
-  name: string
+  name?: string
   value: string
 }>
 
 export type ConfigurationShape = Readonly<{
-  readOnly: boolean
+  githubBanner: boolean
+  readOnly?: boolean
   savedQueries: QueryShape[]
 }>
 

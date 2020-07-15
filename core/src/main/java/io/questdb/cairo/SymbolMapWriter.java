@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 
@@ -111,7 +110,7 @@ public class SymbolMapWriter implements Closeable {
 
     public static void createSymbolMapFiles(FilesFacade ff, AppendMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
         int plen = path.length();
-        try {
+        try (mem) {
             mem.of(ff, offsetFileName(path.trimTo(plen), columnName), ff.getPageSize());
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
@@ -127,7 +126,6 @@ public class SymbolMapWriter implements Closeable {
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
             path.trimTo(plen);
-            mem.close();
         }
     }
 
@@ -182,6 +180,10 @@ public class SymbolMapWriter implements Closeable {
 
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    }
+
+    public void updateCacheFlag(boolean flag) {
+        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
     }
 
     public void rollback(int symbolCount) {

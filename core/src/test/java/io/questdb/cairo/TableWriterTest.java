@@ -1021,7 +1021,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1151,7 +1151,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1220,7 +1220,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -2468,6 +2468,559 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testUnCachedSymbol() {
         testSymbolCacheFlag(false);
     }
+
+    private void testRenameColumn(TableModel model) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.create(model);
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+
+                // optional
+                writer.warmUp();
+
+                ts = append10KProducts(ts, rnd, writer);
+
+                int columnType = writer.getMetadata().getColumnType("supplier");
+
+                writer.renameColumn("supplier", "sup");
+
+                final NativeLPSZ lpsz = new NativeLPSZ();
+                try (Path path = new Path()) {
+                    path.of(root).concat(model.getName());
+                    final int plen = path.length();
+                    if (columnType == ColumnType.SYMBOL) {
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.v").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.o").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.c").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.k").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.v").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.o").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.c").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.k").$()));
+                    }
+                    path.trimTo(plen);
+                    FF.iterateDir(path.$(), (file, type) -> {
+                        lpsz.of(file);
+                        if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
+                            Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.d").$()));
+                            if (columnType == ColumnType.BINARY || columnType == ColumnType.STRING) {
+                                Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.i").$()));
+                            }
+                        }
+                    });
+                }
+
+                ts = append10KWithNewName(ts, rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                append10KWithNewName(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnAfterTimestamp() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .timestamp()
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)) {
+            CairoTestUtils.create(model);
+            testRenameColumn(model);
+        }
+    }
+
+    @Test
+    public void testRenameColumnBeforeTimestamp() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+            testRenameColumn(model);
+        }
+    }
+
+    @Test
+    public void testRenameColumnCannotAppendTodo() throws Exception {
+        testRenameColumnRecoverableFailure(new TodoAppendDenyingFacade());
+    }
+
+    @Test
+    public void testRenameColumnCannotMMapSwap() throws Exception {
+        class X extends TestFilesFacade {
+
+            long fd = -1;
+            boolean hit = false;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd == this.fd) {
+                    this.fd = -1;
+                    this.hit = true;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return hit;
+            }
+        }
+        testRenameColumnRecoverableFailure(new X());
+    }
+
+    @Test
+    public void testRenameColumnCannotOpenSwap() throws Exception {
+        class X extends TestFilesFacade {
+
+            boolean hit = false;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    hit = true;
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return hit;
+            }
+        }
+        testRenameColumnRecoverableFailure(new X());
+    }
+
+    @Test
+    public void testRenameColumnCannotOpenTodo() throws Exception {
+        testRenameColumnRecoverableFailure(new TodoOpenDenyingFacade());
+    }
+
+    @Test
+    public void testRenameColumnCannotRemoveAnyMetadataPrev() throws Exception {
+        testRenameColumnRecoverableFailure(new TestFilesFacade() {
+            int exists = 0;
+            int removes = 0;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME)) {
+                    exists++;
+                    return true;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.contains(name, TableUtils.META_PREV_FILE_NAME)) {
+                    removes++;
+                    return false;
+                }
+                return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return exists > 0 && removes > 0;
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnCannotRemoveDFile() throws Exception {
+        renameColumn(new TestFilesFacade() {
+            int count = 0;
+
+            @Override
+            public boolean rename(LPSZ name, LPSZ to) {
+                if (Chars.endsWith(name, "supplier.d")) {
+                    count++;
+                    return false;
+                }
+                return super.rename(name, to);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count > 0;
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnCannotRemoveSomeMetadataPrev() throws Exception {
+        renameColumn(new TestFilesFacade() {
+            int count = 5;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.contains(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count <= 0;
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnCannotRemoveSwap() throws Exception {
+        class X extends TestFilesFacade {
+            boolean hit = false;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    hit = true;
+                    return false;
+                }
+                return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return hit;
+            }
+        }
+        testRenameColumnRecoverableFailure(new X());
+    }
+
+    @Test
+    public void testRenameColumnCannotRenameMeta() throws Exception {
+        testRenameColumnRecoverableFailure(new MetaRenameDenyingFacade());
+    }
+
+    @Test
+    public void testRenameColumnCannotRenameMetaSwap() throws Exception {
+        testRenameColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
+    }
+
+    @Test
+    public void testRenameColumnUnrecoverableRemoveTodoFailure() throws Exception {
+        class X extends FilesFacadeImpl {
+            int count = 1;
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return (!Chars.endsWith(name, TableUtils.TODO_FILE_NAME) || --count != 0) && super.remove(name);
+            }
+        }
+        testUnrecoverableRenameColumn(new X());
+    }
+
+    @Test
+    public void testRenameColumnUnrecoverableRenameFailure() throws Exception {
+        class X extends FilesFacadeImpl {
+            int count = 2;
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+        }
+        testUnrecoverableRenameColumn(new X());
+    }
+
+    @Test
+    public void testRenameTimestamp() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()
+                .col("supplier", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.create(model);
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+
+                append10KProducts(ts, rnd, writer);
+
+                writer.renameColumn("timestamp", "ts");
+
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        }
+    }
+
+    @Test
+    public void testRenameTimestampFromPartitionedTable() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()
+                .col("supplier", ColumnType.SYMBOL)) {
+            CairoTestUtils.create(model);
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+
+                append10KProducts(ts, rnd, writer);
+
+                writer.renameColumn("timestamp", "ts");
+
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+                append10KProducts(writer.getMaxTimestamp(), rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackPartitionRenameFailure() throws Exception {
+        final int N = 10000;
+        create(FF, PartitionBy.DAY, N);
+
+        class X extends FilesFacadeImpl {
+            boolean removeAttempted = false;
+
+            @Override
+            public boolean rmdir(Path name) {
+                if (Chars.endsWith(name, "2013-03-12")) {
+                    removeAttempted = true;
+                    return false;
+                }
+                return super.rmdir(name);
+            }
+        }
+
+        X ff = new X();
+
+        long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        final long increment = 60000L * 1000;
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        }, PRODUCT)) {
+
+            ts = populateProducts(writer, rnd, ts, N, increment);
+            writer.commit();
+
+            long timestampAfterCommit = ts;
+
+            populateProducts(writer, rnd, ts, N, increment);
+
+            Assert.assertEquals(2 * N, writer.size());
+            writer.rollback();
+
+            Assert.assertTrue(ff.removeAttempted);
+
+            ts = timestampAfterCommit;
+
+            // make sure row rollback works after rollback
+            writer.newRow(ts).cancel();
+
+            // we should be able to repeat timestamps
+            populateProducts(writer, rnd, ts, N, increment);
+            writer.commit();
+
+            Assert.assertEquals(2 * N, writer.size());
+        }
+    }
+
+    private void renameColumn(TestFilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String name = "ABC";
+            try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
+                    .col("productId", ColumnType.INT)
+                    .col("productName", ColumnType.STRING)
+                    .col("supplier", ColumnType.SYMBOL)
+                    .col("category", ColumnType.SYMBOL)
+                    .col("price", ColumnType.DOUBLE)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+
+            try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            }, name)) {
+
+                ts = append10KProducts(ts, rnd, writer);
+
+                writer.renameColumn("supplier", "sup");
+
+                // assert attempt to remove files
+                Assert.assertTrue(ff.wasCalled());
+
+                ts = append10KWithNewName(ts, rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, name)) {
+                append10KWithNewName(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        });
+    }
+
+    private long append10KWithNewName(long ts, Rnd rnd, TableWriter writer) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int supplier = writer.getColumnIndex("sup");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+
+        for (int i = 0; i < 10000; i++) {
+            TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
+            r.putInt(productId, rnd.nextPositiveInt());
+            r.putStr(productName, rnd.nextString(4));
+            r.putSym(supplier, rnd.nextString(4));
+            r.putSym(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+            r.append();
+        }
+        return ts;
+    }
+
+    private void testRenameColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10000);
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            }, PRODUCT)) {
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
+
+                try {
+                    writer.renameColumn("productName", "nameOfProduct");
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                Assert.assertTrue(ff.wasCalled());
+
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                append10KProducts(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        });
+    }
+
+    private void testUnrecoverableRenameColumn(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+            final int N = 20000;
+            create(FF, PartitionBy.DAY, N);
+            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
+
+                try {
+                    writer.renameColumn("supplier", "sup");
+                    Assert.fail();
+                } catch (CairoError ignore) {
+                }
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                append10KProducts(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
         int productId = writer.getColumnIndex("productId");

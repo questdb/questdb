@@ -33,7 +33,7 @@ public class LineUDPSenderMain {
     public static void main(String[] args) {
         final long count = 50_000_000;
         String hostIPv4 = "127.0.0.1";
-        int port = 8089; // 8089 influx
+        int port = 9009; // 8089 influx
         int ttl = 1;
         int bufferCapacity = 1024; // 1024 max
 

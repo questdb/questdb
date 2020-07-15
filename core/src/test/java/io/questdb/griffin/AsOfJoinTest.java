@@ -126,6 +126,49 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementAsOuter() throws Exception {
+        final String expected = "hi\tlo\n" +
+                "2\t1\n" +
+                "3\t2\n" +
+                "4\t3\n" +
+                "5\t4\n" +
+                "6\t5\n" +
+                "7\t6\n" +
+                "8\t7\n" +
+                "9\t8\n" +
+                "10\t9\n" +
+                "11\t10\n" +
+                "12\t11\n" +
+                "13\t12\n" +
+                "14\t13\n" +
+                "15\t14\n" +
+                "16\t15\n" +
+                "17\t16\n" +
+                "18\t17\n" +
+                "19\t18\n" +
+                "20\t19\n" +
+                "21\t20\n" +
+                "22\t21\n" +
+                "23\t22\n" +
+                "24\t23\n" +
+                "25\t24\n" +
+                "26\t25\n" +
+                "27\t26\n" +
+                "28\t27\n" +
+                "29\t28\n" +
+                "30\t29\n";
+        assertQuery(
+                "hi\tlo\n",
+                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != NaN",
+                "create table test(seq long, ts timestamp) timestamp(ts)",
+                null,
+                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
+                expected,
+                false
+        );
+    }
+
+    @Test
     public void testAsofJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
         final String expected = "tag\thi\tlo\n";
         assertQuery(

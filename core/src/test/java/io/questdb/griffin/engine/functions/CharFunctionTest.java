@@ -91,6 +91,7 @@ public class CharFunctionTest {
         TestUtils.assertEquals("4", function.getStr(null));
     }
 
+    @Test
     public void testGetStr2() {
         StringSink sink = new StringSink();
         function.getStr(null, sink);

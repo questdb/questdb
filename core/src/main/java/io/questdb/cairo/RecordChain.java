@@ -48,8 +48,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long nextRecordOffset = -1L;
     private RecordCursor symbolTableResolver;
 
-    public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize) {
-        this.mem = new VirtualMemory(pageSize);
+    public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
+        this.mem = new VirtualMemory(pageSize, maxPages);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
@@ -148,6 +148,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         return offset;
     }
 
+    @Override
     public void putBin(BinarySequence value) {
         if (value == null) {
             putNull();
@@ -163,6 +164,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
     }
 
+    @Override
     public void putBool(boolean value) {
         mem.putBool(value);
     }
@@ -187,6 +189,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putFloat(value);
     }
 
+    @Override
     public void putInt(int value) {
         mem.putInt(value);
     }
@@ -211,6 +214,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putChar(value);
     }
 
+    @Override
     public void putStr(CharSequence value) {
         if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
@@ -222,6 +226,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
     }
 
+    @Override
     public void putStr(CharSequence value, int lo, int hi) {
         final int len = hi - lo;
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);

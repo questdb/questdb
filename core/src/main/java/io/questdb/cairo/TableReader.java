@@ -590,7 +590,7 @@ public class TableReader implements Closeable {
             int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
             columns.remove(2, getColumnBase(delta) + 1);
             prevMinTimestamp = minTimestamp;
-            partitionCount -= delta;
+            partitionCount = Math.max(0, partitionCount - delta);
         }
     }
 
@@ -1153,12 +1153,13 @@ public class TableReader implements Closeable {
     private boolean reloadInitialPartitioned() {
         if (readTxn()) {
             reloadStruct();
-            return reloadInitialPartitioned0();
+            reloadInitialPartitioned0();
+            return true;
         }
         return false;
     }
 
-    private boolean reloadInitialPartitioned0() {
+    private void reloadInitialPartitioned0() {
         reloadSymbolMapCounts();
         partitionCount = calculatePartitionCount();
         if (partitionCount > 0) {
@@ -1167,7 +1168,6 @@ public class TableReader implements Closeable {
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
             }
         }
-        return true;
     }
 
     private boolean reloadNonPartitioned() {

@@ -56,4 +56,6 @@ public interface SqlExecutionContext {
     long getRequestFd();
 
     SqlExecutionInterruptor getSqlExecutionInterruptor();
+
+    void storeTelemetry(short event, short origin);
 }
