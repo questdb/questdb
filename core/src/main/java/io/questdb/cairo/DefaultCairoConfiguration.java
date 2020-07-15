@@ -53,6 +53,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean enableTestFactories() {
+        return true;
+    }
+
+    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }
@@ -225,6 +230,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMapMaxResizes() {
+        return 64;
+    }
+
+    @Override
     public int getSqlModelPoolCapacity() {
         return 1024;
     }
@@ -232,6 +242,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlSortKeyPageSize() {
         return 4 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlSortKeyMaxPages() {
+        return 128;
     }
 
     @Override
@@ -280,6 +295,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinMetadataMaxResizes() {
+        return 10;
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }
@@ -322,5 +342,25 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public TimestampLocale getDefaultTimestampLocale() {
         return TimestampFormatUtils.enLocale;
+    }
+
+    @Override
+    public int getDoubleToStrCastScale() {
+        return Numbers.MAX_SCALE;
+    }
+
+    @Override
+    public int getFloatToStrCastScale() {
+        return 4;
+    }
+
+    @Override
+    public int getGroupByPoolCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getGroupByMapCapacity() {
+        return 1024;
     }
 }

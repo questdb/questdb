@@ -24,21 +24,74 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
+
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final LongAdder sum = new LongAdder();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
-    public SumLongVectorAggregateFunction(int position, int columnIndex) {
+    public SumLongVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            distinctFunc = Rosti::keyedHourDistinct;
+            keyValueFunc = Rosti::keyedHourSumLong;
+        } else {
+            distinctFunc = Rosti::keyedIntDistinct;
+            keyValueFunc = Rosti::keyedIntSumLong;
+        }
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

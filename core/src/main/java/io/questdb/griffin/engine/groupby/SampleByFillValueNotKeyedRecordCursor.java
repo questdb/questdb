@@ -24,7 +24,14 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -42,6 +49,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
+    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
@@ -73,6 +81,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
     @Override
     public void close() {
         base.close();
+        interruptor = null;
     }
 
     @Override
@@ -114,6 +123,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
         int n = groupByFunctions.size();
         // initialize values
         for (int i = 0; i < n; i++) {
+            interruptor.checkInterrupted();
             groupByFunctions.getQuick(i).computeFirst(simpleMapValue, baseRecord);
         }
 
@@ -121,6 +131,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
             final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             if (lastTimestamp == timestamp) {
                 for (int i = 0; i < n; i++) {
+                    interruptor.checkInterrupted();
                     groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
                 }
             } else {
@@ -155,12 +166,13 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
     }
 
     @Override
-    public void of(RecordCursor base) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+        interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     private class TimestampFunc extends TimestampFunction implements NoArgFunction {

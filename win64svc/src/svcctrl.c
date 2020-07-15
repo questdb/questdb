@@ -31,6 +31,8 @@ int svcInstall(CONFIG *config) {
     if (config->forceCopy) {
         strcat(szPath, " -f");
     }
+    strcat(szPath, " -j ");
+    strcat(szPath, config->javaExec);
 
     // Create the service
 
@@ -61,7 +63,7 @@ int svcInstall(CONFIG *config) {
     }
 
     SERVICE_DESCRIPTION description;
-    description.lpDescription = "High performance time series database (www.questdb.org)";
+    description.lpDescription = "High performance time series database (www.questdb.io)";
     ChangeServiceConfig2(hService, SERVICE_CONFIG_DESCRIPTION, &description);
 
     eprintf("Service installed: %s\n", config->serviceName);

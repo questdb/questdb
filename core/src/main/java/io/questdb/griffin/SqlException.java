@@ -25,12 +25,13 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class SqlException extends Exception implements Sinkable {
+public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int position;
@@ -75,6 +76,7 @@ public class SqlException extends Exception implements Sinkable {
                 .put(", to=").put(toName).put(']');
     }
 
+    @Override
     public CharSequence getFlyweightMessage() {
         return message;
     }

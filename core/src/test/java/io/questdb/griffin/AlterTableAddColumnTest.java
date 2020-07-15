@@ -90,7 +90,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 }
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' is busy");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' cannot be altered: [0]: table busy");
             }
 
             allHaltLatch.await(2, TimeUnit.SECONDS);
@@ -326,6 +326,85 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 }
         );
     }
+
+    @Test
+    public void testAddSymbolWithoutSpecifyingCapacityOrCacheWhenDefaultSymbolCacheConfigIsSetToTrue() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+
+                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                        @Override
+                        public boolean getDefaultSymbolCacheFlag() {
+                            return true;
+                        }
+                    };
+
+                    try (CairoEngine engine = new CairoEngine(configuration, null)) {
+                        try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol", sqlExecutionContext).getType());
+
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                                SymbolMapReader smr = reader.getSymbolMapReader(16);
+                                Assert.assertNotNull(smr);
+                                Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                                Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                                Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                                //check that both configuration and new column have cached  == true
+                                Assert.assertTrue(engine.getConfiguration().getDefaultSymbolCacheFlag());
+                                Assert.assertTrue(smr.isCached());
+                            }
+
+                            Assert.assertEquals(0, engine.getBusyWriterCount());
+                            Assert.assertEquals(0, engine.getBusyReaderCount());
+                        }
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddSymbolWithoutSpecifyingCapacityOrCacheWhenDefaultSymbolCacheConfigIsSetToFalse() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+
+                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                        @Override
+                        public boolean getDefaultSymbolCacheFlag() {
+                            return false;
+                        }
+                    };
+
+                    try (CairoEngine engine = new CairoEngine(configuration, null)) {
+                        try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol", sqlExecutionContext).getType());
+
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                                SymbolMapReader smr = reader.getSymbolMapReader(16);
+                                Assert.assertNotNull(smr);
+                                Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                                Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                                Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                                //check that both configuration and new column have cached  == true
+                                Assert.assertFalse(engine.getConfiguration().getDefaultSymbolCacheFlag());
+                                Assert.assertFalse(smr.isCached());
+                            }
+
+                            Assert.assertEquals(0, engine.getBusyWriterCount());
+                            Assert.assertEquals(0, engine.getBusyReaderCount());
+                        }
+                    }
+                }
+        );
+    }
+
 
     @Test
     public void testAddTwoColumns() throws Exception {

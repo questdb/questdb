@@ -62,6 +62,11 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable {
         row.putDate(column, format.parse(value, locale));
     }
 
+
+    public long getDate(DirectByteCharSequence value) throws NumericException {
+        return format.parse(value, locale);
+    }
+
     public DateAdapter of(DateFormat format, DateLocale locale) {
         this.format = format;
         this.locale = locale;

@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.*;
@@ -120,7 +121,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private Rnd rnd;
 
     public PGConnectionContext(
-            CairoConfiguration cairoConfiguration,
+            CairoEngine engine,
             PGWireConfiguration configuration,
             @Nullable MessageBus messageBus,
             int workerCount
@@ -145,7 +146,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.dateLocale = configuration.getDefaultDateLocale();
         this.timestampLocale = configuration.getDefaultTimestampLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(cairoConfiguration, messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
         populateAppender();
     }
 
@@ -218,6 +219,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void close() {
         clear();
         this.fd = -1;
+        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
@@ -327,6 +329,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
         this.fd = clientFd;
+        sqlExecutionContext.with(clientFd);
         this.dispatcher = dispatcher;
         clear();
         return this;
@@ -511,7 +514,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            responseAsciiSink.put(doubleValue);
+            responseAsciiSink.put(doubleValue, Numbers.MAX_SCALE);
             responseAsciiSink.putLenEx(a);
         }
     }
@@ -833,7 +836,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
 
             if (cairoSecurityContext != null) {
-                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd);
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
                 authenticationRequired = false;
                 prepareLoginOk(responseAsciiSink);
                 send();
@@ -1211,6 +1214,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         // vanilla query
         prepareForNewQuery();
         parseQueryText(lo, limit - 1);
+
+        if (SqlKeywords.isSemicolon(queryText)) {
+            sendExecuteTail(TAIL_SUCCESS);
+            return;
+        }
 
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {

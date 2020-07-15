@@ -48,13 +48,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
+    static final int SCAN_UP = -1;
+    static final int SCAN_DOWN = 1;
+
     public AbstractIntervalDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervals = new LongList(intervals);
         this.timestampIndex = timestampIndex;
     }
 
-    protected static long search(ReadOnlyColumn column, long value, long low, long high) {
+    protected static long search(ReadOnlyColumn column, long value, long low, long high, int increment) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -63,8 +66,14 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 low = mid + 1;
             else if (midVal > value)
                 high = mid;
-            else
-                return mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += increment;
+                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
+                    mid += increment;
+                }
+                return mid - increment;
+            }
         }
         return -(low + 1);
     }
@@ -138,6 +147,12 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialIntervalsLo = intervalsLo / 2;
 
         int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp());
+        if (reader.getMaxTimestamp() == intervals.getQuick(intervals.size() - 1)) {
+            this.initialIntervalsHi = intervals.size() - 1;
+        }
+        if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
+            this.initialIntervalsHi = 1;
+        }
         if (intervalsHi < 0) {
             intervalsHi = -intervalsHi - 1;
             // when interval index is "even" we scored just between two interval
@@ -158,7 +173,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         } else {
             intervalLo = reader.floorToPartitionTimestamp(lo);
         }
-        this.initialPartitionLo = reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo);
+        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
     }

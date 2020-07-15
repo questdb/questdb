@@ -27,15 +27,23 @@
 }
 
 .quick-vis-canvas {
-  //background: #0b97c4;
-  /// drgaon, alumina, ibco
-  ///variant calling, join calling
-  /// genomics england
-  // broad instruture, terra, GACK
+  position: relative;
+  flex: 1;
+
+  > div {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-height: 100%;
+    min-width: 100%;
+  }
 }
 
 .quick-vis-controls {
-  padding-top: 35px;
+  flex: 0 0 350px;
+  padding: 2rem 1rem;
 }
 
 #_qvis_frm_draw {

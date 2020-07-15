@@ -24,21 +24,40 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 
 public class SampleByInterpolateRecordCursorFactory implements RecordCursorFactory {
 
@@ -185,8 +204,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
+        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         try {
-
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
@@ -195,6 +214,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.createValue();
@@ -215,7 +235,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // On every change of timestamp sample value we
             // check group for gaps and fill them with placeholder
             // entries. Values for these entries will be interpolated later
-
 
             // we have data in cursor, so we can grab first value
             final boolean good = baseCursor.hasNext();
@@ -260,6 +279,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
+                interruptor.checkInterrupted();
             } while (true);
 
             // fill gaps if any at end of base cursor
@@ -279,6 +299,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         long current = sample;
 
                         while (true) {
+                            interruptor.checkInterrupted();
                             // to timestamp after 'sample' to begin with
                             long x2 = sampler.nextTimestamp(current);
                             // is this timestamp within range?
@@ -320,6 +341,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                                 nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);
                                                 break;
                                             }
+                                            interruptor.checkInterrupted();
                                         }
                                     } else {
 

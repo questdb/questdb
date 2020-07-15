@@ -998,7 +998,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        assertFail(7, "unknown function", "a or   sysdate(a)", metadata);
+        assertFail(7, "unexpected argument", "a or   sysdate(a)", metadata);
     }
 
     @Test
@@ -1030,7 +1030,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unknown function");
+            TestUtils.assertContains(e.getMessage(), "unexpected argument");
         }
     }
 
@@ -1055,7 +1055,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unknown function");
+            TestUtils.assertContains(e.getMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getMessage(), "constant");
         }
     }
 

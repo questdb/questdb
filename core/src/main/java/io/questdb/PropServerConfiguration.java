@@ -90,8 +90,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapKeyCapacity;
     private final int sqlMapPageSize;
+    private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
     private final long sqlSortKeyPageSize;
+    private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
     private final int sqlHashJoinValuePageSize;
     private final long sqlLatestByRowCount;
@@ -100,6 +102,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long workStealTimeoutNanos;
     private final boolean parallelIndexingEnabled;
     private final int sqlJoinMetadataPageSize;
+    private final int sqlJoinMetadataMaxResizes;
     private final int lineUdpCommitRate;
     private final int lineUdpGroupIPv4Address;
     private final int lineUdpMsgBufferSize;
@@ -125,12 +128,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlWithClauseModelPoolCapacity;
     private final int sqlInsertModelPoolCapacity;
+    private final int sqlGroupByPoolCapacity;
+    private final int sqlGroupByMapCapacity;
     private final DateLocale dateLocale;
     private final TimestampLocale timestampLocale;
     private final String backupRoot;
     private final TimestampFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
+    private final int floatToStrCastScale;
+    private final int doubleToStrCastScale;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -173,8 +180,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
     private int jsonQueryFloatScale;
+    private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
+    private boolean readOnlySecurityContext;
+    private long maxHttpQueryResponseRowLimit;
+    private boolean interruptOnClosedConnection;
+    private int interruptorNIterationsPerCheck;
+    private int interruptorBufferSize;;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -245,7 +258,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
 
             this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
-            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
+            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
+            this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
+            this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
+            this.maxHttpQueryResponseRowLimit = getLong(properties, "http.security.max.response.rows", Long.MAX_VALUE);
+            this.interruptOnClosedConnection = getBoolean(properties, "http.security.interrupt.on.closed.connection", true);
+            this.interruptorNIterationsPerCheck = getInt(properties, "http.security.interruptor.iterations.per.check", 2_000_000);
+            this.interruptorBufferSize = getInt(properties, "http.security.interruptor.buffer.size", 64);
 
             parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
@@ -261,7 +280,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.commitMode = getCommitMode(properties, "cairo.commit.mode");
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
         this.defaultMapType = getString(properties, "cairo.default.map.type", "fast");
-        this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", false);
+        this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", true);
         this.defaultSymbolCapacity = getInt(properties, "cairo.default.symbol.capacity", 256);
         this.fileOperationRetryCount = getInt(properties, "cairo.file.operation.retry.count", 30);
         this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 5 * 60 * 1000L);
@@ -285,8 +304,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
         this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
         this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
+        this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
         this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
         this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
+        this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
         this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
         this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
         this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
@@ -295,6 +316,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
         this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
         this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
+        this.sqlJoinMetadataMaxResizes = getIntSize(properties, "cairo.sql.join.metadata.max.resizes", Integer.MAX_VALUE);
         this.sqlAnalyticColumnPoolCapacity = getInt(properties, "cairo.sql.analytic.column.pool.capacity", 64);
         this.sqlCreateTableModelPoolCapacity = getInt(properties, "cairo.sql.create.table.model.pool.capacity", 16);
         this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);
@@ -303,6 +325,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
         this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.sql.copy.model.pool.capacity", 32);
         this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+        this.doubleToStrCastScale = getInt(properties, "cairo.sql.double.cast.scale", 12);
+        this.floatToStrCastScale = getInt(properties, "cairo.sql.float.cast.scale", 4);
+        this.sqlGroupByMapCapacity = getInt(properties, "cairo.sql.groupby.map.capacity", 1024);
+        this.sqlGroupByPoolCapacity = getInt(properties, "cairo.sql.groupby.pool.capacity", 1024);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
 
         final String dateLocale = getString(properties, "cairo.date.locale", "en");
@@ -866,6 +892,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
         }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return readOnlySecurityContext;
+        }
+
+        @Override
+        public boolean isInterruptOnClosedConnection() {
+            return interruptOnClosedConnection;
+        }
+
+        @Override
+        public int getInterruptorNIterationsPerCheck() {
+            return interruptorNIterationsPerCheck;
+        }
+
+        @Override
+        public int getInterruptorBufferSize() {
+            return interruptorBufferSize;
+        }
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
@@ -928,6 +974,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIndexValueBlockSize() {
             return indexValueBlockSize;
+        }
+
+        @Override
+        public boolean enableTestFactories() {
+            return false;
+        }
+
+        @Override
+        public int getDoubleToStrCastScale() {
+            return doubleToStrCastScale;
+        }
+
+        @Override
+        public int getFloatToStrCastScale() {
+            return floatToStrCastScale;
         }
 
         @Override
@@ -1051,6 +1112,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMapMaxResizes() {
+            return sqlMapMaxResizes;
+        }
+
+        @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
         }
@@ -1058,6 +1124,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlSortKeyPageSize() {
             return sqlSortKeyPageSize;
+        }
+
+        @Override
+        public int getSqlSortKeyMaxPages() {
+            return sqlSortKeyMaxPages;
         }
 
         @Override
@@ -1106,6 +1177,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }
@@ -1148,6 +1224,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public TimestampLocale getDefaultTimestampLocale() {
             return timestampLocale;
+        }
+
+        @Override
+        public int getGroupByPoolCapacity() {
+            return sqlGroupByPoolCapacity;
+        }
+
+        @Override
+        public int getGroupByMapCapacity() {
+            return sqlGroupByMapCapacity;
         }
     }
 
@@ -1250,8 +1336,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDoubleScale() {
+            return jsonQueryDoubleScale;
+        }
+
+        @Override
         public CharSequence getKeepAliveHeader() {
             return keepAliveHeader;
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return maxHttpQueryResponseRowLimit;
         }
     }
 

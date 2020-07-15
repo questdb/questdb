@@ -24,22 +24,77 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
+
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class AvgIntVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     private final DoubleAdder sum = new DoubleAdder();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
-    public AvgIntVectorAggregateFunction(int position, int columnIndex) {
+    public AvgIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            distinctFunc = Rosti::keyedHourDistinct;
+            keyValueFunc = Rosti::keyedHourSumInt;
+        } else {
+            distinctFunc = Rosti::keyedIntDistinct;
+            keyValueFunc = Rosti::keyedIntSumInt;
+        }
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        // as for sums, except we space out values
+        // we will have to replace them with doubles
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
     }
 
     @Override

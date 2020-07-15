@@ -14,7 +14,7 @@ VOID ReportSvcStatus(DWORD, DWORD, DWORD);
 
 VOID WINAPI qdbService(DWORD argc, LPSTR *argv);
 
-void log_event(WORD logType, char *serviceName, char *message) {
+void log_event(WORD logType, char *serviceName, const char *message) {
     HANDLE hEventSource;
     LPCTSTR lpszStrings[1];
 
@@ -111,14 +111,17 @@ VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    // Start the child process.
+    char buf[2048];
+    sprintf(buf, "Starting %s %s", gConfig->javaExec, gConfig->javaArgs);
+    log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
+
     if (!CreateProcess(gConfig->javaExec, gConfig->javaArgs, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
         log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Could not start java");
         ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
     }
 
-    char buf[2048];
+//    char buf[2048];
     sprintf(buf, "Started %s %s", gConfig->javaExec, gConfig->javaArgs);
     log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 

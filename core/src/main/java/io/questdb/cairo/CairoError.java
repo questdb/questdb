@@ -24,12 +24,19 @@
 
 package io.questdb.cairo;
 
-public class CairoError extends Error {
+import io.questdb.std.FlyweightMessageContainer;
+
+public class CairoError extends Error implements FlyweightMessageContainer {
     public CairoError(Throwable cause) {
         super(cause);
     }
 
     public CairoError(String message) {
         super(message);
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return getMessage();
     }
 }

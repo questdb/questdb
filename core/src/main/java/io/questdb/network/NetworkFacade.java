@@ -54,6 +54,8 @@ public interface NetworkFacade {
 
     int recv(long fd, long buffer, int bufferLen);
 
+    int peek(long fd, long buffer, int bufferLen);
+
     int send(long fd, long buffer, int bufferLen);
 
     int errno();

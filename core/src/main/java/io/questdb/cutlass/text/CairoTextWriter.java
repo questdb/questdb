@@ -60,6 +60,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -76,6 +77,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        dateToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
         _size = 0;
@@ -244,7 +246,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         // now overwrite detected types with actual table column types
         for (int i = 0, n = this.types.size(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
-            if (this.types.getQuick(i).getType() != columnType) {
+            int detectedType = this.types.getQuick(i).getType();
+            if (detectedType != columnType) {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
                 // use when populating this field
@@ -254,8 +257,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        logTypeError(i);
-                        this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        if (detectedType == ColumnType.DATE) {
+                            this.types.setQuick(i, dateToTimestampAdapterPool.next().of((DateAdapter) this.types.getQuick(i)));
+                        } else {
+                            logTypeError(i);
+                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.BINARY:
                         writer.close();
@@ -293,6 +300,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getWriter(cairoSecurityContext, tableName);
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
+                    tableStructureAdapter.of(names, detectedTypes);
                 }
                 break;
             default:

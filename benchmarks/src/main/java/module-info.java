@@ -1,4 +1,4 @@
-module io.questdb.bechmarks {
+module io.questdb.benchmarks {
     requires jdk.unsupported;
     requires java.base;
     requires io.questdb;

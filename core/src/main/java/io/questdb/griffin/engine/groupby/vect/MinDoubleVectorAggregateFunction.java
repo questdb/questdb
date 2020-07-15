@@ -24,26 +24,40 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;
-
     private final DoubleAccumulator min = new DoubleAccumulator(
             MIN, Double.POSITIVE_INFINITY
     );
-
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
-    public MinDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public MinDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMinDouble;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMinDouble;
+        }
     }
 
     @Override
@@ -73,5 +87,42 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
             return Double.NaN;
         }
         return min;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
 }

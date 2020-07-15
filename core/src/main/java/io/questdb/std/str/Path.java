@@ -24,14 +24,13 @@
 
 package io.questdb.std.str;
 
-import java.io.Closeable;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
 
 /**
  * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
@@ -50,7 +49,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private int len;
 
     public Path() {
-        this(128);
+        this(255);
     }
 
     public Path(int capacity) {
@@ -173,12 +172,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public Path put(long value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
     public final int length() {
         return len;
     }
@@ -212,6 +205,21 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
+    public Path put(long value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
+    protected void putUtf8Special(char c) {
+        if (c == '/' && Os.type == Os.WINDOWS) {
+            put('\\');
+        } else {
+            put(c);
+        }
+    }
+
+    @Override
     @NotNull
     public String toString() {
         return ptr == 0 ? "" : AbstractCharSequence.getString(this);
@@ -236,10 +244,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void extend(int len) {
-        long p = Unsafe.malloc(len);
+        long p = Unsafe.malloc(len + 1);
         Unsafe.getUnsafe().copyMemory(ptr, p, this.len);
         long d = wptr - ptr;
-        Unsafe.free(this.ptr, this.capacity);
+        Unsafe.free(this.ptr, this.capacity + 1);
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;
@@ -247,14 +255,5 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     private boolean missingTrailingSeparator() {
         return len > 0 && Unsafe.getUnsafe().getByte(wptr - 1) != Files.SEPARATOR;
-    }
-
-    @Override
-    protected void putUtf8Special(char c) {
-        if (c == '/' && Os.type == Os.WINDOWS) {
-            put('\\');
-        } else {
-            put(c);
-        }
     }
 }

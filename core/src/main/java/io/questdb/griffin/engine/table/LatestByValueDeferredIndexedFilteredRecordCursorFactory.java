@@ -28,18 +28,23 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
+
+    private final IntList columnIndexes;
 
     public LatestByValueDeferredIndexedFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             String symbol,
-            @NotNull Function filter
+            @NotNull Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, columnIndex, symbol, filter);
+        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -50,6 +55,6 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     @Override
     protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
         assert filter != null;
-        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter);
+        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
     }
 }

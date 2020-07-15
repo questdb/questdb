@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,13 +38,14 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter, columnIndexes);
         }
     }
 

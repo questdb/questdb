@@ -1,0 +1,257 @@
+type ColumnDefinition = Readonly<{ name: string; type: string }>
+
+type Value = string | number | boolean
+type RawData = Record<string, Value>
+
+export enum Type {
+  DDL = "ddl",
+  DQL = "dql",
+  ERROR = "error",
+}
+
+type HostConfig = Readonly<{
+  host: string
+  port: number
+}>
+
+export type Timings = {
+  compiler: number
+  count: number
+  execute: number
+  fetch: number
+}
+
+type RawDqlResult = {
+  columns: ColumnDefinition[]
+  count: number
+  dataset: any[][]
+  ddl: undefined
+  query: string
+  timings: Timings
+}
+
+type RawDdlResult = {
+  ddl: "OK"
+}
+
+type RawErrorResult = {
+  error: string
+  position: number
+  query: string
+}
+
+type DdlResult = {
+  query: string
+  type: Type.DDL
+}
+
+type RawResult = RawDqlResult | RawDdlResult
+
+export type ErrorResult = RawErrorResult & {
+  type: Type.ERROR
+}
+
+export type QueryRawResult =
+  | (Omit<RawDqlResult, "ddl"> & { type: Type.DQL })
+  | DdlResult
+  | ErrorResult
+
+export type QueryResult<T extends Record<string, any>> =
+  | {
+      columns: ColumnDefinition[]
+      count: number
+      data: T[]
+      timings: Timings
+      type: Type.DQL
+    }
+  | ErrorResult
+  | DdlResult
+
+export type Table = {
+  table: string
+}
+
+export type Column = {
+  column: string
+  type: string
+}
+
+export type Options = {
+  limit?: string
+}
+
+export class Client {
+  private _host: string
+  private _controllers: AbortController[] = []
+
+  constructor(host?: string) {
+    if (!host) {
+      this._host = window.location.origin
+    } else {
+      this._host = host
+    }
+  }
+
+  static encodeParams = (
+    params: Record<string, string | number | boolean | undefined>,
+  ) =>
+    Object.keys(params)
+      .filter((k) => typeof params[k] !== "undefined")
+      .map(
+        (k) =>
+          `${encodeURIComponent(k)}=${encodeURIComponent(
+            params[k] as string | number | boolean,
+          )}`,
+      )
+      .join("&")
+
+  abort = () => {
+    this._controllers.forEach((controller) => {
+      controller.abort()
+    })
+    this._controllers = []
+  }
+
+  async query<T>(query: string, options?: Options): Promise<QueryResult<T>> {
+    const result = await this.queryRaw(query, options)
+
+    if (result.type === Type.DQL) {
+      const { columns, count, dataset, timings } = result
+
+      const parsed = (dataset.map(
+        (row) =>
+          row.reduce(
+            (acc: RawData, val: Value, idx) => ({
+              ...acc,
+              [columns[idx].name]: val,
+            }),
+            {},
+          ) as RawData,
+      ) as unknown) as T[]
+
+      return {
+        columns,
+        count,
+        data: parsed,
+        timings,
+        type: Type.DQL,
+      }
+    }
+
+    return result
+  }
+
+  async queryRaw(query: string, options?: Options): Promise<QueryRawResult> {
+    const controller = new AbortController()
+    const payload = {
+      ...options,
+      count: true,
+      src: "con",
+      query,
+      timings: true,
+    }
+
+    this._controllers.push(controller)
+    let response: Response
+    const start = new Date()
+
+    try {
+      response = await fetch(
+        `${this._host}/exec?${Client.encodeParams(payload)}`,
+        { signal: controller.signal },
+      )
+    } catch (error) {
+      const err = {
+        position: -1,
+        query,
+        type: Type.ERROR,
+      }
+
+      if (error instanceof DOMException) {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        return Promise.reject({
+          ...err,
+          error: error.code === 20 ? "Cancelled by user" : error.toString(),
+        })
+      }
+
+      // eslint-disable-next-line prefer-promise-reject-errors
+      return Promise.reject({
+        ...err,
+        error: "An error occured, please try again",
+      })
+    } finally {
+      const index = this._controllers.indexOf(controller)
+
+      if (index >= 0) {
+        this._controllers.splice(index, 1)
+      }
+    }
+
+    if (response.ok) {
+      const fetchTime = (new Date().getTime() - start.getTime()) * 1e6
+      const data = (await response.json()) as RawResult
+
+      if (data.ddl) {
+        return {
+          query,
+          type: Type.DDL,
+        }
+      }
+
+      return {
+        ...data,
+        timings: {
+          ...data.timings,
+          fetch: fetchTime,
+        },
+        type: Type.DQL,
+      }
+    }
+
+    if (/quest/.test(response.headers.get("server") || "")) {
+      const data = (await response.json()) as RawErrorResult
+
+      // eslint-disable-next-line prefer-promise-reject-errors
+      return Promise.reject({
+        ...data,
+        type: Type.ERROR,
+      })
+    }
+
+    // eslint-disable-next-line prefer-promise-reject-errors
+    return Promise.reject({
+      error: "QuestDB is not reachable",
+      position: -1,
+      query,
+      type: Type.ERROR,
+    })
+  }
+
+  async showTables(): Promise<QueryResult<Table>> {
+    const response = await this.query<Table>("SHOW TABLES;")
+
+    if (response.type === Type.DQL) {
+      return {
+        ...response,
+        data: response.data.slice().sort((a, b) => {
+          if (a.table > b.table) {
+            return 1
+          }
+
+          if (a.table < b.table) {
+            return -1
+          }
+
+          return 0
+        }),
+      }
+    }
+
+    return response
+  }
+
+  async showColumns(table: string): Promise<QueryResult<Column>> {
+    return await this.query<Column>(`SHOW COLUMNS FROM '${table}';`)
+  }
+}

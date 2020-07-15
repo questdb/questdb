@@ -36,8 +36,10 @@ public class VectorAggregateEntry implements Mutable {
         TARGET_SEQUENCE_OFFSET = Unsafe.getFieldOffset(VectorAggregateEntry.class, "targetSequence");
     }
 
-    private long address;
-    private long count;
+    private long[] pRosti;
+    private long keyAddress;
+    private long valueAddress;
+    private long valueCount;
     private VectorAggregateFunction func;
     private int srcSequence;
     // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
@@ -45,12 +47,22 @@ public class VectorAggregateEntry implements Mutable {
     private int targetSequence;
     private CountDownLatchSPI doneLatch;
 
-    void of(int counter, VectorAggregateFunction vaf, long pageAddress, long pageValueCount, CountDownLatchSPI doneLatch) {
-        this.address = pageAddress;
-        this.count = pageValueCount;
+    void of(
+            int sequence,
+            VectorAggregateFunction vaf,
+            long[] pRosti,
+            long keyPageAddress,
+            long valuePageAddress,
+            long valuePageCount,
+            CountDownLatchSPI doneLatch
+    ) {
+        this.pRosti = pRosti;
+        this.keyAddress = keyPageAddress;
+        this.valueAddress = valuePageAddress;
+        this.valueCount = valuePageCount;
         this.func = vaf;
-        this.srcSequence = counter;
-        this.targetSequence = counter;
+        this.srcSequence = sequence;
+        this.targetSequence = sequence;
         this.doneLatch = doneLatch;
     }
 
@@ -60,7 +72,11 @@ public class VectorAggregateEntry implements Mutable {
 
     public boolean run(int workerId) {
         if (tryLock()) {
-            func.aggregate(address, count, workerId);
+            if (pRosti != null) {
+                func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, workerId);
+            } else {
+                func.aggregate(valueAddress, valueCount, workerId);
+            }
             doneLatch.countDown();
             return true;
         }
@@ -69,8 +85,8 @@ public class VectorAggregateEntry implements Mutable {
 
     @Override
     public void clear() {
-        this.address = 0;
-        this.count = 0;
+        this.valueAddress = 0;
+        this.valueCount = 0;
         func = null;
     }
 }

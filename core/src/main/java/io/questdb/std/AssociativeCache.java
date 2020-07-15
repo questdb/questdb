@@ -61,10 +61,10 @@ public class AssociativeCache<V> implements Closeable {
 
     public V peek(CharSequence key) {
         int index = getIndex(key);
-        if (index == NOT_FOUND) {
-            return null;
+        if (index != NOT_FOUND) {
+            return values[index];
         }
-        return values[index];
+        return null;
     }
 
     public V poll(CharSequence key) {

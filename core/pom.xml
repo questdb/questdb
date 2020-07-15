@@ -32,10 +32,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <nodejs.npm.cmd>npm</nodejs.npm.cmd>
         <nodejs.version>v12.16.2</nodejs.version>
+        <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
     </properties>
 
-    <version>4.3.0-SNAPSHOT</version>
+    <version>5.0.0</version>
     <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
@@ -90,7 +91,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>generate-sources</phase>
+                        <phase>prepare-package</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
@@ -106,7 +107,7 @@
                         <goals>
                             <goal>exec</goal>
                         </goals>
-                        <phase>generate-sources</phase>
+                        <phase>prepare-package</phase>
                         <configuration>
                             <executable>${nodejs.npm.cmd}</executable>
                             <arguments>
@@ -179,7 +180,6 @@
                             <descriptors>
                                 <descriptor>src/main/assembly/binaries.xml</descriptor>
                             </descriptors>
-                            <finalName>questdb-${project.version}</finalName>
                         </configuration>
                     </execution>
                     <execution>
@@ -190,9 +190,9 @@
                         </goals>
                         <configuration>
                             <descriptors>
-                                <descriptor>src/main/assembly/runtime.xml</descriptor>
+                                <descriptor>${runtime.assembly}</descriptor>
                             </descriptors>
-                            <finalName>questdb-${project.version}</finalName>
+                            <finalName>questdb</finalName>
                         </configuration>
                     </execution>
                 </executions>
@@ -204,6 +204,29 @@
                 <configuration>
                     <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED</argLine>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.0.0-M3</version>
+                <executions>
+                    <execution>
+                        <id>enforce-versions</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>3.0.0</version>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>11</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
@@ -310,7 +333,7 @@
             </build>
         </profile>
         <profile>
-            <id>platform-windows</id>
+            <id>platform-windows-amd64-node</id>
             <activation>
                 <os>
                     <family>windows</family>
@@ -321,6 +344,56 @@
             </activation>
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-windows-amd64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>rt-windows-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-amd64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>rt-linux-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-aarch64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>rt-linux-aarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-osx-amd64</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                </os>
+            </activation>
+            <properties>
+                <runtime.name>rt-osx-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
     </profiles>

@@ -44,19 +44,18 @@ public class MPSequence extends AbstractMSequence {
         long next = current + 1;
         long lo = next - cycle;
 
-        if (lo > cached) {
-            long avail = barrier.availableIndex(lo);
-
-            if (avail > cached) {
-                setCacheFenced(avail);
-                if (lo > avail) {
-                    return -1;
-                }
-            } else {
-                return -1;
-            }
+        if (lo <= cached) {
+            return casValue(current, next) ? next : -2;
         }
 
-        return casValue(current, next) ? next : -2;
+        final long avail = barrier.availableIndex(lo);
+
+        if (avail > cached) {
+            setCacheFenced(avail);
+            if (lo <= avail) {
+                return casValue(current, next) ? next : -2;
+            }
+        }
+        return -1;
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class OrderByAdviceTest extends AbstractGriffinTest {
@@ -108,13 +109,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by 1 desc",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1 desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -217,13 +218,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by 1",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -306,13 +307,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -395,13 +396,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -484,13 +485,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -536,13 +537,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts desc",
+                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -711,13 +712,13 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by k, ts",
+                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
@@ -800,17 +801,297 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>'1970-01-04T00:00:00.000Z' and ts<'1970-01-04T10:30:00.000Z' order by sym",
+                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by sym",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(1000)) timestamp (ts)",
+                expected,
+                true
+
+        );
+    }
+
+
+    @Test
+    public void testFunctionSearchOrderByAlias() throws Exception {
+        final String expected = "sym\tmaxp\n" +
+                "DXR\t0.97613283653158\n" +
+                "ABB\t0.9809851788419132\n" +
+                "HBC\t0.9940353811420282\n";
+
+        assertQuery(
+                "sym\tmaxp\n",
+                "select sym , max(price) maxp from x where ts='1970-01-04' order by maxp",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(1000)) timestamp (ts)",
+                expected,
+                true
+
+        );
+    }
+
+    @Test
+    public void testFunctionSearchOrderByAlias2() throws Exception {
+        final String expected = "sym\tmaxp\n" +
+                "DXR\t0.008134052047644613\n" +
+                "HBC\t0.008427132543617488\n" +
+                "ABB\t0.008444033230580739\n";
+
+        assertQuery(
+                "sym\tmaxp\n",
+                "select sym , min(price) maxp from x where ts='1970-01-04' order by maxp",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(1000)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testExpressionSearchOrderByAlias() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "HBC\t-1912873112\n" +
+                "HBC\t-1707758909\n" +
+                "DXR\t-1021839040\n" +
+                "HBC\t-850582456\n" +
+                "ABB\t4171981\n" +
+                "ABB\t74196247\n" +
+                "ABB\t417348950\n" +
+                "ABB\t1191199593\n" +
+                "ABB\t1233285715\n" +
+                "DXR\t1275864035\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where ts='1970-01-03' order by spread",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByMultipleColumns() throws Exception {
+        final String expected = "sym\tprice\tts\n" +
+                "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
+                "AA\t315515118\t1970-01-03T00:00:00.000000Z\n" +
+                "AA\t339631474\t1970-01-03T00:54:00.000000Z\n" +
+                "AA\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
+                "BB\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
+                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n";
+
+        assertQuery(
+                "sym\tprice\tts\n",
+                "select * from tab where sym in ('AA', 'BB') order by sym, price",
+                "create table tab (\n" +
+                        "    sym symbol index,\n" +
+                        "    price int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testVirtualColumnCancelsPropagationOfOrderByAdvice() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "AA\t4171981\n" +
+                "AA\t74196247\n" +
+                "AA\t417348950\n" +
+                "AA\t1191199593\n" +
+                "AA\t1233285715\n" +
+                "BB\t-1912873112\n" +
+                "BB\t-1707758909\n" +
+                "BB\t-850582456\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testVirtualColumnCancelsPropagationOfOrderByAdviceDesc() throws Exception {
+        final String expected = "sym\tspread\n" +
+                "AA\t1233285715\n" +
+                "AA\t1191199593\n" +
+                "AA\t417348950\n" +
+                "AA\t74196247\n" +
+                "AA\t4171981\n" +
+                "BB\t-850582456\n" +
+                "BB\t-1707758909\n" +
+                "BB\t-1912873112\n";
+
+        assertQuery(
+                "sym\tspread\n",
+                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testSelectWithInClauseAndOrderByTimestampDesc() throws Exception {
+        final String expected = "sym\tbid\task\tts\n" +
+                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
+                "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
+                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
+                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
+                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
+
+
+        assertQuery(
+                "sym\tbid\task\tts\n",
+                "select * from x where sym in ('AA', 'BB' ) order by ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testSelectWithOrderByTimestampDesc() throws Exception {
+        final String expected = "sym\tbid\task\tts\n" +
+                "BB\t-85170055\t-1792928964\t1970-01-03T00:54:00.000000Z\n" +
+                "AA\t-1849627000\t-1432278050\t1970-01-03T00:48:00.000000Z\n" +
+                "AA\t-1532328444\t-1458132197\t1970-01-03T00:42:00.000000Z\n" +
+                "AA\t339631474\t1530831067\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1569490116\t1573662097\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
+                "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
+                "CC\t592859671\t1868723706\t1970-01-03T00:12:00.000000Z\n" +
+                "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
+                "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
+
+        assertQuery(
+                "sym\tbid\task\tts\n",
+                "select * from x order by ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    bid int,\n" +
+                        "    ask int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
+                        "        rnd_int() bid, \n" +
+                        "        rnd_int() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderBy2Columns() throws Exception {
+        final String expected = "k\tprice\tts\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
+                "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
+                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
+
+        assertQuery(
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x order by k, ts desc",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true
 

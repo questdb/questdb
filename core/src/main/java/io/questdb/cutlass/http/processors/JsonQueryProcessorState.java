@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -59,7 +60,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_METADATA = 2;
     static final int QUERY_PREFIX = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
-    private final static ObjList<ValueWriter> VALUE_WRITERS = new ObjList<>();
+    private final ObjList<ValueWriter> allValueWriters = new ObjList<>();
     private final StringSink query = new StringSink();
     private final StringSink columnsQueryParameter = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
@@ -70,6 +71,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnSkewList = new IntList();
     private final ObjList<ValueWriter> skewedValueWriters = new ObjList<>();
     private final NanosecondClock nanosecondClock;
+    private final int floatScale;
+    private final int doubleScale;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -86,11 +89,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long recordCountNanos;
     private long compilerNanos;
     private boolean timigs;
+    private boolean queryCacheable = false;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
             int connectionCheckFrequency,
-            NanosecondClock nanosecondClock
+            NanosecondClock nanosecondClock,
+            int floatScale,
+            int doubleScale
     ) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -116,18 +122,42 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skewedValueWriters.extendAndSet(ColumnType.SYMBOL, this::putSkewedSymValue);
         skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
         skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
+
+        allValueWriters.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessorState::putBooleanValue);
+        allValueWriters.extendAndSet(ColumnType.BYTE, JsonQueryProcessorState::putByteValue);
+        allValueWriters.extendAndSet(ColumnType.DOUBLE, this::putDoubleValue);
+        allValueWriters.extendAndSet(ColumnType.FLOAT, this::putFloatValue);
+        allValueWriters.extendAndSet(ColumnType.INT, JsonQueryProcessorState::putIntValue);
+        allValueWriters.extendAndSet(ColumnType.LONG, JsonQueryProcessorState::putLongValue);
+        allValueWriters.extendAndSet(ColumnType.DATE, JsonQueryProcessorState::putDateValue);
+        allValueWriters.extendAndSet(ColumnType.TIMESTAMP, JsonQueryProcessorState::putTimestampValue);
+        allValueWriters.extendAndSet(ColumnType.SHORT, JsonQueryProcessorState::putShortValue);
+        allValueWriters.extendAndSet(ColumnType.CHAR, JsonQueryProcessorState::putCharValue);
+        allValueWriters.extendAndSet(ColumnType.STRING, JsonQueryProcessorState::putStrValue);
+        allValueWriters.extendAndSet(ColumnType.SYMBOL, JsonQueryProcessorState::putSymValue);
+        allValueWriters.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
+        allValueWriters.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
+
         this.nanosecondClock = nanosecondClock;
+        this.floatScale = floatScale;
+        this.doubleScale = doubleScale;
     }
 
     @Override
     public void clear() {
         columnCount = 0;
-        columnTypes.reset();
+        columnTypes.clear();
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
-        QueryCache.getInstance().push(query, recordCursorFactory);
-        recordCursorFactory = null;
+        if (null != recordCursorFactory) {
+            if (queryCacheable) {
+                QueryCache.getInstance().push(query, recordCursorFactory);
+            } else {
+                recordCursorFactory.close();
+            }
+            recordCursorFactory = null;
+        }
         query.clear();
         columnsQueryParameter.clear();
         queryState = QUERY_PREFIX;
@@ -167,6 +197,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public CharSequence getQuery() {
         return query;
+    }
+
+    void setQueryCacheable(boolean queryCacheable) {
+        this.queryCacheable = queryCacheable;
     }
 
     public Rnd getRnd() {
@@ -290,14 +324,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             return;
         }
         socket.put('"').putISODate(t).put('"');
-    }
-
-    private static void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getDouble(col));
-    }
-
-    private static void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        socket.put(rec.getFloat(col), 10);
     }
 
     private boolean addColumnToOutput(RecordMetadata metadata, CharSequence columnNames, int start, int hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -475,9 +501,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return cursor == null;
     }
 
-    boolean of(RecordCursorFactory factory, RecordCursor cursor) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext) throws PeerDisconnectedException, PeerIsSlowToReadException {
         this.recordCursorFactory = factory;
-        this.cursor = cursor;
+        queryCacheable = true;
+        this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");
@@ -523,7 +550,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
                 this.columnTypes.add(columnType);
-                this.valueWriters.add(VALUE_WRITERS.getQuick(columnType));
+                this.valueWriters.add(allValueWriters.getQuick(columnType));
                 this.columnNames.add(metadata.getColumnName(i));
             }
         }
@@ -619,6 +646,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return true;
     }
 
+    private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getDouble(col), doubleScale);
+    }
+
+    private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        socket.put(rec.getFloat(col), floatScale);
+    }
+
     private void putSkewedBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
         putBinValue(socket, record, columnSkewList.getQuick(col));
     }
@@ -685,22 +720,5 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 HttpChunkedResponseSocket socket,
                 int columnCount
         ) throws PeerDisconnectedException, PeerIsSlowToReadException;
-    }
-
-    static {
-        VALUE_WRITERS.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessorState::putBooleanValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.BYTE, JsonQueryProcessorState::putByteValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.DOUBLE, JsonQueryProcessorState::putDoubleValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.FLOAT, JsonQueryProcessorState::putFloatValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.INT, JsonQueryProcessorState::putIntValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.LONG, JsonQueryProcessorState::putLongValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.DATE, JsonQueryProcessorState::putDateValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.TIMESTAMP, JsonQueryProcessorState::putTimestampValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.SHORT, JsonQueryProcessorState::putShortValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.CHAR, JsonQueryProcessorState::putCharValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.STRING, JsonQueryProcessorState::putStrValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.SYMBOL, JsonQueryProcessorState::putSymValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
-        VALUE_WRITERS.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
     }
 }

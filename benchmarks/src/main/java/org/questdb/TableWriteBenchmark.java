@@ -25,6 +25,7 @@
 package org.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,8 +51,8 @@ public class TableWriteBenchmark {
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
-        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, null, 1);
         try (CairoEngine engine = new CairoEngine(configuration)) {
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(null, 1, engine).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test1(f long)", sqlExecutionContext);
             } catch (SqlException e) {

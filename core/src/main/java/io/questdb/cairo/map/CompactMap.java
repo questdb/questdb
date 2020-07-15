@@ -24,9 +24,15 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -133,12 +139,14 @@ public class CompactMap implements Map {
     private long keyCapacity;
     private long mask;
     private long size;
+    private int nResizes;
+    private final int maxResizes;
 
-    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
+    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction) {
+    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes) {
         this.entries = new VirtualMemory(pageSize);
         this.entrySlots = new VirtualMemory(pageSize);
         try {
@@ -153,6 +161,8 @@ public class CompactMap implements Map {
             this.value = new CompactMapValue(entries, columnOffsets);
             this.record = new CompactMapRecord(entries, columnOffsets, value);
             this.cursor = new CompactMapCursor(record);
+            nResizes = 0;
+            this.maxResizes = maxResizes;
         } catch (CairoException e) {
             Misc.free(this.entries);
             Misc.free(entrySlots);
@@ -160,6 +170,7 @@ public class CompactMap implements Map {
         }
     }
 
+    @Override
     public void clear() {
         entrySlots.jumpTo((mask + 1) * 8);
         entrySlots.zero();
@@ -185,6 +196,7 @@ public class CompactMap implements Map {
         return record;
     }
 
+    @Override
     public long size() {
         return size;
     }
@@ -195,6 +207,7 @@ public class CompactMap implements Map {
         return value;
     }
 
+    @Override
     public MapKey withKey() {
         currentEntryOffset = currentEntryOffset + currentEntrySize;
         entries.jumpTo(currentEntryOffset + columnOffsets[valueColumnCount]);
@@ -278,6 +291,7 @@ public class CompactMap implements Map {
 
     public class Key implements MapKey {
 
+        @Override
         public CompactMapValue createValue() {
             long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
             long offset = getOffsetAt(slot);
@@ -325,6 +339,7 @@ public class CompactMap implements Map {
             return appendEntry(offset, slot, flag);
         }
 
+        @Override
         public CompactMapValue findValue() {
             long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
             long offset = getOffsetAt(slot);
@@ -367,10 +382,12 @@ public class CompactMap implements Map {
             }
         }
 
+        @Override
         public void put(Record record, RecordSink sink) {
             sink.copy(record, key);
         }
 
+        @Override
         public void putBin(BinarySequence value) {
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);
@@ -384,10 +401,12 @@ public class CompactMap implements Map {
             }
         }
 
+        @Override
         public void putBool(boolean value) {
             entries.putBool(value);
         }
 
+        @Override
         public void putByte(byte value) {
             entries.putByte(value);
         }
@@ -397,18 +416,22 @@ public class CompactMap implements Map {
             putLong(value);
         }
 
+        @Override
         public void putDouble(double value) {
             entries.putDouble(value);
         }
 
+        @Override
         public void putFloat(float value) {
             entries.putFloat(value);
         }
 
+        @Override
         public void putInt(int value) {
             entries.putInt(value);
         }
 
+        @Override
         public void putLong(long value) {
             entries.putLong(value);
         }
@@ -418,6 +441,7 @@ public class CompactMap implements Map {
             entries.putLong256(value);
         }
 
+        @Override
         public void putShort(short value) {
             entries.putShort(value);
         }
@@ -427,6 +451,7 @@ public class CompactMap implements Map {
             entries.putChar(value);
         }
 
+        @Override
         public void putStr(CharSequence value) {
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);
@@ -439,6 +464,7 @@ public class CompactMap implements Map {
             }
         }
 
+        @Override
         public void putStr(CharSequence value, int lo, int hi) {
             // offset of string value relative to record start
             entries.putLong(currentEntrySize);
@@ -569,21 +595,25 @@ public class CompactMap implements Map {
         }
 
         private void grow() {
-            // resize offsets virtual memory
-            long appendPosition = entries.getAppendOffset();
-            try {
-                keyCapacity = keyCapacity * 2;
-                configureCapacity();
-                long target = size;
-                long offset = 0L;
-                while (target > 0) {
-                    final long entrySize = getEntrySize(offset);
-                    rehashEntry(offset, entrySize);
-                    offset += entrySize;
-                    target--;
+            if (nResizes < maxResizes) {
+                // resize offsets virtual memory
+                long appendPosition = entries.getAppendOffset();
+                try {
+                    keyCapacity = keyCapacity * 2;
+                    configureCapacity();
+                    long target = size;
+                    long offset = 0L;
+                    while (target > 0) {
+                        final long entrySize = getEntrySize(offset);
+                        rehashEntry(offset, entrySize);
+                        offset += entrySize;
+                        target--;
+                    }
+                } finally {
+                    entries.jumpTo(appendPosition);
                 }
-            } finally {
-                entries.jumpTo(appendPosition);
+            } else {
+                throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in CompactMap");
             }
         }
 
@@ -653,7 +683,6 @@ public class CompactMap implements Map {
             entries.putByte(currentEntryOffset, flag);
             entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
             entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
-
 
             if (++size == keyCapacity) {
                 // reached capacity?

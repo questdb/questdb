@@ -24,12 +24,13 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class HttpException extends RuntimeException implements Sinkable {
+public class HttpException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<HttpException> tlException = new ThreadLocal<>(HttpException::new);
     private final StringSink message = new StringSink();
 
@@ -41,7 +42,7 @@ public class HttpException extends RuntimeException implements Sinkable {
     }
 
     public CharSequence getFlyweightMessage() {
-        return tlException.get().getFlyweightMessage();
+        return message;
     }
 
     @Override

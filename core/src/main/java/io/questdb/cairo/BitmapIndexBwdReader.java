@@ -89,13 +89,14 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                     jumpToPreviousValueBlock();
                 }
 
-                if (result < minValue) {
-                    valueCount = 0;
-                    return false;
+                if (result >= minValue) {
+                    this.next = result;
+                    return true;
                 }
 
-                this.next = result;
-                return true;
+                valueCount = 0;
+                return false;
+
             }
             return false;
         }
@@ -177,12 +178,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                 return true;
             }
 
-            if (--nullCount < minValue) {
-                return false;
+            if (--nullCount >= minValue) {
+                this.next = nullCount;
+                return true;
             }
-
-            this.next = nullCount;
-            return true;
+            return false;
         }
     }
 }

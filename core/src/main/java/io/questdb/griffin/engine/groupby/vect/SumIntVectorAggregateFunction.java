@@ -24,22 +24,75 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAdder;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final LongAdder sum = new LongAdder();
     private final LongAdder count = new LongAdder();
-
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
 
-    public SumIntVectorAggregateFunction(int position, int columnIndex) {
+    private int valueOffset;
+
+    public SumIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
+        if (keyKind == GKK_HOUR_INT) {
+            distinctFunc = Rosti::keyedHourDistinct;
+            keyValueFunc = Rosti::keyedHourSumInt;
+        } else {
+            distinctFunc = Rosti::keyedIntDistinct;
+            keyValueFunc = Rosti::keyedIntSumInt;
+        }
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override
@@ -68,4 +121,5 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     public long getLong(Record rec) {
         return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
     }
+
 }

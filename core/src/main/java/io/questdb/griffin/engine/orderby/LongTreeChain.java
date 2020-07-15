@@ -34,8 +34,8 @@ public class LongTreeChain extends AbstractRedBlackTree {
     private final TreeCursor cursor = new TreeCursor();
     private final VirtualMemory valueChain;
 
-    public LongTreeChain(long keyPageSize, long valuePageSize) {
-        super(keyPageSize);
+    public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize) {
+        super(keyPageSize, keyMaxPages);
         this.valueChain = new VirtualMemory(valuePageSize);
     }
 
@@ -63,18 +63,17 @@ public class LongTreeChain extends AbstractRedBlackTree {
     }
 
     public void put(
-            long value,
+            Record main,
             RecordCursor sourceCursor,
             Record sourceRecord,
             RecordComparator comparator
     ) {
         if (root == -1) {
-            putParent(value);
+            putParent(main.getRowId());
             return;
         }
 
-        sourceCursor.recordAt(sourceRecord, value);
-        comparator.setLeft(sourceRecord);
+        comparator.setLeft(main);
 
         long p = root;
         long parent;
@@ -89,7 +88,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, appendValue(value, r));
+                setRef(p, appendValue(main.getRowId(), r));
                 return;
             }
         } while (p > -1);
@@ -97,7 +96,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
         p = allocateBlock();
         setParent(p, parent);
 
-        setRef(p, appendValue(value, -1L));
+        setRef(p, appendValue(main.getRowId(), -1L));
 
         if (cmp < 0) {
             setLeft(parent, p);
@@ -107,6 +106,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
         fix(p);
     }
 
+    @Override
     protected void putParent(long value) {
         root = allocateBlock();
         setRef(root, appendValue(value, -1L));

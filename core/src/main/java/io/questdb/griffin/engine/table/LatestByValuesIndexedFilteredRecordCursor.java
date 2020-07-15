@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor {
 
@@ -44,9 +46,10 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
             int columnIndex,
             DirectLongList rows,
             IntHashSet symbolKeys,
-            Function filter
+            Function filter,
+            @NotNull IntList columnIndexes
     ) {
-        super(rows);
+        super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.filter = filter;

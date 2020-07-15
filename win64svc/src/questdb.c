@@ -4,15 +4,18 @@
 #include <string.h>
 #include <time.h>
 #include "common.h"
+
 #ifdef _MSC_VER
 #include "getopt.h"
 #else
+
 #include <rpc.h>
 #include <handleapi.h>
 #include <synchapi.h>
 #include <processthreadsapi.h>
 #include <errhandlingapi.h>
 #include <getopt.h>
+
 #endif // __MSVC__
 
 #define CMD_START   1
@@ -22,6 +25,8 @@
 #define CMD_STATUS  5
 #define CMD_SERVICE 6
 #define CMD_CONSOLE -1
+
+void buildJavaExec(CONFIG *config, const char *javaExecOpt);
 
 void freeConfig(CONFIG *config) {
     if (config->exeName != NULL) {
@@ -60,38 +65,48 @@ int makeDir(const char *dir) {
     return 1;
 }
 
+int fileExists(char *file) {
+    WIN32_FIND_DATA FindFileData;
+    HANDLE handle = FindFirstFile(file, &FindFileData);
+    int found = handle != INVALID_HANDLE_VALUE;
+    if (found) {
+        FindClose(handle);
+    }
+    return found;
+}
+
 void buildJavaArgs(CONFIG *config) {
     // main class
-    LPCSTR mainClass = "io.questdb.ServerMain";
+    LPCSTR mainClass = "io.questdb/io.questdb.ServerMain";
 
     // put together static java opts
-    LPCSTR javaOpts =
-    " -XX:+PrintGCApplicationStoppedTime" \
-    " -XX:+PrintSafepointStatistics" \
-    " -XX:PrintSafepointStatisticsCount=1" \
-    " -XX:+PrintGCDetails" \
-    " -XX:+PrintGCTimeStamps" \
-    " -XX:+PrintGCDateStamps" \
-    " -XX:+UnlockDiagnosticVMOptions" \
-    " -XX:GuaranteedSafepointInterval=90000000" \
-    " -XX:-UseBiasedLocking" \
-    " -XX:BiasedLockingStartupDelay=0";
+    LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
+                      " -XX:+AlwaysPreTouch"
+                      " -XX:+UseParallelOldGC"
+                      " --add-exports java.base/jdk.internal.math=io.questdb"
+                      " ";
 
     // put together classpath
+
     char classpath[MAX_PATH + 64];
     memset(classpath, 0, sizeof(classpath));
-    pathCopy(classpath, config->exeName);
-    strcat(classpath, "\\questdb.jar");
 
+    if (!config->localRuntime) {
+        pathCopy(classpath, config->exeName);
+        strcat(classpath, "\\questdb.jar");
+    }
 
     // put together command line
 
     char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir) + 256) *
                         sizeof(char));
     strcpy(args, javaOpts);
-    strcat(args, " -cp \"");
-    strcat(args, classpath);
-    strcat(args, "\" ");
+    if (!config->localRuntime) {
+        strcat(args, " -p \"");
+        strcat(args, classpath);
+        strcat(args, "\" ");
+    }
+    strcat(args, " -m ");
     strcat(args, mainClass);
     strcat(args, " -d \"");
     strcat(args, config->dir);
@@ -116,15 +131,13 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     GetFullPathName(argv[0], n, exe, NULL);
     config->exeName = exe;
 
-
     char *tag = NULL;
-    char *javaHome = NULL;
+    char *javaExecOpt = NULL;
 
     BOOL parsing = TRUE;
     while (parsing) {
 
         c = getopt(argc, argv, "d:fj:t:");
-
 
         switch (c) {
             case -1:
@@ -170,7 +183,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
                 break;
 
             case 'j':
-                javaHome = optarg;
+                javaExecOpt = optarg;
                 break;
 
             case 't':
@@ -183,21 +196,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
         }
     }
 
-    if (javaHome == NULL) {
-        // check our environment
-        javaHome = getenv("JAVA_HOME");
-        if (javaHome == NULL) {
-            eprintf("JAVA_HOME is not defined");
-            config->errorCode = ECONFIG_JAVA_HOME;
-        }
-    }
-
-    if (javaHome != NULL) {
-        char *javaExec = malloc((strlen(javaHome) + 64) * sizeof(char));
-        strcpy(javaExec, javaHome);
-        strcat(javaExec, "\\bin\\java.exe");
-        config->javaExec = javaExec;
-    }
+    buildJavaExec(config, javaExecOpt);
 
     size_t tagSize = tag == NULL ? 0 : strlen(tag);
 
@@ -213,6 +212,10 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     }
 
     config->serviceName = lpServiceName;
+
+    char buf[2048];
+    sprintf(buf, "JAVA_HOME %s ", config->javaExec);
+    log_event(EVENTLOG_INFORMATION_TYPE, config->serviceName, buf);
 
     // Service display name
 
@@ -230,6 +233,40 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     config->serviceDisplayName = lpServiceDisplayName;
 
     buildJavaArgs(config);
+}
+
+void buildJavaExec(CONFIG *config, const char *javaExecOpt) {
+    config->javaExec = malloc(MAX_PATH);
+    memset(config->javaExec, 0, MAX_PATH);
+
+    if (javaExecOpt) {
+        strcpy(config->javaExec, javaExecOpt);
+        config->localRuntime = FALSE;
+        return;
+    } else {
+        // check if we are being executed from runtime location
+        pathCopy(config->javaExec, config->exeName);
+        strcat(config->javaExec, "\\java.exe");
+        if (fileExists(config->javaExec)) {
+            config->localRuntime = TRUE;
+            return;
+        } else {
+            // fallback to JAVA_HOME
+            char *javaHome = getenv("JAVA_HOME");
+            if (javaHome) {
+                strcpy(config->javaExec, javaHome);
+                strcat(config->javaExec, "\\bin\\java.exe");
+                if (fileExists(config->javaExec)) {
+                    config->localRuntime = FALSE;
+                    return;
+                }
+            }
+        }
+    }
+    free(config->javaExec);
+    config->javaExec = NULL;
+    eprintf("\r\nJAVA_HOME is not defined\r\n");
+    config->errorCode = ECONFIG_JAVA_HOME;
 }
 
 
@@ -273,6 +310,8 @@ int qdbConsole(CONFIG *config) {
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
+
+    eprintf("JAVA_EXE: %s\n\r\n\r", config->javaExec);
 
     // Start the child process.
     if (!CreateProcess(config->javaExec, config->javaArgs, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {

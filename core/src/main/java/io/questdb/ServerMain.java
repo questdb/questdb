@@ -239,13 +239,14 @@ public class ServerMain {
 
     private static void extractSite(String dir, boolean force, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
+        final String publicDest = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
         try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
                     while ((ze = zip.getNextEntry()) != null) {
-                        final File dest = new File(dir, ze.getName());
+                        final File dest = new File(publicDest, ze.getName());
                         if (!ze.isDirectory()) {
                             copyInputStream(force, buffer, dest, zip, log);
                         }

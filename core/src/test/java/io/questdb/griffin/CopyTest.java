@@ -42,11 +42,7 @@ public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableService();
     private static final MessageBus messageBus = new MessageBusImpl();
-    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1).with(
-            AllowAllCairoSecurityContext.INSTANCE,
-            bindVariableService,
-            null
-    );
+    protected static SqlExecutionContext sqlExecutionContext;
 
     private static final LongList rows = new LongList();
     private static CairoEngine engine;
@@ -101,6 +97,11 @@ public class CopyTest extends AbstractCairoTest {
         };
         engine = new CairoEngine(configuration, messageBus);
         compiler = new SqlCompiler(engine);
+        sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
+                .with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                bindVariableService,
+                        null, -1, null);
         bindVariableService.clear();
     }
 
@@ -433,7 +434,6 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleCopy() throws Exception {
-        System.out.println("in test");
         assertMemoryLeak(() -> {
 
             compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'", sqlExecutionContext);

@@ -22,6 +22,18 @@ $.fn.splitter = function (msgBus, pName, pMinTop, pMinBottom) {
     }
   }
 
+  function touchDrag(e) {
+    e.preventDefault()
+    const y = e.originalEvent.touches[0].clientY
+    if (
+      y > minTop &&
+      y < window.innerHeight + $(window).scrollTop() - minBottom
+    ) {
+      end = y
+      ghost[0].style = styleMain + "top: " + y + "px;"
+    }
+  }
+
   function endDrag() {
     $(document).off("mousemove", drag)
     $(document).off("mouseup", endDrag)
@@ -52,4 +64,7 @@ $.fn.splitter = function (msgBus, pName, pMinTop, pMinBottom) {
   }
 
   $(this).mousedown(beginDrag)
+  $(this).on("touchstart", beginDrag)
+  $(this).on("touchmove", touchDrag)
+  $(this).on("touchend", endDrag)
 }

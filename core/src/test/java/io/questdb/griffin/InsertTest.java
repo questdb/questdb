@@ -32,19 +32,27 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class InsertTest extends AbstractGriffinTest {
+
+    @Before
+    public void setUp3() {
+        SharedRandom.RANDOM.set(new Rnd());
+    }
+
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -56,7 +64,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByMonth() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -73,7 +81,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.0000000");
+            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -97,7 +105,9 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             BindVariableService bindVariableService = new BindVariableService();
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(configuration, messageBus, 1).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus,
+                    1,
+                    engine).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
 
             bindVariableService.setDouble("bal", 56.4);
 
@@ -117,6 +127,20 @@ public class InsertTest extends AbstractGriffinTest {
                         "1\tGBP\t56.4\n",
                 sink
         );
+    }
+
+    @Test
+    public void testInsertInvalidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(30, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            }
+        });
     }
 
     @Test
@@ -310,6 +334,63 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertSingleCharacterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ww (id int, sym symbol)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("insert into ww VALUES ( 2, 'A')", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "id\tsym\n" +
+                    "2\tA\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
+        final String expected = "sym\tid\tts\n" +
+                "A\t315515118\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-948263339\t1970-01-03T00:12:00.000000Z\n" +
+                "CC\t592859671\t1970-01-03T00:18:00.000000Z\n" +
+                "CC\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
+                "A\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
+                "CC\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
+                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n" +
+                "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
+                "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
+
+        assertQuery(
+                "sym\tid\tts\n",
+                "x",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    id int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym, \n" +
+                        "        rnd_int() id, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+
+
+    @Test
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
@@ -354,6 +435,71 @@ public class InsertTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 Assert.assertEquals(25, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWithoutNominatedTimestamp() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t1970-01-01T00:00:00.000000Z\n" +
+                "2\t1970-01-01T00:00:00.000001Z\n" +
+                "3\t1970-01-01T00:00:00.000003Z\n" +
+                "4\t1970-01-01T00:00:00.000006Z\n" +
+                "5\t1970-01-01T00:00:00.000010Z\n" +
+                "6\t1970-01-01T00:00:00.000015Z\n" +
+                "7\t1970-01-01T00:00:00.000021Z\n" +
+                "8\t1970-01-01T00:00:00.000028Z\n" +
+                "9\t1970-01-01T00:00:00.000036Z\n" +
+                "10\t1970-01-01T00:00:00.000045Z\n";
+
+        assertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp) timestamp(ts);",
+                "ts",
+                    "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
+                expected,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertWithLessColumnsThanExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
+            }
+        });
+    }
+
+
+    @Test
+    public void testInsertWithoutNominatedTimestampAndTypeDoesNotMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select x ac, rnd_int() id from long_sequence(10)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected timestamp column");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWithWrongNominatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
             }
         });
     }

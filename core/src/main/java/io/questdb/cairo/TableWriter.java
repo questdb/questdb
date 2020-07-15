@@ -611,10 +611,10 @@ public class TableWriter implements Closeable {
 
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
-        if (index == -1) {
-            throw CairoException.instance(0).put("Invalid column name: ").put(name);
+        if (index > -1) {
+            return index;
         }
-        return index;
+        throw CairoException.instance(0).put("Invalid column name: ").put(name);
     }
 
     public long getMaxTimestamp() {
@@ -1127,10 +1127,11 @@ public class TableWriter implements Closeable {
     }
 
     private void bumpMasterRef() {
-        if ((masterRef & 1) != 0) {
-            cancelRow();
+        if ((masterRef & 1) == 0) {
+            masterRef++;
+        } else {
+            cancelRowAndBump();
         }
-        masterRef++;
     }
 
     private void bumpStructureVersion() {
@@ -1238,10 +1239,16 @@ public class TableWriter implements Closeable {
         refs.fill(0, columnCount, --masterRef);
     }
 
+    private void cancelRowAndBump() {
+        cancelRow();
+        masterRef++;
+    }
+
     private void checkDistressed() {
-        if (distressed) {
-            throw new CairoError("Table '" + name.toString() + "' is distressed");
+        if (!distressed) {
+            return;
         }
+        throw new CairoError("Table '" + name.toString() + "' is distressed");
     }
 
     private void commitPendingPartitions() {
@@ -1256,11 +1263,12 @@ public class TableWriter implements Closeable {
                     long o = offset;
                     while (len > 0) {
                         long l = Math.min(len, txPendingPartitionSizes.pageRemaining(o));
-                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), l, 0) != l) {
+                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), l, 0) == l) {
+                            len -= l;
+                            o += l;
+                        } else {
                             throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                         }
-                        len -= l;
-                        o += l;
                     }
                 } finally {
                     ff.close(fd);
@@ -1650,7 +1658,7 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.maxTimestamp);
         long timestamp = minTimestamp;
 
-        try (final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
+        try (indexer; final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
 
             while (timestamp < maxTimestamp) {
 
@@ -1688,8 +1696,6 @@ public class TableWriter implements Closeable {
                 }
                 timestamp = timestampAddMethod.calculate(timestamp, 1);
             }
-        } finally {
-            indexer.close();
         }
         return timestamp;
     }
@@ -2465,15 +2471,10 @@ public class TableWriter implements Closeable {
     }
 
     private void updateIndexes() {
-        if (indexCount > 0) {
-            final long lo = txPartitionCount == 1 ? txPrevTransientRowCount : 0;
-            final long hi = transientRowCount;
-            if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
-                updateIndexesParallel(lo, hi);
-            } else {
-                updateIndexesSerially(lo, hi);
-            }
+        if (indexCount == 0) {
+            return;
         }
+        updateIndexesSlow();
     }
 
     private void updateIndexesParallel(long lo, long hi) {
@@ -2571,6 +2572,16 @@ public class TableWriter implements Closeable {
         LOG.info().$("serial indexing done [indexCount=").$(indexCount).$(']').$();
     }
 
+    private void updateIndexesSlow() {
+        final long lo = txPartitionCount == 1 ? txPrevTransientRowCount : 0;
+        final long hi = transientRowCount;
+        if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
+            updateIndexesParallel(lo, hi);
+        } else {
+            updateIndexesSerially(lo, hi);
+        }
+    }
+
     private void updateMaxTimestamp(long timestamp) {
         this.prevMaxTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
@@ -2660,10 +2671,15 @@ public class TableWriter implements Closeable {
     private class OpenPartitionRowFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
-            if (maxTimestamp == Long.MIN_VALUE) {
-                minTimestamp = timestamp;
-                openFirstPartition(timestamp);
+            if (maxTimestamp != Long.MIN_VALUE) {
+                return (rowFunction = switchPartitionFunction).newRow(timestamp);
             }
+            return getRowSlow(timestamp);
+        }
+
+        private Row getRowSlow(long timestamp) {
+            minTimestamp = timestamp;
+            openFirstPartition(timestamp);
             return (rowFunction = switchPartitionFunction).newRow(timestamp);
         }
     }
@@ -2672,11 +2688,11 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
-            if (timestamp < maxTimestamp) {
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            if (timestamp >= maxTimestamp) {
+                updateMaxTimestamp(timestamp);
+                return row;
             }
-            updateMaxTimestamp(timestamp);
-            return row;
+            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
     }
 
@@ -2708,19 +2724,17 @@ public class TableWriter implements Closeable {
 
     public class Row {
         public void append() {
-            if ((masterRef & 1) == 0) {
-                return;
-            }
-
-            for (int i = 0; i < columnCount; i++) {
-                if (refs.getQuick(i) < masterRef) {
-                    nullers.getQuick(i).run();
+            if ((masterRef & 1) != 0) {
+                for (int i = 0; i < columnCount; i++) {
+                    if (refs.getQuick(i) < masterRef) {
+                        nullers.getQuick(i).run();
+                    }
                 }
-            }
-            transientRowCount++;
-            masterRef++;
-            if (prevMinTimestamp == Long.MAX_VALUE) {
-                prevMinTimestamp = minTimestamp;
+                transientRowCount++;
+                masterRef++;
+                if (prevMinTimestamp == Long.MAX_VALUE) {
+                    prevMinTimestamp = minTimestamp;
+                }
             }
         }
 
@@ -2813,6 +2827,11 @@ public class TableWriter implements Closeable {
         }
 
         public void putSym(int index, CharSequence value) {
+            getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
+            notNull(index);
+        }
+
+        public void putSym(int index, char value) {
             getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
             notNull(index);
         }

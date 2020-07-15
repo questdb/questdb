@@ -29,7 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public final class BadDateAdapter extends AbstractTypeAdapter {
+public final class BadDateAdapter extends DateAdapter {
 
     public static final BadDateAdapter INSTANCE = new BadDateAdapter();
 

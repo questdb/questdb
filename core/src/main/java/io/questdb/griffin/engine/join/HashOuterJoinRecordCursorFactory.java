@@ -24,13 +24,24 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -71,10 +82,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         );
     }
 
-    static void buildMap(RecordCursor slaveCursor, Record record, Map joinKeyMap, RecordSink slaveKeySink, RecordChain slaveChain) {
+    static void buildMap(RecordCursor slaveCursor, Record record, Map joinKeyMap, RecordSink slaveKeySink, RecordChain slaveChain, SqlExecutionInterruptor interruptor) {
         joinKeyMap.clear();
         slaveChain.clear();
         while (slaveCursor.hasNext()) {
+            interruptor.checkInterrupted();
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
             MapValue value = key.createValue();
@@ -101,7 +113,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            buildMapOfSlaveRecords(slaveCursor);
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
@@ -115,8 +127,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
-        buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain);
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionInterruptor interruptor) {
+        buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, interruptor);
     }
 
     private class HashOuterJoinRecordCursor implements NoRandomAccessRecordCursor {

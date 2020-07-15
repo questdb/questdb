@@ -52,6 +52,8 @@ open module io.questdb {
 
     exports io.questdb.griffin;
     exports io.questdb.griffin.engine;
+    exports io.questdb.griffin.model;
+    exports io.questdb.griffin.engine.functions;
     exports io.questdb.griffin.engine.functions.rnd;
     exports io.questdb.griffin.engine.functions.bind;
     exports io.questdb.griffin.engine.functions.bool;
@@ -71,8 +73,9 @@ open module io.questdb {
     exports io.questdb.griffin.engine.groupby.vect;
 
     exports io.questdb.std;
-    exports io.questdb.std.str;
+    exports io.questdb.std.microtime;
     exports io.questdb.std.time;
+    exports io.questdb.std.str;
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;
@@ -80,7 +83,9 @@ open module io.questdb {
     provides FunctionFactory with
             // test functions
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
             TestSumXDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestNPEFactory,
             io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.bool.OrFunctionFactory,
@@ -130,6 +135,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.AbsIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory,
 //                    # '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
@@ -425,7 +431,9 @@ open module io.questdb {
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
 //                  ^
-            io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
+            io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
+            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
             ;
 
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Rnd;
@@ -49,4 +50,10 @@ public interface SqlExecutionContext {
     Rnd getRandom();
 
     void setRandom(Rnd rnd);
+
+    CairoEngine getCairoEngine();
+
+    long getRequestFd();
+
+    SqlExecutionInterruptor getSqlExecutionInterruptor();
 }

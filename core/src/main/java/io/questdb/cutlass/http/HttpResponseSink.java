@@ -90,7 +90,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private long total = 0;
     private boolean header = true;
-    private boolean dumpNetworkTraffic;
+    private final boolean dumpNetworkTraffic;
+    private long totalBytesSent = 0;
 
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -117,6 +118,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this._wPtr = outPtr;
         this.zpos = this.zlimit = 0;
         header = true;
+        totalBytesSent = 0;
         resetZip();
     }
 
@@ -345,6 +347,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 sent += n;
             }
         }
+        totalBytesSent += sent;
     }
 
     private void dumpBuffer(char direction, long buffer, int size) {
@@ -352,6 +355,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             StdoutSink.INSTANCE.put(direction);
             Net.dump(buffer, size);
         }
+    }
+
+    long getTotalBytesSent() {
+        return totalBytesSent;
     }
 
     public class HttpResponseHeaderImpl extends AbstractCharSink implements Closeable, Mutable, HttpResponseHeader {
@@ -536,12 +543,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public CharSink put(double value) {
+        public CharSink put(double value, int scale) {
             if (Double.isNaN(value) || Double.isInfinite(value)) {
                 put("null");
                 return this;
             }
-            return super.put(value);
+            return super.put(value, scale);
         }
 
         @Override

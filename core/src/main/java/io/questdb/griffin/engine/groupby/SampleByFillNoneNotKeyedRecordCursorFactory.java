@@ -54,7 +54,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             int timestampIndex
     ) {
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        final RecordMetadata metadata = base.getMetadata();
         this.recordFunctions = recordFunctions;
 
         try {
@@ -102,7 +101,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
 
     @NotNull
     protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor);
+        cursor.of(baseCursor, executionContext);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
             recordFunctions.getQuick(i).init(cursor, executionContext);

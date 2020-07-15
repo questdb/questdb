@@ -35,16 +35,16 @@ import io.questdb.std.ObjList;
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final RecordCursorFactory base;
+    private final RecordCursorFactory baseFactory;
 
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
             ObjList<Function> functions,
-            RecordCursorFactory base) {
+            RecordCursorFactory baseFactory) {
         super(metadata);
         this.functions = functions;
-        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, base.recordCursorSupportsRandomAccess());
-        this.base = base;
+        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, baseFactory.recordCursorSupportsRandomAccess());
+        this.baseFactory = baseFactory;
     }
 
     @Override
@@ -52,12 +52,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).close();
         }
-        this.base.close();
+        this.baseFactory.close();
+    }
+
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        RecordCursor cursor = base.getCursor(executionContext);
+        RecordCursor cursor = baseFactory.getCursor(executionContext);
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).init(cursor, executionContext);
         }
@@ -67,6 +71,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return baseFactory.recordCursorSupportsRandomAccess();
     }
 }

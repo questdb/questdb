@@ -50,7 +50,7 @@ public class AbsLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = arg.getLong(rec);
-            return value < 0 ? -value : value;
+            return Math.abs(value);
         }
     }
 }

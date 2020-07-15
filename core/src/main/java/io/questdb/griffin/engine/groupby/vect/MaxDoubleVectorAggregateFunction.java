@@ -24,26 +24,40 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
 
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MAX = Math::max;
-
     private final DoubleAccumulator max = new DoubleAccumulator(
             MAX, Double.NEGATIVE_INFINITY
     );
-
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
-    public MaxDoubleVectorAggregateFunction(int position, int columnIndex) {
+    public MaxDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMaxDouble;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMaxDouble;
+        }
     }
 
     @Override
@@ -54,6 +68,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
                 max.accumulate(value);
             }
         }
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
     }
 
     @Override
@@ -70,5 +89,35 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     public double getDouble(Record rec) {
         final double value = max.get();
         return Double.isInfinite(value) ? Double.NaN : value;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMaxDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
 }

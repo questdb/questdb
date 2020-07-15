@@ -44,7 +44,8 @@ public class MapFactory {
                     keyTypes,
                     valueTypes,
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor());
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
@@ -53,7 +54,8 @@ public class MapFactory {
                     keyTypes,
                     valueTypes,
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlCompactMapLoadFactor()
+                    configuration.getSqlCompactMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
             );
         }
         throw CairoException.instance(0).put("unknown map type: ").put(mapType);
@@ -68,7 +70,8 @@ public class MapFactory {
                     configuration.getSqlMapPageSize(),
                     keyTypes,
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor());
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
@@ -77,7 +80,8 @@ public class MapFactory {
                     keyTypes,
                     null, // todo: test
                     configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlCompactMapLoadFactor()
+                    configuration.getSqlCompactMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
             );
         }
         throw CairoException.instance(0).put("unknown map type: ").put(mapType);

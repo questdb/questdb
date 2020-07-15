@@ -24,13 +24,19 @@
 
 package io.questdb.cutlass.http.processors;
 
+import java.io.Closeable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
@@ -52,8 +58,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.time.MillisecondClock;
 
-import java.io.Closeable;
-
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
@@ -66,6 +70,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
+    private final int doubleScale;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -77,7 +82,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine.getConfiguration(), messageBus, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
+        this.doubleScale = configuration.getDoubleScale();
     }
 
     @Override
@@ -91,7 +97,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null);
+            state.setQueryCacheable(true);
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), context.getSqlExecutionInterruptor());
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -114,7 +121,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), 200);
                     resumeSend(context);
-                } catch (CairoError | CairoException e) {
+                } catch (CairoException e) {
+                    state.setQueryCacheable(e.isCacheable());
+                    internalError(context.getChunkedResponseSocket(), e, state);
+                } catch (CairoError e) {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {
@@ -168,8 +178,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd);
-
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), context.getSqlExecutionInterruptor());
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -351,6 +360,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             skip = 0;
         }
 
+        if ((stop - skip) > configuration.getMaxQueryResponseRowLimit()) {
+            stop = skip + configuration.getMaxQueryResponseRowLimit();
+        }
+
         state.query.clear();
         try {
             TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
@@ -378,7 +391,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == d) {
-                    socket.put(d);
+                    socket.put(d, doubleScale);
                 }
                 break;
             case ColumnType.FLOAT:
@@ -437,7 +450,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void readyForNextRequest(HttpConnectionContext context) {
-        LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
         context.clear();
         context.getDispatcher().registerChannel(context, IOOperation.READ);
     }

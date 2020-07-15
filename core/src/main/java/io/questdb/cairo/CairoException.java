@@ -24,20 +24,26 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class CairoException extends RuntimeException implements Sinkable {
+public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
-    private final StringSink message = new StringSink();
+    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    protected final StringSink message = new StringSink();
     private int errno;
+    private boolean cacheable;
+    private boolean interruption;
 
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         ex.message.clear();
         ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
         return ex;
     }
 
@@ -61,6 +67,7 @@ public class CairoException extends RuntimeException implements Sinkable {
         return this;
     }
 
+    @Override
     public CharSequence getFlyweightMessage() {
         return message;
     }
@@ -68,5 +75,28 @@ public class CairoException extends RuntimeException implements Sinkable {
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);
+    }
+
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
+    public boolean isCacheable() {
+        return cacheable;
+    }
+
+    public CairoException setInterruption(boolean interruption) {
+        this.interruption = interruption;
+        return this;
+    }
+
+    public boolean isInterruption() {
+        return interruption;
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        return EMPTY_STACK_TRACE;
     }
 }

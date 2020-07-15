@@ -30,6 +30,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
@@ -87,8 +88,18 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
+        public int getDoubleScale() {
+            return Numbers.MAX_SCALE;
+        }
+
+        @Override
         public CharSequence getKeepAliveHeader() {
             return "Keep-Alive: timeout=5, max=10000\r\n";
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return Long.MAX_VALUE;
         }
     };
 
@@ -202,5 +213,25 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public boolean haltOnError() {
         return false;
+    }
+
+    @Override
+    public boolean readOnlySecurityContext() {
+        return false;
+    }
+
+    @Override
+    public boolean isInterruptOnClosedConnection() {
+        return true;
+    }
+
+    @Override
+    public int getInterruptorNIterationsPerCheck() {
+        return 5;
+    }
+
+    @Override
+    public int getInterruptorBufferSize() {
+        return 64;
     }
 }

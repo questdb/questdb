@@ -41,6 +41,7 @@ import java.util.ArrayDeque;
 class SqlOptimiser {
 
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
+    private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_OR = 3;
@@ -65,6 +66,7 @@ class SqlOptimiser {
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final IntList tempCrosses = new IntList();
+    private final IntList tempList = new IntList();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -608,7 +610,7 @@ class SqlOptimiser {
         JoinContext jc;
         for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel m = models.getQuick(i);
-            if (m.getJoinType() == QueryModel.JOIN_ASOF || m.getJoinType() == QueryModel.JOIN_SPLICE) {
+            if (joinsRequiringTimestamp[m.getJoinType()]) {
                 linkDependencies(parent, 0, i);
                 if (m.getContext() == null) {
                     m.setContext(jc = contextPool.next());
@@ -1163,10 +1165,15 @@ class SqlOptimiser {
             return orderByAdvice;
         }
 
-        CharSequenceObjHashMap<CharSequence> map = model.getAliasToColumnNameMap();
+        CharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
-            orderByAdvice.add(nextLiteral(map.get(orderBy.getQuick(i).token)));
-
+            QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
+            if (queryColumn.getAst().type == ExpressionNode.LITERAL) {
+                orderByAdvice.add(nextLiteral(queryColumn.getAst().token));
+            } else {
+                orderByAdvice.clear();
+                break;
+            }
         }
         return orderByAdvice;
     }
@@ -1420,11 +1427,27 @@ class SqlOptimiser {
                 literalCollector.resetNullCount();
                 traversalAlgo.traverse(node, literalCollector.lhs());
 
+                tempList.clear();
+                for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
+                    int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
+                    int position = tempList.binarySearch(tableExpressionReference);
+                    if (position < 0) {
+                        tempList.add(-(position + 1), tableExpressionReference);
+                    }
+                }
+
+                int distinctIndexes = tempList.size();
+
                 // at this point we must not have constant conditions in where clause
                 // this could be either referencing constant of a sub-query
                 if (literalCollectorAIndexes.size() == 0) {
                     // keep condition with this model
                     addWhereNode(model, node);
+                    continue;
+                } else if (distinctIndexes > 1) {
+                    int greatest = tempList.get(distinctIndexes - 1);
+                    final QueryModel m = model.getJoinModels().get(greatest);
+                    m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), nodes.getQuick(i)));
                     continue;
                 }
 
@@ -1646,8 +1669,7 @@ class SqlOptimiser {
             case NOT_OP_NOT_EQ:
                 if (reverse) {
                     node.token = "=";
-                }
-                else {
+                } else {
                     node.token = "!=";
                 }
                 return node;
@@ -2181,7 +2203,10 @@ class SqlOptimiser {
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
-                    getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
+                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
+                        throw SqlException.invalidColumn(orderBy.position, column);
+                    }
 
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
@@ -2206,6 +2231,10 @@ class SqlOptimiser {
                             // we have found alias, rewrite order by column
                             orderBy.token = map.valueAtQuick(index);
                         } else {
+                            if (dot > -1) {
+                                throw SqlException.invalidColumn(orderBy.position, column);
+                            }
+
                             // we must attempt to ascend order by column
                             // when we have group by model, ascent is not possible
                             if (groupBy) {
@@ -2228,9 +2257,6 @@ class SqlOptimiser {
 
                                     // the column may appear in the list after literals from expressions have been emitted
                                     index = synthetic.getColumnNameToAliasMap().keyIndex(column);
-                                    if (index > -1 && dot > -1) {
-                                        index = synthetic.getColumnNameToAliasMap().keyIndex(column, dot + 1, column.length());
-                                    }
 
                                     if (index < 0) {
                                         alias = synthetic.getColumnNameToAliasMap().valueAtQuick(index);
@@ -2892,6 +2918,7 @@ class SqlOptimiser {
         joinBarriers.add(QueryModel.JOIN_OUTER);
         joinBarriers.add(QueryModel.JOIN_ASOF);
         joinBarriers.add(QueryModel.JOIN_SPLICE);
+        joinBarriers.add(QueryModel.JOIN_LT);
 
         nullConstants.add("null");
         nullConstants.add("NaN");

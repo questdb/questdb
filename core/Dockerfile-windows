@@ -1,30 +1,38 @@
-FROM microsoft/nanoserver:1803
+FROM openjdk:11.0.7-nanoserver-1809
 
-ENV JRE jre-8u231-windows-x64.tar.gz
-ENV QUESTDB_VERSION 4.2.1
+## install GIT
 
-# Copy the binary file into the container at /app
-COPY target/questdb-${QUESTDB_VERSION}-bin.tar.gz /app/
+RUN curl -L "https://github.com/git-for-windows/git/releases/download/v2.25.0.windows.4/MinGit-2.25.0.windows.4-64-bit.zip"  --output c:\mingit.zip
+RUN mkdir c:\mingit
+RUN tar -xf c:\mingit.zip -C c:\mingit
 
-# Copy win64 JDK into the container at /app
-COPY dist/${JRE} /app/
+## install Maven
+
+RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output c:\maven.zip
+RUN tar -xf c:\maven.zip
+
+## clone GIT repo
+RUN c:\mingit\cmd\git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
+
+WORKDIR c:/questdb
+
+## build from source
+
+RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs
+
+## unpack the runtime
+
+WORKDIR c:/questdb/core/target
+RUN tar xvfz questdb-rt-windows-amd64.tar.gz
+
+FROM mcr.microsoft.com/windows/nanoserver:1903
 
 WORKDIR /app
 
-# Install questdb
-RUN tar.exe xvfz questdb-%QUESTDB_VERSION%-bin.tar.gz
-RUN del questdb-%QUESTDB_VERSION%-bin.tar.gz
-RUN del questdb-%QUESTDB_VERSION%\questdb.exe
-RUN del questdb-%QUESTDB_VERSION%\questdb.sh
-
-# install JRE8
-RUN tar xvfz %JRE%
-
-# remove JRE tarball
-RUN del %JRE%
+COPY --from=0 c:/questdb/core/target/rt-windows-amd64 .
 
 # Make working folder the quest db folder
-WORKDIR /app/questdb-${QUESTDB_VERSION}
+WORKDIR /app/rt-windows-amd64
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
@@ -36,4 +44,4 @@ RUN mkdir C:\questdb
 VOLUME C:/questdb/db
 
 # Run questdb when the container launches
-CMD ["/app/jre1.8.0_231/bin/java", "-cp", "./questdb.jar", "io.questdb.ServerMain", "-d", "c:/questdb"]
+CMD ["/app/rt-windows-amd64/bin/java", "-m", "io.questdb/io.questdb.ServerMain", "-d", "c:/questdb"]

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -58,11 +59,16 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.of(
-                masterFactory.getCursor(executionContext),
-                slaveFactory.getCursor(executionContext)
-        );
-        return cursor;
+        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
+        try {
+            cursor.of(masterCursor, slaveCursor, executionContext);
+            return cursor;
+        } catch (CairoException ex) {
+            masterCursor.close();
+            slaveCursor.close();
+            throw ex;
+        }
     }
 
     @Override

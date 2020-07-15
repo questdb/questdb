@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 
 import java.io.Closeable;
 
@@ -131,6 +133,10 @@ public class SymbolMapWriter implements Closeable {
 
     public static Path offsetFileName(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".o").$();
+    }
+
+    public int put(char c) {
+        return put(SingleCharCharSequence.get(c));
     }
 
     public int put(CharSequence symbol) {

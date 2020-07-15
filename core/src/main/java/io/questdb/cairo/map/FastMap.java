@@ -24,12 +24,25 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Hash;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 
 public class FastMap implements Map {
 
@@ -43,8 +56,8 @@ public class FastMap implements Map {
     private final int valueColumnCount;
     private final HashFunction hashFunction;
     private long capacity;
-    private int keyBlockOffset;
-    private int keyDataOffset;
+    private final int keyBlockOffset;
+    private final int keyDataOffset;
     private DirectLongList offsets;
     private long kStart;
     private long kLimit;
@@ -53,22 +66,26 @@ public class FastMap implements Map {
     private int keyCapacity;
     private int size = 0;
     private int mask;
+    private int nResizes;
+    private final int maxResizes;
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    int keyCapacity,
-                   double loadFactor
+            double loadFactor,
+            int maxResizes
     ) {
-        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH);
+        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    @Transient @Nullable ColumnTypes valueTypes,
                    int keyCapacity,
-                   double loadFactor
+            double loadFactor,
+            int maxResizes
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
     FastMap(int pageSize,
@@ -76,7 +93,8 @@ public class FastMap implements Map {
             @Transient ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
-            HashFunction hashFunction
+            HashFunction hashFunction,
+            int maxResizes
 
     ) {
         assert pageSize > 3;
@@ -94,6 +112,8 @@ public class FastMap implements Map {
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(-1);
         this.hashFunction = hashFunction;
+        this.nResizes = 0;
+        this.maxResizes = maxResizes;
 
         int[] valueOffsets;
         int offset = 4;
@@ -323,28 +343,33 @@ public class FastMap implements Map {
     }
 
     private void resize(int size) {
-        long kCapacity = (kLimit - kStart) << 1;
-        long target = key.appendAddress + size - kStart;
-        if (kCapacity < target) {
-            kCapacity = Numbers.ceilPow2(target);
+        if (nResizes < maxResizes) {
+            nResizes++;
+            long kCapacity = (kLimit - kStart) << 1;
+            long target = key.appendAddress + size - kStart;
+            if (kCapacity < target) {
+                kCapacity = Numbers.ceilPow2(target);
+            }
+            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
+    
+            this.capacity = kCapacity;
+            long d = kAddress - this.kStart;
+            kPos += d;
+            long colOffsetDelta = key.nextColOffset - key.startAddress;
+            key.startAddress += d;
+            key.appendAddress += d;
+            key.nextColOffset = key.startAddress + colOffsetDelta;
+    
+            assert kPos > 0;
+            assert key.startAddress > 0;
+            assert key.appendAddress > 0;
+            assert key.nextColOffset > 0;
+    
+            this.kStart = kAddress;
+            this.kLimit = kAddress + kCapacity;
+        } else {
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
-        long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
-
-        this.capacity = kCapacity;
-        long d = kAddress - this.kStart;
-        kPos += d;
-        long colOffsetDelta = key.nextColOffset - key.startAddress;
-        key.startAddress += d;
-        key.appendAddress += d;
-        key.nextColOffset = key.startAddress + colOffsetDelta;
-
-        assert kPos > 0;
-        assert key.startAddress > 0;
-        assert key.appendAddress > 0;
-        assert key.nextColOffset > 0;
-
-        this.kStart = kAddress;
-        this.kLimit = kAddress + kCapacity;
     }
 
     @FunctionalInterface
@@ -358,6 +383,7 @@ public class FastMap implements Map {
         private int len;
         private long nextColOffset;
 
+        @Override
         public MapValue createValue() {
             commit();
             // calculate hash remembering "key" structure
@@ -374,6 +400,7 @@ public class FastMap implements Map {
             }
         }
 
+        @Override
         public MapValue findValue() {
             commit();
             int index = keyIndex();

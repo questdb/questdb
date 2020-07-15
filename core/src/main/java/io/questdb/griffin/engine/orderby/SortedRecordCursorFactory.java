@@ -51,6 +51,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                 recordSink,
                 comparator,
                 configuration.getSqlSortKeyPageSize(),
+                configuration
+                        .getSqlSortKeyMaxPages(),
                 configuration.getSqlSortValuePageSize());
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
@@ -64,7 +66,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        this.cursor.of(base.getCursor(executionContext));
+        this.cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
 

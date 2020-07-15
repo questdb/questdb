@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -42,6 +44,7 @@ class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, No
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
+    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillNoneNotKeyedRecordCursor(
             SimpleMapValue simpleMapValue,
@@ -69,6 +72,7 @@ class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, No
     @Override
     public void close() {
         base.close();
+        interruptor = null;
     }
 
     @Override
@@ -107,6 +111,7 @@ class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, No
                 this.nextTimestamp = timestamp;
                 return true;
             }
+            interruptor.checkInterrupted();
         }
 
         // opportunity, after we stream map that is.
@@ -129,12 +134,14 @@ class SampleByFillNoneNotKeyedRecordCursor implements DelegatingRecordCursor, No
         return -1;
     }
 
-    public void of(RecordCursor base) {
+    @Override
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+        interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     private class TimestampFunc extends TimestampFunction implements NoArgFunction {

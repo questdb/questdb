@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine;
 
+import java.io.Closeable;
+
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-
-import java.io.Closeable;
 
 public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     // parent is at offset 0
@@ -45,8 +45,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     protected final MemoryPages mem;
     protected long root = -1;
 
-    public AbstractRedBlackTree(long keyPageSize) {
-        this.mem = new MemoryPages(keyPageSize);
+    public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
+        assert keyPageSize >= getBlockSize();
+        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
     }
 
     @Override

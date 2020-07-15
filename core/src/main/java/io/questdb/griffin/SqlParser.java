@@ -717,8 +717,13 @@ public final class SqlParser {
         // expect [where]
 
         if (tok != null && isWhereKeyword(tok)) {
-            model.setWhereClause(expr(lexer, model));
-            tok = optTok(lexer);
+            ExpressionNode expr = expr(lexer, model);
+            if (expr != null) {
+                model.setWhereClause(expr);
+                tok = optTok(lexer);
+            } else {
+                throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
+            }
         }
 
         // expect [group by]
@@ -891,6 +896,7 @@ public final class SqlParser {
 
         switch (joinType) {
             case QueryModel.JOIN_ASOF:
+            case QueryModel.JOIN_LT:
             case QueryModel.JOIN_SPLICE:
                 if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparse();
@@ -1358,6 +1364,7 @@ public final class SqlParser {
         tableAliasStop.add("outer");
         tableAliasStop.add("asof");
         tableAliasStop.add("splice");
+        tableAliasStop.add("lt");
         tableAliasStop.add("cross");
         tableAliasStop.add("sample");
         tableAliasStop.add("order");
@@ -1383,5 +1390,6 @@ public final class SqlParser {
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
+        joinStartSet.put("lt", QueryModel.JOIN_LT);
     }
 }

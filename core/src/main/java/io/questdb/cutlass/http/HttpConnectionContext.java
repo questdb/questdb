@@ -25,11 +25,14 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.griffin.HttpSqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
@@ -50,12 +53,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
-    private final CairoSecurityContext cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+    private final CairoSecurityContext cairoSecurityContext;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
+    private final HttpSqlExecutionInterruptor execInterruptor;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
+    private int nCompletedRequests;
+    private long totalBytesSent;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -71,11 +77,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
+        cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
+        execInterruptor = configuration.isInterruptOnClosedConnection()
+                ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
+                : null;
     }
 
     @Override
     public void clear() {
         LOG.debug().$("clear").$();
+        totalBytesSent += responseSink.getTotalBytesSent();
+        nCompletedRequests++;
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
@@ -87,6 +99,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
+        Misc.free(execInterruptor);
+        nCompletedRequests = 0;
+        totalBytesSent = 0;
         csPool.clear();
         multipartContentParser.close();
         multipartContentHeaderParser.close();
@@ -156,6 +171,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
+        if (null != execInterruptor) {
+            this.execInterruptor.of(fd);
+        }
         return this;
     }
 
@@ -163,7 +181,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         processor.onRequestComplete(this);
     }
@@ -376,5 +394,21 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             LOG.info().$("kicked out [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this);
         }
+    }
+
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
+    }
+
+    public long getTotalBytesSent() {
+        return totalBytesSent;
+    }
+
+    public long getLastRequestBytesSent() {
+        return responseSink.getTotalBytesSent();
+    }
+
+    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
+        return execInterruptor;
     }
 }

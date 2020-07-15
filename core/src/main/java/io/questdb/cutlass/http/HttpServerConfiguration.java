@@ -61,9 +61,18 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
 
     int getSendBufferSize();
 
+    @Override
     boolean isEnabled();
 
     boolean getDumpNetworkTraffic();
 
     boolean allowDeflateBeforeSend();
+
+    boolean readOnlySecurityContext();
+
+    boolean isInterruptOnClosedConnection();
+
+    int getInterruptorNIterationsPerCheck();
+
+    int getInterruptorBufferSize();
 }

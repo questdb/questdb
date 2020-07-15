@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -38,13 +40,14 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
             DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
+            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
         } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
         }
         this.filter = filter;
     }

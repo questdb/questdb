@@ -81,7 +81,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
-        loadFunctionFactories(functionFactories);
+        loadFunctionFactories(functionFactories, configuration.enableTestFactories());
     }
 
     public static int getArgType(char c) {
@@ -198,6 +198,42 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     ex.put(',');
                 }
                 ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
+    private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, CharSequence expected, int offset, int count) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unexpected argument for function: ");
+        ex.put(node.token);
+        ex.put(". expected args: ");
+        ex.put('(');
+        if (expected != null) {
+            for (int i = 0; i < count; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                char c = expected.charAt(offset + i);
+                ex.put(ColumnType.nameOf(getArgType(c)));
+                if (Character.isLowerCase(c)) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put("). actual args: ");
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                Function arg = args.getQuick(i);
+                ex.put(ColumnType.nameOf(arg.getType()));
+                if (arg.isConstant()) {
+                    ex.put(" constant");
+                }
             }
         }
         ex.put(')');
@@ -429,11 +465,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return new StrConstant(node.position, node.token);
         }
 
-        if (Chars.equalsLowerCaseAscii(node.token, "true")) {
+        if (SqlKeywords.isTrueKeyword(node.token)) {
             return new BooleanConstant(node.position, true);
         }
 
-        if (Chars.equalsLowerCaseAscii(node.token, "false")) {
+        if (SqlKeywords.isFalseKeyword(node.token)) {
             return new BooleanConstant(node.position, false);
         }
 
@@ -539,6 +575,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final char c = signature.charAt(sigArgOffset + k);
 
                     if (Character.isLowerCase(c) && !arg.isConstant()) {
+                        candidateSignature = signature;
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
@@ -588,6 +625,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                     } else {
                         // types mismatch
+                        candidateSignature = signature;
                         match = MATCH_NO_MATCH;
                         break;
                     }
@@ -629,7 +667,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         if (candidate == null) {
             // no signature match
-            throw invalidFunction("unknown function", node, args);
+            if (candidateSignature != null) {
+                final int sigArgOffset = candidateSignature.indexOf('(') + 1;
+                int sigArgCount = candidateSignature.length() - 1 - sigArgOffset;
+                throw invalidArgument(node, args, candidateSignature, sigArgOffset, sigArgCount);
+            } else {
+                throw invalidArgument(node, args, "", 0, 0);
+            }
         }
 
         if (candidateSigVarArgConst) {
@@ -771,42 +815,43 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         addFactoryToList(extraList, name, factory);
     }
 
-    private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories) {
+    private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories, boolean enableTestFactories) {
+        LOG.info().$("loading functions [test=").$(enableTestFactories).$(']').$();
         for (FunctionFactory factory : functionFactories) {
-
-            final String sig = factory.getSignature();
-            final int openBraceIndex;
-            try {
-                openBraceIndex = validateSignatureAndGetNameSeparator(sig);
-            } catch (SqlException e) {
-                LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
-                continue;
-            }
-
-            final String name = sig.substring(0, openBraceIndex);
-            addFactoryToList(factories, name, factory);
-
-            // Add != counterparts to equality function factories
-            if (factory instanceof AbstractBooleanFunctionFactory) {
-                switch (name) {
-                    case "=":
-                        addFactory(booleanFactories, "!=", factory);
-                        break;
-                    case "<":
-                        // `a < b` == `a >= b`
-                        addFactory(booleanFactories, ">=", factory);
-                        if (sig.charAt(2) == sig.charAt(3)) {
-                            // `a < b` == `b > a`
-                            addFactory(commutativeBooleanFactories, ">", factory);
-                            // `a < b` == `b > a` == `b <= a`
-                            addFactory(booleanFactories, "<=", factory);
-                            addFactory(commutativeBooleanFactories, "<=", factory);
-                        }
-                        break;
+            if (!factory.getClass().getName().contains("test") || enableTestFactories) {
+                final String sig = factory.getSignature();
+                final int openBraceIndex;
+                try {
+                    openBraceIndex = validateSignatureAndGetNameSeparator(sig);
+                } catch (SqlException e) {
+                    LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+                    continue;
                 }
-            }
-            else if (factory.isGroupBy()) {
-                groupByFunctionNames.add(name);
+
+                final String name = sig.substring(0, openBraceIndex);
+                addFactoryToList(factories, name, factory);
+
+                // Add != counterparts to equality function factories
+                if (factory instanceof AbstractBooleanFunctionFactory) {
+                    switch (name) {
+                        case "=":
+                            addFactory(booleanFactories, "!=", factory);
+                            break;
+                        case "<":
+                            // `a < b` == `a >= b`
+                            addFactory(booleanFactories, ">=", factory);
+                            if (sig.charAt(2) == sig.charAt(3)) {
+                                // `a < b` == `b > a`
+                                addFactory(commutativeBooleanFactories, ">", factory);
+                                // `a < b` == `b > a` == `b <= a`
+                                addFactory(booleanFactories, "<=", factory);
+                                addFactory(commutativeBooleanFactories, "<=", factory);
+                            }
+                            break;
+                    }
+                } else if (factory.isGroupBy()) {
+                    groupByFunctionNames.add(name);
+                }
             }
         }
     }

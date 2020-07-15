@@ -23,26 +23,28 @@
  ******************************************************************************/
 
 .splitter, .qs-ghost {
-  cursor: row-resize;
+    cursor: row-resize;
 }
 
 .splitter {
-  width: 100%;
-  height: 5px;
-  border: none;
-  background: #d6d5d5;
+    width: 100%;
+    flex: 0 0 6px;
+    height: 6px;
+    margin: 3px 0;
+    border: none;
+    background: #585858;
 }
 
 .splitter.qs-dragging {
-  opacity: 0;
+    opacity: 0;
 }
 
 .splitter:hover {
-  background: #6a6a6a;
+    background: #6a6a6a;
 }
 
 .qs-ghost {
-  background: #6a6a6a;
-  opacity: 0.4;
-  z-index: 10;
+    background: #6a6a6a;
+    opacity: 0.4;
+    z-index: 10;
 }

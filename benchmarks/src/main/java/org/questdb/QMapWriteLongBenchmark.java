@@ -45,8 +45,8 @@ import java.util.concurrent.TimeUnit;
 public class QMapWriteLongBenchmark {
 
     private static final double loadFactor = 0.9;
-    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
-    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f);
+    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f, 1024);
 
 
     private final Rnd rnd = new Rnd();

@@ -126,4 +126,16 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.type = type;
         return this;
     }
+
+   CompiledQuery ofShowTables(RecordCursorFactory recordCursorFactory) {
+        this.type = SHOW_TABLES;
+        this.recordCursorFactory = recordCursorFactory;
+        return this;
+    }
+
+    CompiledQuery ofShowColumns(RecordCursorFactory recordCursorFactory) {
+        this.type = SHOW_COLUMNS;
+        this.recordCursorFactory = recordCursorFactory;
+        return this;
+    }
 }

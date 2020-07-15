@@ -59,6 +59,10 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
+    int getDoubleToStrCastScale();
+
+    int getFloatToStrCastScale();
+
     int getMaxSwapFileCount();
 
     MicrosecondClock getMicrosecondClock();
@@ -109,9 +113,13 @@ public interface CairoConfiguration {
 
     int getSqlMapPageSize();
 
+    int getSqlMapMaxResizes();
+
     int getSqlModelPoolCapacity();
 
     long getSqlSortKeyPageSize();
+
+    int getSqlSortKeyMaxPages();
 
     long getSqlSortLightValuePageSize();
 
@@ -136,6 +144,8 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
+    int getSqlJoinMetadataMaxResizes();
+
     int getAnalyticColumnPoolCapacity();
 
     int getCreateTableModelPoolCapacity();
@@ -153,4 +163,10 @@ public interface CairoConfiguration {
     DateLocale getDefaultDateLocale();
 
     TimestampLocale getDefaultTimestampLocale();
+
+    int getGroupByPoolCapacity();
+
+    int getGroupByMapCapacity();
+
+    boolean enableTestFactories();
 }

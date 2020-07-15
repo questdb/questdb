@@ -82,6 +82,7 @@ public class CairoEngine implements Closeable {
             Path path,
             TableStructure struct
     ) {
+        securityContext.checkWritePermission();
         TableUtils.createTable(
                 configuration.getFilesFacade(),
                 mem,
@@ -155,6 +156,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
+        securityContext.checkWritePermission();
         return writerPool.get(tableName);
     }
 
@@ -163,7 +165,8 @@ public class CairoEngine implements Closeable {
             CharSequence tableName,
             CharSequence backupDirName
     ) {
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental 
+        securityContext.checkWritePermission();
+        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
         return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
 
@@ -171,6 +174,7 @@ public class CairoEngine implements Closeable {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
+        securityContext.checkWritePermission();
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
@@ -226,6 +230,7 @@ public class CairoEngine implements Closeable {
             Path path,
             CharSequence tableName
     ) {
+        securityContext.checkWritePermission();
         if (lock(securityContext, tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
@@ -255,6 +260,7 @@ public class CairoEngine implements Closeable {
             Path otherPath,
             CharSequence newName
     ) {
+        securityContext.checkWritePermission();
         if (lock(securityContext, tableName)) {
             try {
                 rename0(path, tableName, otherPath, newName);
@@ -316,7 +322,7 @@ public class CairoEngine implements Closeable {
         }
 
         protected boolean doRun() {
-        	return releaseInactive();
+            return releaseInactive();
         }
 
         @Override

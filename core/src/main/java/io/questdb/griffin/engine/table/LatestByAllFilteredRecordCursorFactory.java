@@ -24,17 +24,21 @@
 
 package io.questdb.griffin.engine.table;
 
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final Map map;
@@ -45,14 +49,15 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes columnTypes,
-            @Nullable Function filter
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         this.map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
-            this.cursor = new LatestByAllRecordCursor(map, rows, recordSink);
+            this.cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
         } else {
-            this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter);
+            this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
         }
     }
 
@@ -65,5 +70,13 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    protected AbstractDataFrameRecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

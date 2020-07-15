@@ -24,26 +24,43 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
+public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private final int columnIndex;
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
+    private int valueOffset;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
 
-    public SumDoubleVectorAggregateFunction(int position, int columnIndex, int workerCount) {
+    public SumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
         this.workerCount = workerCount;
+
+        if (keyKind == GKK_HOUR_INT) {
+            distinctFunc = Rosti::keyedHourDistinct;
+            keyValueFunc = Rosti::keyedHourSumDouble;
+        } else {
+            distinctFunc = Rosti::keyedIntDistinct;
+            keyValueFunc = Rosti::keyedIntSumDouble;
+        }
     }
 
     @Override
@@ -70,7 +87,53 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            final int offset = i * Misc.CACHE_LINE_SIZE;
+            sum += this.sum[offset];
+            count += this.count[offset];
+        }
+        Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+    }
+
+    @Override
+    public double getDouble(@Nullable Record rec) {
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {

@@ -156,7 +156,7 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, int increment) throws SqlException {
+    private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, boolean equalsTo) throws SqlException {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
@@ -175,7 +175,8 @@ final class WhereClauseParser implements Mutable {
             }
 
             try {
-                model.intersectIntervals(TimestampFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1), Long.MAX_VALUE);
+                long lo = parseFullOrPartialDate(equalsTo, node.rhs, true);
+                model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -190,13 +191,30 @@ final class WhereClauseParser implements Mutable {
             }
 
             try {
-                model.intersectIntervals(Long.MIN_VALUE, TimestampFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) - increment);
+                long hi = parseFullOrPartialDate(equalsTo, node.lhs, false);
+                model.intersectIntervals(Long.MIN_VALUE, hi);
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
                 throw SqlException.invalidDate(node.lhs.position);
             }
         }
         return false;
+    }
+
+    private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
+        long ts;
+        if (node.token.length() - 2 < 20) {
+            if (equalsTo ^ isLo) {
+                ts = IntrinsicModel.parseCeilingPartialDate(node.token, 1, node.token.length() - 1);
+            } else {
+                ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, node.token.length() - 1);
+            }
+        } else {
+            long inc = equalsTo ? 0 : isLo ? 1 : -1;
+            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+        }
+        return ts;
     }
 
     private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
@@ -296,7 +314,7 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeLess(IntrinsicModel model, ExpressionNode node, int inc) throws SqlException {
+    private boolean analyzeLess(IntrinsicModel model, ExpressionNode node, boolean equalsTo) throws SqlException {
 
         checkNodeValid(node);
 
@@ -315,8 +333,7 @@ final class WhereClauseParser implements Mutable {
                 if (node.rhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
-
-                long hi = TimestampFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) - inc;
+                long hi = parseFullOrPartialDate(equalsTo, node.rhs, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -330,8 +347,7 @@ final class WhereClauseParser implements Mutable {
                 if (node.lhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
-
-                long lo = TimestampFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1);
+                long lo = parseFullOrPartialDate(equalsTo, node.lhs, true);
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -673,13 +689,13 @@ final class WhereClauseParser implements Mutable {
             case INTRINCIC_OP_IN:
                 return analyzeIn(translator, model, node, m);
             case INTRINCIC_OP_GREATER:
-                return analyzeGreater(model, node, 1);
+                return analyzeGreater(model, node, false);
             case INTRINCIC_OP_GREATER_EQ:
-                return analyzeGreater(model, node, 0);
+                return analyzeGreater(model, node, true);
             case INTRINCIC_OP_LESS:
-                return analyzeLess(model, node, 1);
+                return analyzeLess(model, node, false);
             case INTRINCIC_OP_LESS_EQ:
-                return analyzeLess(model, node, 0);
+                return analyzeLess(model, node, true);
             case INTRINCIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m);
             case INTRINCIC_OP_NOT_EQ:

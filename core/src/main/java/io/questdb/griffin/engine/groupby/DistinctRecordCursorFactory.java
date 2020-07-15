@@ -24,16 +24,26 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import org.jetbrains.annotations.NotNull;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
 public class DistinctRecordCursorFactory implements RecordCursorFactory {
 
@@ -71,7 +81,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, dataMap, mapSink);
+            cursor.of(baseCursor, dataMap, mapSink, executionContext.getSqlExecutionInterruptor());
             return cursor;
         } catch (CairoException e) {
             baseCursor.close();
@@ -94,6 +104,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         private Map dataMap;
         private RecordSink recordSink;
         private Record record;
+        private SqlExecutionInterruptor interruptor;
 
         public DistinctRecordCursor() {
         }
@@ -116,6 +127,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
                 MapKey key = dataMap.withKey();
                 recordSink.copy(record, key);
                 if (key.create()) {
@@ -141,11 +153,12 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             dataMap.clear();
         }
 
-        public void of(RecordCursor baseCursor, Map dataMap, RecordSink recordSink) {
+        public void of(RecordCursor baseCursor, Map dataMap, RecordSink recordSink, SqlExecutionInterruptor interruptor) {
             this.baseCursor = baseCursor;
             this.dataMap = dataMap;
             this.recordSink = recordSink;
             this.record = baseCursor.getRecord();
+            this.interruptor = interruptor;
         }
 
         @Override

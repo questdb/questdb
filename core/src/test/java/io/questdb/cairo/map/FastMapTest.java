@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -61,7 +62,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
 
-        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8)) {
+        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
@@ -153,7 +154,7 @@ public class FastMapTest extends AbstractCairoTest {
 
         Long256Impl long256 = new Long256Impl();
 
-        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8)) {
+        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
@@ -214,7 +215,8 @@ public class FastMapTest extends AbstractCairoTest {
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
                     N / 2,
-                    0.5f)) {
+                    0.5f,
+                    1)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -242,6 +244,15 @@ public class FastMapTest extends AbstractCairoTest {
 
     @Test
     public void testAppendUnique() throws Exception {
+        testAppendUnique(3);
+    }
+
+    @Test(expected = LimitOverflowException.class)
+    public void testMaxResizes() throws Exception {
+        testAppendUnique(1);
+    }
+
+    private void testAppendUnique(int maxResizes) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             int N = 100000;
@@ -250,7 +261,7 @@ public class FastMapTest extends AbstractCairoTest {
                     Numbers.SIZE_1MB,
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
-                    N / 4, 0.5f)) {
+                    N / 4, 0.5f, maxResizes)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
                     MapKey key = map.withKey();
@@ -285,7 +296,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 try {
-                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
+                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75, 1);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "Unsupported column type");
@@ -305,7 +316,7 @@ public class FastMapTest extends AbstractCairoTest {
             FastMap.HashFunction hash = (address, len) -> 0;
 
 
-            try (FastMap map = new FastMap(1024, types, types, N / 4, 0.5f, hash)) {
+            try (FastMap map = new FastMap(1024, types, types, N / 4, 0.5f, hash, 1)) {
                 // lookup key that doesn't exist
                 MapKey key = map.withKey();
                 key.putInt(10);
@@ -324,7 +335,7 @@ public class FastMapTest extends AbstractCairoTest {
             ColumnTypes keyTypes = new SingleColumnType(ColumnType.BINARY);
             ColumnTypes valueTypes = new SingleColumnType(ColumnType.INT);
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5)) {
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5, 1)) {
                 final Rnd rnd = new Rnd();
                 MapKey key = map.withKey();
                 key.putBin(binarySequence.of(rnd.nextBytes(10)));
@@ -384,7 +395,7 @@ public class FastMapTest extends AbstractCairoTest {
                 }
 
                 final Rnd rnd = new Rnd();
-                try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f)) {
+                try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f, 1)) {
                     try {
                         MapKey key = map.withKey();
                         for (int i = 0; i < N; i++) {
@@ -406,7 +417,7 @@ public class FastMapTest extends AbstractCairoTest {
             final SingleColumnType keyTypes = new SingleColumnType();
             final Rnd rnd = new Rnd();
             final int N = 100;
-            try (FastMap map = new FastMap(2 * Numbers.SIZE_1MB, keyTypes.of(ColumnType.INT), 128, 0.7f)) {
+            try (FastMap map = new FastMap(2 * Numbers.SIZE_1MB, keyTypes.of(ColumnType.INT), 128, 0.7f, 1)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(rnd.nextInt());
@@ -445,7 +456,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -457,7 +468,7 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.BOOLEAN)
                         ,
                         N,
-                        0.9f)) {
+                        0.9f, 1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -485,7 +496,7 @@ public class FastMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
             final int N = 10000;
             final Rnd rnd = new Rnd();
-            try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5)) {
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)) {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -561,7 +572,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -573,7 +584,8 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.BOOLEAN)
                         ,
                         N,
-                        0.9f)) {
+                        0.9f,
+                        1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -628,7 +640,7 @@ public class FastMapTest extends AbstractCairoTest {
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsIntTypes().of(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
+                        new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
                                 .add(ColumnType.SHORT)
@@ -640,7 +652,8 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.BOOLEAN)
                         ,
                         N,
-                        0.9f)) {
+                        0.9f,
+                        1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
 
@@ -984,7 +997,7 @@ public class FastMapTest extends AbstractCairoTest {
     private void testUnsupportedValueType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new FastMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.BINARY), 64, 0.5);
+                new FastMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.BINARY), 64, 0.5, 1);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));

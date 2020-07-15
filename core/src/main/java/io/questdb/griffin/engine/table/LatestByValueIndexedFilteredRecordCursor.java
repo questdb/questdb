@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
@@ -43,7 +44,10 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter) {
+            @NotNull Function filter,
+            @NotNull IntList columnIndexes
+    ) {
+        super(columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
         this.filter = filter;

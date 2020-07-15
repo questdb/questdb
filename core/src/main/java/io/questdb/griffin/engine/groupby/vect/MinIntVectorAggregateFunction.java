@@ -24,13 +24,19 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
+
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class MinIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
@@ -39,10 +45,20 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
             MIN, Integer.MAX_VALUE
     );
     private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
-    public MinIntVectorAggregateFunction(int position, int columnIndex) {
+    public MinIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
         this.columnIndex = columnIndex;
+        if (keyKind == GKK_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedHourDistinct;
+            this.keyValueFunc = Rosti::keyedHourMinInt;
+        } else {
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMinInt;
+        }
     }
 
     @Override
@@ -53,6 +69,41 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
                 accumulator.accumulate(value);
             }
         }
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        valueOffset = types.getColumnCount();
+        types.add(ColumnType.INT);
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Integer.MAX_VALUE);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, count);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
+        }
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 
     @Override
