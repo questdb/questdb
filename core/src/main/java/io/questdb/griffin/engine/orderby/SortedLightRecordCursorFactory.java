@@ -40,7 +40,8 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
-            RecordComparator comparator) {
+            RecordComparator comparator
+    ) {
         super(metadata);
         this.chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
