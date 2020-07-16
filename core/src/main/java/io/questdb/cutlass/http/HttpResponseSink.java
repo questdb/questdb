@@ -92,6 +92,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean header = true;
     private final boolean dumpNetworkTraffic;
     private long totalBytesSent = 0;
+    private final String httpVersion;
 
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -105,6 +106,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.outPtr = this._wPtr = out;
         this.limit = outPtr + responseBufferSize;
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.httpVersion = configuration.getHttpVersion();
     }
 
     public HttpChunkedResponseSocket getChunkedSocket() {
@@ -437,7 +439,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (status == null) {
                 throw new IllegalArgumentException("Illegal status code: " + code);
             }
-            put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
+            put(httpVersion).put(code).put(' ').put(status).put(Misc.EOL);
             put("Server: ").put("questDB/1.0").put(Misc.EOL);
             put("Date: ");
             DateFormatUtils.formatHTTP(this, clock.getTicks());

@@ -58,6 +58,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
+    private final boolean serverKeepAlive;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -77,6 +78,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         execInterruptor = configuration.isInterruptOnClosedConnection()
                 ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
                 : null;
+        this.serverKeepAlive = configuration.getServerKeepAlive();
     }
 
     @Override
@@ -165,8 +167,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 break;
         }
 
-        while (keepGoing) {
-            keepGoing = handleClientRecv(selector);
+        if (keepGoing) {
+            if (serverKeepAlive) {
+                do {
+                    keepGoing = handleClientRecv(selector);
+                } while (keepGoing);
+            } else {
+                dispatcher.disconnect(this);
+            }
         }
     }
 
