@@ -39,7 +39,8 @@ export const theme: DefaultThemeShape = {
 
   fontEmoji:
     '"apple color emoji", "segoe ui emoji", "android emoji", "emojisymbols", "emojione mozilla", "twemoji mozilla", "segoe ui symbol", "noto color emoji"',
-  fontMonospace: '"Source Code Pro", monospace',
+  fontMonospace:
+    'SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono", "Courier New", monospace',
   fontSize,
 }
 
