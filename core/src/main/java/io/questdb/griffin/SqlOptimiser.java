@@ -89,6 +89,7 @@ class SqlOptimiser {
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
+        flexColumnModelTypes.add(QueryModel.SELECT_MODEL_GROUP_BY);
     }
 
     private final CairoEngine engine;
