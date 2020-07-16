@@ -1445,99 +1445,101 @@ class SqlOptimiser {
     }
 
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
-        model.getParsedWhere().clear();
-        final ObjList<ExpressionNode> nodes = model.parseWhereClause();
-        model.setWhereClause(null);
-
-        final int n = nodes.size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                final ExpressionNode node = nodes.getQuick(i);
-                // collect table references this where clause element
-                literalCollectorAIndexes.clear();
-                literalCollectorANames.clear();
-                literalCollector.withModel(model);
-                literalCollector.resetNullCount();
-                traversalAlgo.traverse(node, literalCollector.lhs());
-
-                tempList.clear();
-                for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
-                    int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
-                    int position = tempList.binarySearch(tableExpressionReference);
-                    if (position < 0) {
-                        tempList.add(-(position + 1), tableExpressionReference);
-                    }
-                }
-
-                int distinctIndexes = tempList.size();
-
-                // at this point we must not have constant conditions in where clause
-                // this could be either referencing constant of a sub-query
-                if (literalCollectorAIndexes.size() == 0) {
-                    // keep condition with this model
-                    addWhereNode(model, node);
-                    continue;
-                } else if (distinctIndexes > 1) {
-                    int greatest = tempList.get(distinctIndexes - 1);
-                    final QueryModel m = model.getJoinModels().get(greatest);
-                    m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), nodes.getQuick(i)));
-                    continue;
-                }
-
-                // by now all where clause must reference single table only and all column references have to be valid
-                // they would have been rewritten and validated as join analysis stage
-                final int tableIndex = literalCollectorAIndexes.getQuick(0);
-                final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
-
-                // Do not move where clauses that contain references
-                // to NULL constant inside outer join models.
-                // Outer join can produce nulls in slave model columns.
-                int joinType = parent.getJoinType();
-                if (tableIndex > 0
-                        && (joinBarriers.contains(joinType))
-                        && literalCollector.nullCount > 0
-                ) {
-                    model.getJoinModels().getQuick(tableIndex).setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
-                    continue;
-                }
-
-                final QueryModel nested = parent.getNestedModel();
-                if (nested == null || nested.getLatestBy().size() > 0) {
-                    // there is no nested model for this table, keep where clause element with this model
-                    addWhereNode(parent, node);
-                } else {
-                    // now that we have identified sub-query we have to rewrite our where clause
-                    // to potentially replace all of column references with actual literals used inside
-                    // sub-query, for example:
-                    // (select a x, b from T) where x = 10
-                    // we can't move "x" inside sub-query because it is not a field.
-                    // Instead we have to translate "x" to actual column expression, which is "a":
-                    // select a x, b from T where a = 10
-
-                    // because we are rewriting SqlNode in-place we need to make sure that
-                    // none of expression literals reference non-literals in nested query, e.g.
-                    // (select a+b x from T) where x > 10
-                    // does not warrant inlining of "x > 10" because "x" is not a column
-                    //
-                    // at this step we would throw exception if one of our literals hits non-literal
-                    // in sub-query
-
-                    try {
-                        traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
-
-                        // go ahead and rewrite expression
-                        traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
-
-                        // whenever nested model has explicitly defined columns it must also
-                        // have its own nested model, where we assign new "where" clauses
-                        addWhereNode(nested, node);
-                    } catch (NonLiteralException ignore) {
-                        // keep node where it is
-                        addWhereNode(parent, node);
-                    }
-                }
-            }
+        if (model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) {
             model.getParsedWhere().clear();
+            final ObjList<ExpressionNode> nodes = model.parseWhereClause();
+            model.setWhereClause(null);
+
+            final int n = nodes.size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    final ExpressionNode node = nodes.getQuick(i);
+                    // collect table references this where clause element
+                    literalCollectorAIndexes.clear();
+                    literalCollectorANames.clear();
+                    literalCollector.withModel(model);
+                    literalCollector.resetNullCount();
+                    traversalAlgo.traverse(node, literalCollector.lhs());
+
+                    tempList.clear();
+                    for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
+                        int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
+                        int position = tempList.binarySearch(tableExpressionReference);
+                        if (position < 0) {
+                            tempList.add(-(position + 1), tableExpressionReference);
+                        }
+                    }
+
+                    int distinctIndexes = tempList.size();
+
+                    // at this point we must not have constant conditions in where clause
+                    // this could be either referencing constant of a sub-query
+                    if (literalCollectorAIndexes.size() == 0) {
+                        // keep condition with this model
+                        addWhereNode(model, node);
+                        continue;
+                    } else if (distinctIndexes > 1) {
+                        int greatest = tempList.get(distinctIndexes - 1);
+                        final QueryModel m = model.getJoinModels().get(greatest);
+                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), nodes.getQuick(i)));
+                        continue;
+                    }
+
+                    // by now all where clause must reference single table only and all column references have to be valid
+                    // they would have been rewritten and validated as join analysis stage
+                    final int tableIndex = literalCollectorAIndexes.getQuick(0);
+                    final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
+
+                    // Do not move where clauses that contain references
+                    // to NULL constant inside outer join models.
+                    // Outer join can produce nulls in slave model columns.
+                    int joinType = parent.getJoinType();
+                    if (tableIndex > 0
+                            && (joinBarriers.contains(joinType))
+                            && literalCollector.nullCount > 0
+                    ) {
+                        model.getJoinModels().getQuick(tableIndex).setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
+                        continue;
+                    }
+
+                    final QueryModel nested = parent.getNestedModel();
+                    if (nested == null || nested.getLatestBy().size() > 0) {
+                        // there is no nested model for this table, keep where clause element with this model
+                        addWhereNode(parent, node);
+                    } else {
+                        // now that we have identified sub-query we have to rewrite our where clause
+                        // to potentially replace all of column references with actual literals used inside
+                        // sub-query, for example:
+                        // (select a x, b from T) where x = 10
+                        // we can't move "x" inside sub-query because it is not a field.
+                        // Instead we have to translate "x" to actual column expression, which is "a":
+                        // select a x, b from T where a = 10
+
+                        // because we are rewriting SqlNode in-place we need to make sure that
+                        // none of expression literals reference non-literals in nested query, e.g.
+                        // (select a+b x from T) where x > 10
+                        // does not warrant inlining of "x > 10" because "x" is not a column
+                        //
+                        // at this step we would throw exception if one of our literals hits non-literal
+                        // in sub-query
+
+                        try {
+                            traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getAliasToColumnMap()));
+
+                            // go ahead and rewrite expression
+                            traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnNameMap()));
+
+                            // whenever nested model has explicitly defined columns it must also
+                            // have its own nested model, where we assign new "where" clauses
+                            addWhereNode(nested, node);
+                        } catch (NonLiteralException ignore) {
+                            // keep node where it is
+                            addWhereNode(parent, node);
+                        }
+                    }
+                }
+                model.getParsedWhere().clear();
+            }
         }
 
         QueryModel nested = model.getNestedModel();

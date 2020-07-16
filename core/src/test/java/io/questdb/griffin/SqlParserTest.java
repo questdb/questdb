@@ -3278,6 +3278,15 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNotMoveWhereIntoDistinct() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-distinct [a] a from (select-choose [a] a from (select [a] from tab)) where a = 10) _xQdbA1)",
+                "(select distinct a from tab) where a = 10",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOrderByOnJoinSubQuery2() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from (select [x, z] from (select-choose [x] x, z from (select-choose [x, p] x, z, p from (select [x] from tab1 where x = 'Z') order by p)) a join select [y, z] from (select-choose [y, z] x, y, z, s from (select [y, z, s] from tab2 where s ~= 'K')) b on b.z = a.z)",
