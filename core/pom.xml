@@ -38,7 +38,7 @@
 
     <version>5.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>core</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
 
@@ -180,6 +180,7 @@
                             <descriptors>
                                 <descriptor>src/main/assembly/binaries.xml</descriptor>
                             </descriptors>
+                            <finalName>questdb</finalName>
                         </configuration>
                     </execution>
                     <execution>
@@ -362,7 +363,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-windows-amd64</runtime.name>
+                <archive.name>${project.version}-rt-windows-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -375,7 +377,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-linux-amd64</runtime.name>
+                <archive.name>${project.version}-rt-linux-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -388,7 +391,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-linux-aarch64</runtime.name>
+                <archive.name>${project.version}-rt-linux-aarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -400,7 +404,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-osx-amd64</runtime.name>
+                <archive.name>${project.version}-rt-osx-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
