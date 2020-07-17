@@ -77,6 +77,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final NetworkFacade nf;
     private final int responseBufferSize;
+    private final boolean dumpNetworkTraffic;
+    private final String httpVersion;
     private long fd;
     private long _wPtr;
     private long flushBuf;
@@ -90,8 +92,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private int crc = 0;
     private long total = 0;
     private boolean header = true;
-    private final boolean dumpNetworkTraffic;
     private long totalBytesSent = 0;
+    private final boolean connectionCloseHeader;
 
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -105,6 +107,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.outPtr = this._wPtr = out;
         this.limit = outPtr + responseBufferSize;
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.httpVersion = configuration.getHttpVersion();
+        this.connectionCloseHeader = !configuration.getServerKeepAlive();
     }
 
     public HttpChunkedResponseSocket getChunkedSocket() {
@@ -431,13 +435,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public String status(int code, CharSequence contentType, long contentLength) {
+        public String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
             this.code = code;
             String status = httpStatusMap.get(code);
             if (status == null) {
                 throw new IllegalArgumentException("Illegal status code: " + code);
             }
-            put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
+            put(httpProtocolVersion).put(code).put(' ').put(status).put(Misc.EOL);
             put("Server: ").put("questDB/1.0").put(Misc.EOL);
             put("Date: ");
             DateFormatUtils.formatHTTP(this, clock.getTicks());
@@ -451,6 +455,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
             if (contentType != null) {
                 put("Content-Type: ").put(contentType).put(Misc.EOL);
+            }
+
+            if (connectionCloseHeader) {
+                put("Connection: close").put(Misc.EOL);
             }
 
             return status;
@@ -469,14 +477,14 @@ public class HttpResponseSink implements Closeable, Mutable {
     public class SimpleResponseImpl {
 
         public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final String std = headerImpl.status(code, "text/html; charset=utf-8", -1L);
+            final String std = headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             prepareHeaderSink();
             resumeSend(CHUNK_HEAD);
         }
 
         public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            headerImpl.status(code, "text/html; charset=utf-8", -2L);
+            headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -2L);
             prepareHeaderSink();
             flushSingle();
         }
@@ -570,7 +578,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void status(int status, CharSequence contentType) {
-            headerImpl.status(status, contentType, -1);
+            headerImpl.status("HTTP/1.1 ", status, contentType, -1);
         }
 
         private void escapeSpace(char c) {

@@ -212,7 +212,7 @@ public class HttpServer implements Closeable {
         s.bind(new HttpRequestProcessorFactory() {
             @Override
             public HttpRequestProcessor newInstance() {
-                return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+                return new StaticContentProcessor(configuration);
             }
 
             @Override

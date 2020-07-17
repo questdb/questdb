@@ -234,4 +234,15 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public int getInterruptorBufferSize() {
         return 64;
     }
+
+    @Override
+    public boolean getServerKeepAlive() {
+        return true;
+    }
+
+    @Override
+    public String getHttpVersion() {
+        // trailing space is important
+        return "HTTP/1.1 ";
+    }
 }

@@ -29,7 +29,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.network.IOOperation;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -66,10 +65,6 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     }
 
     @Override
-    public void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         CharSequence tableName = context.getRequestHeader().getUrlParam("j");
         if (tableName == null) {
@@ -90,7 +85,5 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }
         }
-        context.clear();
-        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 }
