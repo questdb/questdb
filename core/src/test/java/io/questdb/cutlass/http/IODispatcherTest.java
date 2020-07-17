@@ -585,7 +585,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -1259,7 +1259,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -1629,7 +1629,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -1799,7 +1799,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -3014,7 +3014,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -3116,7 +3116,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -3317,6 +3317,49 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryTopLimitHttp1() throws Exception {
+        testJsonQuery0(2, engine -> {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            20,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence()
+                    );
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=x&limit=10 HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Connection: close\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "06ac\r\n" +
+                                    "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]]],\"count\":10}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            true
+                    );
+                }, false,
+                true);
     }
 
     @Test
@@ -3652,7 +3695,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -3822,6 +3865,203 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testSCPHttp10() throws Exception {
+        assertMemoryLeak(() -> {
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false, false, "HTTP/1.0 ");
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                // create 20Mb file in /tmp directory
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                    try {
+                        Rnd rnd = new Rnd();
+                        final int diskBufferLen = 1024 * 1024;
+
+                        writeRandomFile(path, rnd, 122222212222L, diskBufferLen);
+
+//                        httpServer.getStartedLatch().await();
+
+                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                        try {
+                            int netBufferLen = 4 * 1024;
+                            long buffer = Unsafe.calloc(netBufferLen);
+                            try {
+
+                                // send request to server to download file we just created
+                                final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader = "HTTP/1.0 200 OK\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Content-Length: 20971520\r\n" +
+                                        "Content-Type: text/plain\r\n" +
+                                        "Connection: close\r\n" +
+                                        "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                                        "\r\n";
+
+                                for (int j = 0; j < 1; j++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // send few requests to receive 304
+                                final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "If-None-Match: \"122222212222\"\r\n" + // this header should make static processor return 304
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader2 = "HTTP/1.0 304 Not Modified\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "Connection: close\r\n" +
+                                        "\r\n";
+
+                                for (int i = 0; i < 3; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request2, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // couple more full downloads after 304
+                                for (int j = 0; j < 2; j++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // get a 404 now
+                                final String request3 = "GET /questdb-temp_!.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader3 = "HTTP/1.0 404 Not Found\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Transfer-Encoding: chunked\r\n" +
+                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "Connection: close\r\n" +
+                                        "\r\n" +
+                                        "0b\r\n" +
+                                        "Not Found\r\n" +
+                                        "\r\n" +
+                                        "00\r\n" +
+                                        "\r\n";
+
+
+                                for (int i = 0; i < 4; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request3, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // and few more 304s
+
+                                for (int i = 0; i < 3; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request2, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                            } finally {
+                                Unsafe.free(buffer, netBufferLen);
+                            }
+                        } finally {
+                            Net.freeSockAddr(sockAddr);
+                            workerPool.halt();
+                        }
+                    } finally {
+                        Files.remove(path);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -3846,7 +4086,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -4715,7 +4955,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override
@@ -4845,6 +5085,19 @@ public class IODispatcherTest {
             boolean dumpTraffic,
             boolean allowDeflateBeforeSend
     ) {
+        return createHttpServerConfiguration(nf, baseDir, sendBufferSize, dumpTraffic, allowDeflateBeforeSend, true, "HTTP/1.1 ");
+    }
+
+    @NotNull
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            NetworkFacade nf,
+            String baseDir,
+            int sendBufferSize,
+            boolean dumpTraffic,
+            boolean allowDeflateBeforeSend,
+            boolean serverKeepAlive,
+            String httpProtocolVersion
+    ) {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
@@ -4916,6 +5169,16 @@ public class IODispatcherTest {
                     return configuredMaxQueryResponseRowLimit;
                 }
             };
+
+            @Override
+            public boolean getServerKeepAlive() {
+                return serverKeepAlive;
+            }
+
+            @Override
+            public String getHttpVersion() {
+                return httpProtocolVersion;
+            }
 
             @Override
             public MillisecondClock getClock() {
@@ -5091,12 +5354,17 @@ public class IODispatcherTest {
     }
 
     private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
+        testJsonQuery0(workerCount, code, telemetry, false);
+    }
+
+    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false,
+                    !http1, http1 ? "HTTP/1.0 " : "HTTP/1.1 ");
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -5135,7 +5403,7 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                        return new StaticContentProcessor(httpConfiguration);
                     }
 
                     @Override

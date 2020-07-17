@@ -46,13 +46,15 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final CharSequence indexFileName;
     private final FilesFacade ff;
     private final String keepAliveHeader;
+    private final String httpProtocolVersion;
 
-    public StaticContentProcessor(StaticContentProcessorConfiguration configuration) {
-        this.mimeTypes = configuration.getMimeTypesCache();
-        this.prefixedPath = new PrefixedPath(configuration.getPublicDirectory());
-        this.indexFileName = configuration.getIndexFileName();
-        this.ff = configuration.getFilesFacade();
-        this.keepAliveHeader = configuration.getKeepAliveHeader();
+    public StaticContentProcessor(HttpServerConfiguration configuration) {
+        this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
+        this.prefixedPath = new PrefixedPath(configuration.getStaticContentProcessorConfiguration().getPublicDirectory());
+        this.indexFileName = configuration.getStaticContentProcessorConfiguration().getIndexFileName();
+        this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
+        this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
+        this.httpProtocolVersion = configuration.getHttpVersion();
     }
 
     private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -191,7 +193,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 state.sendMax = hi == Long.MAX_VALUE ? length : hi;
 
                 final HttpResponseHeader header = context.getResponseHeader();
-                header.status(206, contentType, state.sendMax - lo);
+                header.status(httpProtocolVersion, 206, contentType, state.sendMax - lo);
                 if (asAttachment) {
                     header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
                 }
@@ -229,7 +231,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             h.sendMax = length;
 
             final HttpResponseHeader header = context.getResponseHeader();
-            header.status(200, contentType, length);
+            header.status(httpProtocolVersion, 200, contentType, length);
             if (asAttachment) {
                 header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
             }
