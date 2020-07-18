@@ -28,7 +28,7 @@
 
     <version>5.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>questdb</artifactId>
+    <artifactId>questdb-parent</artifactId>
     <packaging>pom</packaging>
     <name>QuestDB</name>
 
