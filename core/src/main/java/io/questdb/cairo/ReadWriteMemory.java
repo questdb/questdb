@@ -63,7 +63,7 @@ public class ReadWriteMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         return mapWritePage(page);
     }
 

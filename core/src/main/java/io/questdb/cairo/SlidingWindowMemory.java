@@ -46,7 +46,7 @@ public class SlidingWindowMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         return page == pageIndex ? pageAddress : mapPage(page);
     }
 
