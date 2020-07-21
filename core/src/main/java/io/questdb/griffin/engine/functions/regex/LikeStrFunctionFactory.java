@@ -25,10 +25,96 @@
 package io.questdb.griffin.engine.functions.regex;
 
 
-public class LikeStrFunctionFactory extends MatchStrFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.ObjList;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+public class LikeStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "like(Ss)";
     }
 
-}
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        Function value = args.getQuick(0);
+
+        CharSequence likeString=args.getQuick(1).getStr(null);
+
+        if (likeString == null) {
+            throw SqlException.$(args.getQuick(1).getPosition(), "NULL likeString");
+        }
+
+        String regex = escapeSpecialChars(likeString).
+                replace('_', '.').replace("%", ".*?");
+
+        try {
+            Matcher matcher = Pattern.compile(regex,
+                    Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher("");
+
+
+            return new MatchFunction(position, value, matcher);
+
+
+        } catch (PatternSyntaxException e) {
+            throw SqlException.$(args.getQuick(1).getPosition() + e.getIndex() + 1, e.getMessage());
+        }
+    }
+
+    public static String escapeSpecialChars(CharSequence s )
+    {
+        int len = s.length();
+        if (len == 0)
+        {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder(s.length() * 2);
+        for (int i = 0; i < len; i++)
+        {
+            char c = s.charAt(i);
+            if ("[](){}.*+?$^|#\\".indexOf(c) != -1)
+            {
+                sb.append("\\");
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+
+    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
+        private final Function value;
+        private final Matcher matcher;
+
+        public MatchFunction(int position, Function value, Matcher matcher) {
+            super(position);
+            this.value = value;
+            this.matcher = matcher;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).matches();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+    }
+    }
+
+
+
+

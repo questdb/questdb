@@ -25,11 +25,49 @@
 package io.questdb.griffin.engine.functions.regex;
 
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.ObjList;
 
-public class LikeCharFunctionFactory extends MatchCharFunctionFactory {
+public class LikeCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "like(Sa)";
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new MatchFunction(
+                position,
+                args.getQuick(0),
+                args.getQuick(1).getChar(null)
+        );
+    }
+
+    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
+        private final Function value;
+        private final char expected;
+
+        public MatchFunction(int position, Function value, char expected) {
+            super(position);
+            this.value = value;
+            this.expected = expected;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && cs.length()==1 && Character.toLowerCase(cs.charAt(0))==Character.toLowerCase(expected);
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
     }
 
 
