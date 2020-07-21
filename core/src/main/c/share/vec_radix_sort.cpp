@@ -397,7 +397,6 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pInde
         merged_index_size += java_entries[i].size;
     }
 
-//    printf("count=%ld, size=%d, index_size=%llu\n", count, size, merged_index_size);
     if (count < size) {
         for (uint32_t i = count; i < size; i++) {
             entries[i].index = nullptr;

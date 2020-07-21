@@ -50,6 +50,7 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
 
+    public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
@@ -319,6 +320,27 @@ public class TableWriter implements Closeable {
         } finally {
             latch.countDown();
         }
+    }
+
+    private static long searchIndex(long indexAddress, long low, long high, long value, int scanDirection) {
+        while (low < high) {
+            long mid = (low + high - 1) >>> 1;
+            long midVal = Unsafe.getUnsafe().getLong(indexAddress + mid * 16);
+
+            if (midVal < value)
+                low = mid + 1;
+            else if (midVal > value)
+                high = mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += scanDirection;
+                while (mid > 0 && mid < high && midVal == Unsafe.getUnsafe().getLong(indexAddress + mid * 16)) {
+                    mid += scanDirection;
+                }
+                return mid - scanDirection;
+            }
+        }
+        return -(low + 1);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -632,58 +654,72 @@ public class TableWriter implements Closeable {
     }
 
     private void mergeOutOfOrderRecords() {
-/*        final int timestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = metadata.getTimestampIndex();
         long index = mergeRowIndex;
-        long i = 0;
-        Vect.radix_sort_long_index_asc_in_place(timestampMergeMem.getPageAddress(0), timestampMergeMem.getPageSize(0) / 16);
+//        long i = 0;
 
-        final long prevHi = this.partitionHi;
-
-        while (true) {
-            // top of the timestamps
-
-            long ts = timestampMergeMem.getLong(i);
-            // check if this timestamp lands into latest partition
-            // find position in this partition where we need to insert timestamp
-            path.trimTo(rootLen);
-            setStateForTimestamp(ts, true);
-            // this will configure path
-            dFile(path, metadata.getColumnName(timestampIndex));
-
-            if (ff.exists(path)) {
-
-            }
-
-            // check if partition exists
-            if (ff.exists(path)) {
-                timestampSearchColumn.of(ff, path, ff.getMapPageSize(), transientRowCount * Long.BYTES);
-                long pos = BinarySearch.search(timestampSearchColumn, ts, 0, transientRowCount, BinarySearch.SCAN_UP);
-                if (pos < 0) {
-                    pos = -pos - 1;
-                }
-            } else {
-                // cool, need to create new partition ahead of everything
-                // append here until timestamp changes
-                openPartition(ts);
-                // work out where to stop appending
-                while (ts < partitionHi) {
-                    final long row = timestampMergeMem.getLong(i * 16 + 8);
-                    for (int j = 0; j < columnCount; j++) {
-                        switch (metadata.getColumnType(j)) {
-                            case ColumnType.INT:
-                                columns.getQuick(getPrimaryColumnIndex(j)).putInt(mergeColumns.getQuick(getPrimaryColumnIndex(j)).getInt(row * Integer.BYTES));
-                                break;
-                            case ColumnType.STRING:
-
-                        }
-                    }
-                }
+        int pageCount = timestampMergeMem.getPageCount();
+        long p;
+        long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
+        long rowCount = 0;
 
 
-            }
+        LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+        for (int i = 0; i < pageCount; i++) {
+            final long pageAddr = timestampMergeMem.getPageAddress(i);
+            final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
+            System.out.println(Long.toHexString(pageAddr));
+            Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
+            Unsafe.getUnsafe().putLong(p, pageAddr);
+            Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
+            p += TIMESTAMP_MERGE_ENTRY_BYTES;
+            rowCount += pageSize;
+        }
+
+        LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+        long mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
+
+        // we have three frames:
+        // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
+        // partition actual data "lo" and "hi" (dataLo, dataHi)
+        // out of order "lo" and "hi" (indexLo, indexHi)
+
+        long indexLo = 0;
+
+        long ooTimestampLo = Unsafe.getUnsafe().getLong(mergedTimestamps);
+        setStateForTimestamp(ooTimestampLo, true);
+        long partitionTimestampHi = this.partitionHi;
+
+        long indexHi = searchIndex(mergedTimestamps, indexLo, rowCount, partitionTimestampHi, BinarySearch.SCAN_DOWN);
+        if (indexHi < 0) {
+            indexHi = -indexHi - 1;
+        }
+
+        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + indexHi * TIMESTAMP_MERGE_ENTRY_BYTES);
+
+        // find out real boundary of the partition
+        dFile(path, metadata.getColumnName(timestampIndex));
+
+        long fd = ff.openRW(path);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
+        }
+
+        // read the top value
+        if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+            throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
+        }
+
+        long dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+
+        // read bottom of file
+        // todo: check that offset is non-negative
+        if (ff.read(fd, tempMem8b, Long.BYTES, ff.length(fd) - Long.BYTES) != Long.BYTES) {
+            throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
+        }
+        long dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
 
 
-        }*/
         this.mergeRowIndex = 0;
     }
 

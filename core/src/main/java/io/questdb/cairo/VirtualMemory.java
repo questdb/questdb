@@ -24,24 +24,13 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256FromCharSequenceDecoder;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Long256Sink;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -54,8 +43,10 @@ public class VirtualMemory implements Closeable {
     private final CharSequenceView csview2 = new CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private long pageSize;
     private final int maxPages;
+    private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
+    private final StradlingPageLong256FromCharSequenceDecoder stradlingPageLong256Decoder = new StradlingPageLong256FromCharSequenceDecoder();
+    private long pageSize;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -65,8 +56,6 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
-    private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
-    private final StradlingPageLong256FromCharSequenceDecoder stradlingPageLong256Decoder = new StradlingPageLong256FromCharSequenceDecoder();
 
     public VirtualMemory(long pageSize, int maxPages) {
         setPageSize(pageSize);
@@ -126,6 +115,10 @@ public class VirtualMemory implements Closeable {
         pageLo = -1;
         baseOffset = 1;
         clearHotPage();
+    }
+
+    public int getPageCount() {
+        return pages.size();
     }
 
     public final long getAppendOffset() {
@@ -789,12 +782,19 @@ public class VirtualMemory implements Closeable {
      * @param page page index, starting from 0
      * @return native address of page
      */
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         return pages.getQuick(page);
     }
 
     protected long getPageSize(int page) {
         return getMapPageSize();
+    }
+
+    public long getPageUsedSize(int page) {
+        if (page < pages.size() - 1) {
+            return getPageSize(page);
+        }
+        return appendPointer - pages.getQuick(page);
     }
 
     private short getShort0(long offset) {
