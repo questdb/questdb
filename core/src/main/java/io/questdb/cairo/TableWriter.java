@@ -690,36 +690,69 @@ public class TableWriter implements Closeable {
         setStateForTimestamp(ooTimestampLo, true);
         long partitionTimestampHi = this.partitionHi;
 
-        long indexHi = searchIndex(mergedTimestamps, indexLo, rowCount, partitionTimestampHi, BinarySearch.SCAN_DOWN);
+        long indexHi = searchIndex(mergedTimestamps, indexLo, rowCount - 1, partitionTimestampHi, BinarySearch.SCAN_DOWN);
         if (indexHi < 0) {
             indexHi = -indexHi - 1;
         }
 
         long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + indexHi * TIMESTAMP_MERGE_ENTRY_BYTES);
 
-        // find out real boundary of the partition
-        dFile(path, metadata.getColumnName(timestampIndex));
-
-        long fd = ff.openRW(path);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
+        // we may need to re-use file descriptors when this partition is the "current" one
+        // we cannot open file again due to sharing violation
+        //
+        // to determine that 'ooTimestampLo' goes into current partition
+        // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
+        // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
+        long maxTruncated = 0;
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                maxTruncated = Timestamps.ceilDD(this.maxTimestamp);
+                break;
+            case PartitionBy.MONTH:
+                maxTruncated = Timestamps.ceilMM(this.maxTimestamp);
+                break;
+            case PartitionBy.YEAR:
+                maxTruncated = Timestamps.ceilYYYY(this.maxTimestamp);
+                break;
+            default:
+                assert false;
         }
 
-        // read the top value
-        if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
+        long activeTimestampFd = columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+        long fd = activeTimestampFd;
+        long dataTimestampLo;
+        long dataTimestampHi;
+
+        try {
+            if (partitionTimestampHi == maxTruncated) {
+                dataTimestampHi = this.maxTimestamp;
+            } else {
+                // todo: close "fd" if we opened it
+                dFile(path, metadata.getColumnName(timestampIndex));
+                fd = ff.openRW(path);
+                if (fd == -1) {
+                    throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
+                }
+
+                // read bottom of file
+                // todo: check that offset is non-negative
+                if (ff.read(fd, tempMem8b, Long.BYTES, ff.length(fd) - Long.BYTES) != Long.BYTES) {
+                    throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
+                }
+                dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+            }
+
+            // read the top value
+            if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
+            }
+
+            dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+        } finally {
+            if (fd != activeTimestampFd) {
+                ff.close(fd);
+            }
         }
-
-        long dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
-
-        // read bottom of file
-        // todo: check that offset is non-negative
-        if (ff.read(fd, tempMem8b, Long.BYTES, ff.length(fd) - Long.BYTES) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
-        }
-        long dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
-
-
         this.mergeRowIndex = 0;
     }
 
