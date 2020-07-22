@@ -107,7 +107,7 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullers;
     private final ObjList<VirtualMemory> mergeColumns;
-    private final ReadOnlyColumn timestampSearchColumn = new ReadOnlyMemory();
+    private final OnePageMemory timestampSearchColumn = new OnePageMemory();
     private VirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -138,8 +138,9 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
-    private long mergeRowIndex;
+    private long mergeRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
+    private long transientRowCountBeforeOutOfOrder;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -614,7 +615,7 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            if (mergeRowIndex > 0) {
+            if (mergeRowCount > 0) {
                 mergeOutOfOrderRecords();
             }
 
@@ -655,14 +656,11 @@ public class TableWriter implements Closeable {
 
     private void mergeOutOfOrderRecords() {
         final int timestampIndex = metadata.getTimestampIndex();
-        long index = mergeRowIndex;
 //        long i = 0;
 
         int pageCount = timestampMergeMem.getPageCount();
         long p;
         long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
-        long rowCount = 0;
-
 
         LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
         for (int i = 0; i < pageCount; i++) {
@@ -673,7 +671,6 @@ public class TableWriter implements Closeable {
             Unsafe.getUnsafe().putLong(p, pageAddr);
             Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
             p += TIMESTAMP_MERGE_ENTRY_BYTES;
-            rowCount += pageSize;
         }
 
         LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
@@ -685,17 +682,21 @@ public class TableWriter implements Closeable {
         // out of order "lo" and "hi" (indexLo, indexHi)
 
         long indexLo = 0;
+        long indexMax = mergeRowCount;
 
         long ooTimestampLo = Unsafe.getUnsafe().getLong(mergedTimestamps);
+        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + (indexMax - 1) * 16);
+
         setStateForTimestamp(ooTimestampLo, true);
+        dFile(path, metadata.getColumnName(timestampIndex));
         long partitionTimestampHi = this.partitionHi;
 
-        long indexHi = searchIndex(mergedTimestamps, indexLo, rowCount - 1, partitionTimestampHi, BinarySearch.SCAN_DOWN);
-        if (indexHi < 0) {
-            indexHi = -indexHi - 1;
-        }
+//        long indexHi = searchIndex(mergedTimestamps, indexLo, rowCount - 1, partitionTimestampHi, BinarySearch.SCAN_DOWN);
+//        if (indexHi < 0) {
+//            indexHi = -indexHi - 1;
+//        }
 
-        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + indexHi * TIMESTAMP_MERGE_ENTRY_BYTES);
+//        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES);
 
         // we may need to re-use file descriptors when this partition is the "current" one
         // we cannot open file again due to sharing violation
@@ -722,38 +723,132 @@ public class TableWriter implements Closeable {
         long fd = activeTimestampFd;
         long dataTimestampLo;
         long dataTimestampHi;
+        long dataIndexLo = 0;
+        long dataIndexMax;
 
         try {
             if (partitionTimestampHi == maxTruncated) {
                 dataTimestampHi = this.maxTimestamp;
+                dataIndexMax = transientRowCount;
             } else {
                 // todo: close "fd" if we opened it
-                dFile(path, metadata.getColumnName(timestampIndex));
                 fd = ff.openRW(path);
                 if (fd == -1) {
                     throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                 }
 
-                // read bottom of file
-                // todo: check that offset is non-negative
-                if (ff.read(fd, tempMem8b, Long.BYTES, ff.length(fd) - Long.BYTES) != Long.BYTES) {
+                // todo: read the archive
+                dataIndexMax = ff.length(fd) / Long.BYTES;
+
+//                // read bottom of file
+//                // todo: check that offset is non-negative
+                if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
                     throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
                 }
                 dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
             }
 
             // read the top value
+            // todo: check that file size is > 8 bytes
             if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
             }
 
             dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+            // this is an overloaded function, page size is derived from the file size
+            timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
+
+            // create copy jobs
+            if (ooTimestampLo < dataTimestampLo) {
+
+                // need to copy OO data first
+                // find the low boundary
+                long l1 = searchIndex(mergedTimestamps, indexLo, indexMax - 1, dataTimestampLo, BinarySearch.SCAN_DOWN);
+                LOG.info().$("copy ooo set [from=").$(indexLo).$(", to=").$(l1).$(']').$();
+
+                long l2_ooo;
+                long l2_data;
+                if (ooTimestampHi >= dataTimestampLo) {
+
+                    if (ooTimestampHi < dataTimestampHi) {
+                        l2_data = BinarySearch.search(timestampSearchColumn, ooTimestampHi, dataIndexLo, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
+                        l2_ooo = indexMax - 1;
+                    } else if (ooTimestampHi > dataTimestampHi) {
+                        l2_ooo = searchIndex(mergedTimestamps, l1 + 1, indexMax, dataTimestampHi, BinarySearch.SCAN_DOWN);
+                        l2_data = dataIndexMax - 1;
+                    } else {
+                        l2_ooo = indexMax - 1;
+                        l2_data = dataIndexMax - 1;
+                    }
+
+                    // do the merge
+                    LOG.info()
+                            .$("merged data + ooo [dataFrom=").$(dataIndexLo)
+                            .$(", dataTo=").$(l2_data)
+                            .$(", oooFrom=").$(l1 + 1)
+                            .$(", oooTo=").$(l2_ooo)
+                            .$(']').$();
+                } else {
+                    l2_ooo = indexMax - 1;
+                    l2_data = dataIndexMax - 1;
+                }
+
+                if (l2_ooo < indexMax - 1) {
+                    LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
+                } else if (l2_data < dataIndexMax - 1) {
+                    LOG.info().$("copy date set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+                }
+            } else {
+                long l1 = BinarySearch.search(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
+                LOG.info().$("copy data set [from=").$(0).$(", to=").$(l1).$(']').$();
+
+                long l2_ooo;
+                long l2_data;
+                if (ooTimestampLo <= dataTimestampHi) {
+
+                    if (ooTimestampHi < dataTimestampHi) {
+                        l2_data = BinarySearch.search(timestampSearchColumn, ooTimestampHi, dataIndexLo, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
+                        l2_ooo = indexMax - 1;
+                    } else if (ooTimestampHi > dataTimestampHi) {
+                        l2_ooo = searchIndex(mergedTimestamps, l1 + 1, indexMax, dataTimestampHi, BinarySearch.SCAN_DOWN);
+                        l2_data = dataIndexMax - 1;
+                    } else {
+                        l2_ooo = indexMax - 1;
+                        l2_data = dataIndexMax - 1;
+                    }
+
+                    // do the merge
+                    LOG.info()
+                            .$("merged data + ooo [dataFrom=").$(dataIndexLo)
+                            .$(", dataTo=").$(l2_data)
+                            .$(", oooFrom=").$(l1 + 1)
+                            .$(", oooTo=").$(l2_ooo)
+                            .$(']').$();
+
+                    if (l2_ooo < indexMax - 1) {
+                        LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
+                    } else if (l2_data < dataIndexMax - 1) {
+                        LOG.info().$("copy data set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+                    }
+
+                } else {
+                    l2_ooo = indexMax - 1;
+                    l2_data = dataIndexMax - 1;
+                }
+
+                if (l2_ooo < indexMax - 1) {
+                    LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
+                } else if (l2_data < dataIndexMax - 1) {
+                    LOG.info().$("copy date set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+                }
+            }
+
         } finally {
             if (fd != activeTimestampFd) {
                 ff.close(fd);
             }
         }
-        this.mergeRowIndex = 0;
+        this.mergeRowCount = 0;
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -2901,7 +2996,7 @@ public class TableWriter implements Closeable {
 
     private void mergeTimestampSetter(long timestamp) {
         timestampMergeMem.putLong(timestamp);
-        timestampMergeMem.putLong(mergeRowIndex++);
+        timestampMergeMem.putLong(mergeRowCount++);
     }
 
     @FunctionalInterface
@@ -2982,8 +3077,10 @@ public class TableWriter implements Closeable {
 //                txPrevTransientRowCount = transientRowCount;
 //                transientRowCount = 0;
 
+                // todo: do we need this?
+                TableWriter.this.transientRowCountBeforeOutOfOrder = TableWriter.this.transientRowCount;
                 openMergePartition();
-                TableWriter.this.mergeRowIndex = 0;
+                TableWriter.this.mergeRowCount = 0;
                 assert timestampMergeMem != null;
                 timestampSetter = mergeTimestampMethodRef;
                 timestampSetter.accept(timestamp);
