@@ -42,8 +42,8 @@ scratch, without dependencies, in the name of performance. We are 100% free from
 garbage collection.
 
 QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
-Wire protocol, a high-performance HTTP API, and even supports ingestion with
-Influx Line Protocol. It supports both relational and time-series joins, which
+wire protocol, a high-performance REST API, and even supports ingestion with
+InfluxDB line protocol. It supports both relational and time-series joins, which
 makes it easy to correlate data over time. Writes are durably committed to disk,
 meaning that the data is safe, yet instantly accessible.
 
@@ -94,9 +94,9 @@ You can interact with QuestDB using:
 
 - [Web Console](https://questdb.io/docs/usingWebConsole) listening on port
   `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres Wire](https://questdb.io/docs/guidePSQL), for example with PSQL
+- [Postgres wire](https://questdb.io/docs/guidePSQL), for example with PSQL
   (alpha) on port `8812`
-- [HTTP API](https://questdb.io/docs/guideREST) listening on port `9000`
+- [REST API](https://questdb.io/docs/guideREST) listening on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
@@ -161,7 +161,7 @@ Quick-start guides:
 Usage guides:
 
 - [Web Console](https://questdb.io/docs/usingWebConsole)
-- [Postgres Wire with PSQL](https://questdb.io/docs/guidePSQL) (alpha)
+- [Postgres wire with PSQL](https://questdb.io/docs/guidePSQL) (alpha)
 - [REST API](https://questdb.io/docs/guideREST)
 - [CRUD operations](https://questdb.io/docs/crudOperations)
 
