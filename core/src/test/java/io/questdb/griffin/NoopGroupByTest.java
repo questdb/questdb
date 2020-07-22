@@ -37,6 +37,35 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMissingGroupByWithHourFunction() throws Exception {
+        assertQuery(
+                "hour\tavgBid\n",
+                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
+                "select hour(ts), avg(bid) avgBid from x order by hour",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "hour\tavgBid\n" +
+                        "0\t0.47607185409853914\n" +
+                        "1\t0.6861237948732989\n",
+                true
+        );
+    }
+
+    //with where clause
+    @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
         assertFailure(
                 "select sym1, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1, sym2",
@@ -82,10 +111,23 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoopGroupByFailureWhenUsingAliasedColumn() throws Exception {
-        assertQuery(
-                "ccy\tavgBid\n",
-                "select sym1 ccy, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by ccy",
+    public void testNoopGroupByFailureWhenUsingAliasedColumnAndWrongTableAlias() throws Exception {
+        assertFailure(
+                "select sym ccy, avg(bid) avgBid from x a where sym in ('AA', 'BB' ) group by b.ccy",
+                "create table x (\n" +
+                        "    sym symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByInvalidColumnName1() throws Exception {
+        assertFailure(
+                "select a.sym1, avg(bid) avgBid from x a group by b.rubbish",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
@@ -93,18 +135,24 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    ask double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select " +
-                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
-                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
-                        "        rnd_double() bid, \n" +
-                        "        rnd_double() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(20)) timestamp (ts)",
-                "ccy\tavgBid\n" +
-                        "A\t0.5942181417903911\n" +
-                        "B\t0.7080299543021055\n",
-                true
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByInvalidColumnName2() throws Exception {
+        assertFailure(
+                "select a.sym1, avg(bid) avgBid from x a group by b.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                0,
+                "group by column does not match key column is select statement "
         );
     }
 
@@ -131,6 +179,176 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")  partition by NONE",
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByMissingColumnWithTableAlias1() throws Exception {
+        assertFailure(
+                "select a.sym1, a.sym2, avg(bid) avgBid from x a group by a.sym1", //a.sym2 is missing in group by clause
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                0,
+                "group by column does not match key column is select statement "
+        );
+    }
+
+    @Test
+    public void testNoopGroupByValidColumnName() throws Exception {
+        assertQuery(
+                "sym1\tavgBid\n",
+                "select a.sym1, avg(bid) avgBid from x a group by a.sym1 order by a.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "sym1\tavgBid\n" +
+                        "A\t0.5942181417903911\n" +
+                        "B\t0.7080299543021055\n" +
+                        "C\t0.4760584891454253\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByValidColumnNameWithHourFunction() throws Exception {
+        assertQuery(
+                "hour\tavgBid\n",
+                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
+                "select hour(ts), avg(bid) avgBid from x group by hour(ts) order by hour",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "hour\tavgBid\n" +
+                        "0\t0.47607185409853914\n" +
+                        "1\t0.6861237948732989\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByValidColumnNameWithHourFunctionAndAliasedTable() throws Exception {
+        assertQuery(
+                "hour\tavgBid\n",
+                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
+                "select hour(a.ts), avg(bid) avgBid from x a group by hour(a.ts) order by hour",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "hour\tavgBid\n" +
+                        "0\t0.47607185409853914\n" +
+                        "1\t0.6861237948732989\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWhenUsingAliasedColumn() throws Exception {
+        assertQuery(
+                "ccy\tavgBid\n",
+                "select sym1 ccy, avg(bid) avgBid from x where sym1 in ('A', 'B' ) group by ccy",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "ccy\tavgBid\n" +
+                        "A\t0.5942181417903911\n" +
+                        "B\t0.7080299543021055\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable() throws Exception {
+        assertQuery(
+                "ccy\tavgBid\n",
+                "select sym1 ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "ccy\tavgBid\n" +
+                        "A\t0.5942181417903911\n" +
+                        "B\t0.7080299543021055\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable2() throws Exception {
+        assertFailure(
+                "select sym1 ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by b.ccy",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
                 0,
                 "group by column does not match key column is select statement "
         );
@@ -189,6 +407,53 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "A\tE\t0.5837537495691357\n" +
                         "B\tD\t0.8434630350290969\n" +
                         "A\tF\t0.8664158914718532\n",
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWithFunction1() throws Exception {
+        assertQuery(
+                "column\tavg\n",
+                "select b+a, avg(c) from x group by b+a",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    a double,\n" +
+                        "    b double,\n" +
+                        "    c double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() a, \n" +
+                        "        rnd_double() b, \n" +
+                        "        rnd_double() c, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "column\tavg\n" +
+                        "0.30949977657533256\t0.299199045961845\n" +
+                        "1.4932004946738646\t0.9856290845874263\n" +
+                        "1.1347848544029424\t0.7611029514995744\n" +
+                        "0.5966743012271949\t0.2390529010846525\n" +
+                        "0.9879110542701665\t0.38539947865244994\n" +
+                        "0.6649002464931092\t0.7675673070796104\n" +
+                        "0.7795990267808574\t0.6381607531178513\n" +
+                        "1.4831535123369082\t0.12026122412833129\n" +
+                        "1.234827286954693\t0.42281342727402726\n" +
+                        "1.2962662695358191\t0.5522494170511608\n" +
+                        "0.8268723676824133\t0.8847591603509142\n" +
+                        "1.757029498695562\t0.8001121139739173\n" +
+                        "1.0843141424360652\t0.456344569609078\n" +
+                        "0.8195064672447426\t0.5659429139861241\n" +
+                        "1.405167662413488\t0.9644183832564398\n" +
+                        "0.693754621013657\t0.8164182592467494\n" +
+                        "0.9820924616701128\t0.769238189433781\n" +
+                        "0.9144934765891063\t0.6551335839796312\n" +
+                        "0.7675889012481835\t0.9540069089049732\n" +
+                        "0.9257619753148886\t0.19751370382305056\n",
                 true
         );
     }

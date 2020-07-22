@@ -1667,6 +1667,10 @@ public class SqlCodeGenerator implements Mutable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
+                    final ObjList<ExpressionNode> groupBys = model.getNestedModel().getGroupBy().size() > 0 || model.getNestedModel().getNestedModel() == null ? model.getNestedModel().getGroupBy() : model.getNestedModel().getNestedModel().getGroupBy();
+                    ExpressionNode alias = specialCaseKeys ? model.getNestedModel().getNestedModel().getAlias() : model.getNestedModel().getAlias();
+                    GroupByUtils.checkGroupBy(groupBys, model.getNestedModel().getColumns(), tempKeyIndex.size(), alias);
+
                     return new GroupByRecordCursorFactory(
                             configuration,
                             factory,

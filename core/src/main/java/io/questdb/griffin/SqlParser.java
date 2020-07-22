@@ -701,11 +701,11 @@ public final class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparse();
                 ExpressionNode n = expr(lexer, model);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
                 }
 
-                model.addGroupBy(n.token);
+                model.addGroupBy(n);
 
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));

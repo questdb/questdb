@@ -77,6 +77,70 @@ public class GroupByUtils {
         }
     }
 
+    public static void checkGroupBy(ObjList<ExpressionNode> groupBys, ObjList<QueryColumn> selectColumns, int groupByColumnCount, ExpressionNode alias) throws SqlException {
+        int matchingColumnCount = 0;
+        int groupBySize = groupBys.size();
+        if (groupBySize == 0) {
+            return;
+        }
+        int selectColumnCount = selectColumns.size();
+        for (int i = 0; i < selectColumnCount; i++) {
+            for (int j = 0; j < groupBySize; j++) {
+                ExpressionNode groupByNode = groupBys.getQuick(j);
+                QueryColumn selectColumn = selectColumns.get(i);
+                ExpressionNode selectNode = selectColumn.getAst();
+                if (groupByNode.type == ExpressionNode.LITERAL && selectNode.type == ExpressionNode.LITERAL) {
+                    if (Chars.equals(groupByNode.token, selectNode.token) || Chars.equals(groupByNode.token, selectColumn.getAlias())) {
+                        matchingColumnCount++;
+                        break;
+                    }
+
+                    int dotIndex = Chars.indexOf(groupByNode.token, '.');
+                    if (dotIndex > -1) {
+                        if (alias != null
+                                && Chars.equals(alias.token, groupByNode.token, 0, dotIndex)
+                                && (
+                                Chars.equals(selectNode.token, groupByNode.token, dotIndex + 1, groupByNode.token.length())
+                                        ||
+                                        Chars.equals(selectColumn.getAlias(), groupByNode.token, dotIndex + 1, groupByNode.token.length())
+                        )
+                        ) {
+                            matchingColumnCount++;
+                            break;
+                        }
+                    }
+                } else {
+                    if (compareNodes(groupByNode, selectNode)) {
+                        matchingColumnCount++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (matchingColumnCount != groupBySize || matchingColumnCount != groupByColumnCount) {
+            throw SqlException.$(0, "group by column does not match key column is select statement ");
+        }
+    }
+
+    public static boolean compareNodes(ExpressionNode groupBy, ExpressionNode selectNode) {
+        if (groupBy == null && selectNode == null) {
+            return true;
+        }
+
+        if (groupBy == null || selectNode == null || groupBy.type != selectNode.type) {
+            return false;
+        }
+
+        int dotIndex = groupBy.token != null ? Chars.indexOf(groupBy.token, '.') : -1;
+        if ((dotIndex < 0 && !Chars.equals(groupBy.token, selectNode.token))
+                || (dotIndex > -1 && !Chars.equals(selectNode.token, groupBy.token, dotIndex + 1, groupBy.token.length()))) {
+            return false;
+        }
+
+        return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
+    }
+
     public static IntList prepareGroupByRecordFunctions(
             @NotNull QueryModel model,
             RecordMetadata metadata,
@@ -96,9 +160,9 @@ public class GroupByUtils {
         // map key columns.
 
         final ObjList<QueryColumn> columns = model.getColumns();
-        final ObjList<CharSequence> groupBy = model.getNestedModel().getGroupBy();
         IntList symbolTableSkewIndex = null;
         int valueColumnIndex = 0;
+        int groupByColumnCount = 0;
 
         // when we have same column several times in a row
         // we only add it once to map keys
@@ -113,10 +177,6 @@ public class GroupByUtils {
                 int index = metadata.getColumnIndexQuiet(node.token);
                 if (index == -1) {
                     throw SqlException.invalidColumn(node.position, node.token);
-                }
-
-                if (groupBy.size() > 0 && groupBy.indexOf(node.token) < 0) {
-                    throw SqlException.$(node.position, "group by column does not match key column is select statement ");
                 }
 
                 type = metadata.getColumnType(index);
@@ -201,6 +261,7 @@ public class GroupByUtils {
                                 metadata.isSymbolTableStatic(index)
                         )
                 );
+                groupByColumnCount++;
 
             } else {
                 // add group-by function as a record function as well
@@ -222,13 +283,9 @@ public class GroupByUtils {
             }
         }
 
-        for (int i = 0, n = groupBy.size(); i < n; i++) {
-            CharSequence groupByColumnName = groupBy.get(i);
-            int columnIndex = metadata.getColumnIndexQuiet(groupByColumnName);
-            if (columnIndex < 0 || listColumnFilter.getQuiet(columnIndex) < 0) {
-                throw SqlException.$(0, "group by column does not match key column is select statement ");
-            }
-        }
+        final ObjList<ExpressionNode> groupBys = model.getNestedModel().getGroupBy().size() > 0 || model.getNestedModel().getNestedModel() == null ? model.getNestedModel().getGroupBy() : model.getNestedModel().getNestedModel().getGroupBy();
+        ExpressionNode alias = model.getNestedModel().getNestedModel() != null ? model.getNestedModel().getNestedModel().getAlias() : null;
+        GroupByUtils.checkGroupBy(groupBys, model.getNestedModel().getColumns(), groupByColumnCount, alias);
 
         return symbolTableSkewIndex;
     }
