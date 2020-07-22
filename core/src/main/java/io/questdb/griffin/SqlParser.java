@@ -621,6 +621,7 @@ public final class SqlParser {
             throw SqlException.$((lexer.getPosition()), "'by' expected");
         }
     }
+
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok != null && isPartitionKeyword(tok)) {
             expectTok(lexer, "by");
