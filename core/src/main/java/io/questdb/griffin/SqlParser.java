@@ -193,13 +193,9 @@ public final class SqlParser {
     }
 
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
-        return expectLiteral(lexer, "literal");
-    }
-
-    private ExpressionNode expectLiteral(GenericLexer lexer, String expectedList) throws SqlException {
-        CharSequence tok = tok(lexer, expectedList);
+        CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
-        validateLiteral(pos, tok, expectedList);
+        validateLiteral(pos, tok);
         return nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos);
     }
 
@@ -681,6 +677,11 @@ public final class SqlParser {
             parseSelectClause(lexer, model);
 
             tok = optTok(lexer);
+
+            if (tok != null && SqlKeywords.isUnionKeyword(tok)) {
+                tok = null;
+            }
+
             if (tok == null) {
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
@@ -690,6 +691,7 @@ public final class SqlParser {
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
+                lexer.unparse();
                 return model;
             }
         } else {
@@ -1143,6 +1145,7 @@ public final class SqlParser {
             }
 
             if (tok == null) {
+                lexer.unparse();
                 break;
             }
 
@@ -1151,6 +1154,10 @@ public final class SqlParser {
                 break;
             }
 
+            if (isUnionKeyword(tok)) {
+                lexer.unparse();
+                break;
+            }
             if (!Chars.equals(tok, ',')) {
                 throw err(lexer, "',' or 'from' expected");
             }
@@ -1401,7 +1408,7 @@ public final class SqlParser {
         return tok;
     }
 
-    private void validateLiteral(int pos, CharSequence tok, String expectedList) throws SqlException {
+    private void validateLiteral(int pos, CharSequence tok) throws SqlException {
         switch (tok.charAt(0)) {
             case '(':
             case ')':
@@ -1409,7 +1416,7 @@ public final class SqlParser {
             case '`':
 //            case '"':
             case '\'':
-                throw SqlException.position(pos).put(expectedList).put(" expected");
+                throw SqlException.position(pos).put("literal expected");
             default:
                 break;
 

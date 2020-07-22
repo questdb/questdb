@@ -115,6 +115,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectNoFromUnion() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) sum from ((select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x)",
+                "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
+        );
+    }
+
+    @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
