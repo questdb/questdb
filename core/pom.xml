@@ -204,6 +204,7 @@
                 <version>2.19</version>
                 <configuration>
                     <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED</argLine>
+                    <argLine>-Dfile.encoding=UTF-8</argLine>
                 </configuration>
             </plugin>
             <plugin>
