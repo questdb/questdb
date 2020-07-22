@@ -61,6 +61,7 @@ public final class SqlParser {
         tableAliasStop.add(")");
         tableAliasStop.add(";");
         tableAliasStop.add("union");
+        tableAliasStop.add("group");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
