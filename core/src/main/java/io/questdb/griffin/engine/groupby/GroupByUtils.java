@@ -145,13 +145,16 @@ public class GroupByUtils {
             return false;
         }
 
+        if (groupByArgsSize < 3) {
+            return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
+        }
+
         for (int i = 0; i < groupByArgsSize; i++) {
             if (!compareNodes(groupBy.args.get(i), selectNode.args.get(i))) {
                 return false;
             }
         }
-
-        return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
+        return true;
     }
 
     public static IntList prepareGroupByRecordFunctions(
