@@ -41,7 +41,6 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
-
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
 
     static {
@@ -63,9 +62,8 @@ public final class SqlParser {
         tableAliasStop.add(")");
         tableAliasStop.add(";");
         tableAliasStop.add("union");
-        tableAliasStop.add("group");
         tableAliasStop.add("except");
-        tableAliasStop.add("intercept");
+        tableAliasStop.add("intersect");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -86,53 +84,9 @@ public final class SqlParser {
         //
         setOperations.add("union");
         setOperations.add("except");
-        setOperations.add("intercept");
-
+        setOperations.add("intersect");
     }
 
-    private QueryModel parseDml(GenericLexer lexer) throws SqlException {
-        QueryModel model = null;
-        QueryModel prevModel = null;
-        while (true) {
-
-            QueryModel unionModel = parseDml0(lexer);
-            if (prevModel == null) {
-                model = unionModel;
-                prevModel = model;
-            } else {
-                prevModel.setUnionModel(unionModel);
-                prevModel = unionModel;
-            }
-
-            CharSequence tok = optTok(lexer);
-            if (tok == null || setOperations.excludes(tok)) {
-                lexer.unparse();
-                return model;
-            }
-
-            if (isUnionKeyword(tok)) {
-                tok = tok(lexer, "all or select");
-                if (isAllKeyword(tok)) {
-                    if (!model.isDistinct()) {
-                        prevModel.setUnionModelType(QueryModel.UNION_MODEL_ALL);
-                    } else {
-                        prevModel.setUnionModelType(QueryModel.UNION_MODEL_DISTINCT);
-                    }
-                } else {
-                    prevModel.setUnionModelType(QueryModel.UNION_MODEL_DISTINCT);
-                    lexer.unparse();
-                }
-            }
-
-            if (isExceptKeyword(tok)) {
-                prevModel.setUnionModelType(QueryModel.EXCEPT_MODEL);
-            }
-
-            if (isInterceptKeyword(tok)) {
-                prevModel.setUnionModelType(QueryModel.INTERCEPT_MODEL);
-            }
-        }
-    }
 
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder;
@@ -1208,6 +1162,50 @@ public final class SqlParser {
             return model;
         }
         throw errUnexpected(lexer, tok);
+    }
+
+    private QueryModel parseDml(GenericLexer lexer) throws SqlException {
+        QueryModel model = null;
+        QueryModel prevModel = null;
+        while (true) {
+
+            QueryModel unionModel = parseDml0(lexer);
+            if (prevModel == null) {
+                model = unionModel;
+                prevModel = model;
+            } else {
+                prevModel.setUnionModel(unionModel);
+                prevModel = unionModel;
+            }
+
+            CharSequence tok = optTok(lexer);
+            if (tok == null || setOperations.excludes(tok)) {
+                lexer.unparse();
+                return model;
+            }
+
+            if (isUnionKeyword(tok)) {
+                tok = tok(lexer, "all or select");
+                if (isAllKeyword(tok)) {
+                    if (!model.isDistinct()) {
+                        prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
+                    } else {
+                        prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
+                    }
+                } else {
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
+                    lexer.unparse();
+                }
+            }
+
+            if (isExceptKeyword(tok)) {
+                prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+            }
+
+            if (isIntersectKeyword(tok)) {
+                prevModel.setSetOperationType(QueryModel.SET_OPERATION_INTERSECT);
+            }
+        }
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {

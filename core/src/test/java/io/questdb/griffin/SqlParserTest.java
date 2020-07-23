@@ -145,10 +145,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testQueryInterceptQuery() throws SqlException {
+    public void testQueryIntersectQuery() throws SqlException {
         assertQuery(
                 "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
-                "select * from x intercept select* from y",
+                "select * from x intersect select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
