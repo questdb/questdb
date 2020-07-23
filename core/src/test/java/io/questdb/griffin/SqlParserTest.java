@@ -125,7 +125,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testQueryExceptQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) union select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x except select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -147,7 +147,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testQueryInterceptQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) union select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x intercept select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)

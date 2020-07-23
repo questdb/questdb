@@ -882,9 +882,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (unionModel != null) {
-            sink.put(" union ");
-            if (unionModelType == QueryModel.UNION_MODEL_ALL) {
-                sink.put("all ");
+            if (unionModelType == QueryModel.INTERCEPT_MODEL) {
+                sink.put(" intersect ");
+            } else if (unionModelType == QueryModel.EXCEPT_MODEL) {
+                sink.put(" except ");
+            } else {
+                sink.put(" union ");
+                if (unionModelType == QueryModel.UNION_MODEL_ALL) {
+                    sink.put("all ");
+                }
             }
             unionModel.toSink0(sink, false);
         }
