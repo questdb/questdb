@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -35,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
 
-class ExceptRecordCursor implements NoRandomAccessRecordCursor {
+class ExceptRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
     private RecordCursor masterCursor;
@@ -86,12 +85,22 @@ class ExceptRecordCursor implements NoRandomAccessRecordCursor {
         while (masterCursor.hasNext()) {
             MapKey key = map.withKey();
             key.put(masterRecord, recordSink);
-            if (key.create()) {
+            if (key.notFound()) {
                 return true;
             }
             interruptor.checkInterrupted();
         }
         return false;
+    }
+
+    @Override
+    public Record getRecordB() {
+        return masterCursor.getRecordB();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        masterCursor.recordAt(record, atRowId);
     }
 
     @Override
@@ -101,7 +110,6 @@ class ExceptRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        map.clear();
         symbolCursor = masterCursor;
         masterCursor.toTop();
     }

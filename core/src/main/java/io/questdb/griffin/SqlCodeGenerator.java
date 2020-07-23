@@ -1857,9 +1857,9 @@ public class SqlCodeGenerator implements Mutable {
             case QueryModel.SET_OPERATION_UNION_ALL:
                 return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
             case QueryModel.SET_OPERATION_EXCEPT:
-                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_INTERSECT_CONSTRUCTOR);
-            case QueryModel.SET_OPERATION_INTERSECT:
                 return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_EXCEPT_CONSTRUCTOR);
+            case QueryModel.SET_OPERATION_INTERSECT:
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_INTERSECT_CONSTRUCTOR);
             default:
                 assert false;
                 return null;

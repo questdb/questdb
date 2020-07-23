@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -35,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
 
-class IntersectRecordCursor implements NoRandomAccessRecordCursor {
+class IntersectRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
     private RecordCursor masterCursor;
@@ -70,6 +69,16 @@ class IntersectRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return masterCursor.getRecordB();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        masterCursor.recordAt(record, atRowId);
+    }
+
+    @Override
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
@@ -86,7 +95,7 @@ class IntersectRecordCursor implements NoRandomAccessRecordCursor {
         while (masterCursor.hasNext()) {
             MapKey key = map.withKey();
             key.put(masterRecord, recordSink);
-            if (!key.create()) {
+            if (key.findValue() != null) {
                 return true;
             }
             interruptor.checkInterrupted();
@@ -101,7 +110,6 @@ class IntersectRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        map.clear();
         symbolCursor = masterCursor;
         masterCursor.toTop();
     }

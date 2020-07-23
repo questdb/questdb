@@ -80,7 +80,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return masterFactory.recordCursorSupportsRandomAccess();
     }
 
     @Override
