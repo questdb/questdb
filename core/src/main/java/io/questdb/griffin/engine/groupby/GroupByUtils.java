@@ -138,6 +138,19 @@ public class GroupByUtils {
             return false;
         }
 
+        int groupByArgsSize = groupBy.args.size();
+        int selectNodeArgsSize = selectNode.args.size();
+
+        if (groupByArgsSize != selectNodeArgsSize) {
+            return false;
+        }
+
+        for (int i = 0; i < groupByArgsSize; i++) {
+            if (!compareNodes(groupBy.args.get(i), selectNode.args.get(i))) {
+                return false;
+            }
+        }
+
         return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
     }
 

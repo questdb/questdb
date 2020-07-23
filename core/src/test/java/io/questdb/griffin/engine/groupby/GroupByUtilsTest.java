@@ -28,6 +28,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.ObjectFactory;
 import org.junit.Test;
 
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -39,8 +41,8 @@ public class GroupByUtilsTest {
     public void testNodeTraversal1() {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
-        n1.type = ExpressionNode.FUNCTION;
-        n2.type = ExpressionNode.LITERAL;
+        n1.type = FUNCTION;
+        n2.type = LITERAL;
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -49,15 +51,15 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -66,15 +68,15 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "diff";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -83,16 +85,16 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         n1.rhs.token = "baa";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         n2.rhs.token = "boo";
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
@@ -102,16 +104,16 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         n1.rhs.token = "boo";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         n2.rhs.token = "boo";
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
@@ -120,8 +122,8 @@ public class GroupByUtilsTest {
     public void testNodeTraversal14() {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
-        n1.type = ExpressionNode.FUNCTION;
-        n2.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
+        n2.type = FUNCTION;
         n1.rhs = FACTORY.newInstance();
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
@@ -131,22 +133,22 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         n1.lhs.token = "A";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         n1.rhs.token = "B";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         n2.lhs.token = "B";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         n2.rhs.token = "A";
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
@@ -156,23 +158,78 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         n1.lhs.token = "B";
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         n1.rhs.token = "A";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         n2.lhs.token = "B";
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         n2.rhs.token = "A";
+        assertTrue(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal17() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(FACTORY.newInstance());
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.lhs = FACTORY.newInstance();
+        n2.lhs.type = LITERAL;
+        n2.lhs.token = "B";
+        n2.rhs = FACTORY.newInstance();
+        n2.rhs.type = LITERAL;
+        n2.rhs.token = "A";
+        assertFalse(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal18() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.lhs = FACTORY.newInstance();
+        n1.lhs.type = LITERAL;
+        n1.lhs.token = "B";
+        n1.rhs = FACTORY.newInstance();
+        n1.rhs.type = LITERAL;
+        n1.rhs.token = "A";
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(FACTORY.newInstance());
+        assertFalse(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal19() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(FACTORY.newInstance());
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(FACTORY.newInstance());
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -180,17 +237,108 @@ public class GroupByUtilsTest {
     public void testNodeTraversal2() {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
-        n1.type = ExpressionNode.FUNCTION;
-        n2.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
+        n2.type = FUNCTION;
         assertTrue(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal20() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(FACTORY.newInstance());
+        n1.args.add(FACTORY.newInstance());
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(FACTORY.newInstance());
+        assertFalse(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal21() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        ExpressionNode arg = FACTORY.newInstance();
+
+        arg.type = FUNCTION;
+        arg.token = "func";
+        arg.lhs = FACTORY.newInstance();
+        arg.lhs.type = LITERAL;
+        arg.lhs.token = "B";
+        arg.rhs = FACTORY.newInstance();
+        arg.rhs.type = LITERAL;
+        arg.rhs.token = "A";
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(arg);
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(arg);
+        assertTrue(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal22() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        ExpressionNode arg1 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg2 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg3 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg4 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg5 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg6 = createNode(LITERAL, "BOO", null, null);
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(arg1);
+        n1.args.add(arg2);
+        n1.args.add(arg3);
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(arg4);
+        n2.args.add(arg5);
+        n2.args.add(arg6);
+        assertTrue(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    @Test
+    public void testNodeTraversal23() {
+        ExpressionNode n1 = FACTORY.newInstance();
+        ExpressionNode n2 = FACTORY.newInstance();
+        ExpressionNode arg1 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg2 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg3 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg4 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg5 = createNode(LITERAL, "BOO", null, null);
+        ExpressionNode arg6 = createNode(LITERAL, "YYY", null, null);
+        //
+        n1.type = FUNCTION;
+        n1.token = "func";
+        n1.args.add(arg1);
+        n1.args.add(arg2);
+        n1.args.add(arg3);
+        //
+        n2.type = FUNCTION;
+        n2.token = "func";
+        n2.args.add(arg4);
+        n2.args.add(arg5);
+        n2.args.add(arg6);
+        assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
 
     @Test
     public void testNodeTraversal3() {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
-        n1.type = ExpressionNode.FUNCTION;
-        n2.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
+        n2.type = FUNCTION;
         n1.lhs = FACTORY.newInstance();
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
@@ -200,13 +348,13 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -215,15 +363,15 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -232,15 +380,15 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "diff";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
 
@@ -249,16 +397,16 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         n1.lhs.token = "baa";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         n2.lhs.token = "boo";
         assertFalse(GroupByUtils.compareNodes(n1, n2));
     }
@@ -268,16 +416,16 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.token = "func";
         n1.lhs = FACTORY.newInstance();
-        n1.lhs.type = ExpressionNode.LITERAL;
+        n1.lhs.type = LITERAL;
         n1.lhs.token = "boo";
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
-        n2.lhs.type = ExpressionNode.LITERAL;
+        n2.lhs.type = LITERAL;
         n2.lhs.token = "boo";
         assertTrue(GroupByUtils.compareNodes(n1, n2));
     }
@@ -287,13 +435,22 @@ public class GroupByUtilsTest {
         ExpressionNode n1 = FACTORY.newInstance();
         ExpressionNode n2 = FACTORY.newInstance();
         //
-        n1.type = ExpressionNode.FUNCTION;
+        n1.type = FUNCTION;
         n1.rhs = FACTORY.newInstance();
-        n1.rhs.type = ExpressionNode.LITERAL;
+        n1.rhs.type = LITERAL;
         //
-        n2.type = ExpressionNode.FUNCTION;
+        n2.type = FUNCTION;
         n2.rhs = FACTORY.newInstance();
-        n2.rhs.type = ExpressionNode.LITERAL;
+        n2.rhs.type = LITERAL;
         assertTrue(GroupByUtils.compareNodes(n1, n2));
+    }
+
+    static ExpressionNode createNode(int type, String token, ExpressionNode l, ExpressionNode r) {
+        ExpressionNode node = FACTORY.newInstance();
+        node.type = type;
+        node.token = token;
+        node.lhs = l;
+        node.rhs = r;
+        return node;
     }
 }
