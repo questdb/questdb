@@ -157,6 +157,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndFloatCFunctionFactory,
