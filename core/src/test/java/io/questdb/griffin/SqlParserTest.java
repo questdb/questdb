@@ -5007,6 +5007,46 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testNoopGroupByAfterFrom() throws Exception {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
+                "select sym, avg(bid) avgBid from x group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testNoopGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts) where sym in ('AA','BB'))",
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
+        assertFailure(
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
+                "create table x (\n" +
+                        "    sym symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                71,
+                "literal expected"
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }

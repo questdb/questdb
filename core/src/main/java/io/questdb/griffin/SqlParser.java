@@ -61,6 +61,7 @@ public final class SqlParser {
         tableAliasStop.add(")");
         tableAliasStop.add(";");
         tableAliasStop.add("union");
+        tableAliasStop.add("group");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -615,6 +616,13 @@ public final class SqlParser {
         return null;
     }
 
+    private void expectBy(GenericLexer lexer) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok == null || !isByKeyword(tok)) {
+            throw SqlException.$((lexer.getPosition()), "'by' expected");
+        }
+    }
+
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok != null && isPartitionKeyword(tok)) {
             expectTok(lexer, "by");
@@ -784,10 +792,10 @@ public final class SqlParser {
             }
         }
 
-        // expect [group by]
+        // expect [sample by]
 
         if (tok != null && isSampleKeyword(tok)) {
-            expectTok(lexer, "by");
+            expectBy(lexer);
             model.setSampleBy(expectLiteral(lexer));
             tok = optTok(lexer);
 
@@ -809,12 +817,30 @@ public final class SqlParser {
             }
         }
 
+        //expect [group by]
+
+        if (tok != null && isGroupKeyword(tok)) {
+            expectBy(lexer);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparse();
+                ExpressionNode n = expr(lexer, model);
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                }
+
+                model.addGroupBy(n);
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
+        }
+
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
-            expectTok(lexer, "by");
+            expectBy(lexer);
             do {
-                tokIncludingLocalBrace(lexer, "literal expected");
+                tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparse();
 
                 ExpressionNode n = expr(lexer, model);
@@ -1004,7 +1030,7 @@ public final class SqlParser {
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
-        expectTok(lexer, "by");
+        expectBy(lexer);
         CharSequence tok;
         do {
             model.addLatestBy(expectLiteral(lexer));
@@ -1106,7 +1132,7 @@ public final class SqlParser {
                 tok = tok(lexer, "'");
 
                 if (isPartitionKeyword(tok)) {
-                    expectTok(lexer, "by");
+                    expectBy(lexer);
 
                     ObjList<ExpressionNode> partitionBy = col.getPartitionBy();
 
@@ -1117,8 +1143,7 @@ public final class SqlParser {
                 }
 
                 if (isOrderKeyword(tok)) {
-                    expectTok(lexer, "by");
-
+                    expectBy(lexer);
                     do {
                         ExpressionNode e = expectLiteral(lexer);
                         tok = tok(lexer, "'asc' or 'desc'");
