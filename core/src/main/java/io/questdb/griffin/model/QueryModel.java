@@ -52,6 +52,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_DISTINCT = 5;
     public static final int UNION_MODEL_ALL = 0;
     public static final int UNION_MODEL_DISTINCT = 1;
+    public static final int EXCEPT_MODEL = 2;
+    public static final int INTERCEPT_MODEL = 3;
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();

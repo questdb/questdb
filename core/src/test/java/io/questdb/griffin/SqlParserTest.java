@@ -123,6 +123,50 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testQueryExceptQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) union select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select * from x except select* from y",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("y")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testQueryInterceptQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) union select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select * from x intercept select* from y",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("y")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
