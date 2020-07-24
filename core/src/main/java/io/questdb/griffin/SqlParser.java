@@ -62,6 +62,7 @@ public final class SqlParser {
         tableAliasStop.add(")");
         tableAliasStop.add(";");
         tableAliasStop.add("union");
+        tableAliasStop.add("group");
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         //
