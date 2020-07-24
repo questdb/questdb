@@ -50,8 +50,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_DISTINCT = 5;
-    public static final int UNION_MODEL_ALL = 0;
-    public static final int UNION_MODEL_DISTINCT = 1;
+    public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final int SET_OPERATION_UNION = 1;
+    public static final int SET_OPERATION_EXCEPT = 2;
+    public static final int SET_OPERATION_INTERSECT = 3;
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();
@@ -105,7 +107,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
     private QueryModel unionModel;
-    private int unionModelType;
+    private int setOperationType;
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
 
@@ -524,12 +526,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public int getUnionModelType() {
-        return unionModelType;
+    public int getSetOperationType() {
+        return setOperationType;
     }
 
-    public void setUnionModelType(int unionModelType) {
-        this.unionModelType = unionModelType;
+    public void setSetOperationType(int setOperationType) {
+        this.setOperationType = setOperationType;
     }
 
     public ExpressionNode getWhereClause() {
@@ -880,9 +882,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (unionModel != null) {
-            sink.put(" union ");
-            if (unionModelType == QueryModel.UNION_MODEL_ALL) {
-                sink.put("all ");
+            if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
+                sink.put(" intersect ");
+            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
+                sink.put(" except ");
+            } else {
+                sink.put(" union ");
+                if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {
+                    sink.put("all ");
+                }
             }
             unionModel.toSink0(sink, false);
         }

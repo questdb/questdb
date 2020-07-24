@@ -2700,7 +2700,7 @@ class SqlOptimiser {
 
         if (model != root) {
             root.setUnionModel(model.getUnionModel());
-            root.setUnionModelType(model.getUnionModelType());
+            root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
         }
         return root;

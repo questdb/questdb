@@ -41,8 +41,7 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
-import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
-import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
@@ -1831,6 +1830,10 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
+    private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
+    private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
+    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
+
     /**
      * Generates chain of parent factories each of which takes only two argument factories.
      * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
@@ -1848,13 +1851,19 @@ public class SqlCodeGenerator implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         RecordCursorFactory slaveFactory = generateQuery0(model.getUnionModel(), executionContext, true);
-        if (model.getUnionModelType() == QueryModel.UNION_MODEL_DISTINCT) {
-            return generateUnionFactory(model, masterFactory, executionContext, slaveFactory);
-        } else if (model.getUnionModelType() == QueryModel.UNION_MODEL_ALL) {
-            return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
+        switch (model.getSetOperationType()) {
+            case QueryModel.SET_OPERATION_UNION:
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_UNION_CONSTRUCTOR);
+            case QueryModel.SET_OPERATION_UNION_ALL:
+                return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
+            case QueryModel.SET_OPERATION_EXCEPT:
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_EXCEPT_CONSTRUCTOR);
+            case QueryModel.SET_OPERATION_INTERSECT:
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_INTERSECT_CONSTRUCTOR);
+            default:
+                assert false;
+                return null;
         }
-        assert false;
-        return null;
     }
 
     private RecordCursorFactory generateSubQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -2287,7 +2296,13 @@ public class SqlCodeGenerator implements Mutable {
         return unionAllFactory;
     }
 
-    private RecordCursorFactory generateUnionFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+    private RecordCursorFactory generateUnionFactory(
+            QueryModel model,
+            RecordCursorFactory masterFactory,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory slaveFactory,
+            SetRecordCursorFactoryConstructor constructor
+    ) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         entityColumnFilter.of(masterFactory.getMetadata().getColumnCount());
         final RecordSink recordSink = RecordSinkFactory.getInstance(
@@ -2299,7 +2314,7 @@ public class SqlCodeGenerator implements Mutable {
 
         valueTypes.clear();
 
-        RecordCursorFactory unionFactory = new UnionRecordCursorFactory(
+        RecordCursorFactory unionFactory = constructor.create(
                 configuration,
                 masterFactory,
                 slaveFactory,
