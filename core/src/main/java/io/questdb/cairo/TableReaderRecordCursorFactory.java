@@ -29,6 +29,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -110,6 +112,8 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         private final LongList pageSizes = new LongList();
         private long pageValueCount;
         private long partitionRemaining = 0L;
+        private long firstTimestamp = Long.MIN_VALUE;
+        private long lastTimestamp = Long.MIN_VALUE;;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes) {
             this.columnIndexes = columnIndexes;
@@ -165,6 +169,8 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
             columnPageNextAddress.setAll(columnCount, 0);
             pageSizes.setAll(columnCount, -1L);
             pageValueCount = 0;
+            firstTimestamp = Long.MIN_VALUE;
+            lastTimestamp = Long.MIN_VALUE;
         }
 
         @Override
@@ -179,6 +185,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private PageFrame computeFrame(long min) {
+            int timestampIndex = reader.getMetadata().getTimestampIndex();
             for (int i = 0; i < columnCount; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
                 final long top = topsRemaining.getQuick(i);
@@ -192,7 +199,13 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
                     columnPageAddress.setQuick(i, addr);
                     columnPageNextAddress.setQuick(i, addr + (min << columnSizes.getQuick(i)));
                 }
+
+                if (timestampIndex == columnIndex) {
+                    firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress.get(timestampIndex));
+                    lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress.get(timestampIndex) + (Long.BYTES * (min - 1)));
+                }
             }
+
             pageValueCount = min;
             partitionRemaining -= min;
             return frame;
@@ -242,6 +255,16 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public long getPageValueCount(int columnIndex) {
                 return pageValueCount;
+            }
+
+            @Override
+            public long getFirstTimestamp() {
+                return firstTimestamp;
+            }
+
+            @Override
+            public long getLastTimestamp() {
+                return lastTimestamp;
             }
         }
     }

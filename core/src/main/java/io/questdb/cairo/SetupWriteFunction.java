@@ -28,6 +28,6 @@ package io.questdb.cairo;
  *
  */
 @FunctionalInterface
-interface RowFunction {
-    TableWriter.Row newRow(long timestamp);
+interface SetupWriteFunction {
+    void newWrite(long timestamp, boolean block);
 }

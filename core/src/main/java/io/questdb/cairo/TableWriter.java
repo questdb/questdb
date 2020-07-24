@@ -134,9 +134,9 @@ public class TableWriter implements Closeable {
     private final ReadOnlyMemory metaMem;
     private final VirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
-    private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
-    private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
-    private final RowFunction noPartitionFunction = new NoPartitionFunction();
+    private final SetupWriteFunction switchPartitionFunction = new SwitchPartitionFunction();
+    private final SetupWriteFunction openPartitionFunction = new OpenPartitionFunction();
+    private final SetupWriteFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
@@ -167,7 +167,7 @@ public class TableWriter implements Closeable {
     private long txn;
     private long structureVersion;
     private long dataVersion;
-    private RowFunction rowFunction = openPartitionFunction;
+    private SetupWriteFunction setupWriteFunction = openPartitionFunction;
     private long prevMaxTimestamp;
     private long txPrevTransientRowCount;
     private long maxTimestamp;
@@ -188,7 +188,7 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
-    public final BlockWriter blockWriter = new BlockWriter();
+    private final Block block = new Block();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -648,10 +648,6 @@ public class TableWriter implements Closeable {
         return partitionBy;
     }
 
-    public BlockWriter getBlockWriter() {
-        return blockWriter;
-    }
-
     public long getStructureVersion() {
         return structureVersion;
     }
@@ -665,11 +661,18 @@ public class TableWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
-        return rowFunction.newRow(timestamp);
+        setupWriteFunction.newWrite(timestamp, false);
+        return row;
     }
 
     public Row newRow() {
         return newRow(0L);
+    }
+
+    public Block newBlock(long firstTimestamp, long lastTimestamp, int nRows) {
+        setupWriteFunction.newWrite(firstTimestamp, true);
+        block.of(firstTimestamp, lastTimestamp, nRows);
+        return block;
     }
 
     public long partitionNameToTimestamp(CharSequence partitionName) {
@@ -1003,7 +1006,7 @@ public class TableWriter implements Closeable {
                 }
             }
             removePartitionDirectories();
-            rowFunction = openPartitionFunction;
+            setupWriteFunction = openPartitionFunction;
         }
 
         prevMaxTimestamp = Long.MIN_VALUE;
@@ -1298,7 +1301,7 @@ public class TableWriter implements Closeable {
                         throw e;
                     }
                 } else {
-                    rowFunction = openPartitionFunction;
+                    setupWriteFunction = openPartitionFunction;
                 }
 
                 // undo counts
@@ -1396,12 +1399,12 @@ public class TableWriter implements Closeable {
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.maxTimestamp);
             if (partitionBy == PartitionBy.NONE) {
-                rowFunction = noPartitionFunction;
+                setupWriteFunction = noPartitionFunction;
             } else {
-                rowFunction = switchPartitionFunction;
+                setupWriteFunction = switchPartitionFunction;
             }
         } else {
-            rowFunction = openPartitionFunction;
+            setupWriteFunction = openPartitionFunction;
         }
     }
 
@@ -2791,6 +2794,30 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void commitBlock(long firstTimestamp, long lastTimestamp, int nRows) {
+        if (lastTimestamp < maxTimestamp) {
+            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+        }
+
+        if (minTimestamp == Long.MAX_VALUE) {
+            minTimestamp = firstTimestamp;
+        }
+        TableWriter.this.prevMaxTimestamp = TableWriter.this.maxTimestamp;
+        TableWriter.this.maxTimestamp = lastTimestamp;
+
+        for (int i = 0; i < columnCount; i++) {
+            refs.setQuick(i, masterRef);
+        }
+
+        transientRowCount += nRows;
+        masterRef++;
+        if (prevMinTimestamp == Long.MAX_VALUE) {
+            prevMinTimestamp = minTimestamp;
+        }
+
+        TableWriter.this.commit();
+    }
+
     @FunctionalInterface
     private interface RemoveFileLambda {
         void remove(FilesFacade ff, LPSZ name);
@@ -2801,47 +2828,53 @@ public class TableWriter implements Closeable {
         void run(CharSequence columnName);
     }
 
-    private class OpenPartitionRowFunction implements RowFunction {
+    private class OpenPartitionFunction implements SetupWriteFunction {
         @Override
-        public Row newRow(long timestamp) {
+        public void newWrite(long timestamp, boolean block) {
             if (maxTimestamp != Long.MIN_VALUE) {
-                return (rowFunction = switchPartitionFunction).newRow(timestamp);
+                (setupWriteFunction = switchPartitionFunction).newWrite(timestamp, block);
+            } else {
+                newWriteSlow(timestamp, block);
             }
-            return getRowSlow(timestamp);
         }
 
-        private Row getRowSlow(long timestamp) {
+        private void newWriteSlow(long timestamp, boolean block) {
             minTimestamp = timestamp;
             openFirstPartition(timestamp);
-            return (rowFunction = switchPartitionFunction).newRow(timestamp);
+            (setupWriteFunction = switchPartitionFunction).newWrite(timestamp, block);
         }
     }
 
-    private class NoPartitionFunction implements RowFunction {
+    private class NoPartitionFunction implements SetupWriteFunction {
         @Override
-        public Row newRow(long timestamp) {
+        public void newWrite(long timestamp, boolean block) {
             bumpMasterRef();
             if (timestamp >= maxTimestamp) {
-                updateMaxTimestamp(timestamp);
-                return row;
+                if (!block) {
+                    updateMaxTimestamp(timestamp);
+                }
+                return;
             }
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
     }
 
-    private class SwitchPartitionRowFunction implements RowFunction {
+    private class SwitchPartitionFunction implements SetupWriteFunction {
         @Override
-        public Row newRow(long timestamp) {
+        public void newWrite(long timestamp, boolean block) {
             bumpMasterRef();
             if (timestamp > partitionHi || timestamp < maxTimestamp) {
-                return newRow0(timestamp);
+                newWrite0(timestamp, block);
+            } else {
+                if (!block) {
+                    updateMaxTimestamp(timestamp);
+                }
+                return;
             }
-            updateMaxTimestamp(timestamp);
-            return row;
         }
 
         @NotNull
-        private Row newRow0(long timestamp) {
+        private Row newWrite0(long timestamp, boolean block) {
             if (timestamp < maxTimestamp) {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
@@ -2850,7 +2883,10 @@ public class TableWriter implements Closeable {
                 switchPartition(timestamp);
             }
 
-            updateMaxTimestamp(timestamp);
+            if (!block) {
+                updateMaxTimestamp(timestamp);
+            }
+
             return row;
         }
     }
@@ -2983,46 +3019,31 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public class BlockWriter {
-        public void writeBlock(int partitionIndex, int columnIndex, long sourceAddress, long offset, int len) {
-            // TODO: Replication handle partition index
-            if (partitionIndex != 0) {
-                throw new RuntimeException("Partitioned tables is not implemented");
-            }
+    public class Block {
+        private long firstTimestamp;
+        private long lastTimestamp;
+        private int nRows;
+
+        public void append() {
+            commitBlock(firstTimestamp, lastTimestamp, nRows);
+        }
+
+        public void cancel() {
+            cancelRow();
+        }
+
+        public void putBlock(int columnIndex, long sourceAddress) {
+            int colSz = ColumnType.sizeOf(getMetadata().getColumnType(columnIndex));
+            int len = nRows * colSz;
+
             AppendMemory mem = getPrimaryColumn(columnIndex);
-            mem.jumpTo(offset);
             mem.putBlockOfBytes(sourceAddress, len);
         }
 
-        public void commit(int partitionIndex, long firstTimestamp, long lastTimestamp, int nRows) {
-            assert firstTimestamp <= lastTimestamp;
-            // TODO: Replication handle partition index
-            if (partitionIndex != 0) {
-                throw new RuntimeException("Partitioned tables is not implemented");
-            }
-
-            bumpMasterRef();
-            if (lastTimestamp < maxTimestamp) {
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
-            }
-
-            if (minTimestamp == Long.MAX_VALUE) {
-                minTimestamp = firstTimestamp;
-            }
-            TableWriter.this.prevMaxTimestamp = TableWriter.this.maxTimestamp;
-            TableWriter.this.maxTimestamp = lastTimestamp;
-
-            for (int i = 0; i < columnCount; i++) {
-                refs.setQuick(i, masterRef);
-            }
-
-            transientRowCount += nRows;
-            masterRef++;
-            if (prevMinTimestamp == Long.MAX_VALUE) {
-                prevMinTimestamp = minTimestamp;
-            }
-
-            TableWriter.this.commit();
+        private void of(long firstTimestamp, long lastTimestamp, int nRows) {
+            this.firstTimestamp = firstTimestamp;
+            this.lastTimestamp = lastTimestamp;
+            this.nRows = nRows;
         }
     }
 

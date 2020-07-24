@@ -58,7 +58,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SELECT, recordCursorFactory);
     }
 
-    private CompiledQuery of(short type) {
+    public CompiledQuery of(short type) {
         return of(type, null);
     }
 

@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Assert;
 import org.junit.Test;
 
-import io.questdb.cairo.TableWriter.BlockWriter;
+import io.questdb.cairo.TableWriter.Block;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.log.Log;
@@ -785,12 +785,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            long offset = 0;
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                BlockWriter sblk = writer.getBlockWriter();
-                sblk.writeBlock(0, 0, timestampStart, offset, nRows * timestampSz);
-                sblk.writeBlock(0, 1, intcolStart, offset, nRows * intcolSz);
-                sblk.commit(0, firstTimestamp, lastTimestamp, nRows);
+                Block block = writer.newBlock(firstTimestamp, lastTimestamp, nRows);
+                block.putBlock(0, timestampStart);
+                block.putBlock(1, intcolStart);
+                block.append();
             }
 
             Unsafe.free(timestampStart, nRows * timestampSz);

@@ -25,9 +25,15 @@
 package io.questdb.cairo.sql;
 
 public interface PageFrame {
-
     long getPageAddress(int columnIndex);
 
     long getPageValueCount(int columnIndex);
 
+    default long getFirstTimestamp() {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getLastTimestamp() {
+        throw new UnsupportedOperationException();
+    }
 }
