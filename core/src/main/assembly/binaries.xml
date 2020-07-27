@@ -23,7 +23,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>bin</id>
+    <id>${artifact.version}-no-jre-bin</id>
     <formats>
         <format>tar.gz</format>
     </formats>

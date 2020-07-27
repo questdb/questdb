@@ -22,25 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin.engine.union;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.ServerDisconnectException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.RecordCursorFactory;
 
-public interface HttpRequestProcessor {
-    default void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    default void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-    }
-
-    default void resumeRecv(HttpConnectionContext context) {
-    }
-
-    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-    }
-
-    default void parkRequest(HttpConnectionContext context) {
-    }
+@FunctionalInterface
+public interface SetRecordCursorFactoryConstructor {
+    RecordCursorFactory create(
+            CairoConfiguration configuration,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            RecordSink recordSink,
+            ColumnTypes valueTypes
+    );
 }

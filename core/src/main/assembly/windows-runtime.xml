@@ -23,7 +23,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>${runtime.name}</id>
+    <id>${archive.name}</id>
     <formats>
         <format>tar.gz</format>
     </formats>

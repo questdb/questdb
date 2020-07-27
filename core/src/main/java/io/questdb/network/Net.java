@@ -137,13 +137,12 @@ public final class Net {
     public native static int getTcpNoDelay(long fd);
 
     /**
-     * 
      * This method reads 1 byte (or none if the socket is non blocking and there is no data).
      * If there is no error (EOF ?) then it returns false
      * If there is an error (EOF ?) then it returns true
-     * 
-     * @param fd
-     * @return
+     *
+     * @param fd network file descriptor
+     * @return check the description
      */
     public static native boolean isDead(long fd);
 

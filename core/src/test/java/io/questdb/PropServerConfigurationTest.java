@@ -206,7 +206,7 @@ public class PropServerConfigurationTest {
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
 
         // influxdb line TCP protocol
-        Assert.assertEquals(true, configuration.getLineTcpReceiverConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindPort());
@@ -223,12 +223,15 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2048, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueSize());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
-        Assert.assertArrayEquals(new int[] {}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
-        Assert.assertEquals(false, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
+        Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getnUpdatesPerLoadRebalance());
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getServerKeepAlive());
+        Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpVersion());
     }
 
     @Test
@@ -470,7 +473,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
             // influxdb line TCP protocol
-            Assert.assertEquals(true, configuration.getLineTcpReceiverConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
             Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindIPv4Address());
             Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindPort());
@@ -486,8 +489,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
             Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getWriterQueueSize());
             Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
-            Assert.assertArrayEquals(new int[] { 1, 2 }, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
-            Assert.assertEquals(true, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
+            Assert.assertArrayEquals(new int[]{1, 2}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getnUpdatesPerLoadRebalance());
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
@@ -495,6 +498,9 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
+
+            Assert.assertFalse(configuration.getHttpServerConfiguration().getServerKeepAlive());
+            Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpVersion());
         }
     }
 

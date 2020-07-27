@@ -32,7 +32,10 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -339,14 +342,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    @Override
     public void onRequestComplete(HttpConnectionContext context) {
         transientState.clear();
-        context.clear();
-        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     @Override

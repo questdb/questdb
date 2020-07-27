@@ -43,10 +43,13 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -170,8 +173,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static void readyForNextRequest(HttpConnectionContext context) {
         LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
-        context.clear();
-        context.getDispatcher().registerChannel(context, IOOperation.READ);
     }
 
     protected static void sendConfirmation(
@@ -266,10 +267,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.error().$("Uh-oh. Error!").$(e).$();
             throw ServerDisconnectException.INSTANCE;
         }
-    }
-
-    @Override
-    public void onHeadersReady(HttpConnectionContext context) {
     }
 
     @Override
