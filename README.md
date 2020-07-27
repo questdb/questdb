@@ -33,19 +33,19 @@
 
 ## What is QuestDB
 
-QuestDB is an open-source database designed to make time-series lightning fast
+QuestDB is an open source database designed to make time series lightning fast
 and easy.
 
 It uses a column-oriented approach, vectorized execution, SIMD instructions, and
 a whole array of low-latency techniques. The whole code base is built from
-scratch, without dependencies, in the name of performance. We are 100% free from
+scratch and without dependencies, in the name of performance. We are 100% free from
 garbage collection.
 
 QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
 wire protocol, a high-performance REST API, and even supports ingestion with
 InfluxDB line protocol. It supports both relational and time-series joins, which
 makes it easy to correlate data over time. Writes are durably committed to disk,
-meaning that the data is safe, yet instantly accessible.
+meaning that the data is safe - yet instantly accessible.
 
 ## Performance figures
 
