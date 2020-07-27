@@ -125,6 +125,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
     private Rnd rnd;
+    private int rowCount;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -912,10 +913,14 @@ public class PGConnectionContext implements IOContext, Mutable {
         columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
     }
 
-    void prepareCommandComplete() {
+    void prepareCommandComplete(boolean addRowCount) {
         responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
         long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
+        if (addRowCount) {
+            responseAsciiSink.encodeUtf8(queryTag).put(' ').put(rowCount).put((char) 0);
+        } else {
+            responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
+        }
         responseAsciiSink.putLen(addr);
     }
 
@@ -959,25 +964,22 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
-    private void prepareRowDescription() {
-        final RecordMetadata metadata = currentFactory.getMetadata();
-        ResponseAsciiSink sink = responseAsciiSink;
-        sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
-        final long addr = sink.skip();
-        final int n = metadata.getColumnCount();
-        sink.putNetworkShort((short) n);
-        for (int i = 0; i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            sink.encodeUtf8Z(metadata.getColumnName(i));
-            sink.putNetworkInt(0);
-            sink.putNetworkShort((short) 0);
-            sink.putNetworkInt(typeOids.get(columnType)); // type
-            sink.putNetworkShort((short) 0); // type size?
-            sink.putNetworkInt(0); // type mod?
-            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
-            sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
+    private void prepareExecuteTail(boolean addRowCount) {
+        switch (sendCurrentCursorTail) {
+            case TAIL_SUCCESS:
+                prepareCommandComplete(addRowCount);
+                prepareReadyForQuery(responseAsciiSink);
+                LOG.info().$("executed query").$();
+                break;
+            case PGConnectionContext.TAIL_ERROR:
+                SqlException e = SqlException.last();
+                prepareError(e);
+                prepareReadyForQuery(responseAsciiSink);
+                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+                break;
+            default:
+                break;
         }
-        sink.putLen(addr);
     }
 
     private void processBind(@Transient ObjList<BindVariableSetter> bindVariableSetters, long msgLimit, long lo) throws BadProtocolException, SqlException {
@@ -1360,6 +1362,40 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    private void prepareRowDescription() {
+        final RecordMetadata metadata = currentFactory.getMetadata();
+        ResponseAsciiSink sink = responseAsciiSink;
+        sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+        final long addr = sink.skip();
+        final int n = metadata.getColumnCount();
+        sink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            sink.encodeUtf8Z(metadata.getColumnName(i));
+            sink.putNetworkInt(16385); //tableoid ?
+            sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
+            sink.putNetworkInt(typeOids.get(columnType)); // type
+            if (columnType < 10) {
+                //type size
+                sink.putNetworkShort((short) 4);
+                //type modifier
+                sink.put('\uFFFF');
+                sink.put('\uFFFF');
+                sink.put('\uFFFF');
+                sink.put('\uFFFF');
+            } else {
+                // type size
+                sink.put('\uFFFF');
+                sink.put('\uFFFF');
+                // type modifier
+                sink.putNetworkInt(0);
+            }
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
+        }
+        sink.putLen(addr);
+    }
+
     private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
@@ -1370,6 +1406,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Record record = currentCursor.getRecord();
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
+        rowCount = 0;
         while (currentCursor.hasNext()) {
             // create checkpoint to which we can undo the buffer in case
             // current DataRow will does not fit fully.
@@ -1377,6 +1414,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             try {
                 try {
                     appendRecord(record, metadata, columnCount);
+                    rowCount++;
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     responseAsciiSink.resetToBookmark();
                     send();
@@ -1393,8 +1431,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         prepareForNewQuery();
+        sendCurrentCursorTail = TAIL_SUCCESS;
+        prepareExecuteTail(true);
         send(TAIL_SUCCESS);
-        sendExecuteTail();
     }
 
     private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1403,21 +1442,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void sendExecuteTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        switch (sendCurrentCursorTail) {
-            case TAIL_SUCCESS:
-                prepareCommandComplete();
-                prepareReadyForQuery(responseAsciiSink);
-                LOG.info().$("executed query").$();
-                break;
-            case PGConnectionContext.TAIL_ERROR:
-                SqlException e = SqlException.last();
-                prepareError(e);
-                prepareReadyForQuery(responseAsciiSink);
-                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                break;
-            default:
-                break;
-        }
+        prepareExecuteTail(false);
         send(PGConnectionContext.TAIL_NONE);
     }
 
@@ -1631,7 +1656,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOids.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
         typeOids.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
         typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        typeOids.extendAndSet(ColumnType.DATE, PG_DATE); // DATE
         typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
     }
 }
