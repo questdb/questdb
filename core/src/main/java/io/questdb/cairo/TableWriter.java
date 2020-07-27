@@ -729,7 +729,7 @@ public class TableWriter implements Closeable {
         try {
             if (partitionTimestampHi == maxTruncated) {
                 dataTimestampHi = this.maxTimestamp;
-                dataIndexMax = transientRowCount;
+                dataIndexMax = transientRowCountBeforeOutOfOrder;
             } else {
                 // todo: close "fd" if we opened it
                 fd = ff.openRW(path);
@@ -793,11 +793,11 @@ public class TableWriter implements Closeable {
                     l2_data = dataIndexMax - 1;
                 }
 
-                if (l2_ooo < indexMax - 1) {
-                    LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
-                } else if (l2_data < dataIndexMax - 1) {
-                    LOG.info().$("copy date set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
-                }
+//                if (l2_ooo < indexMax - 1) {
+//                    LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
+//                } else if (l2_data < dataIndexMax - 1) {
+//                    LOG.info().$("copy date set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+//                }
             } else {
                 long l1 = BinarySearch.search(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
                 LOG.info().$("copy data set [from=").$(0).$(", to=").$(l1).$(']').$();
@@ -825,11 +825,11 @@ public class TableWriter implements Closeable {
                             .$(", oooTo=").$(l2_ooo)
                             .$(']').$();
 
-                    if (l2_ooo < indexMax - 1) {
-                        LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
-                    } else if (l2_data < dataIndexMax - 1) {
-                        LOG.info().$("copy data set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
-                    }
+//                    if (l2_ooo < indexMax - 1) {
+//                        LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexMax - 1).$(']').$();
+//                    } else if (l2_data < dataIndexMax - 1) {
+//                        LOG.info().$("copy data set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+//                    }
 
                 } else {
                     l2_ooo = indexMax - 1;
@@ -3041,6 +3041,7 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
+            mergeTimestampSetter(timestamp);
             return row;
         }
     }
