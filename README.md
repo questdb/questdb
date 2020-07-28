@@ -17,7 +17,7 @@
     <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/core" />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
   <a href="https://serieux-saucisson-79115.herokuapp.com/">
     <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
