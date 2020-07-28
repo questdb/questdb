@@ -40,8 +40,8 @@ and easy.
 
 It uses a column-oriented approach, vectorized execution, SIMD instructions, and
 a whole array of low-latency techniques. The whole code base is built from
-scratch and without dependencies, in the name of performance. We are 100% free from
-garbage collection.
+scratch and without dependencies, in the name of performance. We are 100% free
+from garbage collection.
 
 QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
 wire protocol, a high-performance REST API, and even supports ingestion with
@@ -96,8 +96,8 @@ You can interact with QuestDB using:
 
 - [Web Console](https://questdb.io/docs/guide/web-console) listening on port
   `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres wire](https://questdb.io/docs/guide/psql), for example with PSQL
-  (alpha) on port `8812`
+- [Postgres wire](https://questdb.io/docs/guide/postgres-wire), for example with
+  PSQL (alpha) on port `8812`
 - [REST API](https://questdb.io/docs/guide/rest) listening on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
@@ -163,7 +163,7 @@ Quick-start guides:
 Usage guides:
 
 - [Web Console](https://questdb.io/docs/guide/web-console)
-- [Postgres wire with PSQL](https://questdb.io/docs/guide/psql) (alpha)
+- [Postgres wire with PSQL](https://questdb.io/docs/guide/postgres-wire) (alpha)
 - [REST API](https://questdb.io/docs/guide/rest)
 - [CRUD operations](https://questdb.io/docs/guide/crud)
 
