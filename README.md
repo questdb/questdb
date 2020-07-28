@@ -27,7 +27,9 @@
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
 [![All Contributors](https://img.shields.io/badge/all_contributors-6-orange.svg?style=flat-square)](#contributors-)
+
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -85,18 +87,18 @@ You can more information about Docker usage
 
 #### Alternative methods
 
-- [Start with Homebrew](https://questdb.io/docs/guideHomebrew)
-- [Start with the binaries](https://questdb.io/docs/guideBinaries)
+- [Start with Homebrew](https://questdb.io/docs/guide/homebrew)
+- [Start with the binaries](https://questdb.io/docs/guide/binaries)
 
 ### Connecting to QuestDB
 
 You can interact with QuestDB using:
 
-- [Web Console](https://questdb.io/docs/usingWebConsole) listening on port
+- [Web Console](https://questdb.io/docs/guide/web-console) listening on port
   `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres wire](https://questdb.io/docs/guidePSQL), for example with PSQL
+- [Postgres wire](https://questdb.io/docs/guide/psql), for example with PSQL
   (alpha) on port `8812`
-- [REST API](https://questdb.io/docs/guideREST) listening on port `9000`
+- [REST API](https://questdb.io/docs/guide/rest) listening on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
@@ -149,28 +151,28 @@ java -p core/target/core-5.0.2-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain 
 ## Resources
 
 Complete references are available in the
-[Documentation](https://questdb.io/docs/documentationOverview). There are also
-several guides to get started.
+[Documentation](https://questdb.io/docs/introduction). There are also several
+guides to get started.
 
 Quick-start guides:
 
-- [Docker](https://questdb.io/docs/guideDocker)
-- [Homebrew](https://questdb.io/docs/guideHomebrew)
-- [Using the binaries](https://questdb.io/docs/guideBinaries)
+- [Docker](https://questdb.io/docs/guide/docker)
+- [Homebrew](https://questdb.io/docs/guide/homebrew)
+- [Using the binaries](https://questdb.io/docs/guide/binaries)
 
 Usage guides:
 
-- [Web Console](https://questdb.io/docs/usingWebConsole)
-- [Postgres wire with PSQL](https://questdb.io/docs/guidePSQL) (alpha)
-- [REST API](https://questdb.io/docs/guideREST)
-- [CRUD operations](https://questdb.io/docs/crudOperations)
+- [Web Console](https://questdb.io/docs/guide/web-console)
+- [Postgres wire with PSQL](https://questdb.io/docs/guide/psql) (alpha)
+- [REST API](https://questdb.io/docs/guide/rest)
+- [CRUD operations](https://questdb.io/docs/guide/crud)
 
 Concepts:
 
-- [SQL extensions](https://questdb.io/docs/sqlExtensions)
-- [Storage model](https://questdb.io/docs/storageModel)
-- [Partitions](https://questdb.io/docs/partitions)
-- [Designated timestamp](https://questdb.io/docs/designatedTimestamp)
+- [SQL extensions](https://questdb.io/docs/concept/sql-extensions)
+- [Storage model](https://questdb.io/docs/concept/storage-model)
+- [Partitions](https://questdb.io/docs/concept/partitions)
+- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp)
 
 ## Support / Contact
 
@@ -207,6 +209,7 @@ Thanks to these wonderful people
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
