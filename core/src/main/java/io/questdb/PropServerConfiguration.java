@@ -256,7 +256,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private String httpVersion;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
-        this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
+        this.sharedWorkerCount = getInt(properties, "shared.worker.count", Runtime.getRuntime().availableProcessors() - 1);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
         this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
