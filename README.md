@@ -85,6 +85,14 @@ docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 You can more information about Docker usage
 [here](https://hub.docker.com/repository/docker/questdb/questdb/).
 
+#### One-Click Deploy
+
+[![Deploy to Render](http://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/render-examples/questdb)
+
+Click "Deploy to Render" above, create an account if you haven't already done so, and follow the prompts to create your service.
+
+Once the deployment has finished, visit the service URL from your dashboard to start using QuestDB.
+
 #### Alternative methods
 
 - [Start with Homebrew](https://questdb.io/docs/guide/homebrew)
