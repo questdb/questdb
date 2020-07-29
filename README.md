@@ -87,6 +87,8 @@ You can more information about Docker usage
 
 #### One-Click Deploy
 
+You can use [Render's](https://render.com/) one-click deploy button to easily run your own QuestDB database.
+
 [![Deploy to Render](http://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/render-examples/questdb)
 
 Click "Deploy to Render" above, create an account if you haven't already done so, and follow the prompts to create your service.
