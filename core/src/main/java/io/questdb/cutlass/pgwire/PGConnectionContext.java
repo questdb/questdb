@@ -260,8 +260,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             doSend(bufferRemainingOffset, bufferRemainingSize);
         }
 
-        sendExecuteTail();
-
         // If we have empty buffer we need to try to read something from socket
         // however the opposite  is a little tricky. If buffer is non-empty
         // we still may need to read from socket if contents of this buffer
