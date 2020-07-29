@@ -86,11 +86,6 @@ public class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
-    public BinarySequence getRawBytes(long offset, int len) {
-        return null;
-    }
-
-    @Override
     public short getShort(long offset) {
         return 0;
     }

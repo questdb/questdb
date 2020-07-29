@@ -213,10 +213,6 @@ public class VirtualMemory implements Closeable {
         return long256B;
     }
 
-    public final BinarySequence getRawBytes(long offset, int len) {
-        return bsview.of(offset, len);
-    }
-
     public final short getShort(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi - Short.BYTES) {
             return Unsafe.getUnsafe().getShort(absolutePointer + offset);

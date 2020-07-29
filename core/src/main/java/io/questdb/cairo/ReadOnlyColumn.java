@@ -57,8 +57,6 @@ public interface ReadOnlyColumn extends Closeable {
 
     long getLong(long offset);
 
-    BinarySequence getRawBytes(long offset, int len);
-
     short getShort(long offset);
 
     CharSequence getStr(long offset);
