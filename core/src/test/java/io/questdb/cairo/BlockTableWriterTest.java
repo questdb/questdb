@@ -4,17 +4,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import io.questdb.cairo.TableWriter.Block;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 
 public class BlockTableWriterTest extends AbstractGriffinTest {
@@ -85,7 +81,7 @@ public class BlockTableWriterTest extends AbstractGriffinTest {
                 long firstTimestamp = frame.getFirstTimestamp();
                 long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
-                Block block = writer.newBlock(firstTimestamp, lastTimestamp, (int) pageRowCount);
+                Block block = writer.newBlock(firstTimestamp, lastTimestamp, pageRowCount);
                 for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     block.putBlock(columnIndex, pageAddress);
@@ -105,33 +101,6 @@ public class BlockTableWriterTest extends AbstractGriffinTest {
     }
 
     private RecordCursorFactory createReplicatingRecordCursorFactory(String tableName) {
-        final RecordMetadata metadata;
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
-            metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
-        }
-        return new TableReplicationRecordCursorFactory(metadata, engine, tableName);
-    }
-
-    private RecordCursorFactory createReplicatingRecordCursorFactoryX(String tableName) {
-        final RecordMetadata metadata;
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
-            metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
-        }
-
-        IntList columnIndexes = new IntList();
-        IntList columnSizes = new IntList();
-
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnIndexes.add(i);
-            columnSizes.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
-        }
-        return new TableReaderRecordCursorFactory(
-                metadata,
-                engine,
-                tableName,
-                TableUtils.ANY_TABLE_VERSION,
-                columnIndexes,
-                columnSizes,
-                true);
+        return new TableReplicationRecordCursorFactory(engine, tableName);
     }
 }

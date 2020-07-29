@@ -2,6 +2,7 @@ package io.questdb.cairo;
 
 import org.jetbrains.annotations.Nullable;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -17,15 +18,17 @@ import io.questdb.std.Unsafe;
 public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFactory {
     private final TableReplicationRecordCursor cursor;
     private final CairoEngine engine;
-    private final String tableName;
+    private final CharSequence tableName;
 
-    public TableReplicationRecordCursorFactory(
-            RecordMetadata metadata,
-            CairoEngine engine,
-            String tableName
-    ) {
-        super(metadata);
-        this.cursor = new TableReplicationRecordCursor(metadata);
+    private static final RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
+            return GenericRecordMetadata.copyOf(reader.getMetadata());
+        }
+    }
+
+    public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName) {
+        super(createMetadata(engine, tableName));
+        this.cursor = new TableReplicationRecordCursor(getMetadata());
         this.engine = engine;
         this.tableName = tableName;
     }
@@ -33,6 +36,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public TableReplicationRecordCursor getPageFrameCursor(SqlExecutionContext executionContext) {
         return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
+    }
+
+    public TableReplicationRecordCursor getPageFrameCursor() {
+        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName));
     }
 
     @Override
@@ -53,7 +60,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     public static class TableReplicationRecordCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
-        private final TableReaderPageFrame frame = new TableReaderPageFrame();
+        private final ReplicationPageFrame frame = new ReplicationPageFrame();
         private final LongList topsRemaining = new LongList();
         private final IntList pages = new IntList();
         private final RecordMetadata metadata;
@@ -83,7 +90,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public @Nullable PageFrame next() {
+        public @Nullable ReplicationPageFrame next() {
 
             if (partitionIndex > -1) {
                 final long m = computePageMin(reader.getColumnBase(partitionIndex));
@@ -129,13 +136,19 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return reader.size();
         }
 
-        public TableReplicationRecordCursor of(TableReader reader) {
+        private TableReplicationRecordCursor of(TableReader reader) {
             this.reader = reader;
             toTop();
             return this;
         }
 
-        private PageFrame computeFrame(long min) {
+        private TableReplicationRecordCursor of(TableReader reader, long fromRow, long toRow) {
+            this.reader = reader;
+            toTop();
+            return this;
+        }
+
+        private ReplicationPageFrame computeFrame(long min) {
             int timestampIndex = reader.getMetadata().getTimestampIndex();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 final int columnIndex = i;
@@ -198,7 +211,14 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return min;
         }
 
-        private class TableReaderPageFrame implements PageFrame {
+        public void from(int partitionIndex, long partitionRow) {
+            // TODO: Replication
+            if (partitionIndex != 0 || partitionRow != 0) {
+                throw new RuntimeException("Not implemented");
+            }
+        }
+
+        public class ReplicationPageFrame implements PageFrame {
 
             @Override
             public long getPageAddress(int columnIndex) {
@@ -218,6 +238,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public long getLastTimestamp() {
                 return lastTimestamp;
+            }
+
+            public int getPartitionIndex() {
+                return 0;
             }
         }
     }

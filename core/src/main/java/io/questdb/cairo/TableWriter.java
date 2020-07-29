@@ -669,7 +669,7 @@ public class TableWriter implements Closeable {
         return newRow(0L);
     }
 
-    public Block newBlock(long firstTimestamp, long lastTimestamp, int nRows) {
+    public Block newBlock(long firstTimestamp, long lastTimestamp, long nRows) {
         setupWriteFunction.newWrite(firstTimestamp, true);
         block.of(firstTimestamp, lastTimestamp, nRows);
         return block;
@@ -2794,7 +2794,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void commitBlock(long firstTimestamp, long lastTimestamp, int nRows) {
+    private void commitBlock(long firstTimestamp, long lastTimestamp, long nRows) {
         if (lastTimestamp < maxTimestamp) {
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
@@ -3022,7 +3022,7 @@ public class TableWriter implements Closeable {
     public class Block {
         private long firstTimestamp;
         private long lastTimestamp;
-        private int nRows;
+        private long nRows;
 
         public void append() {
             commitBlock(firstTimestamp, lastTimestamp, nRows);
@@ -3034,13 +3034,13 @@ public class TableWriter implements Closeable {
 
         public void putBlock(int columnIndex, long sourceAddress) {
             int colSz = ColumnType.sizeOf(getMetadata().getColumnType(columnIndex));
-            int len = nRows * colSz;
+            long len = nRows * colSz;
 
             AppendMemory mem = getPrimaryColumn(columnIndex);
             mem.putBlockOfBytes(sourceAddress, len);
         }
 
-        private void of(long firstTimestamp, long lastTimestamp, int nRows) {
+        private void of(long firstTimestamp, long lastTimestamp, long nRows) {
             this.firstTimestamp = firstTimestamp;
             this.lastTimestamp = lastTimestamp;
             this.nRows = nRows;
