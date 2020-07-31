@@ -30,6 +30,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -1039,16 +1040,7 @@ public class TableReader implements Closeable {
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                if (mem1 != null && mem1 != NullColumn.INSTANCE) {
-                    mem1.of(ff, path, ff.getMapPageSize(), ff.length(path));
-                } else {
-                    if (lastPartition) {
-                        mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
-                    } else {
-                        mem1 = new OnePageMemory(ff, path, ff.length(path));
-                    }
-                    columns.setQuick(primaryIndex, mem1);
-                }
+                mem1 = openOrCreateMemory(path, columns, lastPartition, primaryIndex, mem1);
 
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
                 final int type = metadata.getColumnType(columnIndex);
@@ -1057,16 +1049,7 @@ public class TableReader implements Closeable {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
-                        if (mem2 != null && mem2 != NullColumn.INSTANCE) {
-                            mem2.of(ff, path, ff.getMapPageSize(), ff.length(path));
-                        } else {
-                            if (lastPartition) {
-                                mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
-                            } else {
-                                mem2 = new OnePageMemory(ff, path, ff.length(path));
-                            }
-                            columns.setQuick(secondaryIndex, mem2);
-                        }
+                        mem2 = openOrCreateMemory(path, columns, lastPartition, secondaryIndex, mem2);
                         growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                         break;
                     default:
@@ -1103,6 +1086,21 @@ public class TableReader implements Closeable {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    @NotNull
+    private ReadOnlyColumn openOrCreateMemory(Path path, ObjList<ReadOnlyColumn> columns, boolean lastPartition, int primaryIndex, ReadOnlyColumn mem) {
+        if (mem != null && mem != NullColumn.INSTANCE) {
+            mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
+        } else {
+            if (lastPartition) {
+                mem = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+            } else {
+                mem = new OnePageMemory(ff, path, ff.length(path));
+            }
+            columns.setQuick(primaryIndex, mem);
+        }
+        return mem;
     }
 
     private void reloadColumnChanges() {

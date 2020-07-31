@@ -24,16 +24,8 @@
 
 package io.questdb;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.URL;
+import java.io.*;
+import java.net.*;
 import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
@@ -59,11 +51,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.time.Dates;
 import sun.misc.Signal;
 
@@ -291,29 +279,56 @@ public class ServerMain {
         return optHash;
     }
 
-    private static void extractSite(String dir, boolean force, Log log) throws IOException {
-        final String publicZip = "/io/questdb/site/public.zip";
-        final String publicDest = dir + "/public";
-        final byte[] buffer = new byte[1024 * 1024];
-        try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
-            if (is != null) {
-                try (ZipInputStream zip = new ZipInputStream(is)) {
-                    ZipEntry ze;
-                    while ((ze = zip.getNextEntry()) != null) {
-                        final File dest = new File(publicDest, ze.getName());
-                        if (!ze.isDirectory()) {
-                            copyInputStream(force, buffer, dest, zip, log);
-                        }
-                        zip.closeEntry();
-                    }
-                }
-            } else {
-                log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+    private static long getPublicVersion(String publicDir) throws IOException {
+        File f = new File(publicDir, "version");
+        if (f.exists()) {
+            try (FileInputStream fis = new FileInputStream(f)) {
+                byte[] buf = new byte[128];
+                int len = fis.read(buf);
+                return Long.parseLong(new String(buf, 0, len));
             }
         }
-        copyConfResource(dir, false, buffer, "conf/date.formats", log);
-        copyConfResource(dir, force, buffer, "conf/mime.types", log);
-        copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        return Long.MIN_VALUE;
+    }
+
+    private static void setPublicVersion(String publicDir, long version) throws IOException {
+        File f = new File(publicDir, "version");
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            byte[] buf = Long.toString(version).getBytes();
+            fos.write(buf, 0, buf.length);
+        }
+    }
+
+    private static void extractSite(String dir, boolean force, Log log) throws IOException {
+        final String publicZip = "/io/questdb/site/public.zip";
+        final String publicDir = dir + "/public";
+        final byte[] buffer = new byte[1024 * 1024];
+        final long thisVersion = ServerMain.class.getResource(publicZip).openConnection().getLastModified();
+        final long oldVersion = getPublicVersion(publicDir);
+        if (thisVersion > oldVersion) {
+            try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
+                if (is != null) {
+                    try (ZipInputStream zip = new ZipInputStream(is)) {
+                        ZipEntry ze;
+                        while ((ze = zip.getNextEntry()) != null) {
+                            final File dest = new File(publicDir, ze.getName());
+                            if (!ze.isDirectory()) {
+                                copyInputStream(force, buffer, dest, zip, log);
+                            }
+                            zip.closeEntry();
+                        }
+                    }
+                } else {
+                    log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+                }
+            }
+            setPublicVersion(publicDir, thisVersion);
+            copyConfResource(dir, false, buffer, "conf/date.formats", log);
+            copyConfResource(dir, force, buffer, "conf/mime.types", log);
+            copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        } else {
+            log.info().$("web console is up to date").$();
+        }
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
