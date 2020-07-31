@@ -24,19 +24,24 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.std.ObjList;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
-
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+public class FirstShortGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "first(E)";
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new FirstShortGroupByFunction(position, args.getQuick(0));
     }
 }

@@ -24,19 +24,28 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.Rnd;
+import org.junit.Before;
+import org.junit.Test;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
-
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+public class LastSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
+    @Before
+    public void setUp3() {
+        SharedRandom.RANDOM.set(new Rnd());
     }
 
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    @Test
+    public void testLastSymbolNoNulls() throws Exception {
+        //TODO non functional test here, just an example
+        assertQuery(
+                "x\n" +
+                        "DEF\n",
+                "select last(sym) sym from tab",
+                "create table tab as (select rnd_symbol(10, 4, 4, 0) sym from long_sequence(10))\n",
+                null,
+                false
+        );
     }
 }
