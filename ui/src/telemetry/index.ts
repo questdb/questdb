@@ -10,7 +10,7 @@ type LastUpdatedResponse = Readonly<{ lastUpdated?: string }>
 const quest = new QuestDB.Client()
 
 const start = async () => {
-  const weekOffset = 24 * 60 * 60 * 1000 * 7
+  const yearOffset = 24 * 60 * 60 * 1000 * 31 * 12
   const result = await quest.query<ConfigShape>(Table.CONFIG)
   let lastUpdated: string | undefined
 
@@ -37,7 +37,7 @@ const start = async () => {
         host: window.location.origin,
         lastUpdated:
           lastUpdated ||
-          new Date(new Date().getTime() - weekOffset).toISOString(),
+          new Date(new Date().getTime() - yearOffset).toISOString(),
       }
 
       worker.postMessage(payload)
