@@ -24,65 +24,20 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
+
 import org.jetbrains.annotations.NotNull;
 
-public class LastDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
 
     public LastDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
-        this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, arg.getDouble(record));
+        super(position, arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        computeFirst(mapValue, record);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
-    }
-
-
-    @Override
-    public boolean isConstant() {
-        return false;
+        super.computeFirst(mapValue, record);
     }
 }
