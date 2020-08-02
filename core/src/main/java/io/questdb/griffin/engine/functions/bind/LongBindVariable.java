@@ -24,13 +24,11 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 
-class LongBindVariable extends LongFunction implements StatelessFunction {
+class LongBindVariable extends LongFunction implements Function {
     long value;
 
     public LongBindVariable(long value) {
@@ -41,9 +39,5 @@ class LongBindVariable extends LongFunction implements StatelessFunction {
     @Override
     public long getLong(Record rec) {
         return value;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

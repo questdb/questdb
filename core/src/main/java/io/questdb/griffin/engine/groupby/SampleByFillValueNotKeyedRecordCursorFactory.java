@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -53,7 +52,6 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
             int valueCount,
             int timestampIndex
     ) throws SqlException {
@@ -70,7 +68,6 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
                     placeholderFunctions,
                     timestampIndex,
                     timestampSampler,
-                    symbolTableSkewIndex,
                     simpleMapValue
             );
 

@@ -1881,7 +1881,7 @@ public class IODispatcherTest {
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
                             byte[] expectedResponse1 = expectedResponse.getBytes();
-                            long bufLen = Math.max(request.length(), 200);
+                            long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
                                 sendAndReceive(nf, request, 0, false, true, fd, expectedResponse1, 200, ptr, clientStateListener);

@@ -27,9 +27,7 @@ package io.questdb.griffin.engine.functions.test;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
@@ -55,11 +53,6 @@ public class TestNPEFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             throw new NullPointerException();
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-
         }
     }
 }

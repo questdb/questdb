@@ -30,10 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -46,7 +43,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
         // todo: limit pages
         VirtualMemory strMem = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
@@ -76,7 +73,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         );
     }
 
-    private static final class Func extends StrFunction implements StatelessFunction, NoArgFunction {
+    private static final class Func extends StrFunction implements Function {
         private final int count;
         private final VirtualMemory strMem;
         private final VirtualMemory idxMem;
@@ -126,7 +123,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class FixedFunc extends StrFunction implements StatelessFunction, NoArgFunction {
+    private static final class FixedFunc extends StrFunction implements Function {
         private final int count;
         private final VirtualMemory strMem;
         private final VirtualMemory idxMem;

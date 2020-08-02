@@ -28,9 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -132,7 +131,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         void sink(CharSink sink, Function function, Record record);
     }
 
-    private static class ConcatFunction extends StrFunction {
+    private static class ConcatFunction extends StrFunction implements MultiArgFunction {
         private final ObjList<Function> functions;
         private final ObjList<TypeAdapter> adaptors;
         private final StringSink sinkA = new StringSink();
@@ -164,11 +163,6 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
         public void getStr(Record rec, CharSink sink) {
             for (int i = 0; i < functionCount; i++) {
                 adaptors.getQuick(i).sink(sink, functions.getQuick(i), rec);
@@ -176,13 +170,8 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            Function.init(functions, symbolTableSource, executionContext);
-        }
-
-        @Override
-        public void toTop() {
-            Function.toTop(functions);
+        public ObjList<Function> getArgs() {
+            return functions;
         }
     }
 }

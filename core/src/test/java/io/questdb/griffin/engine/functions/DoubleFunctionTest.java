@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,11 +36,12 @@ public class DoubleFunctionTest {
         public double getDouble(Record rec) {
             return 0;
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -132,11 +131,6 @@ public class DoubleFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -129,6 +129,7 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        // todo: check if duplicate code can be removed
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             arg.init(symbolTableSource, executionContext);

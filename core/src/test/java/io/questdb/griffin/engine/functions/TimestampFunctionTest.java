@@ -39,10 +39,6 @@ public class TimestampFunctionTest {
         public long getTimestamp(Record rec) {
             return 145000L;
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

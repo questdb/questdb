@@ -22,14 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.ObjList;
 
-public interface NoArgFunction extends Function {
+public class FirstSymbolGroupByFunctionFactory implements FunctionFactory {
     @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    public String getSignature() {
+        return "first(K)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new FirstSymbolGroupByFunction(position, (SymbolFunction) args.getQuick(0));
     }
 }

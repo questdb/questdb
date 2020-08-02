@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +48,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableIndex,
             int valueCount,
             int timestampIndex
     ) {
@@ -64,13 +62,18 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
                     groupByFunctions,
                     recordFunctions,
                     timestampIndex,
-                    timestampSampler,
-                    symbolTableIndex
+                    timestampSampler
             );
         } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
     }
 
     @Override
@@ -81,12 +84,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
         }
         baseCursor.close();
         return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
     }
 
     @Override

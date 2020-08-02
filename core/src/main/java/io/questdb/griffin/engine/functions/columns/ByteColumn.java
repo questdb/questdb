@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 
-public class ByteColumn extends ByteFunction implements StatelessFunction, NoArgFunction {
+public class ByteColumn extends ByteFunction implements Function {
     private final int columnIndex;
 
     public ByteColumn(int position, int columnIndex) {

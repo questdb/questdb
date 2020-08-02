@@ -24,16 +24,12 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.Nullable;
 
-public class SymbolColumn extends SymbolFunction implements StatelessFunction {
+public class SymbolColumn extends SymbolFunction implements Function {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;

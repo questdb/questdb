@@ -32,8 +32,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
@@ -73,7 +71,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class Func extends StrFunction implements StatelessFunction, NoArgFunction {
+    private static final class Func extends StrFunction implements Function {
         private final ObjList<String> symbols;
         private final int count;
         private Rnd rnd;

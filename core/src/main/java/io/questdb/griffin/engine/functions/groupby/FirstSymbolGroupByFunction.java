@@ -27,52 +27,65 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import org.jetbrains.annotations.NotNull;
 
-public class CountGroupByFunction extends LongFunction implements GroupByFunction {
+public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
+    private final SymbolFunction arg;
     private int valueIndex;
 
-    public CountGroupByFunction(int position) {
+    public FirstSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
         super(position);
+        this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, 1L);
+        mapValue.putInt(this.valueIndex, this.arg.getInt(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putInt(this.valueIndex, SymbolTable.VALUE_IS_NULL);
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+    public Function getArg() {
+        return this.arg;
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public int getInt(Record rec) {
+        return rec.getInt(this.valueIndex);
     }
 
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        return arg.valueOf(getInt(rec));
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return arg.isSymbolTableStatic();
+    }
+
+    @Override
+    public CharSequence valueOf(int key) {
+        return arg.valueOf(key);
+    }
 }

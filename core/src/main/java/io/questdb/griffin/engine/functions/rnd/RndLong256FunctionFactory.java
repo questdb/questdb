@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -48,7 +47,7 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         return new RndFunction(position);
     }
 
-    private static class RndFunction extends Long256Function implements StatelessFunction {
+    private static class RndFunction extends Long256Function implements Function {
 
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();

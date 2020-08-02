@@ -39,44 +39,10 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByUtils {
-    public static void prepareGroupByFunctions(
-            QueryModel model,
-            RecordMetadata metadata,
-            FunctionParser functionParser,
-            SqlExecutionContext executionContext,
-            ObjList<GroupByFunction> groupByFunctions,
-            ArrayColumnTypes valueTypes
-    ) throws SqlException {
-
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        column.getAst(),
-                        metadata,
-                        executionContext
-                );
-
-                // configure map value columns for group-by functions
-                // some functions may need more than one column in values
-                // so we have them do all the work
-                assert function instanceof GroupByFunction;
-                GroupByFunction func = (GroupByFunction) function;
-                func.pushValueTypes(valueTypes);
-                groupByFunctions.add(func);
-            }
-        }
-    }
-
     public static void checkGroupBy(ObjList<ExpressionNode> groupBys, ObjList<QueryColumn> selectColumns, int groupByColumnCount, ExpressionNode alias) throws SqlException {
         int matchingColumnCount = 0;
         int groupBySize = groupBys.size();
@@ -157,7 +123,40 @@ public class GroupByUtils {
         return true;
     }
 
-    public static IntList prepareGroupByRecordFunctions(
+    public static void prepareGroupByFunctions(
+            QueryModel model,
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
+            ObjList<GroupByFunction> groupByFunctions,
+            ArrayColumnTypes valueTypes
+    ) throws SqlException {
+
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                // this can fail
+                final Function function = functionParser.parseFunction(
+                        column.getAst(),
+                        metadata,
+                        executionContext
+                );
+
+                // configure map value columns for group-by functions
+                // some functions may need more than one column in values
+                // so we have them do all the work
+                assert function instanceof GroupByFunction;
+                GroupByFunction func = (GroupByFunction) function;
+                func.pushValueTypes(valueTypes);
+                groupByFunctions.add(func);
+            }
+        }
+    }
+
+    public static void prepareGroupByRecordFunctions(
             @NotNull QueryModel model,
             RecordMetadata metadata,
             @NotNull ListColumnFilter listColumnFilter,
@@ -176,7 +175,6 @@ public class GroupByUtils {
         // map key columns.
 
         final ObjList<QueryColumn> columns = model.getColumns();
-        IntList symbolTableSkewIndex = null;
         int valueColumnIndex = 0;
         int groupByColumnCount = 0;
 
@@ -234,11 +232,7 @@ public class GroupByUtils {
                             fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            if (symbolTableSkewIndex == null) {
-                                symbolTableSkewIndex = new IntList();
-                            }
-                            symbolTableSkewIndex.extendAndSet(i, index);
-                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i, metadata.isSymbolTableStatic(index));
+                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
                             fun = new DateColumn(node.position, keyColumnIndex - 1);
@@ -302,16 +296,6 @@ public class GroupByUtils {
         final ObjList<ExpressionNode> groupBys = model.getNestedModel().getGroupBy().size() > 0 || model.getNestedModel().getNestedModel() == null ? model.getNestedModel().getGroupBy() : model.getNestedModel().getNestedModel().getGroupBy();
         ExpressionNode alias = model.getNestedModel().getNestedModel() != null ? model.getNestedModel().getNestedModel().getAlias() : null;
         GroupByUtils.checkGroupBy(groupBys, model.getNestedModel().getColumns(), groupByColumnCount, alias);
-
-        return symbolTableSkewIndex;
-    }
-
-    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        if (value.isNew()) {
-            updateNew(groupByFunctions, n, value, record);
-        } else {
-            updateExisting(groupByFunctions, n, value, record);
-        }
     }
 
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
@@ -323,6 +307,14 @@ public class GroupByUtils {
     public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
+        }
+    }
+
+    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+        if (value.isNew()) {
+            updateNew(groupByFunctions, n, value, record);
+        } else {
+            updateExisting(groupByFunctions, n, value, record);
         }
     }
 }
