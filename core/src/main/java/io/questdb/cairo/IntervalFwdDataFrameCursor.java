@@ -77,13 +77,13 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 if (partitionTimestampLo == intervalLo) {
                     lo = 0;
                 } else {
-                    lo = BinarySearch.search(column, intervalLo, partitionLimit, rowCount, BinarySearch.SCAN_UP);
+                    lo = BinarySearch.findOrEmplace(column, intervalLo, partitionLimit, rowCount, BinarySearch.SCAN_UP);
                     if (lo < 0) {
                         lo = -lo - 1;
                     }
                 }
 
-                long hi = BinarySearch.search(column, intervalHi, lo, rowCount, BinarySearch.SCAN_DOWN);
+                long hi = BinarySearch.findOrEmplace(column, intervalHi, lo, rowCount, BinarySearch.SCAN_DOWN);
 
                 if (hi < 0) {
                     hi = -hi - 1;
