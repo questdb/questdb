@@ -14,7 +14,7 @@ import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 public class TableBlockWriter implements Closeable {
-    private static final Log LOG = LogFactory.getLog(AbstractTableWriter.class);
+    private static final Log LOG = LogFactory.getLog(TableBlockWriter.class);
     private TableWriter writer;
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CharSequence root;
