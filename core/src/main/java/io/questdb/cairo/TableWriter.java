@@ -2794,6 +2794,17 @@ public class TableWriter implements Closeable {
         }
     }
 
+    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRows, boolean newPartition) {
+        bumpMasterRef();
+        if (newPartition) {
+            if (partitionBy != PartitionBy.NONE) {
+                switchPartition(firstTimestamp);
+            }
+        }
+        commitBlock(firstTimestamp, lastTimestamp, nRows);
+        setAppendPosition(transientRowCount);
+    }
+
     private void commitBlock(long firstTimestamp, long lastTimestamp, long nRows) {
         if (lastTimestamp < maxTimestamp) {
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);

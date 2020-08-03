@@ -522,6 +522,26 @@ public final class TableUtils {
         }
     }
 
+    static void writePartitionSize(FilesFacade ff, Path path, long tempMem8b, long nRows) {
+        int plen = path.length();
+        try {
+            long fd = ff.openRW(path);
+            if (fd == -1) {
+                throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+            }
+            Unsafe.getUnsafe().putLong(tempMem8b, nRows);
+            try {
+                if (ff.write(fd, tempMem8b, 8, 0) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write: ").put(path);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     static {
         DateFormatCompiler compiler = new DateFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
