@@ -125,7 +125,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
-            LOG.info().$("Missing extension: ").$(path).$();
+            logInfoWithFd(context).$("missing extension [file=").$(path).$(']').$();
             sendStatusWithDefaultMessage(context, 404);
             return;
         }
