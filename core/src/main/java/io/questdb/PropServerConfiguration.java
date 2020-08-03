@@ -460,7 +460,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final String timestampLocale = getString(properties, "cairo.timestamp.locale", "en");
         this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-        if (timestampLocale == null) {
+        if (this.timestampLocale == null) {
             throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
         }
 

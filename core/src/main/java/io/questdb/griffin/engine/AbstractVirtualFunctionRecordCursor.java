@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -35,8 +32,10 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     protected final VirtualRecord recordA;
     private final VirtualRecord recordB;
     protected RecordCursor baseCursor;
+    private final ObjList<Function> functions;
 
     public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
+        this.functions = functions;
         this.recordA = new VirtualRecord(functions);
         if (supportsRandomAccess) {
             this.recordB = new VirtualRecord(functions);
@@ -47,7 +46,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public void close() {
-        Misc.free(baseCursor);
+        baseCursor = Misc.free(baseCursor);
     }
 
     @Override
@@ -76,6 +75,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return (SymbolTable) functions.getQuick(columnIndex);
     }
 
     @Override

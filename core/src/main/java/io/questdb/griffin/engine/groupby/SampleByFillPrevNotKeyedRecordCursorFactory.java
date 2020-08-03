@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +48,6 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
             int timestampIndex,
             int groupByValueCount
     ) {
@@ -63,7 +61,6 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
                     recordFunctions,
                     timestampIndex,
                     timestampSampler,
-                    symbolTableSkewIndex,
                     simpleMapValue
             );
         } catch (CairoException e) {

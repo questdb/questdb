@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -51,7 +50,6 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
             int valueCount,
             int timestampIndex
     ) throws SqlException {
@@ -66,7 +64,6 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions),
                     timestampIndex,
                     timestampSampler,
-                    symbolTableSkewIndex,
                     simpleMapValue
             );
         } catch (SqlException | CairoException e) {

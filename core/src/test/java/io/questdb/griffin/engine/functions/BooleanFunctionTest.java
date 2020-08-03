@@ -57,6 +57,18 @@ public class BooleanFunctionTest {
         }
     };
 
+    @Test
+    public void testChar() {
+        Assert.assertEquals('F', functionA.getChar(null));
+        final BooleanFunction function = new BooleanFunction(25) {
+            @Override
+            public boolean getBool(Record rec) {
+                return true;
+            }
+        };
+        Assert.assertEquals('T', function.getChar(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         functionA.getBin(null);
@@ -164,22 +176,6 @@ public class BooleanFunctionTest {
     public void testGetTimestamp() {
         Assert.assertEquals(1, functionA.getTimestamp(null));
         Assert.assertEquals(0, functionB.getTimestamp(null));
-    }
-
-    @Test
-    public void testChar() {
-        Assert.assertEquals('F', functionA.getChar(null));
-        final BooleanFunction function = new BooleanFunction(25) {
-            @Override
-            public boolean getBool(Record rec) {
-                return true;
-            }
-
-            @Override
-            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            }
-        };
-        Assert.assertEquals('T', function.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

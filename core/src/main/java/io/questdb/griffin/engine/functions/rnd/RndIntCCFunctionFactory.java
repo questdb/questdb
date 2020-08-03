@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -62,7 +61,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends IntFunction implements StatelessFunction {
+    private static class RndFunction extends IntFunction implements Function {
         private final int lo;
         private final int range;
         private final int nanRate;

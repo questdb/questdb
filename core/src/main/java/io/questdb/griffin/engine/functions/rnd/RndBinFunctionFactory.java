@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -48,7 +46,7 @@ public class RndBinFunctionFactory implements FunctionFactory {
         return new FixLenFunction(position);
     }
 
-    private static final class FixLenFunction extends BinFunction implements StatelessFunction, NoArgFunction {
+    private static final class FixLenFunction extends BinFunction implements Function {
         private final Sequence sequence = new Sequence();
 
         public FixLenFunction(int position) {
