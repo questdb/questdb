@@ -53,9 +53,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         of(ff, name, 0, size);
     }
 
-    public OnePageMemory() {
-    }
-
     public long addressOf(long offset) {
         assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return absolutePointer + offset;

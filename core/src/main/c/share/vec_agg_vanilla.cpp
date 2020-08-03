@@ -25,6 +25,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <cmath>
+#include "util.h"
 #include "vec_agg_vanilla.h"
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
@@ -34,32 +35,32 @@ int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
     bool hasData = false;
     for (; pi1 < lim; pi1++) {
         const int32_t i = *pi1;
-        if (i != INT_MIN) {
+        if (i != I_MIN) {
             sum += i;
             hasData = true;
         }
     }
-    return hasData ? sum : LLONG_MIN;
+    return hasData ? sum : L_MIN;
 }
 
 int32_t minInt_Vanilla(int32_t *pi, int64_t count) {
     const int32_t *lim = pi + count;
-    int32_t min = INT_MAX;
+    int32_t min = I_MAX;
     bool hasData = false;
     for (; pi < lim; pi++) {
         const int32_t i = *pi;
-        if (i != INT_MIN && i < min) {
+        if (i != I_MIN && i < min) {
             min = i;
             hasData = true;
         }
     }
-    return hasData ? min : INT_MIN;
+    return hasData ? min : I_MIN;
 }
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
     int32_t *pi1 = pi;
     const int32_t *lim = pi1 + count;
-    int32_t max = INT_MIN;
+    int32_t max = I_MIN;
     for (; pi1 < lim; pi1++) {
         const int32_t i = *pi1;
         if (i > max) {
@@ -76,7 +77,7 @@ double avgInt_Vanilla(int32_t *pi, int64_t count) {
     int64_t sumCount = 0;
     for (; pd < lim; pd++) {
         const int32_t i = *pd;
-        if (i != INT_MIN) {
+        if (i != I_MIN) {
             sum += i;
             sumCount++;
         }
@@ -188,30 +189,30 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
     bool hasData = false;
     for (; pl < lim; pl++) {
         const int64_t l = *pl;
-        if (l != LLONG_MIN) {
+        if (l != L_MIN) {
             sum += l;
             hasData = true;
         }
     }
-    return hasData ? sum : LLONG_MIN;
+    return hasData ? sum : L_MIN;
 }
 
 int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
     const int64_t *lim = pl + count;
-    int64_t min = LLONG_MAX;
+    int64_t min = L_MAX;
     for (; pl < lim; pl++) {
         int64_t l = *pl;
-        if (l != LLONG_MIN && l < min) {
+        if (l != L_MIN && l < min) {
             min = l;
         }
     }
     // all null?
-    return min == LLONG_MAX ? LLONG_MIN : min;
+    return min == L_MAX ? L_MIN : min;
 }
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {
     const int64_t *lim = pl + count;
-    int64_t max = LLONG_MIN;
+    int64_t max = L_MIN;
     for (; pl < lim; pl++) {
         const int64_t l = *pl;
         if (l > max) {
@@ -225,7 +226,7 @@ bool hasNull_Vanilla(int32_t *pi, int64_t count) {
     const int32_t *lim = pi + count;
     for (; pi < lim; pi++) {
         const int32_t i = *pi;
-        if (i == INT_MIN) {
+        if (i == I_MIN) {
             return true;
         }
     }
@@ -239,7 +240,7 @@ double avgLong_Vanilla(int64_t *pl, int64_t count) {
     int64_t sumCount = 0;
     for (; p < lim; p++) {
         const int64_t l = *p;
-        if (l != LLONG_MIN) {
+        if (l != L_MIN) {
             sum += l;
             sumCount++;
         }

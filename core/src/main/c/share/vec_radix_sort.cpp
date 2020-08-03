@@ -307,7 +307,7 @@ void k_way_merge_long_index(
         if (indexes[i].index != nullptr) {
             tree[entries_count + i].value = indexes[i].index->ts;
         } else {
-            tree[entries_count + i].value = LLONG_MAX;
+            tree[entries_count + i].value = L_MAX;
         }
         tree[entries_count + i].index_index = entries_count + i;
     }
@@ -339,7 +339,7 @@ void k_way_merge_long_index(
         if (PREDICT_TRUE(++winner->pos < winner->size)) {
             tree[winner_index].value = winner->index[winner->pos].ts;
         } else {
-            tree[winner_index].value = LLONG_MAX;
+            tree[winner_index].value = L_MAX;
             sentinels_left--;
         }
 

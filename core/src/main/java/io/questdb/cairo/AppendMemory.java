@@ -150,7 +150,7 @@ public class AppendMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         if (page == mappedPage) {
             return pageAddress;
         }
