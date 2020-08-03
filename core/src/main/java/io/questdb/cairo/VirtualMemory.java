@@ -878,7 +878,7 @@ public class VirtualMemory implements Closeable {
         updateLimits(page, mapWritePage(page));
     }
 
-    protected final int pageIndex(long offset) {
+    public final int pageIndex(long offset) {
         return (int) (offset >> bits);
     }
 
@@ -1125,19 +1125,7 @@ public class VirtualMemory implements Closeable {
 
         @Override
         public void copyTo(long address, final long start, final long length) {
-            long bytesRemaining = Math.min(length, this.len - start);
-            long offset = this.offset + start;
-            while (bytesRemaining > 0) {
-                final int page = pageIndex(offset);
-                final long pageSize = getPageSize(page);
-                final long pageAddress = getPageAddress(page);
-                final long offsetInPage = offsetInPage(offset);
-                final long bytesToCopy = Math.min(bytesRemaining, pageSize - offsetInPage);
-                Unsafe.getUnsafe().copyMemory(pageAddress + offsetInPage, address, bytesToCopy);
-                bytesRemaining -= bytesToCopy;
-                offset += bytesToCopy;
-                address += bytesToCopy;
-            }
+            VirtualMemory.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
         }
 
         @Override
@@ -1163,6 +1151,20 @@ public class VirtualMemory implements Closeable {
         private byte updatePosAndGet(long index) {
             calculateBlobAddress(this.offset + index);
             return Unsafe.getUnsafe().getByte(readAddress++);
+        }
+    }
+
+    public void copyTo(long address, long offset, long len) {
+        while (len > 0) {
+            final int page = pageIndex(offset);
+            final long pageSize = getPageSize(page);
+            final long pageAddress = getPageAddress(page);
+            final long offsetInPage = offsetInPage(offset);
+            final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
+            Unsafe.getUnsafe().copyMemory(pageAddress + offsetInPage, address, bytesToCopy);
+            len -= bytesToCopy;
+            offset += bytesToCopy;
+            address += bytesToCopy;
         }
     }
 

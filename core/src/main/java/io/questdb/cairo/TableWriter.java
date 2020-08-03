@@ -481,9 +481,9 @@ public class TableWriter implements Closeable {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
                     path.trimTo(rootLen);
-                    setStateForTimestamp(timestamp, true);
+                    setStateForTimestamp(path, timestamp, true);
                 } else {
-                    setStateForTimestamp(0, false);
+                    setStateForTimestamp(path, 0, false);
                 }
 
                 // create index in last partition
@@ -808,7 +808,7 @@ public class TableWriter implements Closeable {
                 nextMinTimestamp = minTimestamp;
             }
 
-            setStateForTimestamp(timestamp, false);
+            setStateForTimestamp(path, timestamp, false);
 
             if (ff.exists(path)) {
 
@@ -1115,6 +1115,27 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static long searchIndex(long indexAddress, long value, long low, long high) {
+        while (low < high) {
+            long mid = (low + high - 1) >>> 1;
+            long midVal = Unsafe.getUnsafe().getLong(indexAddress + mid * 16);
+
+            if (midVal < value)
+                low = mid + 1;
+            else if (midVal > value)
+                high = mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += BinarySearch.SCAN_DOWN;
+                while (mid > 0 && mid < high && midVal == Unsafe.getUnsafe().getLong(indexAddress + mid * 16)) {
+                    mid += BinarySearch.SCAN_DOWN;
+                }
+                return mid - BinarySearch.SCAN_DOWN;
+            }
+        }
+        return low;
+    }
+
     private int addColumnToMeta(
             CharSequence name,
             int type,
@@ -1211,7 +1232,7 @@ public class TableWriter implements Closeable {
                 freeColumns(false);
                 if (removeDirOnCancelRow) {
                     try {
-                        setStateForTimestamp(maxTimestamp, false);
+                        setStateForTimestamp(path, maxTimestamp, false);
                         if (!ff.rmdir(path.$())) {
                             throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                         }
@@ -1293,7 +1314,7 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < txPartitionCount - 1; i++) {
             try {
                 long partitionTimestamp = txPendingPartitionSizes.getLong(offset + 8);
-                setStateForTimestamp(partitionTimestamp, false);
+                setStateForTimestamp(path, partitionTimestamp, false);
                 long fd = openAppend(path.concat(ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
@@ -1642,7 +1663,7 @@ public class TableWriter implements Closeable {
         long nextMinTimestamp = minTimestamp;
         while (nextMinTimestamp < maxTimestamp) {
             long nextTimestamp = timestampFloorMethod.floor(timestampAddMethod.calculate(nextMinTimestamp, 1));
-            setStateForTimestamp(nextTimestamp, false);
+            setStateForTimestamp(path, nextTimestamp, false);
             try {
                 dFile(path, metadata.getColumnName(metadata.getTimestampIndex()));
                 if (ff.exists(path)) {
@@ -1713,7 +1734,7 @@ public class TableWriter implements Closeable {
 
                 path.trimTo(rootLen);
 
-                setStateForTimestamp(timestamp, true);
+                setStateForTimestamp(path, timestamp, true);
 
                 if (ff.exists(path.$())) {
 
@@ -1792,275 +1813,372 @@ public class TableWriter implements Closeable {
 
     private void mergeOutOfOrderRecords() {
         final int timestampIndex = metadata.getTimestampIndex();
-//        long i = 0;
+        try {
 
-        int pageCount = timestampMergeMem.getPageCount();
-        long p;
-        long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
-
-        LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-        for (int i = 0; i < pageCount; i++) {
-            final long pageAddr = timestampMergeMem.getPageAddress(i);
-            final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
-            // todo: sort in parallel
-            Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
-            Unsafe.getUnsafe().putLong(p, pageAddr);
-            Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
-            p += TIMESTAMP_MERGE_ENTRY_BYTES;
-        }
-
-        LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-        long mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
-
-        // we have three frames:
-        // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
-        // partition actual data "lo" and "hi" (dataLo, dataHi)
-        // out of order "lo" and "hi" (indexLo, indexHi)
-
-        long indexLo = 0;
-        long indexHi;
-        long indexMax = mergeRowCount;
-
-        long ooTimestampLo = Unsafe.getUnsafe().getLong(mergedTimestamps);
-        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + (indexMax - 1) * 16);
-
-        setStateForTimestamp(ooTimestampLo, true);
-        dFile(path, metadata.getColumnName(timestampIndex));
-        long partitionTimestampHi = this.partitionHi;
-
-        // find "current" partition boundary in the out of order data
-        // once we know the boundary we can move on to calculating another one
-        if (ooTimestampHi > partitionTimestampHi) {
-            indexHi = searchIndex(mergedTimestamps, partitionTimestampHi, indexLo, indexMax - 1, BinarySearch.SCAN_DOWN);
-            if (indexHi < 0) {
-                indexHi = -indexHi - 1;
+            // we may need to re-use file descriptors when this partition is the "current" one
+            // we cannot open file again due to sharing violation
+            //
+            // to determine that 'ooTimestampLo' goes into current partition
+            // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
+            // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
+            long maxTruncated = 0;
+            switch (partitionBy) {
+                case PartitionBy.DAY:
+                    maxTruncated = Timestamps.ceilDD(this.maxTimestamp);
+                    break;
+                case PartitionBy.MONTH:
+                    maxTruncated = Timestamps.ceilMM(this.maxTimestamp);
+                    break;
+                case PartitionBy.YEAR:
+                    maxTruncated = Timestamps.ceilYYYY(this.maxTimestamp);
+                    break;
+                default:
+                    assert false;
             }
-        } else {
-            indexHi = indexMax - 1;
+
+            int pageCount = timestampMergeMem.getPageCount();
+            long p;
+            long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
+
+            LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+            for (int i = 0; i < pageCount; i++) {
+                final long pageAddr = timestampMergeMem.getPageAddress(i);
+                final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
+                // todo: sort in parallel
+                Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
+                Unsafe.getUnsafe().putLong(p, pageAddr);
+                Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
+                p += TIMESTAMP_MERGE_ENTRY_BYTES;
+            }
+
+            LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+            long mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
+
+            // we have three frames:
+            // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
+            // partition actual data "lo" and "hi" (dataLo, dataHi)
+            // out of order "lo" and "hi" (indexLo, indexHi)
+
+            long indexLo = 0;
+            long indexHi;
+            long indexMax = mergeRowCount;
+            long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + (indexMax - 1) * 16);
+
+            while (indexLo < indexMax) {
+                long ooTimestampLo = Unsafe.getUnsafe().getLong(mergedTimestamps + indexLo * 16);
+
+                path.trimTo(rootLen);
+                setStateForTimestamp(path, ooTimestampLo, true);
+                int plen = path.length();
+
+                long partitionTimestampHi = this.partitionHi;
+
+                // find "current" partition boundary in the out of order data
+                // once we know the boundary we can move on to calculating another one
+                if (ooTimestampHi > partitionTimestampHi) {
+                    indexHi = searchIndex(mergedTimestamps, partitionTimestampHi, indexLo, indexMax - 1);
+                } else {
+                    indexHi = indexMax - 1;
+                }
+
+                long fdToClose = 0;
+                long fd;
+                long dataTimestampLo;
+                long dataTimestampHi;
+                long dataIndexMax;
+
+                // is out of order data hitting the last partition?
+                // if so we do not need to re-open files and and write to existing file descriptors
+
+                if (partitionTimestampHi > maxTruncated) {
+                    // this has to be a brand new partition
+                    LOG.info().$("copy oo to [path=").$(path).$(", from=").$(indexLo).$(", to=").$(indexHi).$(']').$();
+
+                    // pure OOO data copy into new partition
+                    copyOutOfOrderData(path, indexLo, indexHi);
+                    indexLo = indexHi + 1;
+                    continue;
+                }
+
+                try {
+                    dFile(path, metadata.getColumnName(timestampIndex));
+                    if (partitionTimestampHi == maxTruncated) {
+                        dataTimestampHi = this.maxTimestamp;
+                        dataIndexMax = transientRowCountBeforeOutOfOrder;
+                        fd = columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                    } else {
+
+                        // out of order data is going into archive partition
+                        // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
+                        // and "high" being newest
+
+
+                        // also track the fd that we need to eventually close
+                        fdToClose = fd = ff.openRW(path);
+                        if (fd == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
+                        }
+
+                        // todo: read the archive
+                        dataIndexMax = ff.length(fd) / Long.BYTES;
+
+                        // read bottom of file
+                        // todo: check that offset is non-negative
+                        if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
+                            throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
+                        }
+                        dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+                    }
+
+                    // read the top value
+                    // todo: check that file size is > 8 bytes
+                    if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                        throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
+                    }
+
+                    dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+                    // this is an overloaded function, page size is derived from the file size
+                    timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
+
+                    // create copy jobs
+                    long l2_ooo;
+                    long l2_data;
+                    if (ooTimestampLo < dataTimestampLo) {
+
+                        //            +-----+
+                        //            | OOO |
+                        //
+                        //  +------+
+                        //  | data |
+
+                        long l1 = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
+                        LOG.info().$("copy ooo set [from=").$(indexLo).$(", to=").$(l1).$(']').$();
+
+                        if (ooTimestampHi >= dataTimestampLo) {
+
+                            //
+                            //  +------+  | OOO |
+                            //  | data |  +-----+
+                            //  |      |
+
+                            if (ooTimestampHi < dataTimestampHi) {
+
+                                // |      | |     |
+                                // |      | | OOO |
+                                // | data | +-----+
+                                // |      |
+                                // +------+
+
+                                l2_ooo = indexHi;
+                                l2_data = BinarySearch.find(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1);
+                            } else if (ooTimestampHi > dataTimestampHi) {
+
+                                // |      | |     |
+                                // |      | | OOO |
+                                // | data | |     |
+                                // +------+ |     |
+                                //          +-----+
+
+                                l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, l1 + 1, indexHi);
+                                l2_data = dataIndexMax - 1;
+                            } else {
+
+                                // |      | |     |
+                                // |      | | OOO |
+                                // | data | |     |
+                                // +------+ +-----+
+
+                                l2_ooo = indexHi;
+                                l2_data = dataIndexMax - 1;
+                            }
+
+                            // do the merge
+                            LOG.info()
+                                    .$("merged data + ooo [dataFrom=").$(0)
+                                    .$(", dataTo=").$(l2_data)
+                                    .$(", oooFrom=").$(l1 + 1)
+                                    .$(", oooTo=").$(l2_ooo)
+                                    .$(']').$();
+                        } else {
+
+                            //            +-----+
+                            //            | OOO |
+                            //            +-----+
+                            //
+                            //  +------+
+                            //  | data |
+
+                            l2_ooo = indexHi;
+                            l2_data = 0;
+                        }
+                    } else {
+
+                        //   +------+                +------+  +-----+
+                        //   | data |  +-----+       | data |  |     |
+                        //   |      |  | OOO |  OR   |      |  | OOO |
+                        //   |      |  |     |       |      |  |     |
+
+                        if (ooTimestampLo <= dataTimestampHi) {
+
+                            //
+                            // |      |
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // +------+
+
+                            long l1_data = BinarySearch.find(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1);
+                            LOG.info().$("copy data set [from=").$(0).$(", to=").$(l1_data).$(']').$();
+
+                            if (ooTimestampHi < dataTimestampHi) {
+
+                                //
+                                // |      | +-----+
+                                // | data | | OOO |
+                                // |      | +-----+
+                                // +------+
+
+                                l2_ooo = indexHi;
+                                l2_data = BinarySearch.find(timestampSearchColumn, ooTimestampHi, l1_data, dataIndexMax - 1);
+                            } else if (ooTimestampHi > dataTimestampHi) {
+
+                                //
+                                // |      | +-----+
+                                // | data | | OOO |
+                                // |      | |     |
+                                // +------+ |     |
+                                //          |     |
+                                //          +-----+
+
+                                l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
+                                l2_data = dataIndexMax - 1;
+                            } else {
+
+                                //
+                                // |      | +-----+
+                                // | data | | OOO |
+                                // |      | |     |
+                                // +------+ +-----+
+                                //
+
+                                l2_ooo = indexHi;
+                                l2_data = dataIndexMax - 1;
+                            }
+
+                            // do the merge
+                            LOG.info()
+                                    .$("merged data + ooo [dataFrom=").$(l1_data + 1)
+                                    .$(", dataTo=").$(l2_data)
+                                    .$(", oooFrom=").$(indexLo)
+                                    .$(", oooTo=").$(l2_ooo)
+                                    .$(']').$();
+
+                        } else {
+
+                            // +------+
+                            // | data |
+                            // |      |
+                            // +------+
+                            //
+                            //           +-----+
+                            //           | OOO |
+                            //           |     |
+                            //
+                            l2_ooo = indexLo - 1;
+                            l2_data = dataIndexMax - 1;
+
+                            // todo: this is the only case when we do not need to create new set of files
+                        }
+                    }
+
+                    if (l2_ooo < indexHi) {
+                        LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexHi).$(']').$();
+                    } else if (l2_data < dataIndexMax - 1) {
+                        LOG.info().$("copy data set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+                    }
+                } finally {
+                    indexLo = indexHi + 1;
+                    if (fdToClose > 0) {
+                        ff.close(fdToClose);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+            this.mergeRowCount = 0;
+        }
+    }
+
+    private void copyOutOfOrderData(Path path, long indexLo, long indexHi) {
+        int plen = path.length();
+        for (int i = 0; i < columnCount; i++) {
+            VirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            VirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            try {
+                switch (columnType) {
+                    case ColumnType.STRING:
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
+
+                        dFile(path, metadata.getColumnName(i));
+                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+
+                        path.trimTo(plen);
+                        iFile(path, metadata.getColumnName(i));
+                        lo = indexLo * Long.BYTES;
+                        hi = (indexHi + 1) * Long.BYTES;
+
+                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+
+                        break;
+
+                    case ColumnType.BINARY:
+                        assert false;
+                    default:
+                        dFile(path, metadata.getColumnName(i));
+                        lo = indexLo << ColumnType.pow2SizeOf(columnType);
+                        hi = (indexHi + 1) << ColumnType.pow2SizeOf(columnType);
+                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+                        break;
+                }
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+    }
+
+    private void createColumnAndCopyMergedData(Path path, VirtualMemory mem, long lo, long len) {
+        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
 
-//        long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES);
-
-        // we may need to re-use file descriptors when this partition is the "current" one
-        // we cannot open file again due to sharing violation
-        //
-        // to determine that 'ooTimestampLo' goes into current partition
-        // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
-        // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-        long maxTruncated = 0;
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                maxTruncated = Timestamps.ceilDD(this.maxTimestamp);
-                break;
-            case PartitionBy.MONTH:
-                maxTruncated = Timestamps.ceilMM(this.maxTimestamp);
-                break;
-            case PartitionBy.YEAR:
-                maxTruncated = Timestamps.ceilYYYY(this.maxTimestamp);
-                break;
-            default:
-                assert false;
+        final long fd = ff.openRW(path);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
         }
-
-        long fdToClose = 0;
-        long fd;
-        long dataTimestampLo;
-        long dataTimestampHi;
-        long dataIndexMax;
 
         try {
-            if (partitionTimestampHi == maxTruncated) {
-                dataTimestampHi = this.maxTimestamp;
-                dataIndexMax = transientRowCountBeforeOutOfOrder;
-                fd = columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-            } else {
-                // todo: close "fd" if we opened it
-                fdToClose = fd = ff.openRW(path);
-                if (fd == -1) {
-                    throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
-                }
-
-                // todo: read the archive
-                dataIndexMax = ff.length(fd) / Long.BYTES;
-
-//                // read bottom of file
-//                // todo: check that offset is non-negative
-                if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
-                    throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
-                }
-                dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+            if (!ff.truncate(fd, len)) {
+                throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(len).put(']');
             }
-
-            // read the top value
-            // todo: check that file size is > 8 bytes
-            if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
-            }
-
-            dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
-            // this is an overloaded function, page size is derived from the file size
-            timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
-
-            // create copy jobs
-            long l2_ooo;
-            long l2_data;
-            if (ooTimestampLo < dataTimestampLo) {
-
-                //            +-----+
-                //            | OOO |
-                //
-                //  +------+
-                //  | data |
-
-                long l1 = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi, BinarySearch.SCAN_DOWN);
-                LOG.info().$("copy ooo set [from=").$(indexLo).$(", to=").$(l1).$(']').$();
-
-                if (ooTimestampHi >= dataTimestampLo) {
-
-                    //
-                    //  +------+  | OOO |
-                    //  | data |  +-----+
-                    //  |      |
-
-                    if (ooTimestampHi < dataTimestampHi) {
-
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | +-----+
-                        // |      |
-                        // +------+
-
-                        l2_ooo = indexHi;
-                        l2_data = BinarySearch.search(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
-                    } else if (ooTimestampHi > dataTimestampHi) {
-
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | |     |
-                        // +------+ |     |
-                        //          +-----+
-
-                        l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, l1 + 1, indexHi, BinarySearch.SCAN_DOWN);
-                        l2_data = dataIndexMax - 1;
-                    } else {
-
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | |     |
-                        // +------+ +-----+
-
-                        l2_ooo = indexHi;
-                        l2_data = dataIndexMax - 1;
-                    }
-
-                    // do the merge
-                    LOG.info()
-                            .$("merged data + ooo [dataFrom=").$(0)
-                            .$(", dataTo=").$(l2_data)
-                            .$(", oooFrom=").$(l1 + 1)
-                            .$(", oooTo=").$(l2_ooo)
-                            .$(']').$();
-                } else {
-
-                    //            +-----+
-                    //            | OOO |
-                    //            +-----+
-                    //
-                    //  +------+
-                    //  | data |
-
-                    l2_ooo = indexHi;
-                    l2_data = 0;
+            long addr = ff.mmap(fd, len, 0, Files.MAP_RW);
+            if (addr != -1) {
+                try {
+                    mem.copyTo(addr, lo, len);
+                } finally {
+                    ff.munmap(addr, len);
                 }
             } else {
-
-                //   +------+                +------+  +-----+
-                //   | data |  +-----+       | data |  |     |
-                //   |      |  | OOO |  OR   |      |  | OOO |
-                //   |      |  |     |       |      |  |     |
-
-                if (ooTimestampLo <= dataTimestampHi) {
-
-                    //
-                    // |      |
-                    // |      | +-----+
-                    // | data | | OOO |
-                    // +------+
-
-                    long l1_data = BinarySearch.search(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
-                    LOG.info().$("copy data set [from=").$(0).$(", to=").$(l1_data).$(']').$();
-
-                    if (ooTimestampHi < dataTimestampHi) {
-
-                        //
-                        // |      | +-----+
-                        // | data | | OOO |
-                        // |      | +-----+
-                        // +------+
-
-                        l2_ooo = indexHi;
-                        l2_data = BinarySearch.search(timestampSearchColumn, ooTimestampHi, l1_data, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
-                    } else if (ooTimestampHi > dataTimestampHi) {
-
-                        //
-                        // |      | +-----+
-                        // | data | | OOO |
-                        // |      | |     |
-                        // +------+ |     |
-                        //          |     |
-                        //          +-----+
-
-                        l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi, BinarySearch.SCAN_DOWN);
-                        l2_data = dataIndexMax - 1;
-                    } else {
-
-                        //
-                        // |      | +-----+
-                        // | data | | OOO |
-                        // |      | |     |
-                        // +------+ +-----+
-                        //
-
-                        l2_ooo = indexHi;
-                        l2_data = dataIndexMax - 1;
-                    }
-
-                    // do the merge
-                    LOG.info()
-                            .$("merged data + ooo [dataFrom=").$(l1_data + 1)
-                            .$(", dataTo=").$(l2_data)
-                            .$(", oooFrom=").$(indexLo)
-                            .$(", oooTo=").$(l2_ooo)
-                            .$(']').$();
-
-                } else {
-
-                    // +------+
-                    // | data |
-                    // |      |
-                    // +------+
-                    //
-                    //           +-----+
-                    //           | OOO |
-                    //           |     |
-                    //
-                    l2_ooo = indexLo - 1;
-                    l2_data = dataIndexMax - 1;
-                }
+                throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
             }
-
-            if (l2_ooo < indexHi) {
-                LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexHi).$(']').$();
-            } else if (l2_data < dataIndexMax - 1) {
-                LOG.info().$("copy date set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
-            }
-
         } finally {
-            if (fdToClose > 0) {
-                ff.close(fdToClose);
-            }
+            ff.close(fd);
         }
-        this.mergeRowCount = 0;
     }
 
     private void mergeTimestampSetter(long timestamp) {
@@ -2123,7 +2241,7 @@ public class TableWriter implements Closeable {
     private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
-            setStateForTimestamp(maxTimestamp, false);
+            setStateForTimestamp(path, maxTimestamp, false);
             final int plen = path.length();
             final int columnIndex = columnCount - 1;
 
@@ -2152,7 +2270,7 @@ public class TableWriter implements Closeable {
 
     private void openPartition(long timestamp) {
         try {
-            setStateForTimestamp(timestamp, true);
+            setStateForTimestamp(path, timestamp, true);
             int plen = path.length();
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
@@ -2612,7 +2730,7 @@ public class TableWriter implements Closeable {
                 final long tsLimit = timestampFloorMethod.floor(this.maxTimestamp);
                 for (long ts = minTimestamp; ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
                     path.trimTo(rootLen);
-                    setStateForTimestamp(ts, false);
+                    setStateForTimestamp(path, ts, false);
                     int p = path.length();
                     if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
                         actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
@@ -2626,14 +2744,14 @@ public class TableWriter implements Closeable {
 
                 if (lastTimestamp > -1) {
                     path.trimTo(rootLen);
-                    setStateForTimestamp(tsLimit, false);
+                    setStateForTimestamp(path, tsLimit, false);
                     if (!ff.exists(path.$())) {
                         LOG.error().$("last partition does not exist [name=").$(path).$(']').$();
 
                         // ok, create last partition we discovered the active
                         // 1. read its size
                         path.trimTo(rootLen);
-                        setStateForTimestamp(lastTimestamp, false);
+                        setStateForTimestamp(path, lastTimestamp, false);
                         int p = path.length();
                         transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem8b, 0);
 
@@ -2785,11 +2903,11 @@ public class TableWriter implements Closeable {
      * Because this method modifies "path" member variable, be sure path is trimmed to original
      * state within try..finally block.
      *
+     * @param path                    path instance to modify
      * @param timestamp               to determine interval for
      * @param updatePartitionInterval flag indicating that partition interval partitionLo and
-     *                                partitionHi have to be updated as well.
      */
-    private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
+    private void setStateForTimestamp(Path path, long timestamp, boolean updatePartitionInterval) {
         int y, m, d;
         boolean leap;
         path.put(Files.SEPARATOR);

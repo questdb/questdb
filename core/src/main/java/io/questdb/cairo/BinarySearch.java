@@ -28,7 +28,7 @@ public class BinarySearch {
     public static final int SCAN_UP = -1;
     public static final int SCAN_DOWN = 1;
 
-    public static long search(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
+    public static long findOrEmplace(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -47,5 +47,26 @@ public class BinarySearch {
             }
         }
         return -(low + 1);
+    }
+
+    public static long find(ReadOnlyColumn column, long value, long low, long high) {
+        while (low < high) {
+            long mid = (low + high - 1) >>> 1;
+            long midVal = column.getLong(mid * 8);
+
+            if (midVal < value)
+                low = mid + 1;
+            else if (midVal > value)
+                high = mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += 1;
+                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
+                    mid += 1;
+                }
+                return mid - 1;
+            }
+        }
+        return low;
     }
 }
