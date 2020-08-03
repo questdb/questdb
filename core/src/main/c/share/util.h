@@ -26,6 +26,7 @@
 #define UTIL_H
 #include <cmath>
 #include <cstdint>
+#include "jni.h"
 
 #if (defined(__GNUC__) && !defined(__clang__))
 #define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))

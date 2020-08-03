@@ -126,14 +126,14 @@ bool HAS_NULL(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        if (horizontal_find_first(vec == INT_MIN) > -1) {
+        if (horizontal_find_first(vec == I_MIN) > -1) {
             return true;
         }
     }
 
     if (remainder > 0) {
         vec.load_partial(remainder, pi);
-        return horizontal_find_first(vec == INT_MIN) > -1;
+        return horizontal_find_first(vec == I_MIN) > -1;
     }
     return false;
 }
@@ -153,7 +153,7 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
         nancount = if_add(bVec, nancount, 1);
     }
@@ -162,7 +162,7 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     int n = 0;
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN) {
+        if (x != L_MIN) {
             sum += x;
         } else {
             n++;
@@ -173,35 +173,35 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
         return horizontal_add(vecsum) + sum;
     }
 
-    return LLONG_MIN;
+    return L_MIN;
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
     const int step = 8;
-    Vec8q vecMin = LLONG_MAX;
+    Vec8q vecMin = L_MAX;
     Vec8qb bVec;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
     }
 
     int64_t min = horizontal_min(vecMin);
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN && x < min) {
+        if (x != L_MIN && x < min) {
             min = x;
         }
     }
 
-    if (min < LLONG_MAX) {
+    if (min < L_MAX) {
         return min;
     }
 
-    return LLONG_MIN;
+    return L_MIN;
 }
 
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
@@ -235,7 +235,7 @@ double AVG_LONG(int64_t *pl, int64_t count) {
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
         nancount = if_add(bVec, nancount, 1);
     }
@@ -244,7 +244,7 @@ double AVG_LONG(int64_t *pl, int64_t count) {
     int n = 0;
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN) {
+        if (x != L_MIN) {
             sum += x;
         } else {
             n++;
@@ -276,7 +276,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        bVec = vec != INT_MIN;
+        bVec = vec != I_MIN;
         hasData = hasData || horizontal_count(bVec) > 0;
         result += horizontal_add_x(select(bVec, vec, 0));
     }
@@ -284,48 +284,48 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     if (pi < lim) {
         for (; pi < lim; pi++) {
             int32_t v = *pi;
-            if (PREDICT_TRUE(v != INT_MIN)) {
+            if (PREDICT_TRUE(v != I_MIN)) {
                 result += v;
                 hasData = true;
             }
         }
     }
 
-    return hasData > 0 ? result : LLONG_MIN;
+    return hasData > 0 ? result : L_MIN;
 }
 
 int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     const int step = 16;
-    Vec16i vecMin = INT_MAX;
+    Vec16i vecMin = I_MAX;
     Vec16ib bVec;
     int i;
     for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
-        bVec = vec == INT_MIN;
+        bVec = vec == I_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
     }
 
     int32_t min = horizontal_min(vecMin);
     for (; i < count; i++) {
         int32_t x = *(pi + i);
-        if (x != INT_MIN && x < min) {
+        if (x != I_MIN && x < min) {
             min = x;
         }
     }
 
-    if (min < INT_MAX) {
+    if (min < I_MAX) {
         return min;
     }
 
-    return INT_MIN;
+    return I_MIN;
 }
 
 int32_t MAX_INT(int32_t *pi, int64_t count) {
     const int step = 16;
     Vec16i vec;
-    Vec16i vecMax = INT_MIN;
+    Vec16i vecMax = I_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
@@ -356,7 +356,7 @@ double AVG_INT(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        bVec = vec != INT_MIN;
+        bVec = vec != I_MIN;
         sumCount += horizontal_count(bVec);
         sum += horizontal_add_x(select(bVec, vec, 0));
     }
@@ -364,7 +364,7 @@ double AVG_INT(int32_t *pi, int64_t count) {
     if (pi < lim) {
         for (; pi < lim; pi++) {
             int v = *pi;
-            if (v != INT_MIN) {
+            if (v != I_MIN) {
                 sum += v;
                 sumCount++;
             }
