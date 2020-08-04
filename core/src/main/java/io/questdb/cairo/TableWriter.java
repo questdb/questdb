@@ -134,9 +134,9 @@ public class TableWriter implements Closeable {
     private final ReadOnlyMemory metaMem;
     private final VirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
-    private final SetupWriteFunction switchPartitionFunction = new SwitchPartitionFunction();
-    private final SetupWriteFunction openPartitionFunction = new OpenPartitionFunction();
-    private final SetupWriteFunction noPartitionFunction = new NoPartitionFunction();
+    private final RowFunction switchPartitionFunction = new SwitchPartitionFunction();
+    private final RowFunction openPartitionFunction = new OpenPartitionFunction();
+    private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
@@ -167,7 +167,7 @@ public class TableWriter implements Closeable {
     private long txn;
     private long structureVersion;
     private long dataVersion;
-    private SetupWriteFunction setupWriteFunction = openPartitionFunction;
+    private RowFunction rowFunction = openPartitionFunction;
     private long prevMaxTimestamp;
     private long txPrevTransientRowCount;
     private long maxTimestamp;
@@ -660,8 +660,7 @@ public class TableWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
-        setupWriteFunction.newWrite(timestamp, false);
-        return row;
+        return rowFunction.newRow(timestamp);
     }
 
     public Row newRow() {
@@ -999,7 +998,7 @@ public class TableWriter implements Closeable {
                 }
             }
             removePartitionDirectories();
-            setupWriteFunction = openPartitionFunction;
+            rowFunction = openPartitionFunction;
         }
 
         prevMaxTimestamp = Long.MIN_VALUE;
@@ -1294,7 +1293,7 @@ public class TableWriter implements Closeable {
                         throw e;
                     }
                 } else {
-                    setupWriteFunction = openPartitionFunction;
+                    rowFunction = openPartitionFunction;
                 }
 
                 // undo counts
@@ -1392,12 +1391,12 @@ public class TableWriter implements Closeable {
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.maxTimestamp);
             if (partitionBy == PartitionBy.NONE) {
-                setupWriteFunction = noPartitionFunction;
+                rowFunction = noPartitionFunction;
             } else {
-                setupWriteFunction = switchPartitionFunction;
+                rowFunction = switchPartitionFunction;
             }
         } else {
-            setupWriteFunction = openPartitionFunction;
+            rowFunction = openPartitionFunction;
         }
     }
 
@@ -2786,53 +2785,47 @@ public class TableWriter implements Closeable {
         void run(CharSequence columnName);
     }
 
-    private class OpenPartitionFunction implements SetupWriteFunction {
+    private class OpenPartitionFunction implements RowFunction {
         @Override
-        public void newWrite(long timestamp, boolean block) {
+        public Row newRow(long timestamp) {
             if (maxTimestamp != Long.MIN_VALUE) {
-                (setupWriteFunction = switchPartitionFunction).newWrite(timestamp, block);
-            } else {
-                newWriteSlow(timestamp, block);
+                return (rowFunction = switchPartitionFunction).newRow(timestamp);
             }
+            return getRowSlow(timestamp);
         }
 
-        private void newWriteSlow(long timestamp, boolean block) {
+        private Row getRowSlow(long timestamp) {
             minTimestamp = timestamp;
             openFirstPartition(timestamp);
-            (setupWriteFunction = switchPartitionFunction).newWrite(timestamp, block);
+            return (rowFunction = switchPartitionFunction).newRow(timestamp);
         }
     }
 
-    private class NoPartitionFunction implements SetupWriteFunction {
+    private class NoPartitionFunction implements RowFunction {
         @Override
-        public void newWrite(long timestamp, boolean block) {
+        public Row newRow(long timestamp) {
             bumpMasterRef();
             if (timestamp >= maxTimestamp) {
-                if (!block) {
-                    updateMaxTimestamp(timestamp);
-                }
-                return;
+                updateMaxTimestamp(timestamp);
+                return row;
             }
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
     }
 
-    private class SwitchPartitionFunction implements SetupWriteFunction {
+    private class SwitchPartitionFunction implements RowFunction {
         @Override
-        public void newWrite(long timestamp, boolean block) {
+        public Row newRow(long timestamp) {
             bumpMasterRef();
             if (timestamp > partitionHi || timestamp < maxTimestamp) {
-                newWrite0(timestamp, block);
-            } else {
-                if (!block) {
-                    updateMaxTimestamp(timestamp);
-                }
-                return;
+                return newRow0(timestamp);
             }
+            updateMaxTimestamp(timestamp);
+            return row;
         }
 
         @NotNull
-        private Row newWrite0(long timestamp, boolean block) {
+        private Row newRow0(long timestamp) {
             if (timestamp < maxTimestamp) {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
@@ -2841,10 +2834,7 @@ public class TableWriter implements Closeable {
                 switchPartition(timestamp);
             }
 
-            if (!block) {
-                updateMaxTimestamp(timestamp);
-            }
-
+            updateMaxTimestamp(timestamp);
             return row;
         }
     }
