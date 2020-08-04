@@ -28,9 +28,16 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -275,6 +282,63 @@ public final class TableUtils {
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
+    }
+
+    /**
+     * 
+     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+     * 
+     * @param path  Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp A timestamp in the partition
+     * @return  The last timestamp in the partition
+     */
+    public static long setPathForPartition(Path path, int partitionBy, long timestamp) {
+        int y, m, d;
+        boolean leap;
+        path.put(Files.SEPARATOR);
+        final long partitionHi;
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
+                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
+                TimestampFormatUtils.append000(path, y);
+                path.put('-');
+                TimestampFormatUtils.append0(path, m);
+                path.put('-');
+                TimestampFormatUtils.append0(path, d);
+
+                partitionHi = Timestamps.yearMicros(y, leap)
+                        + Timestamps.monthOfYearMicros(m, leap)
+                        + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
+                break;
+            case PartitionBy.MONTH:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
+                TimestampFormatUtils.append000(path, y);
+                path.put('-');
+                TimestampFormatUtils.append0(path, m);
+
+                partitionHi = Timestamps.yearMicros(y, leap)
+                        + Timestamps.monthOfYearMicros(m, leap)
+                        + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
+                break;
+            case PartitionBy.YEAR:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                TimestampFormatUtils.append000(path, y);
+                partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
+                break;
+            default:
+                path.put(DEFAULT_PARTITION_NAME);
+                partitionHi = Long.MAX_VALUE;
+                break;
+        }
+
+        return partitionHi;
     }
 
     public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {

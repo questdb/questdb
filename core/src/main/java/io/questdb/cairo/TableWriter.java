@@ -2518,55 +2518,9 @@ public class TableWriter implements Closeable {
      *                                partitionHi have to be updated as well.
      */
     private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
-        int y, m, d;
-        boolean leap;
-        path.put(Files.SEPARATOR);
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-
-                if (updatePartitionInterval) {
-                    partitionHi =
-                            Timestamps.yearMicros(y, leap)
-                                    + Timestamps.monthOfYearMicros(m, leap)
-                                    + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.MONTH:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-
-                if (updatePartitionInterval) {
-                    partitionHi =
-                            Timestamps.yearMicros(y, leap)
-                                    + Timestamps.monthOfYearMicros(m, leap)
-                                    + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.YEAR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.append000(path, y);
-                if (updatePartitionInterval) {
-                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                }
-                break;
-            default:
-                path.put(DEFAULT_PARTITION_NAME);
-                partitionHi = Long.MAX_VALUE;
-                break;
+        long partitionHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
+        if (updatePartitionInterval) {
+            this.partitionHi = partitionHi;
         }
     }
 

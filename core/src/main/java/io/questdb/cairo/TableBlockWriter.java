@@ -9,8 +9,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 public class TableBlockWriter implements Closeable {
@@ -66,7 +64,7 @@ public class TableBlockWriter implements Closeable {
             columns.get(i).close();
         }
         try {
-            setStateForTimestamp(firstTimestamp, false);
+            TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
             long nFirstRow = TableUtils.readPartitionSize(ff, path, tempMem8b);
             TableUtils.writePartitionSize(ff, path, tempMem8b, nFirstRow + nRowsAdded);
             writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nFirstRow, nRowsAdded);
@@ -78,7 +76,7 @@ public class TableBlockWriter implements Closeable {
     private void openPartition(long timestamp) {
         try {
             partitionLo = timestamp;
-            setStateForTimestamp(timestamp, true);
+            partitionHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
             int plen = path.length();
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
@@ -97,71 +95,6 @@ public class TableBlockWriter implements Closeable {
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);
-        }
-    }
-
-    /**
-     * Sets path member variable to partition directory for the given timestamp and
-     * partitionLo and partitionHi to partition interval in millis. These values are
-     * determined based on input timestamp and value of partitionBy. For any given
-     * timestamp this method will determine either day, month or year interval timestamp falls to.
-     * Partition directory name is ISO string of interval start.
-     * <p>
-     * Because this method modifies "path" member variable, be sure path is trimmed to original
-     * state within try..finally block.
-     *
-     * @param timestamp               to determine interval for
-     * @param updatePartitionInterval flag indicating that partition interval partitionLo and
-     *                                partitionHi have to be updated as well.
-     */
-    private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
-        int y, m, d;
-        boolean leap;
-        path.put(Files.SEPARATOR);
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-
-                if (updatePartitionInterval) {
-                    partitionHi = Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.MONTH:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-
-                if (updatePartitionInterval) {
-                    partitionHi = Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.YEAR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.append000(path, y);
-                if (updatePartitionInterval) {
-                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                }
-                break;
-            default:
-                path.put(TableUtils.DEFAULT_PARTITION_NAME);
-                partitionHi = Long.MAX_VALUE;
-                break;
         }
     }
 
