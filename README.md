@@ -145,7 +145,7 @@ The build should take around 2 minutes. You can remove `-DskipTests` to run the
 ```shell script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/core-5.0.2-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/questdb-5.0.3-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources
