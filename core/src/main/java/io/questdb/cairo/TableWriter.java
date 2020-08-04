@@ -2794,14 +2794,14 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRows, boolean newPartition) {
+    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nFirstRow, long nRowsAdded) {
         bumpMasterRef();
-        if (newPartition) {
-            if (partitionBy != PartitionBy.NONE) {
+        if (partitionBy != PartitionBy.NONE) {
+            if (nFirstRow == 0) {
                 switchPartition(firstTimestamp);
             }
         }
-        commitBlock(firstTimestamp, lastTimestamp, nRows);
+        commitBlock(firstTimestamp, lastTimestamp, nFirstRow + nRowsAdded);
         setAppendPosition(transientRowCount);
     }
 

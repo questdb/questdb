@@ -94,25 +94,6 @@ public class BlockTableWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void replicateTableOld(String sourceTableName, String destTableName) {
-        try (RecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
-            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext);
-            PageFrame frame;
-            while ((frame = cursor.next()) != null) {
-                long firstTimestamp = frame.getFirstTimestamp();
-                long lastTimestamp = frame.getLastTimestamp();
-                long pageRowCount = frame.getPageValueCount(0);
-                Block block = writer.newBlock(firstTimestamp, lastTimestamp, pageRowCount);
-                for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
-                    long pageAddress = frame.getPageAddress(columnIndex);
-                    block.putBlock(columnIndex, pageAddress);
-                }
-                block.append();
-            }
-        }
-    }
-
     private String select(CharSequence selectSql) throws SqlException {
         sink.clear();
         CompiledQuery query = compiler.compile(selectSql, sqlExecutionContext);

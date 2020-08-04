@@ -61,18 +61,15 @@ public class TableBlockWriter implements Closeable {
         }
     }
 
-    public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nNewRows) {
+    public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
         for (int i = 0; i < columnCount; i++) {
             columns.get(i).close();
         }
         try {
-            // writer.newBlock(firstTimestamp, lastTimestamp, nRows).append();
             setStateForTimestamp(firstTimestamp, false);
-            long nRows = TableUtils.readPartitionSize(ff, path, tempMem8b);
-            boolean newPartition = nRows == 0;
-            nRows += nNewRows;
-            TableUtils.writePartitionSize(ff, path, tempMem8b, nRows);
-            writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nNewRows, newPartition);
+            long nFirstRow = TableUtils.readPartitionSize(ff, path, tempMem8b);
+            TableUtils.writePartitionSize(ff, path, tempMem8b, nFirstRow + nRowsAdded);
+            writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nFirstRow, nRowsAdded);
         } finally {
             path.trimTo(rootLen);
         }
