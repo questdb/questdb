@@ -3,7 +3,6 @@ package io.questdb.cairo;
 import org.junit.Assert;
 import org.junit.Test;
 
-import io.questdb.cairo.TableWriter.Block;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;

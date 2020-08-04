@@ -188,7 +188,6 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
-    private final Block block = new Block();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -667,12 +666,6 @@ public class TableWriter implements Closeable {
 
     public Row newRow() {
         return newRow(0L);
-    }
-
-    public Block newBlock(long firstTimestamp, long lastTimestamp, long nRows) {
-        setupWriteFunction.newWrite(firstTimestamp, true);
-        block.of(firstTimestamp, lastTimestamp, nRows);
-        return block;
     }
 
     public long partitionNameToTimestamp(CharSequence partitionName) {
@@ -2981,34 +2974,6 @@ public class TableWriter implements Closeable {
 
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
-        }
-    }
-
-    public class Block {
-        private long firstTimestamp;
-        private long lastTimestamp;
-        private long nRows;
-
-        public void append() {
-            commitBlock(firstTimestamp, lastTimestamp, nRows);
-        }
-
-        public void cancel() {
-            cancelRow();
-        }
-
-        public void putBlock(int columnIndex, long sourceAddress) {
-            int colSz = ColumnType.sizeOf(getMetadata().getColumnType(columnIndex));
-            long len = nRows * colSz;
-
-            AppendMemory mem = getPrimaryColumn(columnIndex);
-            mem.putBlockOfBytes(sourceAddress, len);
-        }
-
-        private void of(long firstTimestamp, long lastTimestamp, long nRows) {
-            this.firstTimestamp = firstTimestamp;
-            this.lastTimestamp = lastTimestamp;
-            this.nRows = nRows;
         }
     }
 
