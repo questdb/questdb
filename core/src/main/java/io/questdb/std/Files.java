@@ -154,6 +154,10 @@ public final class Files {
         return address;
     }
 
+    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags) {
+        return mremap0(fd, address, previousSize, newSize, offset, flags);
+    }
+
     public static void munmap(long address, long len) {
         if (address != 0 && munmap0(address, len) != -1) {
             Unsafe.recordMemAlloc(-len);
@@ -269,6 +273,8 @@ public final class Files {
     }
 
     private static native int munmap0(long address, long len);
+
+    private static native long mremap0(long fd, long address, long previousSize, long newSize, long offset, int flags);
 
     private static native long mmap0(long fd, long len, long offset, int flags);
 

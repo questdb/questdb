@@ -74,6 +74,8 @@ public interface FilesFacade {
 
     long mmap(long fd, long size, long offset, int mode);
 
+    long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode);
+
     void munmap(long address, long size);
 
     long openAppend(LPSZ name);

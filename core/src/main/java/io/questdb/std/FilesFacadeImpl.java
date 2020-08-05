@@ -125,6 +125,7 @@ public class FilesFacadeImpl implements FilesFacade {
         return Os.type == Os.WINDOWS;
     }
 
+    @Override
     public void iterateDir(LPSZ path, FindVisitor func) {
         long p = findFirst(path);
         if (p > 0) {
@@ -166,6 +167,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long mmap(long fd, long len, long offset, int mode) {
         return Files.mmap(fd, len, offset, mode);
+    }
+
+    @Override
+    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+        return Files.mremap(fd, addr, previousSize, newSize, offset, mode);
     }
 
     @Override
@@ -235,4 +241,5 @@ public class FilesFacadeImpl implements FilesFacade {
             return mapPageSize;
         }
     }
+
 }
