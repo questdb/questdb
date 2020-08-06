@@ -1891,11 +1891,16 @@ public class TableWriter implements Closeable {
                 // if so we do not need to re-open files and and write to existing file descriptors
 
                 if (partitionTimestampHi > maxTruncated) {
+
                     // this has to be a brand new partition
                     LOG.info().$("copy oo to [path=").$(path).$(", from=").$(indexLo).$(", to=").$(indexHi).$(']').$();
-
                     // pure OOO data copy into new partition
-                    copyOutOfOrderData(path, indexLo, indexHi);
+                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0);
+                    try {
+                        copyOutOfOrderData(indexLo, indexHi, mergeStruct);
+                    } finally {
+                        freeMergeStruct(mergeStruct);
+                    }
                     indexLo = indexHi + 1;
                     continue;
                 }
@@ -1941,8 +1946,26 @@ public class TableWriter implements Closeable {
                     timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
 
                     // create copy jobs
-                    long l2_ooo;
-                    long l2_data;
+                    // we will have maximum of 3 stages:
+                    // - prefix data
+                    // - merge job
+                    // - suffix data
+                    //
+                    // prefix and suffix can be sourced either from OO fully or from Data (written to disk) fully
+                    // so for prefix and suffix we will need a flag indicating source of the data
+                    // as well as range of rows in that source
+
+                    int prefixType = -1;
+                    long prefixLo = -1;
+                    long prefixHi = -1;
+                    long mergeDataLo = -1;
+                    long mergeDataHi = -1;
+                    long mergeOOOLo = -1;
+                    long mergeOOOHi = -1;
+                    int suffixType = -1;
+                    long suffixLo = -1;
+                    long suffixHi = -1;
+
                     if (ooTimestampLo < dataTimestampLo) {
 
                         //            +-----+
@@ -1951,8 +1974,11 @@ public class TableWriter implements Closeable {
                         //  +------+
                         //  | data |
 
-                        long l1 = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
-                        LOG.info().$("copy ooo set [from=").$(indexLo).$(", to=").$(l1).$(']').$();
+                        prefixType = 1;
+                        prefixLo = indexLo;
+                        mergeDataLo = 0;
+                        prefixHi = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
+                        mergeOOOLo = prefixHi + 1;
 
                         if (ooTimestampHi >= dataTimestampLo) {
 
@@ -1969,8 +1995,8 @@ public class TableWriter implements Closeable {
                                 // |      |
                                 // +------+
 
-                                l2_ooo = indexHi;
-                                l2_data = BinarySearch.find(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1);
+                                mergeOOOHi = indexHi;
+                                mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1);
                             } else if (ooTimestampHi > dataTimestampHi) {
 
                                 // |      | |     |
@@ -1979,8 +2005,8 @@ public class TableWriter implements Closeable {
                                 // +------+ |     |
                                 //          +-----+
 
-                                l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, l1 + 1, indexHi);
-                                l2_data = dataIndexMax - 1;
+                                mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
+                                mergeDataHi = dataIndexMax - 1;
                             } else {
 
                                 // |      | |     |
@@ -1988,17 +2014,10 @@ public class TableWriter implements Closeable {
                                 // | data | |     |
                                 // +------+ +-----+
 
-                                l2_ooo = indexHi;
-                                l2_data = dataIndexMax - 1;
+                                mergeOOOHi = indexHi;
+                                mergeDataHi = dataIndexMax - 1;
                             }
 
-                            // do the merge
-                            LOG.info()
-                                    .$("merged data + ooo [dataFrom=").$(0)
-                                    .$(", dataTo=").$(l2_data)
-                                    .$(", oooFrom=").$(l1 + 1)
-                                    .$(", oooTo=").$(l2_ooo)
-                                    .$(']').$();
                         } else {
 
                             //            +-----+
@@ -2008,8 +2027,10 @@ public class TableWriter implements Closeable {
                             //  +------+
                             //  | data |
 
-                            l2_ooo = indexHi;
-                            l2_data = 0;
+                            suffixType = 2;
+                            suffixLo = 0;
+                            suffixHi = dataIndexMax - 1;
+
                         }
                     } else {
 
@@ -2026,8 +2047,11 @@ public class TableWriter implements Closeable {
                             // | data | | OOO |
                             // +------+
 
-                            long l1_data = BinarySearch.find(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1);
-                            LOG.info().$("copy data set [from=").$(0).$(", to=").$(l1_data).$(']').$();
+                            prefixType = 2;
+                            prefixLo = 0;
+                            prefixHi = BinarySearch.find(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1);
+                            mergeDataLo = prefixHi + 1;
+                            mergeOOOLo = indexLo;
 
                             if (ooTimestampHi < dataTimestampHi) {
 
@@ -2037,8 +2061,12 @@ public class TableWriter implements Closeable {
                                 // |      | +-----+
                                 // +------+
 
-                                l2_ooo = indexHi;
-                                l2_data = BinarySearch.find(timestampSearchColumn, ooTimestampHi, l1_data, dataIndexMax - 1);
+                                mergeOOOHi = indexHi;
+                                mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, mergeDataLo, dataIndexMax - 1);
+
+                                suffixType = 2;
+                                suffixLo = mergeDataHi + 1;
+                                suffixHi = dataIndexMax - 1;
                             } else if (ooTimestampHi > dataTimestampHi) {
 
                                 //
@@ -2049,8 +2077,12 @@ public class TableWriter implements Closeable {
                                 //          |     |
                                 //          +-----+
 
-                                l2_ooo = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
-                                l2_data = dataIndexMax - 1;
+                                mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
+                                mergeDataHi = dataIndexMax - 1;
+
+                                suffixType = 1;
+                                suffixLo = mergeOOOHi + 1;
+                                suffixHi = indexHi;
                             } else {
 
                                 //
@@ -2060,18 +2092,9 @@ public class TableWriter implements Closeable {
                                 // +------+ +-----+
                                 //
 
-                                l2_ooo = indexHi;
-                                l2_data = dataIndexMax - 1;
+                                mergeOOOHi = indexHi;
+                                mergeDataHi = dataIndexMax - 1;
                             }
-
-                            // do the merge
-                            LOG.info()
-                                    .$("merged data + ooo [dataFrom=").$(l1_data + 1)
-                                    .$(", dataTo=").$(l2_data)
-                                    .$(", oooFrom=").$(indexLo)
-                                    .$(", oooTo=").$(l2_ooo)
-                                    .$(']').$();
-
                         } else {
 
                             // +------+
@@ -2083,18 +2106,59 @@ public class TableWriter implements Closeable {
                             //           | OOO |
                             //           |     |
                             //
-                            l2_ooo = indexLo - 1;
-                            l2_data = dataIndexMax - 1;
+                            suffixType = 1;
+                            suffixLo = indexLo;
+                            suffixHi = indexHi;
 
                             // todo: this is the only case when we do not need to create new set of files
                         }
                     }
 
-                    if (l2_ooo < indexHi) {
-                        LOG.info().$("copy ooo set [from=").$(l2_ooo + 1).$(", to=").$(indexHi).$(']').$();
-                    } else if (l2_data < dataIndexMax - 1) {
-                        LOG.info().$("copy data set [from=").$(l2_data + 1).$(", to=").$(dataIndexMax - 1).$(']').$();
+                    path.trimTo(plen);
+                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1);
+                    try {
+
+                        switch (prefixType) {
+                            case 1:
+                                LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
+                                copyOutOfOrderData(prefixLo, prefixHi, mergeStruct);
+                                break;
+                            case 2:
+                                LOG.info().$("copy data prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
+                                copyPartitionData(prefixLo, prefixHi, mergeStruct);
+                                break;
+                            default:
+                                break;
+                        }
+
+                        if (mergeDataLo != -1) {
+                            LOG.info()
+                                    .$("merged data2 + ooo2 [dataFrom=").$(mergeDataLo)
+                                    .$(", dataTo=").$(mergeDataHi)
+                                    .$(", oooFrom=").$(mergeOOOLo)
+                                    .$(", oooTo=").$(mergeOOOHi)
+                                    .$(']').$();
+                        }
+
+                        switch (suffixType) {
+                            case 1:
+                                LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
+                                copyOutOfOrderData(suffixLo, suffixHi, mergeStruct);
+                                break;
+                            case 2:
+                                LOG.info().$("copy data suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
+                                copyPartitionData(suffixLo, suffixHi, mergeStruct);
+                                break;
+                            default:
+                                break;
+                        }
+
+                        // todo: this should be conditional to what data we just updated
+                        copyTempPartitionBack(mergeStruct);
+                    } finally {
+                        freeMergeStruct(mergeStruct);
                     }
+
                 } finally {
                     indexLo = indexHi + 1;
                     if (fdToClose > 0) {
@@ -2108,7 +2172,248 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyOutOfOrderData(Path path, long indexLo, long indexHi) {
+    private void copyTempPartitionBack(long[] mergeStruct) {
+
+    }
+
+    private void freeMergeStruct(long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            freeMergeStructArtefact(mergeStruct, i * 16);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 3);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8 + 3);
+        }
+    }
+
+    private void freeMergeStructArtefact(long[] mergeStruct, int offset) {
+        long fd = mergeStruct[offset];
+        long mem = mergeStruct[offset + 1];
+        long memSize = mergeStruct[offset + 2];
+
+        if (mem != 0 && memSize != 0) {
+            ff.munmap(mem, memSize);
+        }
+
+        if (fd != 0) {
+            ff.close(fd);
+        }
+    }
+
+    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex) {
+        final int PAD = 16;
+        long[] mergeStruct = new long[columnCount * PAD];
+
+        int plen = path.length();
+        for (int i = 0; i < columnCount; i++) {
+            VirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            VirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            try {
+                switch (columnType) {
+                    case ColumnType.STRING:
+                        int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
+
+                        long dataSize;
+                        if (dataIndexMax > 0) {
+                            // index files are opened as normal
+                            iFile(path, metadata.getColumnName(i));
+
+                            long indexFd = ff.openRO(path);
+                            if (indexFd == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
+                            }
+                            mergeStruct[i * PAD] = indexFd;
+
+                            long indexSize = dataIndexMax << shl;
+                            long indexAddr = ff.mmap(indexFd, indexSize, 0, Files.MAP_RO);
+                            if (indexAddr == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(indexSize);
+                            }
+
+                            mergeStruct[i * PAD + 1] = indexAddr;
+                            mergeStruct[i * PAD + 2] = indexSize;
+
+                            // open data file now
+
+                            path.trimTo(plen);
+                            dFile(path, metadata.getColumnName(i));
+
+                            long dataFd = ff.openRO(path);
+                            if (dataFd == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
+                            }
+                            mergeStruct[i * PAD + 8] = dataFd;
+
+                            dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES);
+                            long dataAddr = ff.mmap(dataFd, dataSize + Integer.BYTES, 0, Files.MAP_RO);
+                            if (dataAddr == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize + Integer.BYTES);
+                            }
+
+                            dataSize += Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
+                            ff.munmap(dataAddr, dataSize + Integer.BYTES);
+                            dataAddr = ff.mmap(dataFd, dataSize, 0, Files.MAP_RO);
+
+                            if (dataAddr == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize);
+                            }
+                            mergeStruct[i * PAD + 8 + 1] = dataAddr;
+                            mergeStruct[i * PAD + 8 + 2] = dataSize;
+                        } else {
+                            dataSize = 0;
+                        }
+
+                        path.trimTo(plen);
+                        if (destIndex > 0) {
+                            path.put('.').put(destIndex);
+                        }
+                        iFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long indexMergeFd = ff.openRW(path);
+                        if (indexMergeFd == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 3] = indexMergeFd;
+
+                        long indexMergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
+
+                        if (!ff.truncate(indexMergeFd, indexMergeSize)) {
+                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(indexMergeSize).put(']');
+                        }
+                        long indexMergeAddr = ff.mmap(indexMergeFd, indexMergeSize, 0, Files.MAP_RW);
+                        if (indexMergeAddr == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 4] = indexMergeAddr;
+                        mergeStruct[i * PAD + 5] = indexMergeSize;
+                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
+
+
+                        path.trimTo(plen);
+                        if (destIndex > 0) {
+                            path.put('.').put(destIndex);
+                        }
+                        dFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long dataMergeFd = ff.openRW(path);
+                        if (dataMergeFd == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 8 + 3] = indexMergeFd;
+
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
+
+                        dataSize += (hi - lo);
+
+                        if (!ff.truncate(dataMergeFd, dataSize)) {
+                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(dataSize).put(']');
+                        }
+                        long dataMergeAddr = ff.mmap(dataMergeFd, dataSize, 0, Files.MAP_RW);
+                        if (dataMergeAddr == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 8 + 4] = dataMergeAddr;
+                        mergeStruct[i * PAD + 8 + 5] = dataSize;
+                        mergeStruct[i * PAD + 8 + 6] = 0L; // offset of what's been written so far
+
+                        break;
+                    case ColumnType.BINARY:
+/*
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getLong(hi) + Long.BYTES;
+
+                        dFile(path, metadata.getColumnName(i));
+                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+
+                        path.trimTo(plen);
+                        iFile(path, metadata.getColumnName(i));
+                        copyOOO(mem2, indexLo, indexHi, path, ColumnType.LONG);
+*/
+                        break;
+
+                    default:
+
+                        shl = ColumnType.pow2SizeOf(columnType);
+
+                        if (dataIndexMax > 0) {
+                            dFile(path, metadata.getColumnName(i));
+                            dataSize = dataIndexMax << shl;
+
+                            long dataFd = ff.openRO(path);
+                            if (dataFd == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
+                            }
+                            mergeStruct[i * PAD] = dataFd;
+
+                            long dataAddr = ff.mmap(dataFd, dataSize, 0, Files.MAP_RO);
+                            if (dataAddr == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize);
+                            }
+
+                            mergeStruct[i * PAD + 1] = dataAddr;
+                            mergeStruct[i * PAD + 2] = dataSize;
+                        }
+
+                        path.trimTo(plen);
+                        path.put('.').put(destIndex);
+                        dFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long mergeFd = ff.openRW(path);
+                        if (mergeFd == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 3] = mergeFd;
+
+                        long mergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
+
+                        if (!ff.truncate(mergeFd, mergeSize)) {
+                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
+                        }
+
+                        long addr = ff.mmap(mergeFd, mergeSize, 0, Files.MAP_RW);
+                        if (addr == -1) {
+                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+                        }
+
+                        mergeStruct[i * PAD + 4] = addr;
+                        mergeStruct[i * PAD + 5] = mergeSize;
+                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
+
+                        break;
+                }
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+        return mergeStruct;
+    }
+
+    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
         int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
             VirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
@@ -2124,26 +2429,21 @@ public class TableWriter implements Closeable {
                         lo = mem2.getLong(indexLo * Long.BYTES);
                         hi = mem2.getLong(indexHi * Long.BYTES);
                         hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
-
-                        dFile(path, metadata.getColumnName(i));
-                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
-
-                        path.trimTo(plen);
-                        iFile(path, metadata.getColumnName(i));
-                        lo = indexLo * Long.BYTES;
-                        hi = (indexHi + 1) * Long.BYTES;
-
-                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
-
+                        copyOOO(mem, mergeStruct, i * 16 + 8, lo, hi - lo);
+                        copyOOOFixedSize(mem2, indexLo, indexHi, ColumnType.LONG, mergeStruct, i * 16);
                         break;
 
                     case ColumnType.BINARY:
-                        assert false;
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getLong(hi) + Long.BYTES;
+                        copyOOO(mem, mergeStruct, i * 16 + 8, lo, hi - lo);
+                        copyOOOFixedSize(mem2, indexLo, indexHi, ColumnType.LONG, mergeStruct, i * 16);
+                        break;
+
                     default:
-                        dFile(path, metadata.getColumnName(i));
-                        lo = indexLo << ColumnType.pow2SizeOf(columnType);
-                        hi = (indexHi + 1) << ColumnType.pow2SizeOf(columnType);
-                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+                        copyOOOFixedSize(mem, indexLo, indexHi, columnType, mergeStruct, i * 16);
                         break;
                 }
             } finally {
@@ -2152,33 +2452,79 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void createColumnAndCopyMergedData(Path path, VirtualMemory mem, long lo, long len) {
-        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
+    private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct) {
+        int plen = path.length();
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            try {
+                switch (columnType) {
+                    case ColumnType.STRING:
 
-        final long fd = ff.openRW(path);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-        }
+                        int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
+                        long srcOffset = indexLo << shl;
+                        long len = (indexHi - indexLo + 1) << shl;
+                        copyPartitionColumn(mergeStruct, i * 16, srcOffset, len);
 
-        try {
-            if (!ff.truncate(fd, len)) {
-                throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(len).put(']');
-            }
-            long addr = ff.mmap(fd, len, 0, Files.MAP_RW);
-            if (addr != -1) {
-                try {
-                    mem.copyTo(addr, lo, len);
-                } finally {
-                    ff.munmap(addr, len);
+//                        // copy index column
+//                        long srcIndexAddr = mergeStruct[i * 16 + 1];
+//                        long destIndexAddr = mergeStruct[i * 16 + 4];
+//                        long destIndexOffset = mergeStruct[i * 16 + 6];
+//                        long indexOffset = indexLo << shl;
+//                        long indexLen = (indexHi - indexLo + 1) << shl;
+//                        Unsafe.getUnsafe().copyMemory(srcIndexAddr + indexOffset, destIndexAddr + destIndexOffset, indexLen);
+//                        mergeStruct[i * 16 + 6] = destIndexOffset + indexLen;
+
+                        // from index column find out the length of data column
+                        long srcDataAddr = mergeStruct[i * 16 + 8 + 1];
+//                        long destDataAddr = mergeStruct[i * 16 + 8 + 4];
+//                        long destDataOffset = mergeStruct[i * 16 + 8 + 6];
+                        long dataOffset = Unsafe.getUnsafe().getLong( mergeStruct[i * 16 + 1] + srcOffset);
+                        long dataLen = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset + len - Long.BYTES) - dataOffset;
+                        dataLen += Unsafe.getUnsafe().getInt(srcDataAddr, dataOffset + dataLen) * Character.BYTES + Integer.BYTES;
+                        copyPartitionColumn(mergeStruct,  i * 16 + 8, dataOffset, dataLen);
+//                        Unsafe.getUnsafe().copyMemory(srcDataAddr + dataOffset, destDataAddr + destDataOffset, dataLen);
+//                        mergeStruct[i * 16 + 8 + 6] = destDataOffset + dataLen;
+                        break;
+                    case ColumnType.BINARY:
+                        assert false;
+                        break;
+                    default:
+                        shl = ColumnType.pow2SizeOf(columnType);
+                        srcOffset = indexLo << shl;
+                        len = (indexHi - indexLo + 1) << shl;
+                        copyPartitionColumn(mergeStruct, i * 16, srcOffset, len);
+                        break;
                 }
-            } else {
-                throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+            } finally {
+                path.trimTo(plen);
             }
-        } finally {
-            ff.close(fd);
         }
+    }
+
+    private static void copyPartitionColumn(long[] mergeStruct, int columnOffset, long srcOffset, long len) {
+        long src = mergeStruct[columnOffset + 1];
+        long dst = mergeStruct[columnOffset + 4];
+        long dstOffset = mergeStruct[columnOffset + 6];
+        Unsafe.getUnsafe().copyMemory(src + srcOffset, dst + dstOffset, len);
+        mergeStruct[columnOffset + 6] = dstOffset + len;
+    }
+
+    private void copyOOOFixedSize(
+            VirtualMemory src,
+            long srcRecLo,
+            long srcRecHi,
+            int columnType,
+            long[] mergeStruct,
+            int columnIndex
+    ) {
+        final long lo = srcRecLo << ColumnType.pow2SizeOf(columnType);
+        final long hi = (srcRecHi + 1) << ColumnType.pow2SizeOf(columnType);
+        copyOOO(src, mergeStruct, columnIndex, lo, hi - lo);
+    }
+
+    private void copyOOO(VirtualMemory src, long[] mergeStruct, int columnIndex, long lo, long len) {
+        src.copyTo(mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], lo, len);
+        mergeStruct[columnIndex + 6] += len;
     }
 
     private void mergeTimestampSetter(long timestamp) {
