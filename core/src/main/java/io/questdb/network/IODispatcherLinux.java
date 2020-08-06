@@ -158,10 +158,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
 
         // process timed out connections
-        final long deadline = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
-            processIdleConnections(deadline);
-            useful = true;
+        if (idleConnectionTimeout > 0) {
+            final long deadline = timestamp - idleConnectionTimeout;
+            if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
+                processIdleConnections(deadline);
+                useful = true;
+            }
         }
 
         return processRegistrations(timestamp) || useful;

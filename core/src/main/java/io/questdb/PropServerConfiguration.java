@@ -509,7 +509,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.lineTcpNetEventCapacity = getInt(properties, "line.tcp.net.event.capacity", 1024);
             this.lineTcpNetIOQueueCapacity = getInt(properties, "line.tcp.net.io.queue.capacity", 1024);
-            this.lineTcpNetIdleConnectionTimeout = getLong(properties, "line.tcp.net.idle.timeout", 300_000);
+            this.lineTcpNetIdleConnectionTimeout = getLong(properties, "line.tcp.net.idle.timeout", 0);
             this.lineTcpNetInterestQueueCapacity = getInt(properties, "line.tcp.net.interest.queue.capacity", 1024);
             this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
             this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
