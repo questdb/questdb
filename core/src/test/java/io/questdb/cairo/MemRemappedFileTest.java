@@ -2,8 +2,8 @@ package io.questdb.cairo;
 
 import java.io.IOException;
 import java.util.Random;
-import java.util.concurrent.Callable;
 
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -33,58 +33,68 @@ public class MemRemappedFileTest {
 
     @Test
     public void testReadOnlyMemory() throws Exception {
-        double micros = test(() -> {
-            return new ReadOnlyMemory(ff, path, MAPPING_PAGE_SIZE, 0);
-        });
+        LOG.info().$("ReadOnlyMemory starting").$();
+        double micros = test(new ReadOnlyMemory());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testOnePageMemory() throws Exception {
-        double micros = test(() -> {
-            return new OnePageMemory(ff, path, MAPPING_PAGE_SIZE);
-        });
+        LOG.info().$("OnePageMemory starting").$();
+        double micros = test(new OnePageMemory());
         LOG.info().$("OnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(Callable<ReadOnlyColumn> memoryBuilder) throws Exception {
+    private double test(ReadOnlyColumn readMem) throws Exception {
         long nanos = 0;
-        for (int cycle = 0; cycle < NCYCLES; cycle++) {
-            path.trimTo(0).concat(root).put(Files.SEPARATOR).concat("file" + nFile).$();
-            nFile++;
-            Random rand = new Random(0);
-            expectedTotal = 0;
-            long size = NPAGES * MAPPING_PAGE_SIZE;
-            try (AppendMemory mem = new AppendMemory(ff, path, size);) {
-                while (size-- > 0) {
-                    byte b = (byte) rand.nextInt();
-                    mem.putByte(b);
-                    expectedTotal += b;
-                }
-            }
+        try (AppendMemory appMem = new AppendMemory()) {
+            for (int cycle = 0; cycle < NCYCLES; cycle++) {
+                path.trimTo(0).concat(root).put(Files.SEPARATOR).concat("file" + nFile).$();
+                nFile++;
+                Random rand = new Random(0);
+                expectedTotal = 0;
 
-            nanos = System.nanoTime();
-            long actualTotal = 0;
-            long offset = 0;
-            try (ReadOnlyColumn mem = memoryBuilder.call()) {
-                for (int nPage = 0; nPage < 1000; nPage++) {
-                    mem.grow(MAPPING_PAGE_SIZE * (nPage + 1));
+                nanos = System.nanoTime();
+                long actualTotal = 0;
+                long offset = 0;
+                for (int nPage = 0; nPage < NPAGES; nPage++) {
+                    long newSize = MAPPING_PAGE_SIZE * (nPage + 1);
+                    appMem.of(ff, path, newSize);
+                    appMem.jumpTo(newSize - MAPPING_PAGE_SIZE);
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
-                        actualTotal += mem.getByte(offset);
+                        byte b = (byte) rand.nextInt();
+                        appMem.putByte(b);
+                        expectedTotal += b;
+                    }
+                    if (nPage == 0) {
+                        readMem.of(ff, path, MAPPING_PAGE_SIZE, newSize);
+                    } else {
+                        readMem.grow(newSize);
+                    }
+                    for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
+                        actualTotal += readMem.getByte(offset);
                         offset++;
                     }
                 }
-            }
-            nanos = System.nanoTime() - nanos;
-            Assert.assertEquals(expectedTotal, actualTotal);
 
-            ff.remove(path);
+                nanos = System.nanoTime() - nanos;
+                Assert.assertEquals(expectedTotal, actualTotal);
+
+                ff.remove(path);
+            }
+            readMem.close();
+            return nanos / 1000000.0;
         }
-        return nanos / 1000000.0;
     }
 
     @BeforeClass
-    public static void before() throws IOException {
+    public static void beforeClass() throws IOException {
+        LOG.info().$("Starting").$();
         root = temp.newFolder("root").getAbsolutePath();
+    }
+
+    @AfterClass
+    public static void afterClass() throws IOException {
+        LOG.info().$("Finished").$();
     }
 }
