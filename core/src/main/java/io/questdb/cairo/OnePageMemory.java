@@ -188,6 +188,9 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
     @Override
     public void grow(long newSize) {
+        if (newSize <= size) {
+            return;
+        }
         long offset = absolutePointer - page;
         long previousSize = size;
         page = ff.mremap(fd, page, previousSize, newSize, 0, Files.MAP_RO);

@@ -155,7 +155,12 @@ public final class Files {
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags) {
-        return mremap0(fd, address, previousSize, newSize, offset, flags);
+        Unsafe.recordMemAlloc(-previousSize);
+        address = mremap0(fd, address, previousSize, newSize, offset, flags);
+        if (address != -1) {
+            Unsafe.recordMemAlloc(newSize);
+        }
+        return address;
     }
 
     public static void munmap(long address, long len) {
