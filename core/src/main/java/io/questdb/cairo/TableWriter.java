@@ -1881,8 +1881,7 @@ public class TableWriter implements Closeable {
                     indexHi = indexMax - 1;
                 }
 
-                long fdToClose = 0;
-                long fd;
+                long fd = 0;
                 long dataTimestampLo;
                 long dataTimestampHi;
                 long dataIndexMax;
@@ -1895,7 +1894,7 @@ public class TableWriter implements Closeable {
                     // this has to be a brand new partition
                     LOG.info().$("copy oo to [path=").$(path).$(", from=").$(indexLo).$(", to=").$(indexHi).$(']').$();
                     // pure OOO data copy into new partition
-                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0);
+                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0, false);
                     try {
                         copyOutOfOrderData(indexLo, indexHi, mergeStruct);
                     } finally {
@@ -1910,7 +1909,7 @@ public class TableWriter implements Closeable {
                     if (partitionTimestampHi == maxTruncated) {
                         dataTimestampHi = this.maxTimestamp;
                         dataIndexMax = transientRowCountBeforeOutOfOrder;
-                        fd = columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                        fd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     } else {
 
                         // out of order data is going into archive partition
@@ -1919,7 +1918,7 @@ public class TableWriter implements Closeable {
 
 
                         // also track the fd that we need to eventually close
-                        fdToClose = fd = ff.openRW(path);
+                        fd = ff.openRW(path);
                         if (fd == -1) {
                             throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                         }
@@ -1937,7 +1936,7 @@ public class TableWriter implements Closeable {
 
                     // read the top value
                     // todo: check that file size is > 8 bytes
-                    if (ff.read(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                    if (ff.read(Math.abs(fd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
                         throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
                     }
 
@@ -2115,7 +2114,7 @@ public class TableWriter implements Closeable {
                     }
 
                     path.trimTo(plen);
-                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1);
+                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0);
                     try {
 
                         switch (prefixType) {
@@ -2158,11 +2157,10 @@ public class TableWriter implements Closeable {
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
-
                 } finally {
                     indexLo = indexHi + 1;
-                    if (fdToClose > 0) {
-                        ff.close(fdToClose);
+                    if (fd > 0) {
+                        ff.close(fd);
                     }
                 }
             }
@@ -2173,7 +2171,27 @@ public class TableWriter implements Closeable {
     }
 
     private void copyTempPartitionBack(long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            copyTempPartitionColumnBack(mergeStruct, i * 16);
+            copyTempPartitionColumnBack(mergeStruct, i * 16 + 8);
+        }
+    }
 
+    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
+        long dstFd = mergeStruct[offset];
+        if (dstFd != 0) {
+            long dstMem = mergeStruct[offset + 1];
+            long dstLen = mergeStruct[offset + 2];
+
+            long srcMem = mergeStruct[offset + 4];
+            long srcLen = mergeStruct[offset + 5];
+
+            ff.munmap(dstMem, dstLen);
+            dstMem = mapReadWriteOrFail(ff, null, Math.abs(dstFd), srcLen);
+            mergeStruct[offset + 1] = dstMem;
+            mergeStruct[offset + 2] = srcLen;
+            Unsafe.getUnsafe().copyMemory(srcMem, dstMem, srcLen);
+        }
     }
 
     private void freeMergeStruct(long[] mergeStruct) {
@@ -2194,12 +2212,12 @@ public class TableWriter implements Closeable {
             ff.munmap(mem, memSize);
         }
 
-        if (fd != 0) {
+        if (fd > 0) {
             ff.close(fd);
         }
     }
 
-    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex) {
+    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds) {
         final int PAD = 16;
         long[] mergeStruct = new long[columnCount * PAD];
 
@@ -2221,17 +2239,11 @@ public class TableWriter implements Closeable {
                             // index files are opened as normal
                             iFile(path, metadata.getColumnName(i));
 
-                            long indexFd = ff.openRO(path);
-                            if (indexFd == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
-                            }
+                            long indexFd = reuseFds ? -columns.getQuick(getSecondaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             mergeStruct[i * PAD] = indexFd;
 
                             long indexSize = dataIndexMax << shl;
-                            long indexAddr = ff.mmap(indexFd, indexSize, 0, Files.MAP_RO);
-                            if (indexAddr == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(indexSize);
-                            }
+                            long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
 
                             mergeStruct[i * PAD + 1] = indexAddr;
                             mergeStruct[i * PAD + 2] = indexSize;
@@ -2240,26 +2252,15 @@ public class TableWriter implements Closeable {
 
                             path.trimTo(plen);
                             dFile(path, metadata.getColumnName(i));
-
-                            long dataFd = ff.openRO(path);
-                            if (dataFd == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
-                            }
+                            long dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             mergeStruct[i * PAD + 8] = dataFd;
-
                             dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES);
-                            long dataAddr = ff.mmap(dataFd, dataSize + Integer.BYTES, 0, Files.MAP_RO);
-                            if (dataAddr == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize + Integer.BYTES);
-                            }
+                            long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
 
-                            dataSize += Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
+                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
                             ff.munmap(dataAddr, dataSize + Integer.BYTES);
-                            dataAddr = ff.mmap(dataFd, dataSize, 0, Files.MAP_RO);
-
-                            if (dataAddr == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize);
-                            }
+                            dataSize += len;
+                            dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
                             mergeStruct[i * PAD + 8 + 1] = dataAddr;
                             mergeStruct[i * PAD + 8 + 2] = dataSize;
                         } else {
@@ -2276,22 +2277,14 @@ public class TableWriter implements Closeable {
                             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
                         }
 
-                        final long indexMergeFd = ff.openRW(path);
-                        if (indexMergeFd == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-                        }
+                        final long indexMergeFd = openReadWriteOrFail(ff, path);
 
                         mergeStruct[i * PAD + 3] = indexMergeFd;
 
                         long indexMergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
 
-                        if (!ff.truncate(indexMergeFd, indexMergeSize)) {
-                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(indexMergeSize).put(']');
-                        }
-                        long indexMergeAddr = ff.mmap(indexMergeFd, indexMergeSize, 0, Files.MAP_RW);
-                        if (indexMergeAddr == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
-                        }
+                        truncateToSizeOrFail(ff, path, indexMergeFd, indexMergeSize);
+                        long indexMergeAddr = mapReadWriteOrFail(ff, path, indexMergeFd, indexMergeSize);
 
                         mergeStruct[i * PAD + 4] = indexMergeAddr;
                         mergeStruct[i * PAD + 5] = indexMergeSize;
@@ -2308,10 +2301,7 @@ public class TableWriter implements Closeable {
                             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
                         }
 
-                        final long dataMergeFd = ff.openRW(path);
-                        if (dataMergeFd == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-                        }
+                        final long dataMergeFd = openReadWriteOrFail(ff, path);
 
                         mergeStruct[i * PAD + 8 + 3] = indexMergeFd;
 
@@ -2322,13 +2312,8 @@ public class TableWriter implements Closeable {
 
                         dataSize += (hi - lo);
 
-                        if (!ff.truncate(dataMergeFd, dataSize)) {
-                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(dataSize).put(']');
-                        }
-                        long dataMergeAddr = ff.mmap(dataMergeFd, dataSize, 0, Files.MAP_RW);
-                        if (dataMergeAddr == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
-                        }
+                        truncateToSizeOrFail(ff, path, dataMergeFd, dataSize);
+                        long dataMergeAddr = mapReadWriteOrFail(ff, path, dataMergeFd, dataSize);
 
                         mergeStruct[i * PAD + 8 + 4] = dataMergeAddr;
                         mergeStruct[i * PAD + 8 + 5] = dataSize;
@@ -2336,6 +2321,8 @@ public class TableWriter implements Closeable {
 
                         break;
                     case ColumnType.BINARY:
+                        // todo: do the same for binary as we have for STRING
+                        //     we may need to refactor a little bit to avoid extreme duplication
 /*
                         mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
                         lo = mem2.getLong(indexLo * Long.BYTES);
@@ -2358,19 +2345,9 @@ public class TableWriter implements Closeable {
                         if (dataIndexMax > 0) {
                             dFile(path, metadata.getColumnName(i));
                             dataSize = dataIndexMax << shl;
-
-                            long dataFd = ff.openRO(path);
-                            if (dataFd == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
-                            }
+                            long dataFd = reuseFds ? columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             mergeStruct[i * PAD] = dataFd;
-
-                            long dataAddr = ff.mmap(dataFd, dataSize, 0, Files.MAP_RO);
-                            if (dataAddr == -1) {
-                                throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(dataSize);
-                            }
-
-                            mergeStruct[i * PAD + 1] = dataAddr;
+                            mergeStruct[i * PAD + 1] = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
                             mergeStruct[i * PAD + 2] = dataSize;
                         }
 
@@ -2382,23 +2359,15 @@ public class TableWriter implements Closeable {
                             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
                         }
 
-                        final long mergeFd = ff.openRW(path);
-                        if (mergeFd == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-                        }
+                        final long mergeFd = openReadWriteOrFail(ff, path);
 
                         mergeStruct[i * PAD + 3] = mergeFd;
 
                         long mergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
 
-                        if (!ff.truncate(mergeFd, mergeSize)) {
-                            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
-                        }
+                        truncateToSizeOrFail(ff, path, mergeFd, mergeSize);
 
-                        long addr = ff.mmap(mergeFd, mergeSize, 0, Files.MAP_RW);
-                        if (addr == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
-                        }
+                        long addr = mapReadWriteOrFail(ff, path, mergeFd, mergeSize);
 
                         mergeStruct[i * PAD + 4] = addr;
                         mergeStruct[i * PAD + 5] = mergeSize;
@@ -2411,6 +2380,44 @@ public class TableWriter implements Closeable {
             }
         }
         return mergeStruct;
+    }
+
+    private static long mapReadOnlyOrFail(FilesFacade ff, Path path, long fd, long size) {
+        long dataAddr = ff.mmap(fd, size + Integer.BYTES, 0, Files.MAP_RO);
+        if (dataAddr == -1) {
+            throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(size + Integer.BYTES);
+        }
+        return dataAddr;
+    }
+
+    private static long mapReadWriteOrFail(FilesFacade ff, Path path, long fd, long size) {
+        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (addr != -1) {
+            return addr;
+        }
+        throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+    }
+
+    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long mergeFd, long mergeSize) {
+        if (!ff.truncate(mergeFd, mergeSize)) {
+            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
+        }
+    }
+
+    private static long openReadWriteOrFail(FilesFacade ff, Path path) {
+        final long fd = ff.openRW(path);
+        if (fd != -1) {
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+    }
+
+    private static long openReadOnlyOrFail(FilesFacade ff, Path path) {
+        long fd = ff.openRO(path);
+        if (fd != -1) {
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
     }
 
     private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
@@ -2478,10 +2485,10 @@ public class TableWriter implements Closeable {
                         long srcDataAddr = mergeStruct[i * 16 + 8 + 1];
 //                        long destDataAddr = mergeStruct[i * 16 + 8 + 4];
 //                        long destDataOffset = mergeStruct[i * 16 + 8 + 6];
-                        long dataOffset = Unsafe.getUnsafe().getLong( mergeStruct[i * 16 + 1] + srcOffset);
+                        long dataOffset = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset);
                         long dataLen = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset + len - Long.BYTES) - dataOffset;
                         dataLen += Unsafe.getUnsafe().getInt(srcDataAddr, dataOffset + dataLen) * Character.BYTES + Integer.BYTES;
-                        copyPartitionColumn(mergeStruct,  i * 16 + 8, dataOffset, dataLen);
+                        copyPartitionColumn(mergeStruct, i * 16 + 8, dataOffset, dataLen);
 //                        Unsafe.getUnsafe().copyMemory(srcDataAddr + dataOffset, destDataAddr + destDataOffset, dataLen);
 //                        mergeStruct[i * 16 + 8 + 6] = destDataOffset + dataLen;
                         break;
