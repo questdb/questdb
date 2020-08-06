@@ -59,10 +59,16 @@ milliseconds.
 Interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
-<a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
-  <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" style="display: block; margin: 0 auto;" />
-  Web Console guide
-</a>
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
+    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" style="display: block; margin: 0 auto;" />
+  </a>
+</div>
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
+    Web Console guide
+  </a>
+</div>
 
 ## Performance figures
 
