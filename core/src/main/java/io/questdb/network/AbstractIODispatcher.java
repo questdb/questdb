@@ -85,7 +85,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.activeConnectionLimit = configuration.getActiveConnectionLimit();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
-        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
+        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout() > 0 ? configuration.getIdleConnectionTimeout() : Long.MIN_VALUE;
 
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
