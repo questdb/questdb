@@ -70,6 +70,11 @@ public class OffsetParserTest {
     }
 
     @Test
+    public void testTrailingQuote() {
+        assertError("Z\"");
+    }
+
+    @Test
     public void testBadUtc() {
         assertError("UTX+09:00");
     }
