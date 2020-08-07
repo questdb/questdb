@@ -92,7 +92,8 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         if (size > 0) {
             this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
             if (page == FilesFacade.MAP_FAILED) {
-                throw CairoException.instance(ff.errno()).put("Failed to map ").put(name).put(" [size=").put(size).put(", fd=").put(fd).put(']');
+                close();
+                throw CairoException.instance(ff.errno()).put("Cannot mmap ").put(name).put(" [size=").put(size).put(", fd=").put(fd).put(']');
             }
             this.absolutePointer = page;
         } else {

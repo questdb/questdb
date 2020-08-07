@@ -60,7 +60,8 @@ public class ExtendableOnePageMemory extends OnePageMemory {
             page = ff.mmap(fd, newSize, 0, Files.MAP_RO);
         }
         if (page == FilesFacade.MAP_FAILED) {
-            throw CairoException.instance(ff.errno()).put("Failed to remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            close();
+            throw CairoException.instance(ff.errno()).put("Cannot remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
         }
         size = newSize;
         absolutePointer = page + offset;
