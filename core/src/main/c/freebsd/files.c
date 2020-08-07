@@ -48,7 +48,7 @@ JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
     }
     if (newAddr == MAP_FAILED) {
         fprintf(stderr, "Failed to remap region at %p with size %ld, got %d: %s\n", orgAddr, newLen, errno, strerror(errno));
-	return 0;
+	return -1;
     }
     return (jlong) newAddr;
 }
