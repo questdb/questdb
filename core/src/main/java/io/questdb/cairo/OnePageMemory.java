@@ -84,6 +84,10 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
 
+        map(ff, name, size);
+    }
+
+    protected void map(FilesFacade ff, LPSZ name, long size) {
         this.size = size;
         if (size > 0) {
             this.page = ff.mmap(fd, size, 0, Files.MAP_RO);

@@ -38,6 +38,12 @@ public class ExtendableOnePageMemory extends OnePageMemory {
     }
 
     @Override
+    protected void map(FilesFacade ff, LPSZ name, long size) {
+        size = Math.min(ff.length(fd), size);
+        super.map(ff, name, size);
+    }
+
+    @Override
     public void grow(long newSize) {
         final long fileSize = ff.length(fd);
         newSize = Math.max(newSize, fileSize);
