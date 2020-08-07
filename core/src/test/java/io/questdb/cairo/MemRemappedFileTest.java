@@ -39,10 +39,10 @@ public class MemRemappedFileTest {
     }
 
     @Test
-    public void testOnePageMemory() throws Exception {
-        LOG.info().$("OnePageMemory starting").$();
-        double micros = test(new OnePageMemory());
-        LOG.info().$("OnePageMemory took ").$(micros).$("ms").$();
+    public void testExtendableOnePageMemory() throws Exception {
+        LOG.info().$("ExtendableOnePageMemory starting").$();
+        double micros = test(new ExtendableOnePageMemory());
+        LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
     private double test(ReadOnlyColumn readMem) throws Exception {
