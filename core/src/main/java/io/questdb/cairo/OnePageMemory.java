@@ -276,7 +276,8 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
         @Override
         public byte byteAt(long index) {
-            return Unsafe.getUnsafe().getByte(readAddress++);
+            assert index < len;
+            return Unsafe.getUnsafe().getByte(readAddress + index);
         }
 
         @Override
