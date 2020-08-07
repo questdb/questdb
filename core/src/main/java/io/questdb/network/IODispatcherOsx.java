@@ -195,12 +195,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
 
         // process timed out connections
-        if (idleConnectionTimeout > 0) {
-            final long deadline = timestamp - idleConnectionTimeout;
-            if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
-                processIdleConnections(deadline);
-                useful = true;
-            }
+        final long deadline = timestamp - idleConnectionTimeout;
+        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
+            processIdleConnections(deadline);
+            useful = true;
         }
 
         return processRegistrations(timestamp) || useful;

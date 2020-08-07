@@ -136,7 +136,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         int writeFdCount = 0;
         readFdSet.reset();
         writeFdSet.reset();
-        long deadline = idleConnectionTimeout > 0 ? timestamp - idleConnectionTimeout : Long.MIN_VALUE;
+        long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
             final long ts = pending.get(i, M_TIMESTAMP);
             final long fd = pending.get(i, M_FD);
