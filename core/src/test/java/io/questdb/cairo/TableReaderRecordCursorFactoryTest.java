@@ -83,7 +83,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
 
-            try (CairoEngine engine = new CairoEngine(configuration, messageBus)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
 
                 final RecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
@@ -107,16 +107,14 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                         false
                 )) {
                     long count = 0;
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                            messageBus,
-                            1,
-                            engine).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            new BindVariableService(),
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(
+                                    AllowAllCairoSecurityContext.INSTANCE,
+                                    new BindVariableService(),
                                     null,
                                     -1,
-                            null
-                    );
+                                    null
+                            );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final Record record = cursor.getRecord();
                         rnd.reset();

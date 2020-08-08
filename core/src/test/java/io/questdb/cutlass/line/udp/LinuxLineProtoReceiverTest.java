@@ -203,7 +203,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
-        try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
                 factory.create(receiverCfg, engine, null, true, null, null);
                 Assert.fail();
@@ -236,7 +236,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
                     "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
 
 
                 try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null)) {

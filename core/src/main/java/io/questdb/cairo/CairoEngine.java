@@ -25,20 +25,21 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.*;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -53,21 +54,20 @@ public class CairoEngine implements Closeable {
     private final CairoConfiguration configuration;
     private final WriterMaintenanceJob writerMaintenanceJob;
     private final MessageBus messageBus;
+    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final MPSequence telemetryPubSeq;
+    private final SCSequence telemetrySubSeq;
 
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, null);
-    }
-
-    public CairoEngine(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
+        this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
-        this.messageBus = messageBus;
-    }
-
-    public Job getWriterMaintenanceJob() {
-        return writerMaintenanceJob;
+        this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
+        this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
+        this.telemetrySubSeq = new SCSequence();
+        telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
     }
 
     @Override
@@ -93,6 +93,16 @@ public class CairoEngine implements Closeable {
         );
     }
 
+    public TableWriter getBackupWriter(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence backupDirName
+    ) {
+        securityContext.checkWritePermission();
+        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
+        return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
+    }
+
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
     }
@@ -103,6 +113,10 @@ public class CairoEngine implements Closeable {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    public MessageBus getMessageBus() {
+        return messageBus;
     }
 
     public PoolListener getPoolListener() {
@@ -152,6 +166,18 @@ public class CairoEngine implements Closeable {
         return getStatus(securityContext, path, tableName, 0, tableName.length());
     }
 
+    public Sequence getTelemetryPubSequence() {
+        return telemetryPubSeq;
+    }
+
+    public RingQueue<TelemetryTask> getTelemetryQueue() {
+        return telemetryQueue;
+    }
+
+    public SCSequence getTelemetrySubSequence() {
+        return telemetrySubSeq;
+    }
+
     public TableWriter getWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName
@@ -160,14 +186,8 @@ public class CairoEngine implements Closeable {
         return writerPool.get(tableName);
     }
 
-    public TableWriter getBackupWriter(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            CharSequence backupDirName
-    ) {
-        securityContext.checkWritePermission();
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
+    public Job getWriterMaintenanceJob() {
+        return writerMaintenanceJob;
     }
 
     public boolean lock(
@@ -185,16 +205,12 @@ public class CairoEngine implements Closeable {
         return false;
     }
 
-    public boolean lockWriter(CharSequence tableName) {
-        return writerPool.lock(tableName);
-    }
-
-    public void unlockWriter(CharSequence tableName) {
-        writerPool.unlock(tableName);
-    }
-
     public boolean lockReaders(CharSequence tableName) {
         return readerPool.lock(tableName);
+    }
+
+    public boolean lockWriter(CharSequence tableName) {
+        return writerPool.lock(tableName);
     }
 
     public boolean migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
@@ -292,6 +308,10 @@ public class CairoEngine implements Closeable {
 
     public void unlockReaders(CharSequence tableName) {
         readerPool.unlock(tableName);
+    }
+
+    public void unlockWriter(CharSequence tableName) {
+        writerPool.unlock(tableName);
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

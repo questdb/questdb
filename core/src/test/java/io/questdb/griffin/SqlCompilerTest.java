@@ -109,7 +109,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
 
-        CairoEngine engine = new CairoEngine(configuration, null);
+        CairoEngine engine = new CairoEngine(configuration);
         SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
@@ -1664,6 +1664,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnNameWithDot() throws Exception {
+        assertFailure(27, "new column name contains invalid characters",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "`bool.flag` BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         TestUtils.assertMemoryLeak(() -> {
@@ -1833,7 +1843,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 };
 
                 try (
-                        CairoEngine engine = new CairoEngine(configuration, null);
+                        CairoEngine engine = new CairoEngine(configuration);
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     try {
@@ -1890,7 +1900,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 };
 
-                try (CairoEngine engine = new CairoEngine(configuration, null); SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (
+                        CairoEngine engine = new CairoEngine(configuration);
+                        SqlCompiler compiler = new SqlCompiler(engine)
+                ) {
                     try {
                         compiler.compile(sql, sqlExecutionContext);
                         Assert.fail();
@@ -2246,7 +2259,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    CairoEngine engine = new CairoEngine(configuration, null);
+                    CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
@@ -2324,16 +2337,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table x (" +
                         "t TIMESTAMP, " +
                         "y BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by MONTH");
-    }
-
-    @Test
-    public void testColumnNameWithDot() throws Exception {
-        assertFailure(27, "new column name contains invalid characters",
-                "create table x (" +
-                        "t TIMESTAMP, " +
-                        "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH");
     }
@@ -2960,7 +2963,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, null) {
+            try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
                 public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
                     fiddler.run(this);
@@ -3376,7 +3379,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        try (CairoEngine engine = new CairoEngine(configuration, null) {
+        try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
             public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
@@ -3422,7 +3425,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
 
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                 compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);

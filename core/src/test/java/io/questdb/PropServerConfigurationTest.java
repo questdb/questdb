@@ -496,8 +496,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
 
-            Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
-            Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
+            Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpVersion());

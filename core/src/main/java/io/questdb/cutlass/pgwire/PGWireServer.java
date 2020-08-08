@@ -98,7 +98,6 @@ public class PGWireServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log log,
             CairoEngine cairoEngine,
-            MessageBus messageBus,
             FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -107,7 +106,6 @@ public class PGWireServer implements Closeable {
                 log,
                 cairoEngine,
                 (conf, engine, workerPool, local, bus, functionFactoryCache1) -> new PGWireServer(conf, cairoEngine, workerPool, bus, functionFactoryCache1),
-                messageBus,
                 functionFactoryCache
         );
     }

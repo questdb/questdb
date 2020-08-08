@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.DefaultServerConfiguration;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
@@ -42,8 +41,6 @@ import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
 
-    private final static DefaultServerConfiguration serverConfiguration = new DefaultServerConfiguration(AbstractGriffinTest.configuration.getRoot());
-
     @Test
     public void testQuestDbForLeaks() throws Exception {
         testForLeaks(() -> {
@@ -54,7 +51,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 bindVariableService.setLong("low", 0L);
                 bindVariableService.setLong("high", 0L);
                 final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
-                        new MessageBusImpl(serverConfiguration), 1, engine).with(AllowAllCairoSecurityContext.INSTANCE,
+                        engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null);
                 StringSink sink = new StringSink();
@@ -76,7 +73,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
 
     private void populateUsersTable(CairoEngine engine, int n) throws SqlException {
         try (SqlCompiler compiler = new SqlCompiler(engine)) {
-            final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(new MessageBusImpl(serverConfiguration), 1, engine).with(AllowAllCairoSecurityContext.INSTANCE,
+            final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                     new BindVariableService(),
                     null);
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);

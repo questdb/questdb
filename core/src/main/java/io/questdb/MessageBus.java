@@ -24,11 +24,10 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.VectorAggregateTask;
 
 public interface MessageBus {
@@ -44,11 +43,5 @@ public interface MessageBus {
 
     Sequence getVectorAggregateSubSequence();
 
-    RingQueue<TelemetryTask> getTelemetryQueue();
-
-    Sequence getTelemetryPubSequence();
-
-    SCSequence getTelemetrySubSequence();
-
-    ServerConfiguration getConfiguration();
+    CairoConfiguration getConfiguration();
 }

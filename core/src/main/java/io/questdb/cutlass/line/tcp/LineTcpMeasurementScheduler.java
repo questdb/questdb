@@ -44,15 +44,9 @@ class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
     private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
-                                                       // not able to populate it for some reason, the event needs to be committed to the
-                                                       // queue incomplete
+    // not able to populate it for some reason, the event needs to be committed to the
+    // queue incomplete
     private static final IntHashSet ALLOWED_LONG_CONVERSIONS = new IntHashSet();
-    static {
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.SHORT);
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.LONG256);
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.TIMESTAMP);
-    }
-
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -69,10 +63,10 @@ class LineTcpMeasurementScheduler implements Closeable {
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
-    LineTcpMeasurementScheduler(CairoConfiguration cairoConfiguration, LineTcpReceiverConfiguration lineConfiguration, CairoEngine engine, WorkerPool writerWorkerPool) {
+    LineTcpMeasurementScheduler(LineTcpReceiverConfiguration lineConfiguration, CairoEngine engine, WorkerPool writerWorkerPool) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
-        this.cairoConfiguration = cairoConfiguration;
+        this.cairoConfiguration = engine.getConfiguration();
         this.milliClock = cairoConfiguration.getMillisecondClock();
         tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
@@ -106,22 +100,25 @@ class LineTcpMeasurementScheduler implements Closeable {
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
     }
 
-    LineTcpMeasurementEvent getNewEvent() {
-        assert isOpen();
-        if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
-            return queue.get(nextEventCursor);
+    @Override
+    public void close() {
+        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
+        if (null != pubSeq) {
+            pubSeq = null;
+            tableUpdateDetailsByTableName.clear();
+            for (int n = 0; n < queue.getCapacity(); n++) {
+                queue.get(n).close();
+            }
         }
+    }
 
-        while (nextEventCursor == -2) {
-            nextEventCursor = pubSeq.next();
+    private void calcThreadLoad() {
+        Arrays.fill(loadByThread, 0);
+        ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
+        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
+            loadByThread[stats.threadId] += stats.nUpdates;
         }
-
-        if (nextEventCursor < 0) {
-            nextEventCursor = -1;
-            return null;
-        }
-
-        return queue.get(nextEventCursor);
     }
 
     void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
@@ -176,6 +173,36 @@ class LineTcpMeasurementScheduler implements Closeable {
         event.createRebalanceEvent(fromThreadId, toThreadId, tableName);
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
+    }
+
+    int[] getLoadByThread() {
+        return loadByThread;
+    }
+
+    LineTcpMeasurementEvent getNewEvent() {
+        assert isOpen();
+        if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
+            return queue.get(nextEventCursor);
+        }
+
+        while (nextEventCursor == -2) {
+            nextEventCursor = pubSeq.next();
+        }
+
+        if (nextEventCursor < 0) {
+            nextEventCursor = -1;
+            return null;
+        }
+
+        return queue.get(nextEventCursor);
+    }
+
+    int getnLoadCheckCycles() {
+        return nLoadCheckCycles;
+    }
+
+    int getnRebalances() {
+        return nRebalances;
     }
 
     private boolean isOpen() {
@@ -264,39 +291,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    private void calcThreadLoad() {
-        Arrays.fill(loadByThread, 0);
-        ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
-        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.threadId] += stats.nUpdates;
-        }
-    }
-
-    int[] getLoadByThread() {
-        return loadByThread;
-    }
-
-    int getnRebalances() {
-        return nRebalances;
-    }
-
-    int getnLoadCheckCycles() {
-        return nLoadCheckCycles;
-    }
-
-    @Override
-    public void close() {
-        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
-        if (null != pubSeq) {
-            pubSeq = null;
-            tableUpdateDetailsByTableName.clear();
-            for (int n = 0; n < queue.getCapacity(); n++) {
-                queue.get(n).close();
-            }
-        }
-    }
-
     static class LineTcpMeasurementEvent implements Closeable {
         private final CharSequenceCache cache;
         private final MicrosecondClock clock;
@@ -323,7 +317,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.timestampAdapter = timestampAdapter;
             lexer.withParser(new LineProtoParser() {
                 @Override
-                public void onLineEnd(CharSequenceCache cache) {
+                public void onError(int position, int state, int code) {
+                    assert errorPosition == -1;
+                    errorPosition = position;
+                    errorCode = code;
                 }
 
                 @Override
@@ -358,30 +355,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
 
                 @Override
-                public void onError(int position, int state, int code) {
-                    assert errorPosition == -1;
-                    errorPosition = position;
-                    errorCode = code;
+                public void onLineEnd(CharSequenceCache cache) {
                 }
             });
         }
 
-        long parseLine(long bytesPtr, long hi) {
-            clear();
-            long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
-            if (recvBufLineNext != -1) {
-                if (isComplete() && firstFieldIndex == -1) {
-                    errorPosition = (int) (recvBufLineNext - bytesPtr);
-                    errorCode = LineProtoParser.ERROR_EMPTY;
-                }
-
-                if (isComplete()) {
-                    if (timestampAddress == 0) {
-                        timestamp = clock.getTicks();
-                    }
-                }
-            }
-            return recvBufLineNext;
+        @Override
+        public void close() {
+            lexer.close();
+            lexer = null;
         }
 
         private void clear() {
@@ -392,16 +374,32 @@ class LineTcpMeasurementScheduler implements Closeable {
             errorPosition = -1;
         }
 
-        boolean isComplete() {
-            return errorPosition == -1;
+        void createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
+            clear();
+            threadId = REBALANCE_EVENT_ID;
+            rebalanceFromThreadId = fromThreadId;
+            rebalanceToThreadId = toThreadId;
+            rebalanceTableName = tableName;
+        }
+
+        int getErrorCode() {
+            return errorCode;
         }
 
         int getErrorPosition() {
             return errorPosition;
         }
 
-        int getErrorCode() {
-            return errorCode;
+        int getFirstFieldIndex() {
+            return firstFieldIndex;
+        }
+
+        int getNValues() {
+            return addresses.size() / 2;
+        }
+
+        CharSequence getName(int i) {
+            return cache.get(addresses.getQuick(2 * i));
         }
 
         CharSequence getTableName() {
@@ -422,38 +420,34 @@ class LineTcpMeasurementScheduler implements Closeable {
             return timestamp;
         }
 
-        CharSequence getName(int i) {
-            return cache.get(addresses.getQuick(2 * i));
-        }
-
-        int getNValues() {
-            return addresses.size() / 2;
-        }
-
         CharSequence getValue(int i) {
             return cache.get(addresses.getQuick(2 * i + 1));
         }
 
-        int getFirstFieldIndex() {
-            return firstFieldIndex;
-        }
-
-        void createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
-            clear();
-            threadId = REBALANCE_EVENT_ID;
-            rebalanceFromThreadId = fromThreadId;
-            rebalanceToThreadId = toThreadId;
-            rebalanceTableName = tableName;
+        boolean isComplete() {
+            return errorPosition == -1;
         }
 
         boolean isRebalanceEvent() {
             return threadId == REBALANCE_EVENT_ID;
         }
 
-        @Override
-        public void close() {
-            lexer.close();
-            lexer = null;
+        long parseLine(long bytesPtr, long hi) {
+            clear();
+            long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
+            if (recvBufLineNext != -1) {
+                if (isComplete() && firstFieldIndex == -1) {
+                    errorPosition = (int) (recvBufLineNext - bytesPtr);
+                    errorCode = LineProtoParser.ERROR_EMPTY;
+                }
+
+                if (isComplete()) {
+                    if (timestampAddress == 0) {
+                        timestamp = clock.getTicks();
+                    }
+                }
+            }
+            return recvBufLineNext;
         }
     }
 
@@ -486,6 +480,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.jobName = "tcp-line-writer-" + id;
         }
 
+        @Override
+        public boolean run(int workerId) {
+            assert workerId == id;
+            boolean busy = drainQueue();
+            doMaintenance(busy);
+            return busy;
+        }
+
         private void close() {
             // Finish all jobs in the queue before stopping
             for (int n = 0; n < queue.getCapacity(); n++) {
@@ -503,12 +505,18 @@ class LineTcpMeasurementScheduler implements Closeable {
             path.close();
         }
 
-        @Override
-        public boolean run(int workerId) {
-            assert workerId == id;
-            boolean busy = drainQueue();
-            doMaintenance(busy);
-            return busy;
+        private void doMaintenance(boolean busy) {
+            long millis = milliClock.getTicks();
+            if (busy && (millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
+                return;
+            }
+
+            lastMaintenanceJobMillis = millis;
+            ObjList<CharSequence> tableNames = parserCache.keys();
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                Parser parser = parserCache.get(tableNames.get(n));
+                parser.doMaintenance();
+            }
         }
 
         private boolean drainQueue() {
@@ -535,20 +543,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (eventProcessed) {
                     sequence.done(cursor);
                 }
-            }
-        }
-
-        private void doMaintenance(boolean busy) {
-            long millis = milliClock.getTicks();
-            if (busy && (millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
-                return;
-            }
-
-            lastMaintenanceJobMillis = millis;
-            ObjList<CharSequence> tableNames = parserCache.keys();
-            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                Parser parser = parserCache.get(tableNames.get(n));
-                parser.doMaintenance();
             }
         }
 
@@ -595,34 +589,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             private transient int nMeasurementValues;
             private transient boolean error;
 
-            private void processFirstEvent(CairoEngine engine, CairoSecurityContext securityContext, LineTcpMeasurementEvent event) {
-                assert null == writer;
-                int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
-                if (status == TableUtils.TABLE_EXISTS) {
-                    writer = engine.getWriter(securityContext, event.getTableName());
-                    processEvent(event);
-                    return;
+            @Override
+            public void close() {
+                if (null != writer) {
+                    doMaintenance();
+                    LOG.info().$("closed parser [jobName=").$(jobName).$(" name=").$(writer.getName()).$(']').$();
+                    writer.close();
+                    writer = null;
                 }
-
-                preprocessEvent(event);
-                engine.creatTable(
-                        securityContext,
-                        appendMemory,
-                        path,
-                        tableStructureAdapter.of(event, this));
-                int nValues = event.getNValues();
-                for (int n = 0; n < nValues; n++) {
-                    colIndexMappings.add(n, n);
-                }
-                writer = engine.getWriter(securityContext, event.getTableName());
-                addRow(event);
-            }
-
-            private void processEvent(LineTcpMeasurementEvent event) {
-                assert event.getTableName().equals(writer.getName());
-                preprocessEvent(event);
-                parseNames(event);
-                addRow(event);
             }
 
             private void addRow(LineTcpMeasurementEvent event) {
@@ -657,24 +631,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                 nUncommitted = 0;
             }
 
-            private void preprocessEvent(LineTcpMeasurementEvent event) {
-                error = false;
-                nMeasurementValues = event.getNValues();
-                colTypes.ensureCapacity(nMeasurementValues);
-                colIndexMappings.ensureCapacity(nMeasurementValues);
-                parseTypes(event);
+            void doMaintenance() {
+                if (nUncommitted == 0) {
+                    return;
+                }
+                commit();
             }
 
-            private void parseTypes(LineTcpMeasurementEvent event) {
-                for (int n = 0; n < nMeasurementValues; n++) {
-                    int colType;
-                    if (n < event.getFirstFieldIndex()) {
-                        colType = ColumnType.SYMBOL;
-                    } else {
-                        colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
-                    }
-                    colTypes.add(n, colType);
-                }
+            private int getColumnType(int i) {
+                return colTypes.getQuick(i);
             }
 
             private void parseNames(LineTcpMeasurementEvent event) {
@@ -705,25 +670,54 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            private int getColumnType(int i) {
-                return colTypes.getQuick(i);
+            private void parseTypes(LineTcpMeasurementEvent event) {
+                for (int n = 0; n < nMeasurementValues; n++) {
+                    int colType;
+                    if (n < event.getFirstFieldIndex()) {
+                        colType = ColumnType.SYMBOL;
+                    } else {
+                        colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
+                    }
+                    colTypes.add(n, colType);
+                }
             }
 
-            void doMaintenance() {
-                if (nUncommitted == 0) {
+            private void preprocessEvent(LineTcpMeasurementEvent event) {
+                error = false;
+                nMeasurementValues = event.getNValues();
+                colTypes.ensureCapacity(nMeasurementValues);
+                colIndexMappings.ensureCapacity(nMeasurementValues);
+                parseTypes(event);
+            }
+
+            private void processEvent(LineTcpMeasurementEvent event) {
+                assert event.getTableName().equals(writer.getName());
+                preprocessEvent(event);
+                parseNames(event);
+                addRow(event);
+            }
+
+            private void processFirstEvent(CairoEngine engine, CairoSecurityContext securityContext, LineTcpMeasurementEvent event) {
+                assert null == writer;
+                int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
+                if (status == TableUtils.TABLE_EXISTS) {
+                    writer = engine.getWriter(securityContext, event.getTableName());
+                    processEvent(event);
                     return;
                 }
-                commit();
-            }
 
-            @Override
-            public void close() {
-                if (null != writer) {
-                    doMaintenance();
-                    LOG.info().$("closed parser [jobName=").$(jobName).$(" name=").$(writer.getName()).$(']').$();
-                    writer.close();
-                    writer = null;
+                preprocessEvent(event);
+                engine.creatTable(
+                        securityContext,
+                        appendMemory,
+                        path,
+                        tableStructureAdapter.of(event, this));
+                int nValues = event.getNValues();
+                for (int n = 0; n < nValues; n++) {
+                    colIndexMappings.add(n, n);
                 }
+                writer = engine.getWriter(securityContext, event.getTableName());
+                addRow(event);
             }
 
         }
@@ -803,5 +797,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return this;
             }
         }
+    }
+
+    static {
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.SHORT);
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.LONG256);
+        ALLOWED_LONG_CONVERSIONS.add(ColumnType.TIMESTAMP);
     }
 }

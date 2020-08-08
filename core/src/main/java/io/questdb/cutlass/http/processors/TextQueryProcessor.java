@@ -85,7 +85,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.doubleScale = configuration.getDoubleScale();
     }
 
