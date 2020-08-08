@@ -24,23 +24,15 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256FromCharSequenceDecoder;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Long256Sink;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
 
 /**
  * 
@@ -511,33 +503,35 @@ public class ContiguousVirtualMemory implements Closeable {
         return baseAddressHi - baseAddress;
     }
 
-    protected final void checkLimits(long offset, long size) {
-        long addressHi = baseAddress + offset + size;
-        checkAndExtend(addressHi);
-    }
-
-    protected final void checkLimits(long size) {
-        long addressHi = appendAddress + size;
-        checkAndExtend(addressHi);
-    }
-
     private void checkAndExtend(long addressHi) {
         assert appendAddress <= baseAddressHi;
         assert addressHi >= baseAddress;
         if (addressHi > baseAddressHi) {
-            long newSize = addressHi - baseAddress;
-            long nPages = (newSize / pageSize) + 1;
-            newSize = nPages * pageSize;
-            long oldSize = getMemorySize();
-            LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
-            if (nPages > maxPages) {
-                throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
-            }
-            long appendOffset = appendAddress - baseAddress;
-            baseAddress = remapMemory(newSize);
-            baseAddressHi = baseAddress + newSize;
-            appendAddress = baseAddress + appendOffset;
+            doExtend(addressHi);
         }
+    }
+
+    protected final void checkLimits(long size) {
+        checkAndExtend(appendAddress + size);
+    }
+
+    protected final void checkLimits(long offset, long size) {
+        checkAndExtend(baseAddress + offset + size);
+    }
+
+    private void doExtend(long addressHi) {
+        long newSize = addressHi - baseAddress;
+        long nPages = (newSize / pageSize) + 1;
+        newSize = nPages * pageSize;
+        long oldSize = getMemorySize();
+        LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+        if (nPages > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+        }
+        long appendOffset = appendAddress - baseAddress;
+        baseAddress = remapMemory(newSize);
+        baseAddressHi = baseAddress + newSize;
+        appendAddress = baseAddress + appendOffset;
     }
 
     public class CharSequenceView extends AbstractCharSequence {
