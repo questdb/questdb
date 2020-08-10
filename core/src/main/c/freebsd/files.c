@@ -41,13 +41,9 @@ JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
     void *orgAddr = (void *) address;
     void *newAddr = mmap(orgAddr, (size_t) newLen, prot, MAP_SHARED, (int) fd, offset);
     if (orgAddr != newAddr) {
-        int rc = munmap(orgAddr, (size_t) previousLen);
-//        if (rc != 0) {
-//            fprintf(stderr, "Failed to unmap region at %p with size %ld, got %d: %s\n", orgAddr, previousLen, errno, strerror(errno));
-//        }
+        munmap(orgAddr, (size_t) previousLen);
     }
     if (newAddr == MAP_FAILED) {
-//        fprintf(stderr, "Failed to remap region at %p with size %ld, got %d: %s\n", orgAddr, newLen, errno, strerror(errno));
 	return -1;
     }
     return (jlong) newAddr;
