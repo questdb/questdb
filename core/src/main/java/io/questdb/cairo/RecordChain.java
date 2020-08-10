@@ -37,7 +37,7 @@ import java.io.Closeable;
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI {
 
     private final long[] columnOffsets;
-    private final VirtualMemory mem;
+    private final ContiguousVirtualMemory mem;
     private final RecordChainRecord recordA = new RecordChainRecord();
     private final RecordChainRecord recordB = new RecordChainRecord();
     private final long varOffset;
@@ -49,7 +49,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private RecordCursor symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        this.mem = new VirtualMemory(pageSize, maxPages);
+        this.mem = new ContiguousVirtualMemory(pageSize, maxPages);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
