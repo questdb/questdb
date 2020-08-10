@@ -29,7 +29,7 @@
 #include <string.h>
 #include <stdio.h>
  
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
+inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;
 
@@ -47,8 +47,13 @@ JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
     return (jlong) newAddr;
 }
  
+JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
+        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return JavaCritical_io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
+    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
