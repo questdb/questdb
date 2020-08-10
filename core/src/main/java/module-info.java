@@ -434,6 +434,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentSchemaBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,

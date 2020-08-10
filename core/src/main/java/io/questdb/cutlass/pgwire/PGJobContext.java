@@ -53,11 +53,21 @@ public class PGJobContext implements Closeable {
     public static final int PG_UNSPECIFIED = 0;
     private final SqlCompiler compiler;
     private final AssociativeCache<Object> factoryCache;
+    private final AssociativeCache<Object> portalfactoryCache;
+    private final AssociativeCache<Object> statementToBindVariableTypeCache;
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
 
     public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
         this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
         this.factoryCache = new AssociativeCache<>(
+                configuration.getFactoryCacheColumnCount(),
+                configuration.getFactoryCacheRowCount()
+        );
+        this.portalfactoryCache = new AssociativeCache<>(
+                configuration.getFactoryCacheColumnCount(),
+                configuration.getFactoryCacheRowCount()
+        );
+        this.statementToBindVariableTypeCache = new AssociativeCache<>(
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()
         );
@@ -73,6 +83,6 @@ public class PGJobContext implements Closeable {
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, factoryCache, bindVariableSetters);
+        context.handleClientOperation(compiler, factoryCache, portalfactoryCache, statementToBindVariableTypeCache, bindVariableSetters);
     }
 }
