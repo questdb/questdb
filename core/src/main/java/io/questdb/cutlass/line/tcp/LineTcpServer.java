@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,9 +47,12 @@ import java.io.Closeable;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
+    private final IODispatcher<LineTcpConnectionContext> dispatcher;
+    private final LineTcpConnectionContextFactory contextFactory;
+    private final LineTcpMeasurementScheduler scheduler;
+    private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
 
     public LineTcpServer(
-            CairoConfiguration cairoConfiguration,
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool workerPool,
@@ -62,7 +64,7 @@ public class LineTcpServer implements Closeable {
                         .getNetDispatcherConfiguration(),
                 contextFactory);
         workerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(cairoConfiguration, lineConfiguration, engine, workerPool);
+        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool);
         final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
             if (context.handleIO()) {
                 busyContexts.add(context);
@@ -98,19 +100,12 @@ public class LineTcpServer implements Closeable {
         }
     }
 
-    private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final LineTcpConnectionContextFactory contextFactory;
-    private final LineTcpMeasurementScheduler scheduler;
-    private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
-
     @Nullable
     public static LineTcpServer create(
-            CairoConfiguration cairoConfiguration,
             LineTcpReceiverConfiguration lineConfiguration,
             WorkerPool sharedWorkerPool,
             Log log,
-            CairoEngine cairoEngine,
-            MessageBus messageBus
+            CairoEngine cairoEngine
     ) {
         if (!lineConfiguration.isEnabled()) {
             return null;
@@ -118,12 +113,11 @@ public class LineTcpServer implements Closeable {
 
         ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool, local, bus,
                                                                               functionfactory) -> new LineTcpServer(
-                cairoConfiguration,
                 lineConfiguration,
                 cairoEngine,
                 workerPool,
                 bus);
-        return WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, messageBus, null);
+        return WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, null);
     }
 
     @Override
@@ -145,11 +139,6 @@ public class LineTcpServer implements Closeable {
         }
 
         @Override
-        public void setup() {
-            contextPool.get();
-        }
-
-        @Override
         public void close() {
             closed = true;
         }
@@ -168,6 +157,11 @@ public class LineTcpServer implements Closeable {
                 contextPool.get().push(context);
                 LOG.info().$("pushed").$();
             }
+        }
+
+        @Override
+        public void setup() {
+            contextPool.get();
         }
 
         private void closeContextPool() {

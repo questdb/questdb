@@ -118,14 +118,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
         };
 
         final int nRows = 1000;
-        final String[] tables = { "weather1", "weather2", "weather3" };
-        final String[] locations = { "london", "paris", "rome" };
+        final String[] tables = {"weather1", "weather2", "weather3"};
+        final String[] locations = {"london", "paris", "rome"};
 
         final Random rand = new Random(0);
         final StringBuilder[] expectedSbs = new StringBuilder[tables.length];
 
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
-            LineTcpServer tcpServer = LineTcpServer.create(configuration, lineConfiguration, sharedWorkerPool, LOG, engine, messageBus);
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
 
             SOCountDownLatch tablesCreated = new SOCountDownLatch();
             tablesCreated.setCount(tables.length);

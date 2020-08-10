@@ -532,24 +532,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
-        final String lineUdpTimestampSwitch = getString(properties, propNm, "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                return LineProtoMicroTimestampAdapter.INSTANCE;
-            case "ms":
-                return LineProtoMilliTimestampAdapter.INSTANCE;
-            case "s":
-                return LineProtoSecondTimestampAdapter.INSTANCE;
-            case "m":
-                return LineProtoMinuteTimestampAdapter.INSTANCE;
-            case "h":
-                return LineProtoHourTimestampAdapter.INSTANCE;
-            default:
-                return LineProtoNanoTimestampAdapter.INSTANCE;
-        }
-    }
-
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
@@ -578,11 +560,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
-    }
-
-    @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
-        return telemetryConfiguration;
     }
 
     private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
@@ -667,6 +644,24 @@ public class PropServerConfiguration implements ServerConfiguration {
             return value != null ? Numbers.parseIntSize(value) : defaultValue;
         } catch (NumericException e) {
             throw new ServerConfigurationException(key, value);
+        }
+    }
+
+    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
+        final String lineUdpTimestampSwitch = getString(properties, propNm, "n");
+        switch (lineUdpTimestampSwitch) {
+            case "u":
+                return LineProtoMicroTimestampAdapter.INSTANCE;
+            case "ms":
+                return LineProtoMilliTimestampAdapter.INSTANCE;
+            case "s":
+                return LineProtoSecondTimestampAdapter.INSTANCE;
+            case "m":
+                return LineProtoMinuteTimestampAdapter.INSTANCE;
+            case "h":
+                return LineProtoHourTimestampAdapter.INSTANCE;
+            default:
+                return LineProtoNanoTimestampAdapter.INSTANCE;
         }
     }
 
@@ -937,16 +932,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
-        public boolean getServerKeepAlive() {
-            return httpServerKeepAlive;
-        }
-
-        @Override
-        public String getHttpVersion() {
-            return httpVersion;
-        }
-
-        @Override
         public int getConnectionPoolInitialCapacity() {
             return connectionPoolInitialCapacity;
         }
@@ -1032,21 +1017,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int[] getWorkerAffinity() {
-            return httpWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return httpWorkerCount;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return httpWorkerHaltOnError;
-        }
-
-        @Override
         public boolean readOnlySecurityContext() {
             return readOnlySecurityContext;
         }
@@ -1064,6 +1034,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInterruptorBufferSize() {
             return interruptorBufferSize;
+        }
+
+        @Override
+        public boolean getServerKeepAlive() {
+            return httpServerKeepAlive;
+        }
+
+        @Override
+        public String getHttpVersion() {
+            return httpVersion;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return httpWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return httpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return httpWorkerHaltOnError;
         }
     }
 
@@ -1127,11 +1122,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIndexValueBlockSize() {
             return indexValueBlockSize;
-        }
-
-        @Override
-        public boolean enableTestFactories() {
-            return false;
         }
 
         @Override
@@ -1418,6 +1408,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getGroupByMapCapacity() {
             return sqlGroupByMapCapacity;
         }
+
+        @Override
+        public boolean enableTestFactories() {
+            return false;
+        }
+
+        @Override
+        public TelemetryConfiguration getTelemetryConfiguration() {
+            return telemetryConfiguration;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -1500,11 +1500,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
 
         @Override
-        public String getDispatcherLogName() {
-            return "line-server";
-        }
-
-        @Override
         public int getActiveConnectionLimit() {
             return lineTcpNetActiveConnectionLimit;
         }
@@ -1522,6 +1517,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "line-server";
         }
 
         @Override
@@ -1737,11 +1737,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropPGWireDispatcherConfiguration implements IODispatcherConfiguration {
 
         @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-
-        @Override
         public int getActiveConnectionLimit() {
             return pgNetActiveConnectionLimit;
         }
@@ -1759,6 +1754,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "pg-server";
         }
 
         @Override
@@ -1910,11 +1910,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isEnabled() {
-            return pgEnabled;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return pgWorkerAffinity;
         }
@@ -1932,6 +1927,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return pgEnabled;
         }
     }
 

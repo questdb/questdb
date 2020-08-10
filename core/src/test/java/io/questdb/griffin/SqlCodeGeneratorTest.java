@@ -4212,7 +4212,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
-        Sequence seq = messageBus.getVectorAggregateSubSequence();
+        Sequence seq = engine.getMessageBus().getVectorAggregateSubSequence();
         // consume sequence fully and do nothing
         // this might be needed to make sure we don't consume things other tests publish here
         while (true) {
@@ -4226,7 +4226,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(messageBus);
+        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);

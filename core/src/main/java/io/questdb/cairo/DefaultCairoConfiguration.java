@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -37,6 +39,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
+    private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -50,11 +53,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getCopyPoolCapacity() {
         return 16;
-    }
-
-    @Override
-    public boolean enableTestFactories() {
-        return true;
     }
 
     @Override
@@ -105,6 +103,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getIndexValueBlockSize() {
         return 256;
+    }
+
+    @Override
+    public int getDoubleToStrCastScale() {
+        return Numbers.MAX_SCALE;
+    }
+
+    @Override
+    public int getFloatToStrCastScale() {
+        return 4;
     }
 
     @Override
@@ -370,16 +378,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return Numbers.MAX_SCALE;
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return 4;
-    }
-
-    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -393,4 +391,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getGroupByMapCapacity() {
         return 1024;
     }
+
+    @Override
+    public boolean enableTestFactories() {
+        return true;
+    }
+
+    @Override
+    public TelemetryConfiguration getTelemetryConfiguration() {
+        return telemetryConfiguration;
+    }
+
 }

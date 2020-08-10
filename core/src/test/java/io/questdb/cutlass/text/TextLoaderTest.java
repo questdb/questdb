@@ -868,7 +868,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             };
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, null);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
                     TextLoader loader = new TextLoader(engine)
             ) {
                 configureLoaderDefaults(loader, (byte) ',');
@@ -999,7 +999,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1085,7 +1085,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1121,70 +1121,58 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLineRoll() throws Exception {
-        assertNoLeak(textLoader -> {
-            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
-
-            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
-                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
-                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
-                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
-                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
-                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
-                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
-                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
-                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
-                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
-                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
-                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
-
-            TextConfiguration textConfiguration = new DefaultTextConfiguration() {
-                @Override
-                public int getRollBufferLimit() {
-                    return 128;
-                }
-
-                @Override
-                public int getRollBufferSize() {
-                    return 32;
-                }
-            };
-
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public TextConfiguration getTextConfiguration() {
-                    return textConfiguration;
-                }
-            };
-
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                try (TextLoader loader = new TextLoader(engine)) {
-                    configureLoaderDefaults(loader, (byte) ',');
-                    playText(
-                            engine,
-                            loader,
-                            csv,
-                            1024,
-                            expected,
-                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                            12,
-                            12
-                    );
-                }
+    public void testImportTimestampPartitionByDay() throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
             }
-        });
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tts\n" +
+                                "CMP1\t2015-01-13T19:15:09.000000Z\n" +
+                                "CMP2\t2015-01-14T19:15:09.000234Z\n" +
+                                "CMP1\t2015-01-15T19:15:09.000455Z\n" +
+                                "CMP2\t2015-01-16T19:15:09.000754Z\n" +
+                                "CMP1\t2015-01-17T19:15:09.000903Z\n";
+
+
+                        String csv = "StrSym,ts\n" +
+                                "CMP1,2015-01-13T19:15:09.000000Z\n" +
+                                "CMP2,2015-01-14T19:15:09.000234Z\n" +
+                                "CMP1,2015-01-15T19:15:09.000455Z\n" +
+                                "CMP2,2015-01-16T19:15:09.000754Z\n" +
+                                "CMP1,2015-01-17T19:15:09.000903Z\n";
+
+                        configureLoaderDefaults(textLoader, (byte) ',', 0, false, PartitionBy.DAY, "ts");
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                                5,
+                                5
+                        );
+
+                        try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                            Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
+                        }
+                    }
+            );
+        }
     }
 
     @Test
@@ -1715,53 +1703,70 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testReduceLinesForStats() throws Exception {
-        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
-            @Override
-            public int getTextAnalysisMaxLines() {
-                return 3;
+    public void testLineRoll() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
+                    "\"CMP2\t8\t8000\t2.27636352181435\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.01423481060192\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.6284336107783\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.87764661805704\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+                @Override
+                public int getRollBufferLimit() {
+                    return 128;
+                }
+
+                @Override
+                public int getRollBufferSize() {
+                    return 32;
+                }
+            };
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public TextConfiguration getTextConfiguration() {
+                    return textConfiguration;
+                }
+            };
+
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (TextLoader loader = new TextLoader(engine)) {
+                    configureLoaderDefaults(loader, (byte) ',');
+                    playText(
+                            engine,
+                            loader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                            12,
+                            12
+                    );
+                }
             }
-        };
-
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public TextConfiguration getTextConfiguration() {
-                return textConfiguration;
-            }
-        };
-
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
-            assertNoLeak(
-                    engine,
-                    textLoader -> {
-                        String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
-                                "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
-                                "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
-                                "CMP1\t4\t6938\t5.11407712241635\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
-                                "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
-
-
-                        String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
-                                "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
-                                "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
-                                "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
-                                ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
-                                "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
-
-                        configureLoaderDefaults(textLoader, (byte) ',');
-                        textLoader.setForceHeaders(false);
-                        playText(
-                                engine,
-                                textLoader,
-                                csv,
-                                1024,
-                                expected,
-                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
-                                5,
-                                4
-                        );
-                    });
-        }
+        });
     }
 
     @Test
@@ -2526,7 +2531,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportTimestampPartitionByDay() throws Exception {
+    public void testReduceLinesForStats() throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
             public int getTextAnalysisMaxLines() {
@@ -2534,49 +2539,44 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration, null)) {
+
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
-                engine,
-                textLoader -> {
-                    String expected = "StrSym\tts\n" +
-                            "CMP1\t2015-01-13T19:15:09.000000Z\n" +
-                            "CMP2\t2015-01-14T19:15:09.000234Z\n" +
-                            "CMP1\t2015-01-15T19:15:09.000455Z\n" +
-                            "CMP2\t2015-01-16T19:15:09.000754Z\n" +
-                            "CMP1\t2015-01-17T19:15:09.000903Z\n";
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+                                "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
+                                "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
+                                "CMP1\t4\t6938\t5.11407712241635\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
+                                "CMP1\t7\t6460\t6.39910243218765\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
 
 
-                    String csv = "StrSym,ts\n" +
-                            "CMP1,2015-01-13T19:15:09.000000Z\n" +
-                            "CMP2,2015-01-14T19:15:09.000234Z\n" +
-                            "CMP1,2015-01-15T19:15:09.000455Z\n" +
-                            "CMP2,2015-01-16T19:15:09.000754Z\n" +
-                            "CMP1,2015-01-17T19:15:09.000903Z\n";
+                        String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
+                                "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
+                                "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
+                                "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
+                                ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
+                                "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
 
-                    configureLoaderDefaults(textLoader, (byte) ',', 0, false, PartitionBy.DAY, "ts");
-                    textLoader.setForceHeaders(false);
-                    playText(
-                            engine,
-                            textLoader,
-                            csv,
-                            1024,
-                            expected,
-                            "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
-                            5,
-                            5
-                    );
-
-                    try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                        Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
-                    }
-                }
-            );
+                        configureLoaderDefaults(textLoader, (byte) ',');
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                                5,
+                                4
+                        );
+                    });
         }
     }
 

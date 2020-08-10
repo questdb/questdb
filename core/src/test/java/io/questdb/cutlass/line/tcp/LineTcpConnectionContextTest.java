@@ -812,7 +812,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     private void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 setupContext(engine, onCommitNewEvent);
                 try {
                     r.run();
@@ -851,7 +851,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(configuration, lineTcpConfiguration, engine, workerPool) {
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool) {
             @Override
             void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
                 if (null != onCommitNewEvent) {
