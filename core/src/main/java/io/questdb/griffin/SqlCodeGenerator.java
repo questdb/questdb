@@ -2060,7 +2060,7 @@ public class SqlCodeGenerator implements Mutable {
                     }
 
                     if (intrinsicModel.keyExcludedValues.size() == 0) {
-                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
                             try {
                                 if (!f.getBool(null)) {
@@ -2079,13 +2079,13 @@ public class SqlCodeGenerator implements Mutable {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
                                 } else {
-                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection);
+                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection, columnIndexes);
                                 }
                             } else {
                                 if (f == null) {
                                     rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
                                 } else {
-                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection);
+                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes);
                                 }
                             }
                             return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);

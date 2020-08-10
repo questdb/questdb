@@ -26,14 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderRecord;
+import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.IntList;
 
 class SymbolIndexFilteredRowCursor implements RowCursor {
     private final Function filter;
-    private final TableReaderRecord record = new TableReaderRecord();
+    private final TableReaderSelectedColumnRecord record;
     private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
     private int symbolKey;
@@ -46,9 +48,10 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
             int symbolKey,
             Function filter,
             boolean cachedIndexReaderCursor,
-            int indexDirection
+            int indexDirection,
+            IntList columnIndexes
     ) {
-        this(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
+        this(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
         of(symbolKey);
     }
 
@@ -56,12 +59,14 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
             int columnIndex,
             Function filter,
             boolean cachedIndexReaderCursor,
-            int indexDirection
+            int indexDirection,
+            IntList columnIndexes
     ) {
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
+        this.record = new TableReaderSelectedColumnRecord(columnIndexes);
     }
 
     @Override

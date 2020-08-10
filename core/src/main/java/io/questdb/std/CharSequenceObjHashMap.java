@@ -78,6 +78,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         }
     }
 
+    public void cleaValues() {
+        Arrays.fill(values, 0, capacity, null);
+    }
+
     public V get(CharSequence key) {
         return valueAt(keyIndex(key));
     }
@@ -119,6 +123,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     public V valueQuick(int index) {
         return get(list.getQuick(index));
+    }
+
+    public void setValueQuick(int keyIndex, V value) {
+        values[-keyIndex - 1] = value;
     }
 
     private boolean putAt0(int index, CharSequence key, V value) {
