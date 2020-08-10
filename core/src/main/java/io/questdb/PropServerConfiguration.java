@@ -350,7 +350,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.pgEnabled = getBoolean(properties, "pg.enabled", true);
         if (pgEnabled) {
             pgNetActiveConnectionLimit = getInt(properties, "pg.net.active.connection.limit", 10);
-            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:8812", (a, p) -> {
+            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:5432", (a, p) -> {
                 pgNetBindIPv4Address = a;
                 pgNetBindPort = p;
             });

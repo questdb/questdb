@@ -242,6 +242,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
+        intListPool.clear();
+        Misc.free(intListPool);
     }
 
     @Override
@@ -345,10 +347,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             clearRecvBuffer();
         } catch (SqlException e) {
-            if (!Chars.contains(e.getFlyweightMessage(), "empty query")) {
-                sendExecuteTail(TAIL_ERROR);
-                clearRecvBuffer();
-            }
+            sendExecuteTail(TAIL_ERROR);
+            clearRecvBuffer();
         }
     }
 
@@ -800,6 +800,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         currentCursor = factory.getCursor(sqlExecutionContext);
         prepareRowDescription();
         sendCursor();
+        send();
     }
 
     @Nullable
@@ -898,7 +899,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 processExecute();
                 break;
             case 'S': // sync
-                send(TAIL_SUCCESS);
+                send();
                 prepareForNewQuery();
                 break;
             case 'D': // describe
@@ -1019,6 +1020,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void prepareForNewQuery() {
         isEmptyQuery = false;
         queryCharacterStore.clear();
+        portalCharacterStore.clear();
+        bindVariableService.clear();
         currentCursor = Misc.free(currentCursor);
         currentFactory = null;
         currentInsertStatement = null;
@@ -1257,7 +1260,6 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         short parameterCount = getShort(lo);
 
-        bindVariableService.clear();
         IntList bindVariableTypes = intListPool.next();
         bindVariableTypes.clear();
         if (parameterCount > 0) {
@@ -1272,6 +1274,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
             LOG.debug().$("params [count=").$(parameterCount).$(']').$();
             lo += Short.BYTES;
+            bindVariableService.clear();
             setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
         } else if (parameterCount < 0) {
             LOG.error()
@@ -1540,7 +1543,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                 responseAsciiSink.resetToBookmark();
                 LOG.error().$(e.getFlyweightMessage()).$();
                 prepareForNewQuery();
-                send(TAIL_ERROR);
+                sendCurrentCursorTail = TAIL_ERROR;
+                prepareExecuteTail(true);
                 return;
             }
         }
@@ -1548,7 +1552,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareForNewQuery();
         sendCurrentCursorTail = TAIL_SUCCESS;
         prepareExecuteTail(true);
-        send(TAIL_SUCCESS);
     }
 
     private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
