@@ -24,17 +24,17 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.VirtualMemory;
+import io.questdb.cairo.ContiguousVirtualMemory;
 
 public class CompactMapValue implements MapValue {
 
-    private final VirtualMemory entries;
+    private final ContiguousVirtualMemory entries;
     private final long[] columnOffsets;
     private long currentValueOffset;
     private boolean _new;
     private CompactMapRecord record;
 
-    CompactMapValue(VirtualMemory entries, long[] columnOffsets) {
+    CompactMapValue(ContiguousVirtualMemory entries, long[] columnOffsets) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
     }
