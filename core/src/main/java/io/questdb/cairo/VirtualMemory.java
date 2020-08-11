@@ -611,7 +611,7 @@ public class VirtualMemory implements Closeable {
 
     protected long allocateNextPage(int page) {
         LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
-        if (page > maxPages) {
+        if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
         return Unsafe.malloc(getMapPageSize());

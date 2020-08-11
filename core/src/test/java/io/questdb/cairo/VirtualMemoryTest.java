@@ -185,7 +185,7 @@ public class VirtualMemoryTest {
 
     @Test
     public void testChar() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (VirtualMemory mem = new VirtualMemory(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -204,7 +204,7 @@ public class VirtualMemoryTest {
 
     @Test
     public void testCharWithOffset() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (VirtualMemory mem = new VirtualMemory(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -288,7 +288,7 @@ public class VirtualMemoryTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (VirtualMemory mem = new VirtualMemory(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
             }
@@ -429,7 +429,7 @@ public class VirtualMemoryTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (VirtualMemory mem = new VirtualMemory(pageSize, Integer.MAX_VALUE)) {
             mem.putLong256(expected);
             mem.putLong256(expected);
             mem.getLong256(0, long256);
@@ -1087,7 +1087,7 @@ public class VirtualMemoryTest {
         final long bufAddr = Unsafe.malloc(buffer.length);
         binarySequence.of(buffer);
 
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(mem1Size, Integer.MAX_VALUE)) {
+        try (VirtualMemory mem = new VirtualMemory(mem1Size, Integer.MAX_VALUE)) {
             Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getMapPageSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
@@ -1113,7 +1113,7 @@ public class VirtualMemoryTest {
                 offset1 += 8 + sz;
             }
 
-            try (ContiguousVirtualMemory mem2 = new ContiguousVirtualMemory(mem2Size, Integer.MAX_VALUE)) {
+            try (VirtualMemory mem2 = new VirtualMemory(mem2Size, Integer.MAX_VALUE)) {
                 Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getMapPageSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
@@ -1208,7 +1208,7 @@ public class VirtualMemoryTest {
         int pageSize = 256;
         int maxPages = 3;
         int sz = 256 * 3;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, maxPages)) {
+        try (VirtualMemory mem = new VirtualMemory(pageSize, maxPages)) {
             Assert.assertEquals(pageSize, mem.getMapPageSize());
             int n = 0;
             try {
