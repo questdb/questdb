@@ -61,10 +61,6 @@ public class ContiguousVirtualMemory implements Closeable {
         setPageSize(pageSize);
     }
 
-    protected ContiguousVirtualMemory() {
-        this.maxPages = Integer.MAX_VALUE;
-    }
-
     public static int getStorageLength(CharSequence s) {
         if (s == null) {
             return STRING_LENGTH_BYTES;
@@ -472,23 +468,6 @@ public class ContiguousVirtualMemory implements Closeable {
         }
     }
 
-    protected long remapMemory(long newSize) {
-        if (baseAddress == 0) {
-            return Unsafe.malloc(newSize);
-        }
-        long oldSize = getMemorySize();
-        return Unsafe.realloc(baseAddress, oldSize, newSize);
-    }
-
-    protected final void handleMemoryTruncated(long newSize) {
-        assert newSize <= getMemorySize();
-        assert baseAddress != 0;
-        baseAddressHi = baseAddress + newSize;
-        if (appendAddress > baseAddressHi) {
-            appendAddress = baseAddressHi;
-        }
-    }
-
     protected final void handleMemoryReleased() {
         baseAddress = 0;
         baseAddressHi = 0;
@@ -507,7 +486,34 @@ public class ContiguousVirtualMemory implements Closeable {
         assert appendAddress <= baseAddressHi;
         assert addressHi >= baseAddress;
         if (addressHi > baseAddressHi) {
-            doExtend(addressHi);
+            long newSize = addressHi - baseAddress;
+            long nPages = (newSize / pageSize) + 1;
+            newSize = nPages * pageSize;
+            long oldSize = getMemorySize();
+            LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+            if (nPages > maxPages) {
+                throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+            }
+            long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
+            handleMemoryReallocation(newBaseAddress, newSize);
+        }
+    }
+
+    protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
+        if (currentBaseAddress == 0) {
+            return Unsafe.malloc(newSize);
+        }
+        return Unsafe.realloc(currentBaseAddress, currentSize, newSize);
+    }
+
+    protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
+        assert newBaseAddress != 0;
+        long appendOffset = appendAddress - baseAddress;
+        baseAddress = newBaseAddress;
+        baseAddressHi = baseAddress + newSize;
+        appendAddress = baseAddress + appendOffset;
+        if (appendAddress > baseAddressHi) {
+            appendAddress = baseAddressHi;
         }
     }
 
@@ -517,21 +523,6 @@ public class ContiguousVirtualMemory implements Closeable {
 
     protected final void checkLimits(long offset, long size) {
         checkAndExtend(baseAddress + offset + size);
-    }
-
-    private void doExtend(long addressHi) {
-        long newSize = addressHi - baseAddress;
-        long nPages = (newSize / pageSize) + 1;
-        newSize = nPages * pageSize;
-        long oldSize = getMemorySize();
-        LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
-        if (nPages > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
-        }
-        long appendOffset = appendAddress - baseAddress;
-        baseAddress = remapMemory(newSize);
-        baseAddressHi = baseAddress + newSize;
-        appendAddress = baseAddress + appendOffset;
     }
 
     public class CharSequenceView extends AbstractCharSequence {

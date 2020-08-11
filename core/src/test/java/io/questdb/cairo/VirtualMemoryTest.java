@@ -1026,10 +1026,16 @@ public class VirtualMemoryTest {
             mem.putByte((byte) 1);
         }
 
+        Assert.assertEquals(10, VirtualMemory.getStorageLength("123"));
+        Assert.assertEquals(6, VirtualMemory.getStorageLength("x"));
+
         long o1 = mem.putStr("123");
         long o2 = mem.putStr("0987654321abcd");
+        Assert.assertEquals(o2 - o1, VirtualMemory.getStorageLength("123"));
         long o3 = mem.putStr(null);
+        Assert.assertEquals(o3 - o2, VirtualMemory.getStorageLength("0987654321abcd"));
         long o4 = mem.putStr("xyz123");
+        Assert.assertEquals(o4 - o3, VirtualMemory.getStorageLength(null));
         long o5 = mem.putNullStr();
         long o6 = mem.putStr("123ohh4", 3, 3);
         long o7 = mem.putStr(null, 0, 2);
@@ -1196,4 +1202,31 @@ public class VirtualMemoryTest {
             }
         }
     }
+
+    @Test
+    public void testMaxPages() {
+        int pageSize = 256;
+        int maxPages = 3;
+        int sz = 256 * 3;
+        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, maxPages)) {
+            Assert.assertEquals(pageSize, mem.getMapPageSize());
+            int n = 0;
+            try {
+                while (n <= sz) {
+                    mem.putByte((byte) n);
+                    n++;
+                }
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("breached"));
+            }
+            Assert.assertEquals(sz, n);
+
+            for (n = 0; n < sz; n++) {
+                byte b = mem.getByte(n);
+                Assert.assertEquals((byte) n, b);
+            }
+        }
+    }
+
 }

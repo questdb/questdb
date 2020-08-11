@@ -24,14 +24,24 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.TestBinarySequence;
-import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import io.questdb.griffin.engine.TestBinarySequence;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
 public class ContiguousVirtualMemoryTest {
 
@@ -1007,10 +1017,16 @@ public class ContiguousVirtualMemoryTest {
             mem.putByte((byte) 1);
         }
 
+        Assert.assertEquals(10, ContiguousVirtualMemory.getStorageLength("123"));
+        Assert.assertEquals(6, ContiguousVirtualMemory.getStorageLength("x"));
+
         long o1 = mem.putStr("123");
         long o2 = mem.putStr("0987654321abcd");
+        Assert.assertEquals(o2 - o1, ContiguousVirtualMemory.getStorageLength("123"));
         long o3 = mem.putStr(null);
+        Assert.assertEquals(o3 - o2, ContiguousVirtualMemory.getStorageLength("0987654321abcd"));
         long o4 = mem.putStr("xyz123");
+        Assert.assertEquals(o4 - o3, ContiguousVirtualMemory.getStorageLength(null));
         long o5 = mem.putNullStr();
         long o6 = mem.putStr("123ohh4", 3, 3);
         long o7 = mem.putStr(null, 0, 2);
@@ -1174,6 +1190,32 @@ public class ContiguousVirtualMemoryTest {
                     TestUtils.assertEquals(rnd.nextChars(M), mem.getStr(o));
                     o += M * 2 + 4;
                 }
+            }
+        }
+    }
+
+    @Test
+    public void testMaxPages() {
+        int pageSize = 256;
+        int maxPages = 3;
+        int sz = 256 * 3;
+        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, maxPages)) {
+            Assert.assertEquals(pageSize, mem.getMapPageSize());
+            int n = 0;
+            try {
+                while (n <= sz) {
+                    mem.putByte((byte) n);
+                    n++;
+                }
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("breached"));
+            }
+            Assert.assertEquals(sz, n);
+
+            for (n = 0; n < sz; n++) {
+                byte b = mem.getByte(n);
+                Assert.assertEquals((byte) n, b);
             }
         }
     }
