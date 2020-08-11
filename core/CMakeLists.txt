@@ -44,6 +44,7 @@ if (APPLE)
             src/main/c/share/net.c
             src/main/c/osx/affinity.c
             src/main/c/osx/accept.c
+            src/main/c/freebsd/files.c
     )
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
@@ -56,6 +57,7 @@ elseif (UNIX)
                 src/main/c/share/net.c
                 src/main/c/freebsd/affinity.c
                 src/main/c/freebsd/accept.c
+                src/main/c/freebsd/files.c
         )
     else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for GNU/Linux")
@@ -74,6 +76,7 @@ elseif (UNIX)
                 src/main/c/linux/recvmmsg.c
                 src/main/c/linux/affinity.c
                 src/main/c/linux/accept.c
+                src/main/c/linux/files.c
         )
 
     endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")

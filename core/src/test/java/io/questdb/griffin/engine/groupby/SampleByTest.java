@@ -428,7 +428,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot mmap");
+                        TestUtils.assertContains(e.getMessage(), "Could not mmap");
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1476,7 +1476,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Could not mmap"));
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());

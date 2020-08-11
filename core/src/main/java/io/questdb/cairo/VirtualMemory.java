@@ -611,7 +611,7 @@ public class VirtualMemory implements Closeable {
 
     protected long allocateNextPage(int page) {
         LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
-        if (page > maxPages) {
+        if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
         return Unsafe.malloc(getMapPageSize());
@@ -990,15 +990,14 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putSplitChar(char c) {
-        Unsafe.getUnsafe().putByte(pageHi - 1, (byte) c);
-        pageAt(baseOffset + pageHi);
-        Unsafe.getUnsafe().putByte(appendPointer++, (byte) (c >> 8));
+        putByte((byte) c);
+        putByte((byte) (c >> 8));
     }
 
     private long putStr0(CharSequence value, int pos, int len) {
         final long offset = getAppendOffset();
         putInt(len);
-        if (pageHi - appendPointer < len * 2L) {
+        if (pageHi - appendPointer < len << 1) {
             putStrSplit(value, pos, len);
         } else {
             copyStrChars(value, pos, len, appendPointer);
@@ -1035,27 +1034,11 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putStrSplit(CharSequence value, int pos, int len) {
-        int start = pos;
-        do {
-            int half = (int) ((pageHi - appendPointer) / 2);
-
-            if (len <= half) {
-                copyStrChars(value, start, len, appendPointer);
-                appendPointer += len * 2;
-                break;
-            }
-
-            copyStrChars(value, start, half, appendPointer);
-
-            if (half * 2 < pageHi - appendPointer) {
-                putSplitChar(value.charAt(start + half++));
-            } else {
-                pageAt(getAppendOffset() + half * 2);
-            }
-
-            len -= half;
-            start += half;
-        } while (true);
+        int end = pos + len;
+        int at = pos;
+        while (at < end) {
+            putSplitChar(value.charAt(at++));
+        }
     }
 
     protected void release(int page, long address) {

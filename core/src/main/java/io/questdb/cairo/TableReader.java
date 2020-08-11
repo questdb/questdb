@@ -604,7 +604,7 @@ public class TableReader implements Closeable {
             long partitionRowCount,
             boolean lastPartition) {
         ReadOnlyColumn mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
+        final boolean reload = (mem1 instanceof ExtendableOnePageMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -1094,7 +1094,7 @@ public class TableReader implements Closeable {
             mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
         } else {
             if (lastPartition) {
-                mem = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                mem = new ExtendableOnePageMemory(ff, path, ff.getMapPageSize());
             } else {
                 mem = new OnePageMemory(ff, path, ff.length(path));
             }
@@ -1331,7 +1331,7 @@ public class TableReader implements Closeable {
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof NullColumn) {
+                            if ((col instanceof ExtendableOnePageMemory && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             }
                             continue;
