@@ -28,11 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.QueueConsumer;
@@ -45,7 +41,6 @@ import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -55,32 +50,28 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private final static CharSequence tableName = "telemetry";
     private final static CharSequence configTableName = "telemetry_config";
-    private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
-
     private final MicrosecondClock clock;
-    private final PropServerConfiguration configuration;
+    private final CairoConfiguration configuration;
     private final boolean enabled;
     private final TableWriter writer;
+    private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
     private final TableWriter writerConfig;
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
 
-    public TelemetryJob(
-            PropServerConfiguration configuration,
-            CairoEngine engine,
-            @NotNull MessageBus messageBus,
-            @Nullable FunctionFactoryCache functionFactoryCache
-    ) throws SqlException, CairoException {
-        final CairoConfiguration cairoConfig = configuration.getCairoConfiguration();
+    public TelemetryJob(CairoEngine engine) throws SqlException {
+        this(engine, null);
+    }
 
-        this.clock = cairoConfig.getMicrosecondClock();
-        this.configuration = configuration;
+    public TelemetryJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
+        this.configuration = engine.getConfiguration();
+        this.clock = configuration.getMicrosecondClock();
         this.enabled = configuration.getTelemetryConfiguration().getEnabled();
-        this.queue = messageBus.getTelemetryQueue();
-        this.subSeq = messageBus.getTelemetrySubSequence();
+        this.queue = engine.getTelemetryQueue();
+        this.subSeq = engine.getTelemetrySubSequence();
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine, messageBus, functionFactoryCache)) {
-            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine);
+        try (final SqlCompiler compiler = new SqlCompiler(engine, engine.getMessageBus(), functionFactoryCache)) {
+            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, engine.getMessageBus());
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             try (final Path path = new Path()) {
@@ -95,7 +86,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             }
 
             try {
-                this.writer = new TableWriter(cairoConfig, tableName);
+                this.writer = new TableWriter(configuration, tableName);
             } catch (CairoException ex) {
                 LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
                 throw ex;
@@ -104,7 +95,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
-                this.writerConfig = new TableWriter(cairoConfig, configTableName);
+                this.writerConfig = new TableWriter(configuration, configTableName);
             } catch (CairoException ex) {
                 Misc.free(writer);
                 LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
@@ -128,8 +119,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                         writerConfig.commit();
                     }
                 } else {
-                    final MicrosecondClock clock = cairoConfig.getMicrosecondClock();
-                    final NanosecondClock nanosecondClock = cairoConfig.getNanosecondClock();
+                    final MicrosecondClock clock = configuration.getMicrosecondClock();
+                    final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
                     final TableWriter.Row row = writerConfig.newRow();
                     row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
                     row.putBool(1, enabled);
@@ -142,15 +133,34 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    @Override
+    public void close() {
+        runSerially();
+        newRow(TelemetryEvent.DOWN);
+        writer.commit();
+        Misc.free(writer);
+        Misc.free(writerConfig);
+    }
+
     public int getTableStatus(Path path, CharSequence tableName) {
         return TableUtils.exists(
-                configuration.getCairoConfiguration().getFilesFacade(),
+                configuration.getFilesFacade(),
                 path,
-                configuration.getCairoConfiguration().getRoot(),
+                configuration.getRoot(),
                 tableName,
                 0,
                 tableName.length()
         );
+    }
+
+    @Override
+    public boolean runSerially() {
+        if (enabled) {
+            subSeq.consumeAll(queue, myConsumer);
+            writer.commit();
+        }
+
+        return false;
     }
 
     private void newRow(short event) {
@@ -167,24 +177,5 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         row.putShort(1, telemetryRow.event);
         row.putShort(2, telemetryRow.origin);
         row.append();
-    }
-
-    @Override
-    public boolean runSerially() {
-        if (enabled) {
-            subSeq.consumeAll(queue, myConsumer);
-            writer.commit();
-        }
-
-        return false;
-    }
-
-    @Override
-    public void close() {
-        runSerially();
-        newRow(TelemetryEvent.DOWN);
-        writer.commit();
-        Misc.free(writer);
-        Misc.free(writerConfig);
     }
 }

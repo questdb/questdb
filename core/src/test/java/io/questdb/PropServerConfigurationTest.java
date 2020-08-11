@@ -212,7 +212,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindPort());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getEventCapacity());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getIOQueueCapacity());
-        Assert.assertEquals(300_000, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getIdleConnectionTimeout());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getIdleConnectionTimeout());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(50_000, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getRcvBufSize());
@@ -496,8 +496,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
 
-            Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
-            Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
+            Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpVersion());

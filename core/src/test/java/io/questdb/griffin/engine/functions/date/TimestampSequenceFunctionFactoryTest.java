@@ -32,8 +32,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -42,15 +42,14 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new CairoEngine(new StaticClockCairoConfiguration(root), messageBus);
+        engine = new CairoEngine(new StaticClockCairoConfiguration(root));
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
-                messageBus,
-                1, engine)
+                engine, 1)
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                                null, -1, null);
+                        null, -1, null);
         bindVariableService.clear();
     }
 

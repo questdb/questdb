@@ -152,7 +152,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.dateLocale = configuration.getDefaultDateLocale();
         this.timestampLocale = configuration.getDefaultTimestampLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(messageBus, workerCount, engine);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         populateAppender();
     }
 

@@ -142,17 +142,16 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl(configuration);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
         // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
         // updating the telemetry_config table.
-        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus, functionFactoryCache);
+        final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
 
-        if (configuration.getTelemetryConfiguration().getEnabled()) {
+        if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
         }
 
@@ -162,7 +161,6 @@ public class ServerMain {
                     workerPool,
                     log,
                     cairoEngine,
-                    messageBus,
                     functionFactoryCache
             );
 
@@ -174,7 +172,6 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        messageBus,
                         functionFactoryCache
                 );
             } else {
@@ -197,8 +194,12 @@ public class ServerMain {
                 );
             }
 
-            LineTcpServer lineTcpServer = LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine,
-                    messageBus);
+            LineTcpServer lineTcpServer = LineTcpServer.create(
+                    configuration.getLineTcpReceiverConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine
+            );
             startQuestDb(workerPool, lineProtocolReceiver, log);
             logWebConsoleUrls(log, configuration);
 

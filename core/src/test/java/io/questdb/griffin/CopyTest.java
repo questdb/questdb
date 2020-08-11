@@ -24,14 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.PropServerConfiguration;
-import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
@@ -41,7 +36,6 @@ import org.junit.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Properties;
 
 public class CopyTest extends AbstractCairoTest {
 
@@ -91,7 +85,7 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @BeforeClass
-    public static void setUp2() throws IOException, ServerConfigurationException, JsonException {
+    public static void setUp2() throws IOException {
         final String path = new File(".").getAbsolutePath();
         CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
             @Override
@@ -100,14 +94,12 @@ public class CopyTest extends AbstractCairoTest {
             }
         };
         TestUtils.copyMimeTypes(path);
-        final PropServerConfiguration serverConfiguration = new PropServerConfiguration(path, new Properties());
-        MessageBus messageBus = new MessageBusImpl(serverConfiguration);
-        engine = new CairoEngine(configuration, messageBus);
+        engine = new CairoEngine(configuration);
         compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService,
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
                         null, -1, null);
         bindVariableService.clear();
     }

@@ -42,7 +42,6 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
-    private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
 
     public DefaultServerConfiguration(CharSequence root) {
         this.cairoConfiguration = new DefaultCairoConfiguration(root);
@@ -76,10 +75,5 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
-    }
-
-    @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
-        return telemetryConfiguration;
     }
 }

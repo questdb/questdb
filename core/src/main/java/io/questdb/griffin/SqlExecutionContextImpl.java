@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.RingQueue;
@@ -56,17 +57,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
 
-    public SqlExecutionContextImpl(@Nullable MessageBus messageBus, int workerCount, CairoEngine cairoEngine) {
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
+        this(cairoEngine, workerCount, cairoEngine.getMessageBus());
+    }
+
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, @Nullable MessageBus messageBus) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
         this.messageBus = messageBus;
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
         this.clock = cairoConfiguration.getMicrosecondClock();
+        this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
 
         if (messageBus != null) {
-            this.telemetryQueue = messageBus.getTelemetryQueue();
-            this.telemetryPubSeq = messageBus.getTelemetryPubSequence();
+            this.telemetryQueue = cairoEngine.getTelemetryQueue();
+            this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
     }
