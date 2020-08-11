@@ -69,7 +69,7 @@ public class TextLoader implements Closeable, Mutable {
         );
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         textLexer = new TextLexer(textConfiguration, typeManager);
-        textWriter = new CairoTextWriter(engine, path, textConfiguration, typeManager);
+        textWriter = new CairoTextWriter(engine, path, typeManager);
         textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);

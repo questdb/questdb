@@ -43,6 +43,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
+    private final IntList columnIndexes;
 
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -54,7 +55,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             boolean followedOrderByAdvice,
             int indexDirection,
             @NotNull IntList columnIndexes,
-            int maxSymbolNotEqualsCount) {
+            int maxSymbolNotEqualsCount
+    ) {
         super(metadata, dataFrameCursorFactory);
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
@@ -69,6 +71,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
+        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -98,7 +101,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 if (filter == null) {
                     rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection);
                 } else {
-                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection);
+                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection, columnIndexes);
                 }
                 includedValues.add(Chars.toString(symbol));
                 cursorFactories.add(rowCursorFactory);

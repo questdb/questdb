@@ -1092,6 +1092,53 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterOnIndexAndExpression() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("contactId\n" +
+                        "KOJSOLDYRO\n" +
+                        "SKEDJ\n",
+                "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'ZIMN'\n" +
+                        "    AND E.eventId = 'IPHZ'\n" +
+                        "EXCEPT\n" +
+                        "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events  E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'MLGL'\n" +
+                        "    AND E.site__clean = 'EPIH'",
+                "create table contact_events as (" +
+                        "select" +
+                        " rnd_str(5,10,0) id," +
+                        " rnd_str(5,10,0) contactId," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_source," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_medium," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_campaign," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignId," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignGroupId," +
+                        " rnd_symbol(5,4,4,1) site__query__adsetId," +
+                        " rnd_symbol(5,4,4,1) site__query__adId," +
+                        " rnd_symbol(5,4,4,1) site__main," +
+                        " rnd_str(5,10,0) site__queryString," +
+                        " rnd_str(5,10,0) site__clean," +
+                        " rnd_symbol(5,4,4,1) site__hash," +
+                        " rnd_symbol(5,4,4,1) eventId," +
+                        " rnd_symbol(5,4,4,1) groupId" +
+                        " from long_sequence(100)" +
+                        ")," +
+                        " index(groupId)",
+                null
+        );
+    }
+
+    @Test
     public void testFilterOnValuesAndInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
