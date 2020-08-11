@@ -227,7 +227,7 @@ public class ContiguousVirtualMemory implements Closeable {
             putLong(TableUtils.NULL_LEN);
         } else {
             final long len = value.length();
-            checkLimits(len + 8);
+            checkLimits(len + Long.BYTES);
             putLong(len);
             value.copyTo(appendAddress, 0, len);
             appendAddress += len;
@@ -236,7 +236,7 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public final long putBin(long from, long len) {
-        checkLimits(len + 8);
+        checkLimits(len + Long.BYTES);
         final long offset = getAppendOffset();
         putLong(len > 0 ? len : TableUtils.NULL_LEN);
         if (len < 1) {
@@ -257,69 +257,69 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public final void putByte(long offset, byte value) {
-        checkLimits(offset, 1);
+        checkLimits(offset, Byte.BYTES);
         Unsafe.getUnsafe().putByte(baseAddress + offset, value);
     }
 
     public void putByte(byte b) {
-        checkLimits(1);
+        checkLimits(Byte.BYTES);
         Unsafe.getUnsafe().putByte(appendAddress, b);
         appendAddress++;
     }
 
     public void putChar(long offset, char value) {
-        checkLimits(offset, 2);
+        checkLimits(offset, Character.BYTES);
         Unsafe.getUnsafe().putChar(baseAddress + offset, value);
     }
 
     public final void putChar(char value) {
-        checkLimits(2);
+        checkLimits(Character.BYTES);
         Unsafe.getUnsafe().putChar(appendAddress, value);
-        appendAddress += 2;
+        appendAddress += Character.BYTES;
     }
 
     public void putDouble(long offset, double value) {
-        checkLimits(offset, 8);
+        checkLimits(offset, Double.BYTES);
         Unsafe.getUnsafe().putDouble(baseAddress + offset, value);
     }
 
     public final void putDouble(double value) {
-        checkLimits(8);
+        checkLimits(Double.BYTES);
         Unsafe.getUnsafe().putDouble(appendAddress, value);
-        appendAddress += 8;
+        appendAddress += Double.BYTES;
     }
 
     public void putFloat(long offset, float value) {
-        checkLimits(offset, 4);
+        checkLimits(offset, Float.BYTES);
         Unsafe.getUnsafe().putFloat(baseAddress + offset, value);
     }
 
     public final void putFloat(float value) {
-        checkLimits(4);
+        checkLimits(Float.BYTES);
         Unsafe.getUnsafe().putFloat(appendAddress, value);
-        appendAddress += 4;
+        appendAddress += Float.BYTES;
     }
 
     public void putInt(long offset, int value) {
-        checkLimits(offset, 4);
+        checkLimits(offset, Integer.BYTES);
         Unsafe.getUnsafe().putInt(baseAddress + offset, value);
     }
 
     public final void putInt(int value) {
-        checkLimits(4);
+        checkLimits(Integer.BYTES);
         Unsafe.getUnsafe().putInt(appendAddress, value);
-        appendAddress += 4;
+        appendAddress += Integer.BYTES;
     }
 
     public void putLong(long offset, long value) {
-        checkLimits(offset, 8);
+        checkLimits(offset, Long.BYTES);
         Unsafe.getUnsafe().putLong(baseAddress + offset, value);
     }
 
     public final void putLong(long value) {
         checkLimits(8);
         Unsafe.getUnsafe().putLong(appendAddress, value);
-        appendAddress += 8;
+        appendAddress += Long.BYTES;
     }
 
     public final void putLong128(long l1, long l2) {
