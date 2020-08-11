@@ -1,6 +1,7 @@
 package io.questdb.cairo;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -20,14 +21,15 @@ public class ExtendendOnePageMemoryTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
 
-    public static Path path;
+    private static final Path path = new Path(4096);
 
     private static FilesFacade ff;
 
     private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
 
     @Test
-    public void testFailOnInitialMap() {
+    public void testFailOnInitialMap() throws IOException {
+        createFile(FILE_SIZE);
         try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
@@ -40,7 +42,8 @@ public class ExtendendOnePageMemoryTest {
     }
 
     @Test
-    public void testFailOnGrow() {
+    public void testFailOnGrow() throws IOException {
+        createFile(FILE_SIZE);
         try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
@@ -53,6 +56,16 @@ public class ExtendendOnePageMemoryTest {
                 Assert.assertTrue(ex.getMessage().contains("Could not remap"));
             }
         }
+    }
+
+    private void createFile(int size) throws IOException {
+        File f = temp.newFile();
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            for (int i = 0; i < size; i++) {
+                fos.write(0);
+            }
+        }
+        path.of(f.getCanonicalPath()).$();
     }
 
     @SuppressWarnings("resource")
@@ -75,13 +88,6 @@ public class ExtendendOnePageMemoryTest {
                 return super.mremap(fd, addr, previousSize, newSize, offset, mode);
             }
         };
-
-        String fileName = "aFile";
-        File f = temp.newFile(fileName);
-        path = new Path().of(f.getCanonicalPath());
-        long fd = ff.openRW(path);
-        ff.truncate(fd, FILE_SIZE);
-        ff.close(fd);
     }
 
     @AfterClass
