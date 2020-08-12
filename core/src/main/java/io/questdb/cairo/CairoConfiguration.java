@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
@@ -181,4 +182,6 @@ public interface CairoConfiguration {
     int getGroupByMapCapacity();
 
     boolean enableTestFactories();
+
+    TelemetryConfiguration getTelemetryConfiguration();
 }

@@ -259,6 +259,7 @@ public class JsonLexer implements Mutable, Closeable {
                     // this isn't a quote, include this character
                     valueStart = p - 1;
                     quoted = false;
+                    break;
             }
         }
 

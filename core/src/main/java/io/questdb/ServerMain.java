@@ -147,23 +147,22 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl(configuration);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
         // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
         // updating the telemetry_config table.
-        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus, functionFactoryCache);
+        final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
 
-        if (configuration.getTelemetryConfiguration().getEnabled()) {
+        if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
         }
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
-            final HttpServer httpServer = createHttpServer(workerPool, messageBus, log, cairoEngine, functionFactoryCache);
+            final HttpServer httpServer = createHttpServer(workerPool, log, cairoEngine, functionFactoryCache);
 
             final PGWireServer pgWireServer;
 
@@ -173,7 +172,6 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        messageBus,
                         functionFactoryCache
                 );
             } else {
@@ -196,8 +194,12 @@ public class ServerMain {
                 );
             }
 
-            LineTcpServer lineTcpServer = LineTcpServer.create(configuration.getCairoConfiguration(), configuration.getLineTcpReceiverConfiguration(), workerPool, log, cairoEngine,
-                    messageBus);
+            LineTcpServer lineTcpServer = LineTcpServer.create(
+                    configuration.getLineTcpReceiverConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine
+            );
             startQuestDb(workerPool, cairoEngine, lineProtocolReceiver, log);
             logWebConsoleUrls(log, configuration);
 
@@ -249,13 +251,12 @@ public class ServerMain {
         }
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final MessageBus messageBus, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                messageBus,
                 functionFactoryCache);
     }
 

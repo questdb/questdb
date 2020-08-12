@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.VirtualMemory;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -38,10 +39,9 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryBenchmark {
-
-
     private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+    private static final ContiguousVirtualMemory mem3 = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
@@ -57,16 +57,19 @@ public class VirtualMemoryBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
+        mem1.jumpTo(0);
         mem2.jumpTo(0);
+        mem3.jumpTo(0);
     }
 
     //    @Benchmark
-    public void testExternalSequence() {
-        long o = 0;
-        for (int i = 0; i < 10000; i++) {
-            mem1.putInt(o, i);
-            o += 4;
-        }
+    public void testHashAsLong256() {
+        mem2.putLong256("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
+    }
+
+    //    @Benchmark
+    public void testHashAsStr() {
+        mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
     }
 
     //    @Benchmark
@@ -80,13 +83,21 @@ public class VirtualMemoryBenchmark {
     }
 
     @Benchmark
-    public void testHashAsLong256() {
-        mem2.putLong256("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
+    public void testPutIntContiguous() {
+        long o = 0;
+        for (int i = 0; i < 10000; i++) {
+            mem3.putInt(o, i);
+            o += 4;
+        }
     }
 
     @Benchmark
-    public void testHashAsStr() {
-        mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
+    public void testPutIntLegacy() {
+        long o = 0;
+        for (int i = 0; i < 10000; i++) {
+            mem1.putInt(o, i);
+            o += 4;
+        }
     }
 
     //    @Benchmark

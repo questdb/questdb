@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,7 +35,6 @@ import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2450,7 +2448,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public PropServerConfiguration getConfiguration() {
+        public CairoConfiguration getConfiguration() {
             return null;
         }
 
@@ -2481,21 +2479,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public Sequence getVectorAggregateSubSequence() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<TelemetryTask> getTelemetryQueue() {
-            return null;
-        }
-
-        @Override
-        public Sequence getTelemetryPubSequence() {
-            return null;
-        }
-
-        @Override
-        public SCSequence getTelemetrySubSequence() {
             return null;
         }
     }

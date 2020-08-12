@@ -30,6 +30,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 
@@ -40,7 +41,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     private long recordIndex = 0;
     private TableReader reader;
 
-    public TableReaderSelectedColumnRecord(IntList columnIndexes) {
+    public TableReaderSelectedColumnRecord(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
     }
 

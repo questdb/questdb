@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 
-class ByteBindVariable extends ByteFunction implements StatelessFunction, NoArgFunction {
+class ByteBindVariable extends ByteFunction implements Function {
     byte value;
 
     public ByteBindVariable(byte value) {

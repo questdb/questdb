@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.microtime.MicrosecondClock;
@@ -45,7 +43,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         return new Func(position, configuration.getMicrosecondClock());
     }
 
-    private static class Func extends TimestampFunction implements StatelessFunction, NoArgFunction {
+    private static class Func extends TimestampFunction implements Function {
 
         private final MicrosecondClock clock;
 

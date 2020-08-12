@@ -24,44 +24,21 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import org.jetbrains.annotations.NotNull;
-
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
@@ -84,7 +61,6 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
             int timestampIndex
     ) throws SqlException {
 
@@ -105,8 +81,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
                     recordFunctions,
                     placeholderFunctions,
                     timestampIndex,
-                    timestampSampler,
-                    symbolTableSkewIndex
+                    timestampSampler
             );
         } catch (SqlException | CairoException e) {
             Misc.freeObjList(recordFunctions);
@@ -239,7 +214,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
         cursor.of(baseCursor, executionContext);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, executionContext);
+            recordFunctions.getQuick(i).init(baseCursor, executionContext);
         }
         return cursor;
     }

@@ -4995,6 +4995,71 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWithRecursive() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) x)) y)",
+                "with x as (select * from tab)," +
+                        " y as (select * from x)" +
+                        " select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithSubquery() throws SqlException {
+        assertQuery(
+                "select-choose 1 from ((select-virtual [1 1] 1 1 from ((select-choose a from (select [a] from tab)) x cross join (select-choose a from ((select-choose [a] a from (select [a] from tab)) x)) y)) _xQdbA1)",
+                "with x as (select * from tab)," +
+                        " y as (select * from x)" +
+                        " select * from (select 1 from x cross join y)",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithTwoAliasesExcept() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from (select [a] from tab)) x) except select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) y)",
+                "with x as (select * from tab)," +
+                        " y as (select * from tab)" +
+                        " select * from x except select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithTwoAliasesIntersect() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from (select [a] from tab)) x) intersect select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) y)",
+                "with x as (select * from tab)," +
+                        " y as (select * from tab)" +
+                        " select * from x intersect select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithTwoAliasesUnion() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from (select [a] from tab)) x) union select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) y)",
+                "with x as (select * from tab)," +
+                        " y as (select * from tab)" +
+                        " select * from x union select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithUnionWith() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from (select [a] from tab)) x) union select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) y)",
+                "with x as (select * from tab) select * from x union with " +
+                        " y as (select * from tab) select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testWithSyntaxError() throws Exception {
         assertSyntaxError(
                 "with x as (" +

@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -52,7 +51,7 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         return new RndFunction(position, nanRate);
     }
 
-    private static class RndFunction extends FloatFunction implements StatelessFunction {
+    private static class RndFunction extends FloatFunction implements Function {
 
         private final int nanRate;
         private Rnd rnd;

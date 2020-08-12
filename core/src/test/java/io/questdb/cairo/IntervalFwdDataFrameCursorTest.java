@@ -398,7 +398,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final int timestampIndex;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     timestampIndex = reader.getMetadata().getTimestampIndex();

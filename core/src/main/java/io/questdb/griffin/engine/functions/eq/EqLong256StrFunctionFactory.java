@@ -38,11 +38,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<Long256Decoder> DECODER = new ThreadLocal<>() {
-        protected Long256Decoder initialValue() {
-            return new Long256Decoder();
-        };
-    };
+    private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
 
     @Override
     public String getSignature() {

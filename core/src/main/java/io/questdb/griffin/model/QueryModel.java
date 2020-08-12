@@ -143,6 +143,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         aliasToColumnMap.put(alias, column);
     }
 
+    public void addGroupBy(ExpressionNode node) {
+        groupBy.add(node);
+    }
+
     public void addJoinColumn(ExpressionNode node) {
         joinColumns.add(node);
     }
@@ -153,10 +157,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void addLatestBy(ExpressionNode latestBy) {
         this.latestBy.add(latestBy);
-    }
-
-    public void addGroupBy(ExpressionNode node) {
-        groupBy.add(node);
     }
 
     public void addOrderBy(ExpressionNode node, int direction) {
@@ -180,6 +180,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void addWithClause(CharSequence name, WithClauseModel model) {
         withClauses.put(name, model);
+    }
+
+    public void addWithClauses(CharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
+        withClauses.putAll(parentWithClauses);
     }
 
     public void clear() {
@@ -296,12 +300,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return bottomUpColumnNames;
     }
 
+    public ObjList<QueryColumn> getBottomUpColumns() {
+        return bottomUpColumns;
+    }
+
     public CharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
         return columnNameToAliasMap;
     }
 
-    public ObjList<QueryColumn> getBottomUpColumns() {
-        return bottomUpColumns;
+    public ObjList<QueryColumn> getColumns() {
+        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -326,6 +334,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    public ObjList<ExpressionNode> getGroupBy() {
+        return groupBy;
     }
 
     public ObjList<ExpressionNode> getJoinColumns() {
@@ -409,10 +421,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderBy;
     }
 
-    public ObjList<ExpressionNode> getGroupBy() {
-        return groupBy;
-    }
-
     public ObjList<ExpressionNode> getOrderByAdvice() {
         return orderByAdvice;
     }
@@ -478,6 +486,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.selectModelType = selectModelType;
     }
 
+    public int getSetOperationType() {
+        return setOperationType;
+    }
+
+    public void setSetOperationType(int setOperationType) {
+        this.setOperationType = setOperationType;
+    }
+
     public ExpressionNode getTableName() {
         return tableName;
     }
@@ -514,24 +530,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return topDownColumns;
     }
 
-    public ObjList<QueryColumn> getColumns() {
-        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
-    }
-
     public QueryModel getUnionModel() {
         return unionModel;
     }
 
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
-    }
-
-    public int getSetOperationType() {
-        return setOperationType;
-    }
-
-    public void setSetOperationType(int setOperationType) {
-        this.setOperationType = setOperationType;
     }
 
     public ExpressionNode getWhereClause() {
@@ -544,6 +548,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WithClauseModel getWithClause(CharSequence name) {
         return withClauses.get(name);
+    }
+
+    public CharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        return withClauses;
     }
 
     public boolean isDistinct() {

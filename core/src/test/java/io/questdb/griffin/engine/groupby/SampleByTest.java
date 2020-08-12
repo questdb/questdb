@@ -420,7 +420,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
@@ -428,7 +428,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot mmap");
+                        TestUtils.assertContains(e.getMessage(), "Could not mmap");
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1418,7 +1418,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
@@ -1476,7 +1476,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Could not mmap"));
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());

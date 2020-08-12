@@ -49,6 +49,27 @@ InfluxDB line protocol. It supports both relational and time-series joins, which
 makes it easy to correlate data over time. Writes are durably committed to disk,
 meaning that the data is safe - yet instantly accessible.
 
+## Live demo
+
+Query [our demo](http://try.questdb.io:9000) dataset with 1.6 billion rows in
+milliseconds.
+
+## Web Console
+
+Interactive console to import data (drag and drop) and start querying right
+away. Check our Web Console guide to get started:
+
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
+    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" style="display: block; margin: 0 auto;" />
+  </a>
+</div>
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
+    Web Console guide
+  </a>
+</div>
+
 ## Performance figures
 
 ### Raw figures
@@ -78,7 +99,7 @@ Execution time on a c5.metal instance using 16 of the 96 threads available.
 
 The easiest way to get started is with Docker:
 
-```shell script
+```script
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
@@ -104,9 +125,9 @@ Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
 
 You can connect to the Postgres server as follows. The default password is
-`quest`
+`quest`:
 
-```shell script
+```script
 psql -h localhost -p 8812 -U admin -W -d qdb
 ```
 
@@ -118,7 +139,7 @@ psql -h localhost -p 8812 -U admin -W -d qdb
 - Maven 3
 - Node.js 12 / NPM 6
 
-```shell script
+```script
 java --version
 mvn --version
 node --version
@@ -126,13 +147,13 @@ node --version
 
 #### (b) Clone the Repository
 
-```shell script
+```script
 git clone git@github.com:questdb/questdb.git
 ```
 
 #### (c) Build the Code
 
-```shell script
+```script
 cd questdb
 mvn clean package -DskipTests
 ```
@@ -142,10 +163,10 @@ The build should take around 2 minutes. You can remove `-DskipTests` to run the
 
 #### (d) Run QuestDB
 
-```shell script
+```script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/core-5.0.2-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/questdb-5.0.3-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources

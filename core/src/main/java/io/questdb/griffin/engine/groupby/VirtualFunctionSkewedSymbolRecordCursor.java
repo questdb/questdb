@@ -26,35 +26,25 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
-    private final IntList symbolTableSkewIndex;
-    private SymbolTableSource symbolTableSource;
 
-    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions, IntList symbolTableSkewIndex) {
+    private RecordCursor managedCursor;
+
+    public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions) {
         super(functions, true);
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
     }
 
     @Override
     public void close() {
-        Misc.free(symbolTableSource);
+        managedCursor = Misc.free(managedCursor);
     }
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolTableSource.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
-    }
-
-
-    public void of(SymbolTableSource symbolTableSource, RecordCursor mapCursor) {
-        this.symbolTableSource = symbolTableSource;
-        of(mapCursor);
+    public void of(RecordCursor managedCursor, RecordCursor baseCursor) {
+        this.managedCursor = managedCursor;
+        of(baseCursor);
     }
 }

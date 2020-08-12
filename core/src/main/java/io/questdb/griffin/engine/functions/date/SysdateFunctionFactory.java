@@ -27,11 +27,8 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.time.MillisecondClock;
 
@@ -46,7 +43,7 @@ public class SysdateFunctionFactory implements FunctionFactory {
         return new Func(position, configuration.getMillisecondClock());
     }
 
-    private static class Func extends DateFunction implements StatelessFunction {
+    private static class Func extends DateFunction implements Function {
 
         private final MillisecondClock clock;
 
@@ -58,10 +55,6 @@ public class SysdateFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             return clock.getTicks();
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

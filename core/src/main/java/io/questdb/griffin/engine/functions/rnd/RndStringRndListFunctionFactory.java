@@ -25,15 +25,12 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.VirtualMemory;
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -46,11 +43,11 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
         // todo: limit pages
-        VirtualMemory strMem = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
-        VirtualMemory idxMem = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+        ContiguousVirtualMemory strMem = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+        ContiguousVirtualMemory idxMem = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
 
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
@@ -76,16 +73,16 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         );
     }
 
-    private static final class Func extends StrFunction implements StatelessFunction, NoArgFunction {
+    private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final VirtualMemory strMem;
-        private final VirtualMemory idxMem;
+        private final ContiguousVirtualMemory strMem;
+        private final ContiguousVirtualMemory idxMem;
         private final int strLo;
         private final int strHi;
         private final int nullRate;
         private Rnd rnd;
 
-        public Func(int position, VirtualMemory strMem, VirtualMemory idxMem, int strLo, int strHi, int strCount, int nullRate) {
+        public Func(int position, ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLo, int strHi, int strCount, int nullRate) {
             super(position);
             this.count = strCount;
             this.strMem = strMem;
@@ -126,15 +123,15 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class FixedFunc extends StrFunction implements StatelessFunction, NoArgFunction {
+    private static final class FixedFunc extends StrFunction implements Function {
         private final int count;
-        private final VirtualMemory strMem;
-        private final VirtualMemory idxMem;
+        private final ContiguousVirtualMemory strMem;
+        private final ContiguousVirtualMemory idxMem;
         private final int strLen;
         private final int nullRate;
         private Rnd rnd;
 
-        public FixedFunc(int position, VirtualMemory strMem, VirtualMemory idxMem, int strLen, int strCount, int nullRate) {
+        public FixedFunc(int position, ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLen, int strCount, int nullRate) {
             super(position);
             this.count = strCount;
             this.strMem = strMem;

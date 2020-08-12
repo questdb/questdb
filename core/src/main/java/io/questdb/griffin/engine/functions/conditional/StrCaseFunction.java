@@ -26,14 +26,12 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-class StrCaseFunction extends StrFunction {
+class StrCaseFunction extends StrFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
@@ -64,17 +62,7 @@ class StrCaseFunction extends StrFunction {
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        Function.init(args, symbolTableSource, executionContext);
-    }
-
-    @Override
-    public void toTop() {
-        Function.toTop(args);
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(args);
+    public ObjList<Function> getArgs() {
+        return args;
     }
 }

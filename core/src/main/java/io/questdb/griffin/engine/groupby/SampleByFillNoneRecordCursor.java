@@ -27,20 +27,12 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.VirtualRecordNoRowid;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
@@ -50,8 +42,8 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
     private final Record record;
-    private final IntList symbolTableSkewIndex;
     private final RecordCursor mapCursor;
+    private final ObjList<Function> recordFunctions;
     private RecordCursor base;
     private Record baseRecord;
     private long lastTimestamp;
@@ -64,8 +56,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler,
-            IntList symbolTableSkewIndex
+            TimestampSampler timestampSampler
     ) {
         this.map = map;
         this.groupByFunctions = groupByFunctions;
@@ -75,7 +66,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
         rec.of(map.getRecord());
         this.record = rec;
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
@@ -83,11 +73,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
             }
         }
         this.mapCursor = map.getCursor();
-    }
-
-    @Override
-    public long size() {
-        return -1;
+        this.recordFunctions = recordFunctions;
     }
 
     @Override
@@ -103,12 +89,39 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
+        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
     public boolean hasNext() {
         return mapHasNext() || baseRecord != null && computeNextBatch();
+    }
+
+    @Override
+    public void toTop() {
+        MultiArgFunction.toTop(recordFunctions);
+        this.base.toTop();
+        if (base.hasNext()) {
+            baseRecord = base.getRecord();
+            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            this.lastTimestamp = this.nextTimestamp;
+            map.clear();
+        }
+    }
+
+    @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        // factory guarantees that base cursor is not empty
+        this.base = base;
+        this.baseRecord = base.getRecord();
+        this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+        this.lastTimestamp = this.nextTimestamp;
+        interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     private boolean computeNextBatch() {
@@ -149,27 +162,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         return mapHasNext();
     }
 
-    @Override
-    public void toTop() {
-        this.base.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
-            map.clear();
-        }
-    }
-
-    @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        // factory guarantees that base cursor is not empty
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-        this.lastTimestamp = this.nextTimestamp;
-        interruptor = executionContext.getSqlExecutionInterruptor();
-    }
-
     private boolean mapHasNext() {
         return mapCursor.hasNext();
     }
@@ -183,10 +175,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         @Override
         public long getTimestamp(Record rec) {
             return lastTimestamp;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     }
 }

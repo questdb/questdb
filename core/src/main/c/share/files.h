@@ -151,6 +151,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    mremap0
+ * Signature: (JJJJJI)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
+        (JNIEnv *, jclass, jlong, jlong, jlong, jlong, jlong, jint);
+
+JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
+        (jlong, jlong, jlong, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    getPageSize
  * Signature: ()J
  */

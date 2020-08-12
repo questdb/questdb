@@ -116,7 +116,6 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            MessageBus messageBus,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -125,7 +124,6 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                messageBus,
                 functionFactoryCache
         );
     }
@@ -135,15 +133,14 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine,
-            MessageBus messageBus
+            CairoEngine cairoEngine
     ) {
-        return create(
+        return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                messageBus,
+                null,
                 null
         );
     }
@@ -154,15 +151,14 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            ServerFactory<HttpServer, HttpServerConfiguration> factory,
-            MessageBus messageBus
+            ServerFactory<HttpServer, HttpServerConfiguration> factory
     ) {
         return WorkerPoolAwareConfiguration.create(
-                configuration, sharedWorkerPool,
+                configuration,
+                sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
                 factory,
-                messageBus,
                 null
         );
     }

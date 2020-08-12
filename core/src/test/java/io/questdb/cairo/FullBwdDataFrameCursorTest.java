@@ -85,7 +85,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 w.commit();
 
-                try (CairoEngine engine = new CairoEngine(configuration, null)) {
+                try (CairoEngine engine = new CairoEngine(configuration)) {
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 

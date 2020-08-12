@@ -76,6 +76,7 @@ open module io.questdb {
     exports io.questdb.std.microtime;
     exports io.questdb.std.time;
     exports io.questdb.std.str;
+    exports io.questdb.std.ex;
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;
@@ -442,6 +443,8 @@ open module io.questdb {
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
-            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
+            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
+            // first
+            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
             ;
 }
