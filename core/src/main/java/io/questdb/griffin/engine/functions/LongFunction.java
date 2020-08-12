@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public abstract class LongFunction implements Function {
@@ -73,12 +74,20 @@ public abstract class LongFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        return getLong(rec);
+        final long value = getLong(rec);
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Double.NaN;
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getLong(rec);
+        final long value = getLong(rec);
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
     }
 
     @Override

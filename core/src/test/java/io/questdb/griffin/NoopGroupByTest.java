@@ -382,6 +382,33 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoopGroupByWithAlias() throws Exception {
+        assertQuery(
+                "sym1\tavgBid\n",
+                "select sym1, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "sym1\tavgBid\n" +
+                        "A\t0.5942181417903911\n" +
+                        "B\t0.7080299543021055\n",
+                true
+        );
+    }
+
+    @Test
     public void testNoopGroupByWith2Syms() throws Exception {
         assertQuery(
                 "sym1\tsym2\tavgBid\n",
