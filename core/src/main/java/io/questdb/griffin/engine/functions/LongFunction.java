@@ -74,20 +74,12 @@ public abstract class LongFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        final long value = getLong(rec);
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
+        return Numbers.longToDouble(getLong(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        final long value = getLong(rec);
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Float.NaN;
+        return Numbers.longToFloat(getLong(rec));
     }
 
     @Override

@@ -2466,4 +2466,39 @@ public final class Numbers {
         longHexAppenderPad64[63] = a64;
         longHexAppenderPad64[64] = a64;
     }
+
+    public static double longToDouble(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float longToFloat(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
+    }
+
+    public static double intToDouble(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float intToFloat(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Float.NaN;
+    }
+
+    public static long intToLong(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Numbers.LONG_NaN;
+    }
 }

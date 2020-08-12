@@ -40,7 +40,6 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     public void testMissingGroupByWithHourFunction() throws Exception {
         assertQuery(
                 "hour\tavgBid\n",
-                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
                 "select hour(ts), avg(bid) avgBid from x order by hour",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -60,6 +59,35 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                 "hour\tavgBid\n" +
                         "0\t0.47607185409853914\n" +
                         "1\t0.6861237948732989\n",
+                true
+        );
+    }
+
+    @Test
+    public void testSubQuery() throws Exception {
+        assertQuery(
+                "bkt\tavg\n",
+                "select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt",
+                "create table x (\n" +
+                        "    id long,\n" +
+                        "    bid double\n" +
+                        ") ",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_long(), \n" +
+                        "        rnd_double() \n" +
+                        "    from long_sequence(20))",
+                "bkt\tavg\n" +
+                        "6\t0.7275909062911847\n" +
+                        "5\t0.08486964232560668\n" +
+                        "8\t0.5773046624150107\n" +
+                        "4\t0.413662826357355\n" +
+                        "2\t0.22452340856088226\n" +
+                        "1\t0.33762525947485594\n" +
+                        "3\t0.7715455271652294\n" +
+                        "7\t0.47335449523280454\n" +
+                        "0\t0.1911234617573182\n" +
+                        "9\t0.5793466326862211\n",
                 true
         );
     }
