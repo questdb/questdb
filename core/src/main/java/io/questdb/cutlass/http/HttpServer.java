@@ -140,7 +140,7 @@ public class HttpServer implements Closeable {
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                null,
+                CREATE0,
                 null
         );
     }
