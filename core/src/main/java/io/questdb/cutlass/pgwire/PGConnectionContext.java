@@ -109,7 +109,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter strSetter = this::setStrBindVariable;
     private final BindVariableSetter noopSetter = this::setNoopBindVariable;
     private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 8);
+    private final ObjStack<IntList> bindVarTypesStack = new ObjStack<>(16);
+    private final ObjStack<NamedStatementWrapper> namedStatementWrapperStack = new ObjStack<>(16);
     private final DateLocale dateLocale;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final TimestampLocale timestampLocale;
@@ -231,7 +232,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         // todo: test that both of these are cleared (unit test)
         authenticationRequired = true;
         username = null;
-        intListPool.clear();
     }
 
     @Override
@@ -242,8 +242,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
-        intListPool.clear();
-        Misc.free(intListPool);
     }
 
     @Override
@@ -264,8 +262,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<Object> factoryCache,
-            @Transient AssociativeCache<Object> portalFactoryCache,
-            @Transient AssociativeCache<Object> statementToBindVariableTypeCache,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
             @Transient ObjList<BindVariableSetter> binsVariableSetters
     ) throws PeerDisconnectedException,
             PeerIsSlowToReadException,
@@ -296,8 +293,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     (int) (recvBufferWriteOffset - recvBufferReadOffset),
                     compiler,
                     factoryCache,
-                    portalFactoryCache,
-                    statementToBindVariableTypeCache,
+                    namedStatementMap,
                     binsVariableSetters
             );
 
@@ -327,8 +323,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                             (int) (recvBufferWriteOffset - recvBufferReadOffset),
                             compiler,
                             factoryCache,
-                            portalFactoryCache,
-                            statementToBindVariableTypeCache,
+                            namedStatementMap,
                             binsVariableSetters
                     );
                     // nothing changed?
@@ -804,12 +799,16 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     @Nullable
-    private CharSequence getStatementName(long lo, long hi) {
+    private CharSequence getStatementName(long lo, long hi) throws BadProtocolException {
         CharacterStoreEntry e = portalCharacterStore.newEntry();
         CharSequence statementName = null;
-        if (hi - lo > 0 && Chars.utf8Decode(lo, hi, e)) {
-            statementName = portalCharacterStore.toImmutable();
-        }
+        if (hi - lo > 0)
+            if (Chars.utf8Decode(lo, hi, e)) {
+                statementName = portalCharacterStore.toImmutable();
+            } else {
+                LOG.error().$("invalid UTF8 bytes in statement name").$();
+                throw BadProtocolException.INSTANCE;
+            }
         return statementName;
     }
 
@@ -823,8 +822,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             int len,
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<Object> factoryCache,
-            @Transient AssociativeCache<Object> portalFactoryCache,
-            @Transient AssociativeCache<Object> statementToBindVariableTypeCache,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
             @Transient ObjList<BindVariableSetter> bindVariableSetters
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
         final long limit = address + len;
@@ -883,17 +881,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
         switch (type) {
             case 'P':
-                processParse(address, lo, msgLimit, compiler, factoryCache, portalFactoryCache, statementToBindVariableTypeCache, bindVariableSetters);
+                processParse(address, lo, msgLimit, compiler, factoryCache, namedStatementMap, bindVariableSetters);
                 break;
             case 'X':
                 // 'Terminate'
                 throw PeerDisconnectedException.INSTANCE;
             case 'C':
                 // close
-                processClose();
+                processClose(lo, msgLimit, namedStatementMap);
                 break;
             case 'B': // bind
-                processBind(bindVariableSetters, msgLimit, lo, portalFactoryCache, statementToBindVariableTypeCache);
+                processBind(bindVariableSetters, msgLimit, lo, namedStatementMap);
                 break;
             case 'E': // execute
                 processExecute();
@@ -903,7 +901,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 prepareForNewQuery();
                 break;
             case 'D': // describe
-                processDescribe(bindVariableSetters, lo, msgLimit, portalFactoryCache, statementToBindVariableTypeCache);
+                processDescribe(bindVariableSetters, lo, msgLimit, namedStatementMap);
                 break;
             case 'Q':
                 processQuery(lo, limit, compiler, factoryCache);
@@ -1030,8 +1028,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void processBind(@Transient ObjList<BindVariableSetter> bindVariableSetters,
                              long msgLimit,
                              long lo,
-                             @Transient AssociativeCache<Object> portalFactoryCache,
-                             @Transient AssociativeCache<Object> statementToBindVariableTypeCache) throws BadProtocolException, SqlException {
+                             @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException, SqlException {
         long hi;
         short parameterCount;
         hi = getStringLength(lo, msgLimit);
@@ -1042,20 +1039,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         checkNotTrue(hi == -1, "bad prepared statement name length [msgType='B']");
 
         CharSequence statementName = getStatementName(lo, hi);
-        if (statementName != null) {
-            final Object statement = portalFactoryCache.peek(statementName);
-            if (statement instanceof RecordCursorFactory) {
-                queryTag = TAG_SELECT;
-                currentFactory = (RecordCursorFactory) statement;
-            } else if (statement instanceof InsertStatement) {
-                queryTag = TAG_INSERT;
-                currentInsertStatement = (InsertStatement) statement;
-            }
-            final Object bindVariableTypes = statementToBindVariableTypeCache.peek(statementName);
-            if (bindVariableTypes instanceof IntList) {
-                setupCachedBindVariables(bindVariableSetters, (IntList) bindVariableTypes);
-            }
-        }
+        setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
 
         lo = hi + 1;
         checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter format code count");
@@ -1075,42 +1059,166 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareBindComplete();
     }
 
-    private void processClose() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareForNewQuery();
+    private void processClose(long lo, long msgLimit, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException {
+        final byte type = Unsafe.getUnsafe().getByte(lo);
+        if (type == 'S') {
+            lo = lo + 1;
+            long hi = getStringLength(lo, msgLimit);
+            checkNotTrue(hi == -1, "bad prepared statement name length");
+            CharSequence statementName = getStatementName(lo, hi);
+            if (statementName != null) {
+                final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+                wrapper.clear();
+                bindVarTypesStack.push(wrapper.bindVariableTypes);
+                namedStatementWrapperStack.push(wrapper);
+            }
+        }
+
         sink().put('3'); // close complete
         sink().putNetworkInt(Integer.BYTES);
-        send();
     }
 
     private void processDescribe(@Transient ObjList<BindVariableSetter> bindVariableSetters,
                                  long lo,
                                  long msgLimit,
-                                 @Transient AssociativeCache<Object> portalFactoryCache,
-                                 @Transient AssociativeCache<Object> statementToBindVariableTypeCache) throws SqlException, BadProtocolException {
+                                 @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws SqlException, BadProtocolException {
         lo = lo + 1;
         long hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad portal name length [msgType='D']");
 
         CharSequence statementName = getStatementName(lo, hi);
-        if (statementName != null) {
-            final Object statement = portalFactoryCache.peek(statementName);
+        setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
+
+        if (currentFactory != null) {
+            prepareRowDescription();
+            LOG.info().$("described").$();
+        }
+    }
+
+    private void processParse(
+            long address,
+            long lo,
+            long msgLimit,
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<Object> factoryCache,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
+            @Transient ObjList<BindVariableSetter> bindVariableSetters
+    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        // 'Parse'
+        // this appears to be the execution side - we must at least return 'RowDescription'
+        // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
+
+        long hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad prepared statement name length");
+
+        CharSequence statementName = getStatementName(lo, hi);
+
+        lo = hi + 1;
+
+        hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad query text length");
+
+        prepareForNewQuery();
+        parseQueryText(lo, hi);
+
+        lo = hi + 1;
+
+        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter count");
+
+        short parameterCount = getShort(lo);
+
+        IntList bindVariableTypes = bindVarTypesStack.pop();
+        if (parameterCount > 0) {
+            if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
+                LOG.error()
+                        .$("could not read parameters [parameterCount=").$(parameterCount)
+                        .$(", offset=").$(lo - address)
+                        .$(", remaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+
+            LOG.debug().$("params [count=").$(parameterCount).$(']').$();
+            lo += Short.BYTES;
+            bindVariableService.clear();
+            if (bindVariableTypes == null) {
+                bindVariableTypes = new IntList();
+            }
+            bindVariableTypes.clear();
+            setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
+        } else if (parameterCount < 0) {
+            LOG.error()
+                    .$("invalid parameter count [parameterCount=").$(parameterCount)
+                    .$(", offset=").$(lo - address)
+                    .$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        // at this point we may have a current query that is not null
+        // this is ok to lose reference to this query because we have cache
+        // of all of them, which is looked up by query text
+        responseAsciiSink.reset();
+        final Object statement = factoryCache.peek(queryText);
+        if (statement == null) {
+            if (queryText.length() > 0) {
+                final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
+
+                switch (cc.getType()) {
+                    case CompiledQuery.SELECT:
+                        currentFactory = cc.getRecordCursorFactory();
+                        queryTag = TAG_SELECT;
+                        factoryCache.put(queryText, currentFactory);
+                        break;
+                    case CompiledQuery.INSERT:
+                        currentInsertStatement = cc.getInsertStatement();
+                        queryTag = TAG_INSERT;
+                        factoryCache.put(queryText, currentInsertStatement);
+                        break;
+                    case CompiledQuery.COPY_LOCAL:
+                        queryTag = TAG_COPY;
+                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                        break;
+                    case CompiledQuery.SET:
+                        queryTag = TAG_SET;
+                        break;
+                    default:
+                        // DDL SQL
+                        queryTag = TAG_OK;
+                        break;
+                }
+            } else {
+                isEmptyQuery = true;
+            }
+        } else {
             if (statement instanceof RecordCursorFactory) {
                 queryTag = TAG_SELECT;
                 currentFactory = (RecordCursorFactory) statement;
             } else if (statement instanceof InsertStatement) {
                 queryTag = TAG_INSERT;
                 currentInsertStatement = (InsertStatement) statement;
-            }
-            final Object bindVariableTypes = statementToBindVariableTypeCache.peek(statementName);
-            if (bindVariableTypes instanceof IntList) {
-                setupCachedBindVariables(bindVariableSetters, (IntList) bindVariableTypes);
+            } else {
+                assert false;
             }
         }
-
-        if (currentFactory != null) {
-            prepareRowDescription();
-            LOG.info().$("described").$();
+        //cache named statement
+        if (statementName != null) {
+            NamedStatementWrapper wrapper = namedStatementWrapperStack.pop();
+            if (wrapper == null) {
+                wrapper = new NamedStatementWrapper();
+            }
+            if (currentFactory != null) {
+                wrapper.selectFactory = currentFactory;
+            }
+            if (currentInsertStatement != null) {
+                wrapper.insertStatement = currentInsertStatement;
+            }
+            if (bindVariableTypes != null && bindVariableTypes.size() > 0) {
+                wrapper.bindVariableTypes = bindVariableTypes;
+            }
+            namedStatementMap.put(statementName, wrapper);
         }
+        prepareParseComplete();
     }
 
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1227,122 +1335,21 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processParse(
-            long address,
-            long lo,
-            long msgLimit,
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<Object> factoryCache,
-            @Transient AssociativeCache<Object> statementFactoryCache,
-            @Transient AssociativeCache<Object> statementToBindVariableTypeCache,
-            @Transient ObjList<BindVariableSetter> bindVariableSetters
-    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        // 'Parse'
-        // this appears to be the execution side - we must at least return 'RowDescription'
-        // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
-
-        long hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad prepared statement name length");
-
-        CharSequence statementName = getStatementName(lo, hi);
-
-        lo = hi + 1;
-
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad query text length");
-
-        prepareForNewQuery();
-        parseQueryText(lo, hi);
-
-        lo = hi + 1;
-
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter count");
-
-        short parameterCount = getShort(lo);
-
-        IntList bindVariableTypes = intListPool.next();
-        bindVariableTypes.clear();
-        if (parameterCount > 0) {
-            if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
-                LOG.error()
-                        .$("could not read parameters [parameterCount=").$(parameterCount)
-                        .$(", offset=").$(lo - address)
-                        .$(", remaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-
-            LOG.debug().$("params [count=").$(parameterCount).$(']').$();
-            lo += Short.BYTES;
-            bindVariableService.clear();
-            setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
-        } else if (parameterCount < 0) {
-            LOG.error()
-                    .$("invalid parameter count [parameterCount=").$(parameterCount)
-                    .$(", offset=").$(lo - address)
-                    .$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        // at this point we may have a current query that is not null
-        // this is ok to lose reference to this query because we have cache
-        // of all of them, which is looked up by query text
-        responseAsciiSink.reset();
-        final Object statement = factoryCache.peek(queryText);
-        if (statement == null) {
-            if (queryText.length() > 0) {
-                final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
-
-                switch (cc.getType()) {
-                    case CompiledQuery.SELECT:
-                        currentFactory = cc.getRecordCursorFactory();
-                        queryTag = TAG_SELECT;
-                        factoryCache.put(queryText, currentFactory);
-                        break;
-                    case CompiledQuery.INSERT:
-                        currentInsertStatement = cc.getInsertStatement();
-                        queryTag = TAG_INSERT;
-                        factoryCache.put(queryText, currentInsertStatement);
-                        break;
-                    case CompiledQuery.COPY_LOCAL:
-                        queryTag = TAG_COPY;
-                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                        break;
-                    case CompiledQuery.SET:
-                        queryTag = TAG_SET;
-                        break;
-                    default:
-                        // DDL SQL
-                        queryTag = TAG_OK;
-                        break;
-                }
-            } else {
-                isEmptyQuery = true;
-            }
-        } else {
-            if (statement instanceof RecordCursorFactory) {
-                queryTag = TAG_SELECT;
-                currentFactory = (RecordCursorFactory) statement;
-            } else if (statement instanceof InsertStatement) {
-                queryTag = TAG_INSERT;
-                currentInsertStatement = (InsertStatement) statement;
-            } else {
-                assert false;
-            }
-        }
+    private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap, CharSequence statementName) throws SqlException {
         if (statementName != null) {
-            if (currentFactory != null) {
-                statementFactoryCache.put(statementName, currentFactory);
+            final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+            if (wrapper.selectFactory != null) {
+                queryTag = TAG_SELECT;
+                currentFactory = wrapper.selectFactory;
+            } else if (wrapper.insertStatement != null) {
+                queryTag = TAG_INSERT;
+                currentInsertStatement = wrapper.insertStatement;
             }
-            if (currentInsertStatement != null) {
-                statementFactoryCache.put(statementName, currentInsertStatement);
-            }
-            if (bindVariableTypes.size() > 0) {
-                statementToBindVariableTypeCache.put(statementName, bindVariableTypes);
+            if (wrapper.bindVariableTypes != null) {
+                bindVariableSetters.clear();
+                setupCachedBindVariables(bindVariableSetters, wrapper.bindVariableTypes);
             }
         }
-        prepareParseComplete();
     }
 
     private void processQuery(
@@ -1788,5 +1795,20 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
         typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
+    }
+
+    static class NamedStatementWrapper {
+        public RecordCursorFactory selectFactory = null;
+        public InsertStatement insertStatement = null;
+        public IntList bindVariableTypes = null;
+
+        public void clear() {
+            selectFactory = null;
+            insertStatement = null;
+            if (bindVariableTypes != null) {
+                bindVariableTypes.clear();
+                bindVariableTypes = null;
+            }
+        }
     }
 }
