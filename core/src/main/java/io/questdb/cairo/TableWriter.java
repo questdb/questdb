@@ -97,9 +97,9 @@ public class TableWriter implements Closeable {
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullers;
-    private final ObjList<VirtualMemory> mergeColumns;
+    private final ObjList<ContiguousVirtualMemory> mergeColumns;
     private final OnePageMemory timestampSearchColumn = new OnePageMemory();
-    private VirtualMemory timestampMergeMem;
+    private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -1100,7 +1100,7 @@ public class TableWriter implements Closeable {
             if (Chars.equalsIgnoreCase(col, name)) {
                 return i;
             }
-            nameOffset += VirtualMemory.getStorageLength(col);
+            nameOffset += ContiguousVirtualMemory.getStorageLength(col);
         }
         return -1;
     }
@@ -1363,13 +1363,13 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final AppendMemory primary = new AppendMemory();
         final AppendMemory secondary;
-        final VirtualMemory mergePrimary = new VirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
-        final VirtualMemory mergeSecondary;
+        final ContiguousVirtualMemory mergePrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory mergeSecondary;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendMemory();
-                mergeSecondary = new VirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+                mergeSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
@@ -1836,27 +1836,10 @@ public class TableWriter implements Closeable {
                     assert false;
             }
 
-            int pageCount = timestampMergeMem.getPageCount();
-            long p;
-            final long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
-            final long mergedTimestamps;
-            try {
-                LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-                for (int i = 0; i < pageCount; i++) {
-                    final long pageAddr = timestampMergeMem.getPageAddress(i);
-                    final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
-                    // todo: sort in parallel
-                    Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
-                    Unsafe.getUnsafe().putLong(p, pageAddr);
-                    Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
-                    p += TIMESTAMP_MERGE_ENTRY_BYTES;
-                }
+            LOG.info().$("sorting [name=").$(name).$(']').$();
+            final long mergedTimestamps = timestampMergeMem.addressOf(0);
+            Vect.sortLongIndexAscInPlace(mergedTimestamps, timestampMergeMem.getAppendOffset() / TIMESTAMP_MERGE_ENTRY_BYTES);
 
-                LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-                mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
-            } finally {
-                Unsafe.free(struct, TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
-            }
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -2264,8 +2247,8 @@ public class TableWriter implements Closeable {
 
         int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
-            VirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
-            VirtualMemory mem2;
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
             long lo;
@@ -2454,101 +2437,82 @@ public class TableWriter implements Closeable {
     }
 
     private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
-        int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
-            VirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
-            VirtualMemory mem2;
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
             long lo;
             long hi;
-            try {
-                switch (columnType) {
-                    case ColumnType.STRING:
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                        lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
-                        copyOOO(mem, mergeStruct, i * 16 + 8, lo, hi - lo);
-                        copyOOOFixedSize(mem2, indexLo, indexHi, ColumnType.LONG, mergeStruct, i * 16);
-                        break;
-
-                    case ColumnType.BINARY:
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                        lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getLong(hi) + Long.BYTES;
-                        copyOOO(mem, mergeStruct, i * 16 + 8, lo, hi - lo);
-                        copyOOOFixedSize(mem2, indexLo, indexHi, ColumnType.LONG, mergeStruct, i * 16);
-                        break;
-
-                    default:
-                        copyOOOFixedSize(mem, indexLo, indexHi, columnType, mergeStruct, i * 16);
-                        break;
-                }
-            } finally {
-                path.trimTo(plen);
+            switch (columnType) {
+                // todo: review removing case statement
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // we can find out the edge of string column in one of two ways
+                    // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
+                    // 2  if there are more items behind indexHi we can get offset of indexHi+1
+                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                    lo = mem2.getLong(indexLo * Long.BYTES);
+                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
+                        hi = mem.getAppendOffset();
+                    } else {
+                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
+                    copyFixedSizeColumnData(mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    break;
+                default:
+                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    break;
             }
         }
     }
 
     private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct) {
-        int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
             final int columnType = metadata.getColumnType(i);
-            try {
-                switch (columnType) {
-                    case ColumnType.STRING:
-                        int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
-                        long srcOffset = indexLo << shl;
-                        long len = (indexHi - indexLo + 1) << shl;
-                        copyPartitionColumn(mergeStruct, i * 16, srcOffset, len);
-                        // from index column find out the length of data column
-                        long srcDataAddr = mergeStruct[i * 16 + 8 + 1];
-                        long dataOffset = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset);
-                        long dataLen = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset + len - Long.BYTES) - dataOffset;
-                        dataLen += Unsafe.getUnsafe().getInt(srcDataAddr, dataOffset + dataLen) * Character.BYTES + Integer.BYTES;
-                        copyPartitionColumn(mergeStruct, i * 16 + 8, dataOffset, dataLen);
-                        break;
-                    case ColumnType.BINARY:
-                        assert false;
-                        break;
-                    default:
-                        shl = ColumnType.pow2SizeOf(columnType);
-                        srcOffset = indexLo << shl;
-                        len = (indexHi - indexLo + 1) << shl;
-                        copyPartitionColumn(mergeStruct, i * 16, srcOffset, len);
-                        break;
-                }
-            } finally {
-                path.trimTo(plen);
+            long lo;
+            long hi;
+            switch (columnType) {
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    lo = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + indexLo * Long.BYTES);
+                    if (indexHi + 1 == mergeStruct[i * 16 + 2] / Long.BYTES) {
+                        hi = mergeStruct[i * 16 + 8 + 2];
+                    } else {
+                        hi = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + (indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mergeStruct[i * 16 + 8 + 1], mergeStruct, i * 16 + 8, lo, hi - lo);
+                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    break;
+                default:
+                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    break;
             }
         }
     }
 
-    private static void copyPartitionColumn(long[] mergeStruct, int columnOffset, long srcOffset, long len) {
-        long src = mergeStruct[columnOffset + 1];
-        long dst = mergeStruct[columnOffset + 4];
-        long dstOffset = mergeStruct[columnOffset + 6];
-        Unsafe.getUnsafe().copyMemory(src + srcOffset, dst + dstOffset, len);
-        mergeStruct[columnOffset + 6] = dstOffset + len;
-    }
 
-    private void copyOOOFixedSize(
-            VirtualMemory src,
-            long srcRecLo,
-            long srcRecHi,
-            int columnType,
+    private void copyFixedSizeColumnData(
+            long src,
             long[] mergeStruct,
-            int columnIndex
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            int columnType
     ) {
-        final long lo = srcRecLo << ColumnType.pow2SizeOf(columnType);
-        final long hi = (srcRecHi + 1) << ColumnType.pow2SizeOf(columnType);
-        copyOOO(src, mergeStruct, columnIndex, lo, hi - lo);
+        final int shl = ColumnType.pow2SizeOf(columnType);
+        final long lo = srcLo << shl;
+        final long hi = (srcHi + 1) << shl;
+        copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
     }
 
-    private void copyOOO(VirtualMemory src, long[] mergeStruct, int columnIndex, long lo, long len) {
-        src.copyTo(mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], lo, len);
+    private static void copyPartitionColumn(long[] mergeStruct, int columnIndex, long lo, long len) {
+        copyColumnData(mergeStruct[columnIndex + 1], mergeStruct, columnIndex, lo, len);
+    }
+
+    private static void copyColumnData(long src, long[] mergeStruct, int columnIndex, long lo, long len) {
+        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], len);
         mergeStruct[columnIndex + 6] += len;
     }
 
@@ -2589,9 +2553,9 @@ public class TableWriter implements Closeable {
 
     private void openMergePartition() {
         for (int i = 0; i < columnCount; i++) {
-            VirtualMemory mem1 = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem1 = mergeColumns.getQuick(getPrimaryColumnIndex(i));
             mem1.clear();
-            VirtualMemory mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+            ContiguousVirtualMemory mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.clear();
             }
@@ -3655,7 +3619,7 @@ public class TableWriter implements Closeable {
     }
 
     public class Row {
-        private ObjList<? extends VirtualMemory> rowColumns;
+        private ObjList<? extends BigMem> rowColumns;
 
         // ISO 27001
         // todo: configure nullers for the merge columns
@@ -3781,11 +3745,11 @@ public class TableWriter implements Closeable {
             putLong(index, value);
         }
 
-        private VirtualMemory getPrimaryColumn(int columnIndex) {
+        private BigMem getPrimaryColumn(int columnIndex) {
             return rowColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
 
-        private VirtualMemory getSecondaryColumn(int columnIndex) {
+        private BigMem getSecondaryColumn(int columnIndex) {
             return rowColumns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
 

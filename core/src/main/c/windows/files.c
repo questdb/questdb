@@ -354,10 +354,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    LPCVOID newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
+    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
-    return (jlong) newAddress;
+    return newAddress;
 }
     
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0

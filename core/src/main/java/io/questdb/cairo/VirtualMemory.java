@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class VirtualMemory implements Closeable {
+public class VirtualMemory implements BigMem {
     static final int STRING_LENGTH_BYTES = 4;
     private static final Log LOG = LogFactory.getLog(VirtualMemory.class);
     protected final LongList pages = new LongList(4, 0);
@@ -295,6 +295,7 @@ public class VirtualMemory implements Closeable {
         return getPageSize(pageIndex(offset)) - offsetInPage(offset);
     }
 
+    @Override
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
         if (value == null) {
@@ -313,6 +314,7 @@ public class VirtualMemory implements Closeable {
         return offset;
     }
 
+    @Override
     public final long putBin(long from, long len) {
         final long offset = getAppendOffset();
         putLong(len > 0 ? len : TableUtils.NULL_LEN);
@@ -330,14 +332,17 @@ public class VirtualMemory implements Closeable {
         return offset;
     }
 
+    @Override
     public void putBool(boolean value) {
         putByte((byte) (value ? 1 : 0));
     }
 
+    @Override
     public void putBool(long offset, boolean value) {
         putByte(offset, (byte) (value ? 1 : 0));
     }
 
+    @Override
     public final void putByte(long offset, byte value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 1) {
             Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
@@ -346,6 +351,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putByte(byte b) {
         if (pageHi == appendPointer) {
             pageAt(getAppendOffset() + 1);
@@ -353,6 +359,7 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().putByte(appendPointer++, b);
     }
 
+    @Override
     public void putChar(long offset, char value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2) {
             Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
@@ -361,6 +368,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putChar(char value) {
         if (pageHi - appendPointer > 1) {
             Unsafe.getUnsafe().putChar(appendPointer, value);
@@ -370,6 +378,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putDouble(long offset, double value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
@@ -378,6 +387,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putDouble(double value) {
         if (pageHi - appendPointer > 7) {
             Unsafe.getUnsafe().putDouble(appendPointer, value);
@@ -387,6 +397,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putFloat(long offset, float value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 4) {
             Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
@@ -395,6 +406,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putFloat(float value) {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putFloat(appendPointer, value);
@@ -404,6 +416,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putInt(long offset, int value) {
         if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
             Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
@@ -412,6 +425,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putInt(int value) {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putInt(appendPointer, value);
@@ -421,6 +435,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putLong(long offset, long value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
@@ -429,6 +444,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putLong(long value) {
         if (pageHi - appendPointer > 7) {
             Unsafe.getUnsafe().putLong(appendPointer, value);
@@ -438,6 +454,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putLong128(long l1, long l2) {
         if (pageHi - appendPointer > 15) {
             Unsafe.getUnsafe().putLong(appendPointer, l1);
@@ -449,6 +466,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putLong256(long offset, Long256 value) {
         putLong256(
                 offset,
@@ -459,6 +477,7 @@ public class VirtualMemory implements Closeable {
         );
     }
 
+    @Override
     public void putLong256(long offset, long l0, long l1, long l2, long l3) {
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
@@ -473,6 +492,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putLong256(long l0, long l1, long l2, long l3) {
         if (pageHi - appendPointer > Long256.BYTES - 1) {
             Unsafe.getUnsafe().putLong(appendPointer, l0);
@@ -488,6 +508,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putLong256(Long256 value) {
         putLong256(
                 value.getLong0(),
@@ -497,6 +518,7 @@ public class VirtualMemory implements Closeable {
         );
     }
 
+    @Override
     public final void putLong256(CharSequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
             stradlingPageLong256Decoder.putLong256(hexString);
@@ -505,6 +527,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
             stradlingPageLong256Decoder.putLong256(hexString, start, end);
@@ -513,22 +536,26 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final long putNullBin() {
         final long offset = getAppendOffset();
         putLong(TableUtils.NULL_LEN);
         return offset;
     }
 
+    @Override
     public final long putNullStr() {
         final long offset = getAppendOffset();
         putInt(TableUtils.NULL_LEN);
         return offset;
     }
 
+    @Override
     public final void putNullStr(long offset) {
         putInt(offset, TableUtils.NULL_LEN);
     }
 
+    @Override
     public void putShort(long offset, short value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2) {
             Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
@@ -537,6 +564,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final void putShort(short value) {
         if (pageHi - appendPointer > 1) {
             Unsafe.getUnsafe().putShort(appendPointer, value);
@@ -546,10 +574,12 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final long putStr(CharSequence value) {
         return value == null ? putNullStr() : putStr0(value, 0, value.length());
     }
 
+    @Override
     public final long putStr(char value) {
         if (value == 0) return putNullStr();
         else {
@@ -565,6 +595,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public final long putStr(CharSequence value, int pos, int len) {
         if (value == null) {
             return putNullStr();
@@ -572,6 +603,7 @@ public class VirtualMemory implements Closeable {
         return putStr0(value, pos, len);
     }
 
+    @Override
     public void putStr(long offset, CharSequence value) {
         if (value == null) {
             putNullStr(offset);
@@ -580,6 +612,7 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    @Override
     public void putStr(long offset, CharSequence value, int pos, int len) {
         putInt(offset, len);
         if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {

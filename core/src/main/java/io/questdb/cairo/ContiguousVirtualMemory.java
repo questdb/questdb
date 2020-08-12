@@ -32,14 +32,12 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 /**
  * A version of {@link VirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will grow in page sizes.
  *
  * @author Patrick Mackinlay
  */
-public class ContiguousVirtualMemory implements Closeable {
+public class ContiguousVirtualMemory implements BigMem, Mutable {
     static final int STRING_LENGTH_BYTES = 4;
     private static final Log LOG = LogFactory.getLog(ContiguousVirtualMemory.class);
     private final ByteSequenceView bsview = new ByteSequenceView();
@@ -68,7 +66,6 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public long addressOf(long offset) {
-        checkLimits(offset, 1);
         return baseAddress + offset;
     }
 
@@ -200,6 +197,7 @@ public class ContiguousVirtualMemory implements Closeable {
         appendAddress = baseAddress + offset;
     }
 
+    @Override
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
         if (value != null) {
@@ -299,6 +297,11 @@ public class ContiguousVirtualMemory implements Closeable {
         checkLimits(8);
         Unsafe.getUnsafe().putLong(appendAddress, value);
         appendAddress += Long.BYTES;
+    }
+
+    @Override
+    public void clear() {
+        releaseMemory();
     }
 
     public final void putLong128(long l1, long l2) {
