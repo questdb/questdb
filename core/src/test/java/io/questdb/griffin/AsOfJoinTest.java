@@ -105,7 +105,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
         final String expected = "hi\tlo\n" +
-                "1\tNaN\n" +
                 "18116\t18114\n" +
                 "48689\t48687\n" +
                 "57275\t57273\n" +
@@ -256,7 +255,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     @Test
     public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
         final String expected = "tag\thi\tlo\n" +
-                "AA\t315515118\tNaN\n" +
                 "CC\t592859671\t-948263339\n" +
                 "BB\t-1575378703\t-2041844972\n" +
                 "BB\t1545253512\t-1575378703\n" +
@@ -325,16 +323,13 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             printSqlResult(ex, query, "ts", null, null, true, true);
             // test
             ex = "tag\thi\tlo\n" +
-                    "AA\t1\tNaN\n" +
-                    "BB\t3\tNaN\n" +
                     "AA\t7\t2\n" +
                     "BB\t8\t6\n" +
                     "AA\t9\t7\n" +
                     "BB\t14\t8\n" +
                     "AA\t16\t13\n" +
                     "BB\t18\t15\n" +
-                    "AA\t20\t17\n" +
-                    "CC\t24\tNaN\n";
+                    "AA\t20\t17\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, null, null, false, true);
         });
@@ -384,7 +379,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             printSqlResult(ex, query, "ts", null, null, true, true);
             // test
             ex = "tag\thi\tlo\n" +
-                    "AA\t1\tNaN\n" +
                     "CC\t24\t20\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
             printSqlResult(ex, query, null, null, null, false, true);

@@ -76,12 +76,12 @@ public abstract class TimestampFunction implements Function {
 
     @Override
     public final double getDouble(Record rec) {
-        return getTimestamp(rec);
+        return Numbers.longToDouble(getTimestamp(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return getTimestamp(rec);
+        return Numbers.longToFloat(getTimestamp(rec));
     }
 
     @Override

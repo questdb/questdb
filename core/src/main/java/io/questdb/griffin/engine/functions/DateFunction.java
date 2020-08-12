@@ -79,12 +79,12 @@ public abstract class DateFunction implements Function {
 
     @Override
     public final double getDouble(Record rec) {
-        return getDate(rec);
+        return Numbers.longToDouble(getDate(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return getDate(rec);
+        return Numbers.longToFloat(getDate(rec));
     }
 
     @Override
