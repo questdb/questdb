@@ -12,7 +12,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 
-public class BlockTableWriterTest extends AbstractGriffinTest {
+public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
