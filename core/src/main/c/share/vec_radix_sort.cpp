@@ -271,23 +271,6 @@ typedef struct {
     uint64_t size;
 } index_entry_t;
 
-inline void play_game(loser_node_t *tree, uint32_t player_count) {
-    auto remaining = player_count;
-    uint32_t offset = remaining;
-
-    // first level
-    while (remaining > 2) {
-        for (uint32_t i = 0; i < remaining; i += 2) {
-            uint32_t winner_index;
-            winner_index = tree[i].value < tree[i + 1].value ? i : i + 1;
-//            printf("winner_index %d, a=%llu, b=%llu\n", winner_index, tree[i].value, tree[i + 1].value);
-            tree[offset + i / 2] = tree[winner_index];
-        }
-        remaining /= 2;
-        offset += remaining;
-    }
-}
-
 void k_way_merge_long_index(
         index_entry_t *indexes,
         uint32_t entries_count,
