@@ -1838,21 +1838,25 @@ public class TableWriter implements Closeable {
 
             int pageCount = timestampMergeMem.getPageCount();
             long p;
-            long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
+            final long struct = p = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
+            final long mergedTimestamps;
+            try {
+                LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+                for (int i = 0; i < pageCount; i++) {
+                    final long pageAddr = timestampMergeMem.getPageAddress(i);
+                    final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
+                    // todo: sort in parallel
+                    Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
+                    Unsafe.getUnsafe().putLong(p, pageAddr);
+                    Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
+                    p += TIMESTAMP_MERGE_ENTRY_BYTES;
+                }
 
-            LOG.info().$("sorting [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-            for (int i = 0; i < pageCount; i++) {
-                final long pageAddr = timestampMergeMem.getPageAddress(i);
-                final long pageSize = timestampMergeMem.getPageUsedSize(i) / TIMESTAMP_MERGE_ENTRY_BYTES;
-                // todo: sort in parallel
-                Vect.sortLongIndexAscInPlace(pageAddr, pageSize);
-                Unsafe.getUnsafe().putLong(p, pageAddr);
-                Unsafe.getUnsafe().putLong(p + Long.BYTES, pageSize);
-                p += TIMESTAMP_MERGE_ENTRY_BYTES;
+                LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
+                mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
+            } finally {
+                Unsafe.free(struct, TIMESTAMP_MERGE_ENTRY_BYTES * pageCount);
             }
-
-            LOG.info().$("merging [name=").$(name).$(", pages=").$(pageCount).$(']').$();
-            long mergedTimestamps = Vect.mergeLongIndexesAsc(struct, pageCount);
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -2130,7 +2134,44 @@ public class TableWriter implements Closeable {
                                 break;
                         }
 
+                        long dataOOMergeIndex;
                         if (mergeDataLo != -1) {
+                            // copy timestamp column of the partition into a "index" memory
+
+                            long ss = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                            try {
+                                long src = mergeStruct[timestampIndex * 16 + 1] + mergeDataLo * Long.BYTES;
+                                long index = Unsafe.malloc((mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
+                                for (long l = mergeDataLo; l <= mergeDataHi; l++) {
+                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
+                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + 1, l | (1L << 63));
+                                }
+
+                                Unsafe.getUnsafe().putLong(ss, src);
+                                Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+                                Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+                                Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+
+                                dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
+
+                                for (int i = 0; i < columnCount; i++) {
+                                    long src1 = mergeStruct[i * 16 + 1];
+//                                    long src2 =
+                                    switch (metadata.getColumnType(i)) {
+                                        case ColumnType.STRING:
+                                        case ColumnType.BINARY:
+                                            assert false;
+                                        default:
+                                            break;
+                                    }
+                                }
+
+
+                            } finally {
+                                Unsafe.free(ss, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                            }
+
+
                             LOG.info()
                                     .$("merged data2 + ooo2 [dataFrom=").$(mergeDataLo)
                                     .$(", dataTo=").$(mergeDataHi)
@@ -2412,14 +2453,6 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private static long openReadOnlyOrFail(FilesFacade ff, Path path) {
-        long fd = ff.openRO(path);
-        if (fd != -1) {
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open file [file=").put(path);
-    }
-
     private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
         int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
@@ -2466,31 +2499,16 @@ public class TableWriter implements Closeable {
             try {
                 switch (columnType) {
                     case ColumnType.STRING:
-
                         int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
                         long srcOffset = indexLo << shl;
                         long len = (indexHi - indexLo + 1) << shl;
                         copyPartitionColumn(mergeStruct, i * 16, srcOffset, len);
-
-//                        // copy index column
-//                        long srcIndexAddr = mergeStruct[i * 16 + 1];
-//                        long destIndexAddr = mergeStruct[i * 16 + 4];
-//                        long destIndexOffset = mergeStruct[i * 16 + 6];
-//                        long indexOffset = indexLo << shl;
-//                        long indexLen = (indexHi - indexLo + 1) << shl;
-//                        Unsafe.getUnsafe().copyMemory(srcIndexAddr + indexOffset, destIndexAddr + destIndexOffset, indexLen);
-//                        mergeStruct[i * 16 + 6] = destIndexOffset + indexLen;
-
                         // from index column find out the length of data column
                         long srcDataAddr = mergeStruct[i * 16 + 8 + 1];
-//                        long destDataAddr = mergeStruct[i * 16 + 8 + 4];
-//                        long destDataOffset = mergeStruct[i * 16 + 8 + 6];
                         long dataOffset = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset);
                         long dataLen = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + srcOffset + len - Long.BYTES) - dataOffset;
                         dataLen += Unsafe.getUnsafe().getInt(srcDataAddr, dataOffset + dataLen) * Character.BYTES + Integer.BYTES;
                         copyPartitionColumn(mergeStruct, i * 16 + 8, dataOffset, dataLen);
-//                        Unsafe.getUnsafe().copyMemory(srcDataAddr + dataOffset, destDataAddr + destDataOffset, dataLen);
-//                        mergeStruct[i * 16 + 8 + 6] = destDataOffset + dataLen;
                         break;
                     case ColumnType.BINARY:
                         assert false;
