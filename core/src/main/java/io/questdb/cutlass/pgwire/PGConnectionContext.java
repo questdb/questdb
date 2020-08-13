@@ -1081,10 +1081,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                 if (wrapper != null) {
                     IntList bindVariableTypes = wrapper.bindVariableTypes;
                     if (bindVariableTypes != null) {
-                        bindVariableTypes.clear();
                         bindVarTypesPool.push(bindVariableTypes);
                     }
-                    wrapper.clear();
                     namedStatementWrapperPool.push(wrapper);
                 } else {
                     LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
