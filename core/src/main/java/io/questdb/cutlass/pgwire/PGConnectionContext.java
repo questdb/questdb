@@ -1228,9 +1228,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             } else if (currentInsertStatement != null) {
                 wrapper.insertStatement = currentInsertStatement;
             }
-            if (bindVariableTypes != null) {
-                wrapper.bindVariableTypes = bindVariableTypes;
-            }
+            wrapper.bindVariableTypes = bindVariableTypes;
             namedStatementMap.put(statementName, wrapper);
         }
         prepareParseComplete();
