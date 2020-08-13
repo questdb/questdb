@@ -769,7 +769,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void executeInsert() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void executeInsert() {
         try (final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext)) {
             m.execute();
             m.commit();
@@ -1480,9 +1480,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         recvBufferWriteOffset += n;
     }
 
-    private void send(int tailType) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendCurrentCursorTail = tailType;
-        send();
+    private void sendExecuteTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareExecuteTail(false);
+        prepareReadyForQuery(responseAsciiSink);
+        sendNoTail();
     }
 
     private void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1560,10 +1561,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.putLen(addr);
     }
 
-    private void sendExecuteTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareExecuteTail(false);
-        prepareReadyForQuery(responseAsciiSink);
-        send(PGConnectionContext.TAIL_NONE);
+    private void sendNoTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
+        send();
     }
 
     private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1664,10 +1664,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         for (int idx = 0; idx < bindVariableTypes.size(); idx++) {
             setupBindVariable(bindVariableSetters, idx, bindVariableTypes.get(idx));
         }
-    }
-
-    ResponseAsciiSink sink() {
-        return responseAsciiSink;
     }
 
     @FunctionalInterface
@@ -1812,7 +1808,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
     }
 
-    static class NamedStatementWrapper implements Mutable {
+    public static class NamedStatementWrapper implements Mutable {
         public RecordCursorFactory selectFactory = null;
         public InsertStatement insertStatement = null;
         public IntList bindVariableTypes = null;
