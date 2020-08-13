@@ -32,6 +32,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -53,6 +54,7 @@ public class PGJobContext implements Closeable {
     public static final int PG_UNSPECIFIED = 0;
     private final SqlCompiler compiler;
     private final AssociativeCache<Object> factoryCache;
+    private final CharSequenceObjHashMap<PGConnectionContext.NamedStatementWrapper> namedStatementMap;
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
 
     public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
@@ -61,6 +63,7 @@ public class PGJobContext implements Closeable {
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()
         );
+        this.namedStatementMap = new CharSequenceObjHashMap<>();
     }
 
     @Override
@@ -73,6 +76,6 @@ public class PGJobContext implements Closeable {
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, factoryCache, bindVariableSetters);
+        context.handleClientOperation(compiler, factoryCache, namedStatementMap, bindVariableSetters);
     }
 }
