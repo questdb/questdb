@@ -174,7 +174,7 @@ public class GroupByUtils {
         // Map value count is needed to calculate offsets for
         // map key columns.
 
-        final ObjList<QueryColumn> columns = model.getColumns();
+        ObjList<QueryColumn> columns = model.getColumns();
         int valueColumnIndex = 0;
         int groupByColumnCount = 0;
 
@@ -292,10 +292,7 @@ public class GroupByUtils {
                 );
             }
         }
-
-        final ObjList<ExpressionNode> groupBys = model.getNestedModel().getGroupBy().size() > 0 || model.getNestedModel().getNestedModel() == null ? model.getNestedModel().getGroupBy() : model.getNestedModel().getNestedModel().getGroupBy();
-        ExpressionNode alias = model.getNestedModel().getNestedModel() != null ? model.getNestedModel().getNestedModel().getAlias() : null;
-        GroupByUtils.checkGroupBy(groupBys, model.getNestedModel().getColumns(), groupByColumnCount, alias);
+        validateGroupByColumns(model, columns, groupByColumnCount);
     }
 
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
@@ -308,6 +305,21 @@ public class GroupByUtils {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
         }
+    }
+
+    public static void validateGroupByColumns(@NotNull QueryModel model, ObjList<QueryColumn> columns, int groupByColumnCount) throws SqlException {
+        final ObjList<ExpressionNode> groupBys = model.getGroupBy();
+        QueryModel next = model.getNestedModel();
+        while (next.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+            if (next.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL) {
+                columns = next.getColumns();
+                break;
+            }
+            next = next.getNestedModel();
+        }
+        //
+        ExpressionNode alias = next.getAlias();
+        GroupByUtils.checkGroupBy(groupBys, columns, groupByColumnCount, alias);
     }
 
     static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {

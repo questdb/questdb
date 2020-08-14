@@ -70,7 +70,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testDayEndNan() throws SqlException {
-        call('d', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('d', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -85,7 +85,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testDayStartNan() throws SqlException {
-        call('d', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('d', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -126,7 +126,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testHourEndNan() throws SqlException {
-        call('h', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('h', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -141,7 +141,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testHourStartNan() throws SqlException {
-        call('h', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('h', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -182,7 +182,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMinuteEndNan() throws SqlException {
-        call('m', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('m', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -197,7 +197,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMinuteStartNan() throws SqlException {
-        call('m', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('m', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -238,7 +238,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMonthEndNan() throws SqlException {
-        call('M', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('M', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -253,7 +253,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testMonthStartNan() throws SqlException {
-        call('M', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('M', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -294,7 +294,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testSecondEndNan() throws SqlException {
-        call('s', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('s', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -309,12 +309,12 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testSecondStartNan() throws SqlException {
-        call('s', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('s', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testUnknownPeriod() throws SqlException {
-        call('/', 1587275359886758L, 1587275364886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('/', 1587275359886758L, 1587275364886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -355,7 +355,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testWeekEndNan() throws SqlException {
-        call('w', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('w', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -370,7 +370,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testWeekStartNan() throws SqlException {
-        call('w', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('w', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -411,7 +411,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testYearEndNan() throws SqlException {
-        call('y', 1587275364886758L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('y', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -426,7 +426,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testYearStartNan() throws SqlException {
-        call('y', Numbers.LONG_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('y', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Override

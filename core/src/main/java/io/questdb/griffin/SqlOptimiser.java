@@ -2512,6 +2512,10 @@ class SqlOptimiser {
             groupByModel.moveSampleByFrom(baseModel);
         }
 
+        if (baseModel.getGroupBy().size() > 0) {
+            groupByModel.moveGroupByFrom(baseModel);
+        }
+
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);

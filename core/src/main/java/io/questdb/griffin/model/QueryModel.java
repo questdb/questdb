@@ -589,6 +589,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         model.clearSampleBy();
     }
 
+    public void moveGroupByFrom(QueryModel model) {
+        this.groupBy.addAll(model.groupBy);
+        // clear the source
+        model.groupBy.clear();
+    }
+
     /**
      * Optimiser may be attempting to order join clauses several times.
      * Every time ordering takes place optimiser will keep at most two lists:
