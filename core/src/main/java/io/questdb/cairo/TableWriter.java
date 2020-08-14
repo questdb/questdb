@@ -2751,12 +2751,10 @@ public class TableWriter implements Closeable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             switch (columnType) {
-                case ColumnType.STRING:
+                case ColumnType.STRING: {
                     AppendMemory mem = getPrimaryColumn(columnIndex);
                     AppendMemory imem = getSecondaryColumn(columnIndex);
 
-                    // TableWriter.setColumnSize(ff, mem, imem, columnType, transientRowCount - columnTops.getQuick(columnIndex),
-                    // tempMem8b);
                     long offset = mem.getAppendOffset();
                     for (int row = 0; row < nRowsAdded; row++) {
                         imem.putLong(offset);
@@ -2770,6 +2768,26 @@ public class TableWriter implements Closeable {
                     }
 
                     break;
+                }
+
+                case ColumnType.BINARY: {
+                    AppendMemory mem = getPrimaryColumn(columnIndex);
+                    AppendMemory imem = getSecondaryColumn(columnIndex);
+
+                    long offset = mem.getAppendOffset();
+                    for (int row = 0; row < nRowsAdded; row++) {
+                        imem.putLong(offset);
+                        mem.jumpTo(offset);
+                        long binLen = mem.getBinLen(offset);
+                        if (binLen == TableUtils.NULL_LEN) {
+                            offset += Long.BYTES;
+                        } else {
+                            offset += Long.BYTES + binLen;
+                        }
+                    }
+
+                    break;
+                }
 
                 default:
             }

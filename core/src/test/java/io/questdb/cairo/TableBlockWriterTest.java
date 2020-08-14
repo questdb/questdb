@@ -90,6 +90,25 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testBinary() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_bin(10, 20, 2) bin FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, bin BINARY) TIMESTAMP(ts);", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
     private void replicateTable(String sourceTableName, String destTableName) {
         try (RecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
