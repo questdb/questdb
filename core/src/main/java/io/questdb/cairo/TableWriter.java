@@ -294,27 +294,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static long searchIndex(long indexAddress, long low, long high, long value, int scanDirection) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = Unsafe.getUnsafe().getLong(indexAddress + mid * 16);
-
-            if (midVal < value)
-                low = mid + 1;
-            else if (midVal > value)
-                high = mid;
-            else {
-                // In case of multiple equal values, find the first
-                mid += scanDirection;
-                while (mid > 0 && mid < high && midVal == Unsafe.getUnsafe().getLong(indexAddress + mid * 16)) {
-                    mid += scanDirection;
-                }
-                return mid - scanDirection;
-            }
-        }
-        return -(low + 1);
-    }
-
     public void addColumn(CharSequence name, int type) {
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
@@ -2123,28 +2102,37 @@ public class TableWriter implements Closeable {
 
                             long ss = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
                             try {
-                                long src = mergeStruct[timestampIndex * 16 + 1] + mergeDataLo * Long.BYTES;
+                                final long src = mergeStruct[timestampIndex * 16 + 1];
                                 long index = Unsafe.malloc((mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
                                 for (long l = mergeDataLo; l <= mergeDataHi; l++) {
                                     Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
-                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + 1, l | (1L << 63));
+                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
                                 }
 
-                                Unsafe.getUnsafe().putLong(ss, src);
+                                Unsafe.getUnsafe().putLong(ss, index);
                                 Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
                                 Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
                                 Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
 
                                 dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
+                                long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
 
                                 for (int i = 0; i < columnCount; i++) {
-                                    long src1 = mergeStruct[i * 16 + 1];
-//                                    long src2 =
+
                                     switch (metadata.getColumnType(i)) {
                                         case ColumnType.STRING:
                                         case ColumnType.BINARY:
-                                            assert false;
-                                        default:
+                                            break;
+                                        case ColumnType.INT:
+                                        case ColumnType.FLOAT:
+                                        case ColumnType.SYMBOL:
+                                            mergeCopyInt(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                            break;
+                                        case ColumnType.LONG:
+                                        case ColumnType.DATE:
+                                        case ColumnType.TIMESTAMP:
+                                        case ColumnType.DOUBLE:
+                                            mergeCopyLong(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                             break;
                                     }
                                 }
@@ -2194,10 +2182,58 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void mergeCopyInt(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+        long dst = mergeStruct[msGetOffsetTargetPtr(i)] + mergeStruct[i * 16 + 6];
+        long src1 = mergeStruct[msGetOffsetDataPtr(i)];
+        long src2 = mergeColumns.getQuick(getPrimaryColumnIndex(i)).addressOf(0);
+        // reverse order
+        // todo: cache?
+        long[] sources = new long[]{src2, src1};
+        for (long l = 0; l < dataOOMergeIndexLen; l++) {
+            final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
+            final int bit = (int) (row >>> 63);
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putInt(dst, Unsafe.getUnsafe().getInt(sources[bit] + rr * Integer.BYTES));
+        }
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Integer.BYTES;
+    }
+
+    private void mergeCopyLong(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+        long dst = mergeStruct[msGetOffsetTargetPtr(i)] + mergeStruct[i * 16 + 6];
+        long src1 = mergeStruct[msGetOffsetDataPtr(i)];
+        long src2 = mergeColumns.getQuick(getPrimaryColumnIndex(i)).addressOf(0);
+        // reverse order
+        // todo: cache?
+        long[] sources = new long[]{src2, src1};
+        for (long l = 0; l < dataOOMergeIndexLen; l++) {
+            final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
+            final int bit = (int) (row >>> 63);
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putLong(dst, Unsafe.getUnsafe().getLong(sources[bit] + rr * Long.BYTES));
+        }
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
+    }
+
+    private static int msGetOffsetDataFd(int columnIndex) {
+        return columnIndex * 16;
+    }
+
+    private static int msGetOffsetDataPtr(int columnIndex) {
+        return columnIndex * 16 + 1;
+    }
+
+    private static int msGetOffsetTargetFd(int columnIndex) {
+        return columnIndex * 16 + 8;
+    }
+
+    private static int msGetOffsetTargetPtr(int columnIndex) {
+        return columnIndex * 16 + 4;
+    }
+
     private void copyTempPartitionBack(long[] mergeStruct) {
         for (int i = 0; i < columnCount; i++) {
-            copyTempPartitionColumnBack(mergeStruct, i * 16);
-            copyTempPartitionColumnBack(mergeStruct, i * 16 + 8);
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetDataFd(i));
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetTargetFd(i));
         }
     }
 
@@ -2505,10 +2541,6 @@ public class TableWriter implements Closeable {
         final long lo = srcLo << shl;
         final long hi = (srcHi + 1) << shl;
         copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
-    }
-
-    private static void copyPartitionColumn(long[] mergeStruct, int columnIndex, long lo, long len) {
-        copyColumnData(mergeStruct[columnIndex + 1], mergeStruct, columnIndex, lo, len);
     }
 
     private static void copyColumnData(long src, long[] mergeStruct, int columnIndex, long lo, long len) {
