@@ -2746,6 +2746,35 @@ public class TableWriter implements Closeable {
                 switchPartition(firstTimestamp);
             }
         }
+
+        // Add binary and string indexes
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            int columnType = metadata.getColumnType(columnIndex);
+            switch (columnType) {
+                case ColumnType.STRING:
+                    AppendMemory mem = getPrimaryColumn(columnIndex);
+                    AppendMemory imem = getSecondaryColumn(columnIndex);
+
+                    // TableWriter.setColumnSize(ff, mem, imem, columnType, transientRowCount - columnTops.getQuick(columnIndex),
+                    // tempMem8b);
+                    long offset = mem.getAppendOffset();
+                    for (int row = 0; row < nRowsAdded; row++) {
+                        imem.putLong(offset);
+                        mem.jumpTo(offset);
+                        int strLen = mem.getStrLen(offset);
+                        if (strLen == TableUtils.NULL_LEN) {
+                            offset += VirtualMemory.STRING_LENGTH_BYTES;
+                        } else {
+                            offset += VirtualMemory.STRING_LENGTH_BYTES + 2 * strLen;
+                        }
+                    }
+
+                    break;
+
+                default:
+            }
+        }
+
         commitBlock(firstTimestamp, lastTimestamp, nFirstRow + nRowsAdded);
         setAppendPosition(transientRowCount);
     }

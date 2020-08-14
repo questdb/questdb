@@ -71,6 +71,25 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, s STRING) TIMESTAMP(ts);", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
     private void replicateTable(String sourceTableName, String destTableName) {
         try (RecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
@@ -78,14 +97,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             blockWriter.of(writer);
             PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext);
             PageFrame frame;
+            final int columnCount = writer.getMetadata().getColumnCount();
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
                 long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
-                for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
-                    int colSz = ColumnType.sizeOf(writer.getMetadata().getColumnType(columnIndex));
-                    long blockLength = pageRowCount * colSz;
+                    long blockLength = frame.getPageLength(columnIndex);
                     blockWriter.putBlock(firstTimestamp, columnIndex, 0, blockLength, pageAddress);
                 }
                 blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount);

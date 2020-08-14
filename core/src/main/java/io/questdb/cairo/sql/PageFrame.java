@@ -29,6 +29,10 @@ public interface PageFrame {
 
     long getPageValueCount(int columnIndex);
 
+    default long getPageLength(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
+
     default long getFirstTimestamp() {
         throw new UnsupportedOperationException();
     }

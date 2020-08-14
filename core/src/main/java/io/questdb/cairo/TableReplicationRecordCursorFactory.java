@@ -9,7 +9,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -28,7 +27,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
     public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName) {
         super(createMetadata(engine, tableName));
-        this.cursor = new TableReplicationRecordCursor(getMetadata());
+        this.cursor = new TableReplicationRecordCursor();
         this.engine = engine;
         this.tableName = tableName;
     }
@@ -58,30 +57,28 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     public static class TableReplicationRecordCursor implements PageFrameCursor {
-        private final LongList columnPageNextAddress = new LongList();
-        private final LongList columnPageAddress = new LongList();
+        private final LongList columnFrameAddresses = new LongList();
+        private final LongList columnFramesLengths = new LongList();
         private final ReplicationPageFrame frame = new ReplicationPageFrame();
-        private final LongList topsRemaining = new LongList();
-        private final IntList pages = new IntList();
-        private final RecordMetadata metadata;
         private TableReader reader;
         private int partitionIndex;
         private int partitionCount;
-        private final LongList pageSizes = new LongList();
-        private long pageValueCount;
-        private long partitionRemaining = 0L;
+        private int columnCount;
+        private int timestampColumnIndex;
+        private long nFrameRows;
         private long firstTimestamp = Long.MIN_VALUE;
         private long lastTimestamp = Numbers.LONG_NaN;;
 
-        private TableReplicationRecordCursor(RecordMetadata metadata) {
+        private TableReplicationRecordCursor() {
             super();
-            this.metadata = metadata;
         }
 
         @Override
         public void close() {
-            reader = Misc.free(reader);
-            reader = null;
+            if (null != reader) {
+                reader = Misc.free(reader);
+                reader = null;
+            }
         }
 
         @Override
@@ -89,29 +86,48 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return reader.getSymbolMapReader(columnIndex);
         }
 
+        private TableReplicationRecordCursor of(TableReader reader) {
+            this.reader = reader;
+            columnCount = reader.getMetadata().getColumnCount();
+            timestampColumnIndex = reader.getMetadata().getTimestampIndex();
+            columnFrameAddresses.ensureCapacity(columnCount);
+            columnFramesLengths.ensureCapacity(columnCount);
+            toTop();
+            return this;
+        }
+
         @Override
         public @Nullable ReplicationPageFrame next() {
-
-            if (partitionIndex > -1) {
-                final long m = computePageMin(reader.getColumnBase(partitionIndex));
-                if (m < Long.MAX_VALUE) {
-                    return computeFrame(m);
-                }
-            }
-
             while (++partitionIndex < partitionCount) {
-                partitionRemaining = reader.openPartition(partitionIndex);
-                if (partitionRemaining > 0) {
+                nFrameRows = reader.openPartition(partitionIndex);
+                if (nFrameRows > 0) {
                     final int base = reader.getColumnBase(partitionIndex);
-                    // copy table tops
-                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                        final int columnIndex = i;
-                        topsRemaining.setQuick(i, reader.getColumnTop(base, columnIndex));
-                        pages.setQuick(i, 0);
-                        pageSizes.setQuick(i, -1L);
-                    }
+                    for (int i = 0; i < columnCount; i++) {
+                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i));
+                        assert col.getPageCount() == 1;
+                        long columnPageAddress = col.getPageAddress(0);
+                        long columnPageLength;
 
-                    return computeFrame(computePageMin(base));
+                        int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(i)));
+                        if (columnSizeBinaryPower >= 0) {
+                            columnPageLength = nFrameRows << columnSizeBinaryPower;
+                        } else {
+                            final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
+                            long lastStrLenOffset = (nFrameRows - 1) << 3;
+                            long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
+                            int lastStrLen = col.getStrLen(lastStrOffset);
+                            columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
+                        }
+
+                        columnFrameAddresses.setQuick(i, columnPageAddress);
+                        columnFramesLengths.setQuick(i, columnPageLength);
+
+                        if (timestampColumnIndex == i) {
+                            firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
+                            lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
+                        }
+                    }
+                    return frame;
                 }
             }
             return null;
@@ -119,14 +135,8 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void toTop() {
-            this.partitionIndex = -1;
-            this.partitionCount = reader.getPartitionCount();
-            pages.setAll(metadata.getColumnCount(), 0);
-            topsRemaining.setAll(metadata.getColumnCount(), 0);
-            columnPageAddress.setAll(metadata.getColumnCount(), 0);
-            columnPageNextAddress.setAll(metadata.getColumnCount(), 0);
-            pageSizes.setAll(metadata.getColumnCount(), -1L);
-            pageValueCount = 0;
+            partitionIndex = -1;
+            partitionCount = reader.getPartitionCount();
             firstTimestamp = Long.MIN_VALUE;
             lastTimestamp = 0;
         }
@@ -135,82 +145,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         public long size() {
             return reader.size();
         }
-
-        private TableReplicationRecordCursor of(TableReader reader) {
-            this.reader = reader;
-            toTop();
-            return this;
-        }
-
-        private TableReplicationRecordCursor of(TableReader reader, long fromRow, long toRow) {
-            this.reader = reader;
-            toTop();
-            return this;
-        }
-
-        private ReplicationPageFrame computeFrame(long min) {
-            int timestampIndex = reader.getMetadata().getTimestampIndex();
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                final int columnIndex = i;
-                final long top = topsRemaining.getQuick(i);
-                if (top > 0) {
-                    topsRemaining.setQuick(i, top - min);
-                    columnPageAddress.setQuick(columnIndex, 0);
-                } else {
-                    long addr = columnPageNextAddress.getQuick(i);
-                    long psz = pageSizes.getQuick(i);
-                    pageSizes.setQuick(i, psz - min);
-                    columnPageAddress.setQuick(i, addr);
-                    int columnSize = Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(columnIndex)));
-                    columnPageNextAddress.setQuick(i, addr + (min << columnSize));
-                }
-
-                if (timestampIndex == columnIndex) {
-                    firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress.get(timestampIndex));
-                    lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress.get(timestampIndex) + (Long.BYTES * (min - 1)));
-                }
-            }
-
-            pageValueCount = min;
-            partitionRemaining -= min;
-            return frame;
-        }
-
-        private long computePageMin(int base) {
-            // find min frame length
-            long min = Long.MAX_VALUE;
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                final long top = topsRemaining.getQuick(i);
-                if (top > 0) {
-                    if (min > top) {
-                        min = top;
-                    }
-                } else {
-                    long psz = pageSizes.getQuick(i);
-                    if (psz > 0) {
-                        if (min > psz) {
-                            min = psz;
-                        }
-                    } else if (partitionRemaining > 0) {
-                        final int page = pages.getQuick(i);
-                        pages.setQuick(i, page + 1);
-                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i));
-                        // page size is liable to change after it is mapped
-                        // it is important to map page first and call pageSize() after
-                        columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        int columnSize = Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i)));
-                        psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSize : partitionRemaining;
-                        final long m = Math.min(psz, partitionRemaining);
-                        pageSizes.setQuick(i, m);
-                        if (min > m) {
-                            min = m;
-                        }
-                    }
-                }
-            }
-            return min;
-        }
-
+        
         public void from(int partitionIndex, long partitionRow) {
             // TODO: Replication
             if (partitionIndex != 0 || partitionRow != 0) {
@@ -222,12 +157,12 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getPageAddress(int columnIndex) {
-                return columnPageAddress.getQuick(columnIndex);
+                return columnFrameAddresses.getQuick(columnIndex);
             }
 
             @Override
             public long getPageValueCount(int columnIndex) {
-                return pageValueCount;
+                return nFrameRows;
             }
 
             @Override
@@ -241,7 +176,12 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             public int getPartitionIndex() {
-                return 0;
+                return partitionIndex;
+            }
+
+            @Override
+            public long getPageLength(int columnIndex) {
+                return columnFramesLengths.getQuick(columnIndex);
             }
         }
     }

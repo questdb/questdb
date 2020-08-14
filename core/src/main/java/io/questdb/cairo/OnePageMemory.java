@@ -232,7 +232,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
-        if (offset + len + Integer.BYTES < size) {
+        if (offset + len * 2 + Integer.BYTES <= size) {
             if (len == TableUtils.NULL_LEN) {
                 return null;
             }
