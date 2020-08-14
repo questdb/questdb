@@ -769,7 +769,6 @@ public class TableWriter implements Closeable {
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
-
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -2739,13 +2738,18 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nFirstRow, long nRowsAdded) {
+    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
         bumpMasterRef();
-        if (partitionBy != PartitionBy.NONE) {
-            if (nFirstRow == 0) {
-                switchPartition(firstTimestamp);
-            }
+        if (txPartitionCount == 0) {
+            openFirstPartition(firstTimestamp);
         }
+
+        if (partitionBy != PartitionBy.NONE && firstTimestamp > partitionHi) {
+            switchPartition(firstTimestamp);
+        }
+
+        // Entire block must be in the same partition
+        assert lastTimestamp < partitionHi;
 
         // Add binary and string indexes
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -2793,7 +2797,7 @@ public class TableWriter implements Closeable {
             }
         }
 
-        commitBlock(firstTimestamp, lastTimestamp, nFirstRow + nRowsAdded);
+        commitBlock(firstTimestamp, lastTimestamp, transientRowCount + nRowsAdded);
         setAppendPosition(transientRowCount);
     }
 

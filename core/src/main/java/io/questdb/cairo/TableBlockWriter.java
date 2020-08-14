@@ -8,7 +8,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class TableBlockWriter implements Closeable {
@@ -19,7 +18,6 @@ public class TableBlockWriter implements Closeable {
     private final FilesFacade ff;
     private final int mkDirMode;
     private final Path path = new Path();
-    private long tempMem8b = Unsafe.malloc(8);
 
     private int rootLen;
     private RecordMetadata metadata;
@@ -60,17 +58,8 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
-        for (int i = 0; i < columnCount; i++) {
-            columns.get(i).close();
-        }
-        try {
-            TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
-            long nFirstRow = TableUtils.readPartitionSize(ff, path, tempMem8b);
-            TableUtils.writePartitionSize(ff, path, tempMem8b, nFirstRow + nRowsAdded);
-            writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nFirstRow, nRowsAdded);
-        } finally {
-            path.trimTo(rootLen);
-        }
+        LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$("[firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
     }
 
     private void openPartition(long timestamp) {
@@ -81,12 +70,8 @@ public class TableBlockWriter implements Closeable {
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
-            if (!ff.exists(path.trimTo(plen).concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
-                TableUtils.writePartitionSize(ff, path, tempMem8b, 0);
-            }
 
             assert columnCount > 0;
-
             for (int i = 0; i < columnCount; i++) {
                 final CharSequence name = metadata.getColumnName(i);
                 AppendMemory mem = columns.getQuick(i);
@@ -124,15 +109,11 @@ public class TableBlockWriter implements Closeable {
 
     @Override
     public void close() {
-        if (tempMem8b != 0) {
-            clear();
-            for (int i = 0, sz = columns.size(); i < sz; i++) {
-                columns.getQuick(i).close();
-            }
-            columns.clear();
-            path.close();
-            Unsafe.free(tempMem8b, 8);
-            tempMem8b = 0;
+        clear();
+        for (int i = 0, sz = columns.size(); i < sz; i++) {
+            columns.getQuick(i).close();
         }
+        columns.clear();
+        path.close();
     }
 }
