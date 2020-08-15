@@ -55,6 +55,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final HttpSqlExecutionInterruptor execInterruptor;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
+    private final RescheduleContext retryRescheduleContext = retry -> {
+        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
+        throw RetryOperationException.INSTANCE;
+    };
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
@@ -307,7 +311,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         try {
             parseResult = multipartContentParser.parse(start, buf, multipartListener);
         } catch (RetryOperationException e) {
-            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getNextTokenPtr(), buf, bufRemaining,  multipartContentParser.getPreviousState());
+            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);
             throw e;
         }
 
@@ -472,11 +476,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             try {
                 if (multipartParserState.multipartRetry) {
                     processor.onRequestRetry(this);
-                    multipartContentParser.setState(multipartParserState.state);
-                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retry -> {
-                        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
-                        throw RetryOperationException.INSTANCE;
-                    });
+                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retryRescheduleContext);
                 } else {
                     processor.onRequestRetry(this);
                 }
