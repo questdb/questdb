@@ -58,7 +58,7 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
-        LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$("[firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
     }
 
@@ -111,7 +111,7 @@ public class TableBlockWriter implements Closeable {
     public void close() {
         clear();
         for (int i = 0, sz = columns.size(); i < sz; i++) {
-            columns.getQuick(i).close();
+            columns.getQuick(i).close(false);
         }
         columns.clear();
         path.close();
