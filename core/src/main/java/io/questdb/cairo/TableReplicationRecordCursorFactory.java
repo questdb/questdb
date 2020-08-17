@@ -108,6 +108,39 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                         long columnPageAddress = col.getPageAddress(0);
                         long columnPageLength;
 
+                        int columnType = reader.getMetadata().getColumnType(i);
+                        switch (columnType) {
+                            case ColumnType.STRING: {
+                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
+                                long lastStrLenOffset = (nFrameRows - 1) << 3;
+                                long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
+                                int lastStrLen = col.getStrLen(lastStrOffset);
+                                if (lastStrLen == TableUtils.NULL_LEN) {
+                                    lastStrLen = 0;
+                                }
+                                columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
+                                break;
+                            }
+
+                            case ColumnType.BINARY: {
+                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
+                                long lastBinLenOffset = (nFrameRows - 1) << 3;
+                                long lastBinOffset = strLenCol.getLong(lastBinLenOffset);
+                                long lastBinLen = col.getBinLen(lastBinOffset);
+                                if (lastBinLen == TableUtils.NULL_LEN) {
+                                    lastBinLen = 0;
+                                }
+                                columnPageLength = lastBinOffset + Long.BYTES + lastBinLen;
+                                break;
+                            }
+
+                            default: {
+                                int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(i)));
+                                columnPageLength = nFrameRows << columnSizeBinaryPower;
+                            }
+
+                        }
+
                         int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(i)));
                         if (columnSizeBinaryPower >= 0) {
                             columnPageLength = nFrameRows << columnSizeBinaryPower;
@@ -145,7 +178,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         public long size() {
             return reader.size();
         }
-        
+
         public void from(int partitionIndex, long partitionRow) {
             // TODO: Replication
             if (partitionIndex != 0 || partitionRow != 0) {
