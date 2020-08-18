@@ -13,9 +13,6 @@
   <a href="https://circleci.com/gh/questdb/questdb">
     <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
   </a>
-  <a href="https://github.com/questdb/questdb/releases/tag/5.0.1">
-    <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
-  </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
@@ -28,7 +25,7 @@
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
 
-[![All Contributors](https://img.shields.io/badge/all_contributors-6-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-6-orange.svg?style=flat)](#contributors-)
 
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
@@ -60,12 +57,12 @@ Interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
-    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" style="display: block; margin: 0 auto;" />
+  <a href="https://questdb.io/docs/guide/web-console">
+    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console" target="_blank" ref="noopener noreferrer" style="display: block; text-align: center; margin-bottom: 16px;">
+  <a href="https://questdb.io/docs/guide/web-console">
     Web Console guide
   </a>
 </div>
