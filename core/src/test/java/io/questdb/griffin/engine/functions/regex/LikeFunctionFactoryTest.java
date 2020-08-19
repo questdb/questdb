@@ -50,7 +50,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                 compiler.compile("select * from x where name like null", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL likeString");
+                TestUtils.assertContains(e.getFlyweightMessage(), "NULL input not supported for like");
             }
         });
     }
@@ -136,60 +136,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testLikeCharacterExactMatchIgnoreCase() throws Exception {
-        assertMemoryLeak(() -> {
-
-
-            String sql="create table x as (\n" +
-                    "select cast('h' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('H' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('a' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('A' as string) as name from long_sequence(1)\n" +
-                    ")";
-            compiler.compile(sql, sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like 'H'", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false);
-                    Assert.assertEquals(sink.toString().replace("\n","").length(), 2);
-                    sink.clear();
-
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLikeStringExactMatchIgnoreCase() throws Exception {
-        assertMemoryLeak(() -> {
-
-            String sql="create table x as (\n" +
-                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
-                    "union\n" +
-                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
-                    ")";
-            compiler.compile(sql, sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name like 'BDGDGGG'", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false);
-                    Assert.assertEquals(sink.toString().replace("\n",""), "BDGDGGG");
-                    sink.clear();
-
-                }
-            }
-        });
-    }
 
     @Test
     public void testLikeStringPercentageAtStart() throws Exception {
@@ -319,6 +265,60 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false);
                     Assert.assertEquals(sink.toString().split("\n").length, 2);
+                    sink.clear();
+
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyLikeString() throws Exception {
+        assertMemoryLeak(() -> {
+
+            String sql="create table x as (\n" +
+                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
+                    ")";
+            compiler.compile(sql, sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name like ''", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), false);
+                    Assert.assertEquals(sink.toString(), "");
+                    sink.clear();
+
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidRegex() throws Exception {
+        assertMemoryLeak(() -> {
+
+            String sql="create table x as (\n" +
+                    "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
+                    ")";
+            compiler.compile(sql, sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name like '[][n'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), false);
+                    Assert.assertEquals(sink.toString(), "");
                     sink.clear();
 
                 }

@@ -61,7 +61,7 @@ public class LikeCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = getArg().getStr(rec);
-            return cs != null && cs.length()==1 && Character.toLowerCase(cs.charAt(0))==Character.toLowerCase(expected);
+            return cs != null && cs.length()==1 && cs.charAt(0)==expected;
         }
 
         @Override
