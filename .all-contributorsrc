@@ -65,6 +65,16 @@
         "code",
         "platform"
       ]
+    },
+    {
+      "login": "rawkode",
+      "name": "rawkode",
+      "avatar_url": "https://avatars3.githubusercontent.com/u/145816?v=4",
+      "profile": "https://rawkode.com",
+      "contributions": [
+        "code",
+        "infra"
+      ]
     }
   ],
   "contributorsPerLine": 7,
