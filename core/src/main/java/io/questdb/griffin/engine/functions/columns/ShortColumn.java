@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 
-public class ShortColumn extends ShortFunction implements StatelessFunction, NoArgFunction {
+public class ShortColumn extends ShortFunction implements Function {
     private final int columnIndex;
 
     public ShortColumn(int position, int columnIndex) {

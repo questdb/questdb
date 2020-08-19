@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -50,7 +48,7 @@ public class RndByteFunctionFactory implements FunctionFactory {
 
     }
 
-    private static class RndFunction extends ByteFunction implements StatelessFunction, NoArgFunction {
+    private static class RndFunction extends ByteFunction implements Function {
         private final byte lo;
         private final byte range;
         private Rnd rnd;

@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.VirtualMemory;
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
@@ -32,11 +32,11 @@ import io.questdb.std.Misc;
 
 public class LongTreeChain extends AbstractRedBlackTree {
     private final TreeCursor cursor = new TreeCursor();
-    private final VirtualMemory valueChain;
+    private final ContiguousVirtualMemory valueChain;
 
     public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
         super(keyPageSize, keyMaxPages);
-        this.valueChain = new VirtualMemory(valuePageSize, valueMaxPages);
+        this.valueChain = new ContiguousVirtualMemory(valuePageSize, valueMaxPages);
     }
 
     @Override

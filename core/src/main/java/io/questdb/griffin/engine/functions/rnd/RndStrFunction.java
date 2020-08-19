@@ -24,14 +24,14 @@
 
 package io.questdb.griffin.engine.functions.rnd;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Rnd;
 
-class RndStrFunction extends StrFunction implements StatelessFunction {
+class RndStrFunction extends StrFunction implements Function {
     private final int lo;
     private final int range;
     private final int nullRate;

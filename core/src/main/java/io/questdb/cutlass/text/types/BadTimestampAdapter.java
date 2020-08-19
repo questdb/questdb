@@ -50,4 +50,9 @@ public final class BadTimestampAdapter  extends TimestampAdapter {
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
         row.putTimestamp(column, Numbers.LONG_NaN);
     }
+
+    @Override
+    public long getTimestamp(DirectByteCharSequence value) {
+        return Numbers.LONG_NaN;
+    }
 }

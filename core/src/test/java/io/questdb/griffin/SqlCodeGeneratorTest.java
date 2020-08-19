@@ -108,6 +108,26 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterConstantTrue() throws Exception {
+        final String expected = "sum\n" +
+                "551.3822454600645\n";
+
+        assertQuery(expected,
+                "(select sum(a) from x) where 1=1",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(12)" +
+                        ") timestamp(k)",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testAvgDoubleColumnWithNaNs() throws Exception {
         final String expected = "a\tk\n";
 
@@ -687,6 +707,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBug484() throws Exception {
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("sym\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n",
+                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
+                null
+        );
+
+        // also good numbers, extra top calls are due to symbol column API check
+        // tables without symbol columns will skip this check
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
     public void testFilterOnIntrinsicFalse() throws Exception {
         assertQuery(null,
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
@@ -844,6 +894,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexedFilteredEmpty() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
+        final String expected = "a\tb\tk\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match() and 1 = 2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                false);
+
+        // these value are also ok because ddl2 is present, there is another round of check for that
+        // this ensures that "init" on filter is invoked
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
@@ -1013,6 +1089,53 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "44.80468966861358\t\t\n");
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterOnIndexAndExpression() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("contactId\n" +
+                        "KOJSOLDYRO\n" +
+                        "SKEDJ\n",
+                "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'ZIMN'\n" +
+                        "    AND E.eventId = 'IPHZ'\n" +
+                        "EXCEPT\n" +
+                        "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events  E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'MLGL'\n" +
+                        "    AND E.site__clean = 'EPIH'",
+                "create table contact_events as (" +
+                        "select" +
+                        " rnd_str(5,10,0) id," +
+                        " rnd_str(5,10,0) contactId," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_source," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_medium," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_campaign," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignId," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignGroupId," +
+                        " rnd_symbol(5,4,4,1) site__query__adsetId," +
+                        " rnd_symbol(5,4,4,1) site__query__adId," +
+                        " rnd_symbol(5,4,4,1) site__main," +
+                        " rnd_str(5,10,0) site__queryString," +
+                        " rnd_str(5,10,0) site__clean," +
+                        " rnd_symbol(5,4,4,1) site__hash," +
+                        " rnd_symbol(5,4,4,1) eventId," +
+                        " rnd_symbol(5,4,4,1) groupId" +
+                        " from long_sequence(100)" +
+                        ")," +
+                        " index(groupId)",
+                null
+        );
     }
 
     @Test
@@ -1731,6 +1854,27 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testLatestByKeyValueFilteredEmpty() throws Exception {
+        TestMatchFunctionFactory.clear();
+        assertQuery("a\tb\tk\n",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and 1 = 2 and test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(200)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false
+        );
+
+        // this is good
+        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
@@ -4115,7 +4259,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
-        Sequence seq = messageBus.getVectorAggregateSubSequence();
+        Sequence seq = engine.getMessageBus().getVectorAggregateSubSequence();
         // consume sequence fully and do nothing
         // this might be needed to make sure we don't consume things other tests publish here
         while (true) {
@@ -4129,7 +4273,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(messageBus);
+        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);

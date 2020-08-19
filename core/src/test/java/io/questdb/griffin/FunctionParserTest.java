@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -455,17 +454,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testImplicitConstantBin() throws SqlException {
         BinFunction function = new BinFunction(0) {
             @Override
-            public void close() {
-            }
-
-            @Override
             public BinarySequence getBin(Record rec) {
                 return null;
-            }
-
-            @Override
-            public boolean isConstant() {
-                return true;
             }
 
             @Override
@@ -474,7 +464,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            public boolean isConstant() {
+                return true;
             }
         };
 
@@ -514,14 +505,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
-
-                    @Override
-                    public void close() {
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-                    }
                 };
             }
         });
@@ -549,10 +532,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }
@@ -582,10 +561,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-                    }
                 };
             }
         });
@@ -613,10 +588,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }
@@ -646,10 +617,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-                    }
                 };
             }
         });
@@ -678,10 +645,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-                    }
                 };
             }
         });
@@ -709,10 +672,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }
@@ -746,10 +705,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }
@@ -797,10 +752,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-                    }
                 };
             }
         });
@@ -835,10 +786,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }
@@ -885,10 +832,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
-                    }
-
-                    @Override
-                    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
                     }
                 };
             }

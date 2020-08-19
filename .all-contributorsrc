@@ -55,6 +55,46 @@
         "code",
         "ideas"
       ]
+    },
+    {
+      "login": "mick2004",
+      "name": "mick2004",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/2042132?v=4",
+      "profile": "https://github.com/mick2004",
+      "contributions": [
+        "code",
+        "platform"
+      ]
+    },
+    {
+      "login": "rawkode",
+      "name": "rawkode",
+      "avatar_url": "https://avatars3.githubusercontent.com/u/145816?v=4",
+      "profile": "https://rawkode.com",
+      "contributions": [
+        "code",
+        "infra"
+      ]
+    },
+    {
+      "login": "solidnerd",
+      "name": "Niclas Mietz",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/886383?v=4",
+      "profile": "https://solidnerd.dev",
+      "contributions": [
+        "code",
+        "infra"
+      ]
+    },
+    {
+      "login": "solanav",
+      "name": "solanav",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/32469597?v=4",
+      "profile": "http://solanav.github.io",
+      "contributions": [
+        "code",
+        "doc"
+      ]
     }
   ],
   "contributorsPerLine": 7,

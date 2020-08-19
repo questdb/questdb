@@ -34,11 +34,12 @@
         <nodejs.version>v12.16.2</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
+        <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>5.0.2-SNAPSHOT</version>
+    <version>5.0.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>core</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
 
@@ -180,6 +181,7 @@
                             <descriptors>
                                 <descriptor>src/main/assembly/binaries.xml</descriptor>
                             </descriptors>
+                            <finalName>questdb</finalName>
                         </configuration>
                     </execution>
                     <execution>
@@ -196,14 +198,6 @@
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.19</version>
-                <configuration>
-                    <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED</argLine>
-                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -362,7 +356,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-windows-amd64</runtime.name>
+                <archive.name>${project.version}-rt-windows-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -375,7 +370,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-linux-amd64</runtime.name>
+                <archive.name>${project.version}-rt-linux-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -388,7 +384,8 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-linux-aarch64</runtime.name>
+                <archive.name>${project.version}-rt-linux-aarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
@@ -400,10 +397,38 @@
                 </os>
             </activation>
             <properties>
-                <runtime.name>rt-osx-amd64</runtime.name>
+                <archive.name>${project.version}-rt-osx-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>
+		<profile>
+			<id>jacoco</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.jacoco</groupId>
+						<artifactId>jacoco-maven-plugin</artifactId>
+						<version>0.8.5</version>
+						<executions>
+							<execution>
+								<id>default-prepare-agent</id>
+								<goals>
+									<goal>prepare-agent</goal>
+								</goals>
+							</execution>
+							<execution>
+								<id>default-report</id>
+								<phase>test</phase>
+								<goals>
+									<goal>report</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
     </profiles>
 
     <dependencies>

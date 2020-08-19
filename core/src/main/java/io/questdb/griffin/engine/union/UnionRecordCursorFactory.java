@@ -59,14 +59,16 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
+        RecordCursor masterCursor = null;
+        RecordCursor slaveCursor = null;
         try {
+            masterCursor = masterFactory.getCursor(executionContext);
+            slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (CairoException ex) {
-            masterCursor.close();
-            slaveCursor.close();
+            Misc.free(masterCursor);
+            Misc.free(slaveCursor);
             throw ex;
         }
     }

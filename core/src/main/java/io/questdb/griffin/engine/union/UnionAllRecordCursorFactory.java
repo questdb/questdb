@@ -42,9 +42,7 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
         this.metadata = masterFactory.getMetadata();
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-
-        this.cursor = new UnionAllRecordCursor(
-        );
+        this.cursor = new UnionAllRecordCursor();
     }
 
     @Override

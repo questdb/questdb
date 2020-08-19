@@ -42,8 +42,8 @@ import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    protected static SqlExecutionContext sqlExecutionContext;
     private static final LongList rows = new LongList();
+    protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
@@ -96,17 +96,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new CairoEngine(configuration, messageBus);
+        engine = new CairoEngine(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
-                messageBus,
-                1, engine)
-                        .with(
-                                AllowAllCairoSecurityContext.INSTANCE,
-                                bindVariableService,
-                                null,
-                                -1,
-                                null);
+                engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
         bindVariableService.clear();
     }
 

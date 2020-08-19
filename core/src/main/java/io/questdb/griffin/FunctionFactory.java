@@ -56,6 +56,9 @@ public interface FunctionFactory {
      * <li>H = long256</li>
      * </ul>
      *
+     * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
+     * variable expressions.
+     *
      * @return signature, for example "substr(SII)"
      */
      String getSignature();

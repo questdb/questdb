@@ -106,7 +106,6 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            MessageBus messageBus,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -115,7 +114,6 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                messageBus,
                 functionFactoryCache
         );
     }
@@ -125,15 +123,13 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine,
-            MessageBus messageBus
+            CairoEngine cairoEngine
     ) {
         return create(
                 configuration,
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                messageBus,
                 null
         );
     }
@@ -212,7 +208,7 @@ public class HttpServer implements Closeable {
         s.bind(new HttpRequestProcessorFactory() {
             @Override
             public HttpRequestProcessor newInstance() {
-                return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+                return new StaticContentProcessor(configuration);
             }
 
             @Override

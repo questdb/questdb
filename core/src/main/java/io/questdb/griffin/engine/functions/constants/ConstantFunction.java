@@ -24,17 +24,11 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StatelessFunction;
+import io.questdb.cairo.sql.Function;
 
-public interface ConstantFunction extends StatelessFunction {
+public interface ConstantFunction extends Function {
     @Override
     default boolean isConstant() {
         return true;
-    }
-
-    @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 }

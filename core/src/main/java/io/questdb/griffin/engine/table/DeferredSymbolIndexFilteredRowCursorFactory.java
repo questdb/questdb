@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.std.IntList;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
@@ -39,11 +40,12 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
             String symbol,
             Function filter,
             boolean cachedIndexReaderCursor,
-            int indexDirection
+            int indexDirection,
+            IntList columnIndexes
     ) {
         this.columnIndex = columnIndex;
         this.symbol = symbol;
-        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
+        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
     }
 
     @Override

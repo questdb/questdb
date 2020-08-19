@@ -27,10 +27,8 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
 
 public class LineProtoReceiver extends AbstractLineProtoReceiver {
-    private final DirectByteCharSequence byteSequence = new DirectByteCharSequence();
     private final int bufLen;
     private long buf;
 
@@ -57,7 +55,6 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
         boolean ran = false;
         int count;
         while ((count = nf.recv(fd, buf, bufLen)) > 0) {
-            byteSequence.of(buf, buf + count);
             lexer.parse(buf, buf + count);
             lexer.parseLast();
 

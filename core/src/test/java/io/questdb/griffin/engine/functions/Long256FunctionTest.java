@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -50,10 +48,6 @@ public class Long256FunctionTest {
 
         @Override
         public void getLong256(Record rec, CharSink sink) {
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 

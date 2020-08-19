@@ -24,11 +24,14 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -66,32 +69,13 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            final Record baseRecord = baseCursor.getRecord();
-            final int n = groupByFunctions.size();
-
-            if (baseCursor.hasNext()) {
-                GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
-            } else {
-                return EmptyTableRecordCursor.INSTANCE;
-            }
-
-            while (baseCursor.hasNext()) {
-                interruptor.checkInterrupted();
-                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-            }
-
-            cursor.toTop();
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
-            for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
-                groupByFunctions.getQuick(i).init(cursor, executionContext);
-            }
-        } finally {
+            return cursor.of(baseCursor, executionContext);
+        } catch (CairoException | CairoError e) {
             Misc.free(baseCursor);
+            throw e;
         }
-        return cursor;
     }
 
     @Override
@@ -106,10 +90,25 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
+        // hold on to reference of base cursor here
+        // because we use it as symbol table source for the functions
+        private RecordCursor baseCursor;
         private int recordsRemaining = 1;
 
         @Override
         public void close() {
+            this.baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return (SymbolTable) groupByFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public void toTop() {
+            recordsRemaining = 1;
+            MultiArgFunction.toTop(groupByFunctions);
         }
 
         @Override
@@ -122,9 +121,29 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             return recordsRemaining-- > 0;
         }
 
-        @Override
-        public void toTop() {
-            recordsRemaining = 1;
+        RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+            this.baseCursor = baseCursor;
+            final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
+
+            final Record baseRecord = baseCursor.getRecord();
+            final int n = groupByFunctions.size();
+
+            if (baseCursor.hasNext()) {
+                GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
+            } else {
+                this.baseCursor = Misc.free(baseCursor);
+                return EmptyTableRecordCursor.INSTANCE;
+            }
+
+            while (baseCursor.hasNext()) {
+                interruptor.checkInterrupted();
+                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+            }
+
+            toTop();
+
+            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
+            return this;
         }
 
         @Override

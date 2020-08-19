@@ -955,6 +955,13 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static short parseShort(CharSequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence, p, lim);
+    }
+
     public static double roundDown(double value, int scale) throws NumericException {
         if (scale < pow10max && scale > -pow10max) {
             return roundDown0(value, scale);
@@ -1700,6 +1707,45 @@ public final class Numbers {
         return value;
     }
 
+    private static short parseShort0(CharSequence sequence, final int p, int lim) throws NumericException {
+
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        short val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            if (val < (Short.MIN_VALUE / 10)) {
+                throw NumericException.INSTANCE;
+            }
+            short r = (short) ((val << 3) + (val << 1) - (c - '0'));
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Short.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : (short) -val;
+    }
+
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
@@ -2419,5 +2465,40 @@ public final class Numbers {
         longHexAppenderPad64[62] = a64;
         longHexAppenderPad64[63] = a64;
         longHexAppenderPad64[64] = a64;
+    }
+
+    public static double longToDouble(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float longToFloat(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
+    }
+
+    public static double intToDouble(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float intToFloat(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Float.NaN;
+    }
+
+    public static long intToLong(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Numbers.LONG_NaN;
     }
 }

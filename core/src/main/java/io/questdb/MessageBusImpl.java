@@ -24,14 +24,14 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnIndexerTask> indexerQueue;
@@ -42,13 +42,10 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence vectorAggregatePubSeq;
     private final MCSequence vectorAggregateSubSeq;
 
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private final MPSequence telemetryPubSeq;
-    private final SCSequence telemetrySubSeq;
 
-    private final PropServerConfiguration configuration;
+    private final CairoConfiguration configuration;
 
-    public MessageBusImpl(PropServerConfiguration configuration) {
+    public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
 
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
@@ -59,17 +56,12 @@ public class MessageBusImpl implements MessageBus {
         this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
 
-        this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
-        this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
-        this.telemetrySubSeq = new SCSequence();
-
         indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
-        telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
     }
 
     @Override
-    public PropServerConfiguration getConfiguration() {
+    public CairoConfiguration getConfiguration() {
         return configuration;
     }
 
@@ -101,20 +93,5 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSequence() {
         return vectorAggregateSubSeq;
-    }
-
-    @Override
-    public RingQueue<TelemetryTask> getTelemetryQueue() {
-        return telemetryQueue;
-    }
-
-    @Override
-    public Sequence getTelemetryPubSequence() {
-        return telemetryPubSeq;
-    }
-
-    @Override
-    public SCSequence getTelemetrySubSequence() {
-        return telemetrySubSeq;
     }
 }

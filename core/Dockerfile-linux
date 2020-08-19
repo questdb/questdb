@@ -15,13 +15,13 @@ RUN ../apache-maven-3.6.3/bin/mvn clean package -DskipTests -Dprofile.install-lo
 
 WORKDIR /build/questdb/core/target
 
-RUN tar xvfz questdb-rt-linux-amd64.tar.gz
+RUN tar xvfz questdb-*-rt-linux-amd64.tar.gz
 
 FROM debian:stretch-slim
 
 WORKDIR /app
 
-COPY --from=0 /build/questdb/core/target/rt-linux-amd64 .
+COPY --from=0 /build/questdb/core/target/questdb-*-rt-linux-amd64 .
 
 WORKDIR /app/bin
 
@@ -40,6 +40,7 @@ RUN echo "PS1='🐳  \[\033[1;36m\]\h \[\033[1;34m\]\W\[\033[0;35m\] \[\033[1;36
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
 EXPOSE 8812/tcp
+EXPOSE 9009/tcp
 
 # Run questdb when the container launches
-CMD ["/app/bin/java", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb"]
+CMD ["/app/bin/java", "--add-exports", "java.base/jdk.internal.math=io.questdb", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]

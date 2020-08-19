@@ -25,18 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
     public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         super(functions, supportsRandomAccess);
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return ((SymbolFunction) recordA.getFunctions().getQuick(columnIndex));
     }
 }

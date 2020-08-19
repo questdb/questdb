@@ -13,11 +13,8 @@
   <a href="https://circleci.com/gh/questdb/questdb">
     <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
   </a>
-  <a href="https://github.com/questdb/questdb/releases/tag/5.0.1">
-    <img src="https://img.shields.io/github/downloads/questdb/questdb/total" />
-  </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/core" />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
   <a href="https://serieux-saucisson-79115.herokuapp.com/">
     <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
@@ -27,27 +24,46 @@
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-
-[![All Contributors](https://img.shields.io/badge/all_contributors-5-orange.svg)](#contributors-)
-
+[![All Contributors](https://img.shields.io/badge/all_contributors-9-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
 ## What is QuestDB
 
-QuestDB is an open-source database designed to make time-series lightning fast
+QuestDB is an open source database designed to make time series lightning fast
 and easy.
 
 It uses a column-oriented approach, vectorized execution, SIMD instructions, and
 a whole array of low-latency techniques. The whole code base is built from
-scratch, without dependencies, in the name of performance. We are 100% free from
-garbage collection.
+scratch and without dependencies, in the name of performance. We are 100% free
+from garbage collection.
 
 QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
-Wire protocol, a high-performance HTTP API, and even supports ingestion with
-Influx Line Protocol. It supports both relational and time-series joins, which
+wire protocol, a high-performance REST API, and even supports ingestion with
+InfluxDB line protocol. It supports both relational and time-series joins, which
 makes it easy to correlate data over time. Writes are durably committed to disk,
-meaning that the data is safe, yet instantly accessible.
+meaning that the data is safe - yet instantly accessible.
+
+## Live demo
+
+Query [our demo](http://try.questdb.io:9000) dataset with 1.6 billion rows in
+milliseconds.
+
+## Web Console
+
+Interactive console to import data (drag and drop) and start querying right
+away. Check our Web Console guide to get started:
+
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console">
+    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
+  </a>
+</div>
+<div align="center">
+  <a href="https://questdb.io/docs/guide/web-console">
+    Web Console guide
+  </a>
+</div>
 
 ## Performance figures
 
@@ -78,33 +94,35 @@ Execution time on a c5.metal instance using 16 of the 96 threads available.
 
 The easiest way to get started is with Docker:
 
-```shell script
-docker pull questdb/questdb
+```script
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
+You can more information about Docker usage
+[here](https://hub.docker.com/repository/docker/questdb/questdb/).
+
 #### Alternative methods
 
-- [Start with Homebrew](https://questdb.io/docs/guideHomebrew)
-- [Start with the binaries](https://questdb.io/docs/guideBinaries)
+- [Start with Homebrew](https://questdb.io/docs/guide/homebrew)
+- [Start with the binaries](https://questdb.io/docs/guide/binaries)
 
 ### Connecting to QuestDB
 
 You can interact with QuestDB using:
 
-- [Web Console](https://questdb.io/docs/usingWebConsole) listening on port
+- [Web Console](https://questdb.io/docs/guide/web-console) listening on port
   `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres Wire](https://questdb.io/docs/guidePSQL), for example with PSQL
-  (alpha) on port `8812`
-- [HTTP API](https://questdb.io/docs/guideREST) listening on port `9000`
+- [Postgres wire](https://questdb.io/docs/guide/postgres-wire), for example with
+  PSQL (alpha) on port `8812`
+- [REST API](https://questdb.io/docs/guide/rest) listening on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
 
 You can connect to the Postgres server as follows. The default password is
-`quest`
+`quest`:
 
-```shell script
+```script
 psql -h localhost -p 8812 -U admin -W -d qdb
 ```
 
@@ -116,7 +134,7 @@ psql -h localhost -p 8812 -U admin -W -d qdb
 - Maven 3
 - Node.js 12 / NPM 6
 
-```shell script
+```script
 java --version
 mvn --version
 node --version
@@ -124,13 +142,13 @@ node --version
 
 #### (b) Clone the Repository
 
-```shell script
+```script
 git clone git@github.com:questdb/questdb.git
 ```
 
 #### (c) Build the Code
 
-```shell script
+```script
 cd questdb
 mvn clean package -DskipTests
 ```
@@ -140,37 +158,37 @@ The build should take around 2 minutes. You can remove `-DskipTests` to run the
 
 #### (d) Run QuestDB
 
-```shell script
+```script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/core-5.0.2-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/questdb-5.0.3-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources
 
 Complete references are available in the
-[Documentation](https://questdb.io/docs/documentationOverview). There are also
-several guides to get started.
+[Documentation](https://questdb.io/docs/introduction). There are also several
+guides to get started.
 
 Quick-start guides:
 
-- [Docker](https://questdb.io/docs/guideDocker)
-- [Homebrew](https://questdb.io/docs/guideHomebrew)
-- [Using the binaries](https://questdb.io/docs/guideBinaries)
+- [Docker](https://questdb.io/docs/guide/docker)
+- [Homebrew](https://questdb.io/docs/guide/homebrew)
+- [Using the binaries](https://questdb.io/docs/guide/binaries)
 
 Usage guides:
 
-- [Web Console](https://questdb.io/docs/usingWebConsole)
-- [Postgres Wire with PSQL](https://questdb.io/docs/guidePSQL) (alpha)
-- [REST API](https://questdb.io/docs/guideREST)
-- [CRUD operations](https://questdb.io/docs/crudOperations)
+- [Web Console](https://questdb.io/docs/guide/web-console)
+- [Postgres wire with PSQL](https://questdb.io/docs/guide/postgres-wire) (alpha)
+- [REST API](https://questdb.io/docs/guide/rest)
+- [CRUD operations](https://questdb.io/docs/guide/crud)
 
 Concepts:
 
-- [SQL extensions](https://questdb.io/docs/sqlExtensions)
-- [Storage model](https://questdb.io/docs/storageModel)
-- [Partitions](https://questdb.io/docs/partitions)
-- [Designated timestamp](https://questdb.io/docs/designatedTimestamp)
+- [SQL extensions](https://questdb.io/docs/concept/sql-extensions)
+- [Storage model](https://questdb.io/docs/concept/storage-model)
+- [Partitions](https://questdb.io/docs/concept/partitions)
+- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp)
 
 ## Support / Contact
 
@@ -195,18 +213,23 @@ Thanks to these wonderful people
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
 <table>
- <tr>
-   <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
-   <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>ideoma</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
-   <td align="center"><a href="https://github.com/tonytamwk"><img src="https://avatars2.githubusercontent.com/u/20872271?v=4" width="100px;" alt=""/><br /><sub><b>tonytamwk</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=tonytamwk" title="Code">💻</a> <a href="#userTesting-tonytamwk" title="User Testing">📓</a></td>
-   <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>sirinath</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
-   <td align="center"><a href="https://www.linkedin.com/in/suhorukov"><img src="https://avatars1.githubusercontent.com/u/10332206?v=4" width="100px;" alt=""/><br /><sub><b>igor-suhorukov</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=igor-suhorukov" title="Code">💻</a> <a href="#ideas-igor-suhorukov" title="Ideas, Planning, & Feedback">🤔</a></td>
- </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
+    <td align="center"><a href="https://github.com/ideoma"><img src="https://avatars0.githubusercontent.com/u/2159629?v=4" width="100px;" alt=""/><br /><sub><b>ideoma</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Code">💻</a> <a href="#userTesting-ideoma" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/commits?author=ideoma" title="Tests">⚠️</a></td>
+    <td align="center"><a href="https://github.com/tonytamwk"><img src="https://avatars2.githubusercontent.com/u/20872271?v=4" width="100px;" alt=""/><br /><sub><b>tonytamwk</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=tonytamwk" title="Code">💻</a> <a href="#userTesting-tonytamwk" title="User Testing">📓</a></td>
+    <td align="center"><a href="http://sirinath.com/"><img src="https://avatars2.githubusercontent.com/u/637415?v=4" width="100px;" alt=""/><br /><sub><b>sirinath</b></sub></a><br /><a href="#ideas-sirinath" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://www.linkedin.com/in/suhorukov"><img src="https://avatars1.githubusercontent.com/u/10332206?v=4" width="100px;" alt=""/><br /><sub><b>igor-suhorukov</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=igor-suhorukov" title="Code">💻</a> <a href="#ideas-igor-suhorukov" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://github.com/mick2004"><img src="https://avatars1.githubusercontent.com/u/2042132?v=4" width="100px;" alt=""/><br /><sub><b>mick2004</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=mick2004" title="Code">💻</a> <a href="#platform-mick2004" title="Packaging/porting to new platform">📦</a></td>
+    <td align="center"><a href="https://rawkode.com"><img src="https://avatars3.githubusercontent.com/u/145816?v=4" width="100px;" alt=""/><br /><sub><b>rawkode</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=rawkode" title="Code">💻</a> <a href="#infra-rawkode" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://solidnerd.dev"><img src="https://avatars0.githubusercontent.com/u/886383?v=4" width="100px;" alt=""/><br /><sub><b>Niclas Mietz</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=solidnerd" title="Code">💻</a> <a href="#infra-solidnerd" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+    <td align="center"><a href="http://solanav.github.io"><img src="https://avatars1.githubusercontent.com/u/32469597?v=4" width="100px;" alt=""/><br /><sub><b>solanav</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=solanav" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=solanav" title="Documentation">📖</a></td>
+  </tr>
 </table>
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
-
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the

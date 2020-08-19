@@ -45,6 +45,7 @@ open module io.questdb {
     exports io.questdb.cutlass.json;
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
+    exports io.questdb.cutlass.line.tcp;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;
@@ -75,6 +76,7 @@ open module io.questdb {
     exports io.questdb.std.microtime;
     exports io.questdb.std.time;
     exports io.questdb.std.str;
+    exports io.questdb.std.ex;
     exports io.questdb.network;
     exports io.questdb.log;
     exports io.questdb.mp;
@@ -159,6 +161,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndStringRndListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndFloatCFunctionFactory,
@@ -435,6 +438,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentSchemaBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
@@ -443,6 +448,8 @@ open module io.questdb {
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
-            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
+            io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
+            // first
+            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
             ;
 }

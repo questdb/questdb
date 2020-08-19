@@ -33,11 +33,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
+import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+    private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
+
     @Override
     public String getSignature() {
         return "=(Hs)";
@@ -46,47 +48,11 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         final CharSequence hexLong256 = args.getQuick(1).getStr(null);
-        int len = hexLong256.length();
-        int n;
-
-        long long0 = 0;
-        long long1 = 0;
-        long long2 = 0;
-        long long3 = 0;
         try {
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long0 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long1 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long2 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            n = Math.max(0, len - 16);
-            if (len > 0) {
-                long3 = Numbers.parseHexLong(hexLong256, n, len);
-                len = n;
-            }
-
-            if (len > 2) {
-                throw SqlException.position(args.getQuick(1).getPosition()).put("value is too long");
-            }
-
-            return new Func(position, args.getQuick(0), long0, long1, long2, long3, isNegated);
+            return DECODER.get().newInstance(position, args.getQuick(0), hexLong256, isNegated);
         } catch (NumericException e) {
             throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
         }
-
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {
@@ -110,17 +76,36 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
-            return isNegated != (
-                    value.getLong0() == long0 &&
+            return isNegated != (value.getLong0() == long0 &&
                     value.getLong1() == long1 &&
                     value.getLong2() == long2 &&
-                    value.getLong3() == long3
-            );
+                    value.getLong3() == long3);
         }
 
         @Override
         public Function getArg() {
             return arg;
         }
+    }
+
+    private static class Long256Decoder extends Long256FromCharSequenceDecoder {
+        private long long0;
+        private long long1;
+        private long long2;
+        private long long3;
+
+        private Func newInstance(int position, Function arg, CharSequence hexLong256, boolean isNegated) throws NumericException {
+            decode(hexLong256, 2, hexLong256.length());
+            return new Func(position, arg, long0, long1, long2, long3, isNegated);
+        }
+
+        @Override
+        protected void onDecoded(long l0, long l1, long l2, long l3) {
+            long0 = l0;
+            long1 = l1;
+            long2 = l2;
+            long3 = l3;
+        }
+
     }
 }

@@ -50,8 +50,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_DISTINCT = 5;
-    public static final int UNION_MODEL_ALL = 0;
-    public static final int UNION_MODEL_DISTINCT = 1;
+    public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final int SET_OPERATION_UNION = 1;
+    public static final int SET_OPERATION_EXCEPT = 2;
+    public static final int SET_OPERATION_INTERSECT = 3;
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();
@@ -62,6 +64,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
+    private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
@@ -104,7 +107,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
     private QueryModel unionModel;
-    private int unionModelType;
+    private int setOperationType;
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
 
@@ -138,6 +141,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
+    }
+
+    public void addGroupBy(ExpressionNode node) {
+        groupBy.add(node);
     }
 
     public void addJoinColumn(ExpressionNode node) {
@@ -175,6 +182,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauses.put(name, model);
     }
 
+    public void addWithClauses(CharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
+        withClauses.putAll(parentWithClauses);
+    }
+
     public void clear() {
         bottomUpColumns.clear();
         aliasToColumnNameMap.clear();
@@ -183,6 +194,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
+        groupBy.clear();
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
@@ -288,12 +300,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return bottomUpColumnNames;
     }
 
+    public ObjList<QueryColumn> getBottomUpColumns() {
+        return bottomUpColumns;
+    }
+
     public CharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
         return columnNameToAliasMap;
     }
 
-    public ObjList<QueryColumn> getBottomUpColumns() {
-        return bottomUpColumns;
+    public ObjList<QueryColumn> getColumns() {
+        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
     }
 
     public ExpressionNode getConstWhereClause() {
@@ -318,6 +334,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    public ObjList<ExpressionNode> getGroupBy() {
+        return groupBy;
     }
 
     public ObjList<ExpressionNode> getJoinColumns() {
@@ -466,6 +486,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.selectModelType = selectModelType;
     }
 
+    public int getSetOperationType() {
+        return setOperationType;
+    }
+
+    public void setSetOperationType(int setOperationType) {
+        this.setOperationType = setOperationType;
+    }
+
     public ExpressionNode getTableName() {
         return tableName;
     }
@@ -502,24 +530,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return topDownColumns;
     }
 
-    public ObjList<QueryColumn> getColumns() {
-        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
-    }
-
     public QueryModel getUnionModel() {
         return unionModel;
     }
 
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
-    }
-
-    public int getUnionModelType() {
-        return unionModelType;
-    }
-
-    public void setUnionModelType(int unionModelType) {
-        this.unionModelType = unionModelType;
     }
 
     public ExpressionNode getWhereClause() {
@@ -532,6 +548,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WithClauseModel getWithClause(CharSequence name) {
         return withClauses.get(name);
+    }
+
+    public CharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        return withClauses;
     }
 
     public boolean isDistinct() {
@@ -567,6 +587,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         // clear the source
         model.clearSampleBy();
+    }
+
+    public void moveGroupByFrom(QueryModel model) {
+        this.groupBy.addAll(model.groupBy);
+        // clear the source
+        model.groupBy.clear();
     }
 
     /**
@@ -870,9 +896,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (unionModel != null) {
-            sink.put(" union ");
-            if (unionModelType == QueryModel.UNION_MODEL_ALL) {
-                sink.put("all ");
+            if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {
+                sink.put(" intersect ");
+            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {
+                sink.put(" except ");
+            } else {
+                sink.put(" union ");
+                if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {
+                    sink.put("all ");
+                }
             }
             unionModel.toSink0(sink, false);
         }

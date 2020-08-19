@@ -24,15 +24,16 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
-import io.questdb.std.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.*;
-
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.Properties;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
@@ -50,9 +51,8 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
-                final TelemetryJob telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
-
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final TelemetryJob telemetryJob = new TelemetryJob(engine, null);
                 try (Path path = new Path()) {
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry"));
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry_config"));
@@ -66,27 +66,18 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            serverConfiguration = new PropServerConfiguration(temp.getRoot().getAbsolutePath(), new Properties()) {
-                @Override
-                public CairoConfiguration getCairoConfiguration() {
-                    return configuration;
-                }
-            };
-            configuration = serverConfiguration.getCairoConfiguration();
-            messageBus = new MessageBusImpl(serverConfiguration);
-            CairoEngine engine = new CairoEngine(configuration, messageBus);
-            TelemetryJob telemetryJob = new TelemetryJob(serverConfiguration, engine, messageBus);
-            Misc.free(telemetryJob);
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                Misc.free(telemetryJob);
 
-            final String expectedEvent = "100\n" +
-                    "101\n";
-            assertColumn(expectedEvent, "telemetry", 1);
+                final String expectedEvent = "100\n" +
+                        "101\n";
+                assertColumn(expectedEvent, "telemetry", 1);
 
-            final String expectedOrigin = "1\n" +
-                    "1\n";
-            assertColumn(expectedOrigin, "telemetry", 2);
-
-            Misc.free(engine);
+                final String expectedOrigin = "1\n" +
+                        "1\n";
+                assertColumn(expectedOrigin, "telemetry", 2);
+            }
         });
     }
 }

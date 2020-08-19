@@ -33,9 +33,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -46,8 +45,8 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
     private final Record record;
-    private final IntList symbolTableSkewIndex;
     private final RecordCursor mapCursor;
+    private final ObjList<Function> recordFunctions;
     private RecordCursor base;
     private Record baseRecord;
     private long lastTimestamp;
@@ -60,8 +59,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler,
-            IntList symbolTableSkewIndex
+            TimestampSampler timestampSampler
     ) {
         this.map = map;
         this.groupByFunctions = groupByFunctions;
@@ -71,7 +69,6 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
         VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
         rec.of(map.getRecord());
         this.record = rec;
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
@@ -79,6 +76,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
             }
         }
         this.mapCursor = map.getCursor();
+        this.recordFunctions = recordFunctions;
     }
 
     @Override
@@ -94,7 +92,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
+        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -171,6 +169,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
 
     @Override
     public void toTop() {
+        MultiArgFunction.toTop(recordFunctions);
         this.base.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
@@ -208,7 +207,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor, NoRandomAc
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
-    private class TimestampFunc extends TimestampFunction implements NoArgFunction {
+    private class TimestampFunc extends TimestampFunction implements Function {
 
         public TimestampFunc(int position) {
             super(position);

@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -37,10 +35,6 @@ public class ShortFunctionTest {
         @Override
         public short getShort(Record rec) {
             return 0;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
     };
 

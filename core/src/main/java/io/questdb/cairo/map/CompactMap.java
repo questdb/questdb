@@ -116,9 +116,9 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = VirtualMemory::hash;
-    private final VirtualMemory entries;
-    private final VirtualMemory entrySlots;
+    private static final HashFunction DEFAULT_HASH = ContiguousVirtualMemory::hash;
+    private final ContiguousVirtualMemory entries;
+    private final ContiguousVirtualMemory entrySlots;
     private final Key key = new Key();
     private final CompactMapValue value;
     private final double loadFactor;
@@ -142,8 +142,8 @@ public class CompactMap implements Map {
     }
 
     CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = new VirtualMemory(pageSize, maxPages);
-        this.entrySlots = new VirtualMemory(pageSize, maxPages);
+        this.entries = new ContiguousVirtualMemory(pageSize, maxPages);
+        this.entrySlots = new ContiguousVirtualMemory(pageSize, maxPages);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
@@ -281,7 +281,7 @@ public class CompactMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        long hash(VirtualMemory mem, long offset, long size);
+        long hash(ContiguousVirtualMemory mem, long offset, long size);
     }
 
     public class Key implements MapKey {

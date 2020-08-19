@@ -278,6 +278,53 @@ public class UnionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExcept() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tamy\n" +
+                            "grp1\tbobby\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "except\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+
+    }
+
+    @Test
+    public void testIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tstewy\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "intersect\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+
+    }
+
+    @Test
     public void testUnionAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tl256\tchr\n" +

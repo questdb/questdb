@@ -123,11 +123,7 @@ public class SqlCompiler implements Closeable {
     };
 
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
-    }
-
-    public SqlCompiler(CairoEngine engine, MessageBus bus) {
-        this(engine, bus, null);
+        this(engine, engine.getMessageBus(), null);
     }
 
     public SqlCompiler(CairoEngine engine, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache) {
@@ -1019,7 +1015,7 @@ public class SqlCompiler implements Closeable {
             CharSequence existingName = GenericLexer.immutableOf(tok);
 
             tok = expectToken(lexer, "'to' expected");
-            if (!SqlKeywords.isToKeyboard(tok)) {
+            if (!SqlKeywords.isToKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
             }
 

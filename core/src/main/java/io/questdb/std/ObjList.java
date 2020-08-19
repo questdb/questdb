@@ -205,7 +205,7 @@ public class ObjList<T> implements Mutable, Sinkable {
         if (move > 0) {
             System.arraycopy(buffer, to + 1, buffer, from, move);
         }
-        pos -= (to - from + 1);
+        pos = Math.max(0, pos - (to - from + 1));
         Arrays.fill(buffer, pos, buffer.length - 1, null);
     }
 

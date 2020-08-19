@@ -22,14 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface NoArgFunction extends Function {
-    @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+public class DirectLongListTest {
+
+    private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
+
+    @Test
+    public void testResizeMemLeak() {
+        // use logger so that static memory allocation happens before our control measurement
+        LOG.info().$("testResizeMemLeak").$();
+        long expected = Unsafe.getMemUsed();
+        try (DirectLongList list = new DirectLongList(1024)) {
+            for (int i = 0; i < 1_000_000; i++) {
+                list.add(i);
+            }
+        }
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
     }
 }
