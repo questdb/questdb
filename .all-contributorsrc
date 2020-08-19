@@ -75,6 +75,16 @@
         "code",
         "infra"
       ]
+    },
+    {
+      "login": "solidnerd",
+      "name": "solidnerd",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/886383?v=4",
+      "profile": "https://solidnerd.dev",
+      "contributions": [
+        "code",
+        "infra"
+      ]
     }
   ],
   "contributorsPerLine": 7,
