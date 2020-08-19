@@ -85,6 +85,16 @@
         "code",
         "infra"
       ]
+    },
+    {
+      "login": "solanav",
+      "name": "solanav",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/32469597?v=4",
+      "profile": "http://solanav.github.io",
+      "contributions": [
+        "code",
+        "doc"
+      ]
     }
   ],
   "contributorsPerLine": 7,
