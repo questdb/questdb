@@ -141,17 +141,6 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
                         }
 
-                        int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(i)));
-                        if (columnSizeBinaryPower >= 0) {
-                            columnPageLength = nFrameRows << columnSizeBinaryPower;
-                        } else {
-                            final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
-                            long lastStrLenOffset = (nFrameRows - 1) << 3;
-                            long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
-                            int lastStrLen = col.getStrLen(lastStrOffset);
-                            columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
-                        }
-
                         columnFrameAddresses.setQuick(i, columnPageAddress);
                         columnFramesLengths.setQuick(i, columnPageLength);
 
