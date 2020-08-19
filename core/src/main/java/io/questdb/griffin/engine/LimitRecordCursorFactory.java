@@ -50,6 +50,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.recordCursorSupportsRandomAccess();
     }
 
+    @Override
+    public void close() {
+        base.close();
+    }
+
     private static class LimitRecordCursor implements RecordCursor {
         private final Function loFunction;
         private final Function hiFunction;
