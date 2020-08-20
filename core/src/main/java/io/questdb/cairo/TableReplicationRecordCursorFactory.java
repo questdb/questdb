@@ -143,35 +143,27 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                         switch (columnType) {
                             case ColumnType.STRING: {
                                 final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                long lastStrLenOffset = (nFrameRows - 1) << 3;
-                                long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
-                                int lastStrLen = col.getStrLen(lastStrOffset);
-                                if (lastStrLen == TableUtils.NULL_LEN) {
-                                    lastStrLen = 0;
-                                }
-                                columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
+                                columnPageLength = calculateStringPagePosition(col, strLenCol, nFrameRows);
 
                                 if (nFirstFrameRow > 0) {
-                                    // TODO
-                                    throw new RuntimeException("Not implemented");
+                                    long columnPageBegin = calculateStringPagePosition(col, strLenCol, nFirstFrameRow);
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
                                 }
+
                                 break;
                             }
 
                             case ColumnType.BINARY: {
-                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                long lastBinLenOffset = (nFrameRows - 1) << 3;
-                                long lastBinOffset = strLenCol.getLong(lastBinLenOffset);
-                                long lastBinLen = col.getBinLen(lastBinOffset);
-                                if (lastBinLen == TableUtils.NULL_LEN) {
-                                    lastBinLen = 0;
-                                }
-                                columnPageLength = lastBinOffset + Long.BYTES + lastBinLen;
+                                final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
+                                columnPageLength = calculateBinaryPagePosition(col, binLenCol, nFrameRows);
 
                                 if (nFirstFrameRow > 0) {
-                                    // TODO
-                                    throw new RuntimeException("Not implemented");
+                                    long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, nFirstFrameRow);
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
                                 }
+
                                 break;
                             }
 
@@ -227,6 +219,30 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                 nFirstFrameRow = 0;
             }
             return null;
+        }
+
+        private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row) {
+            long columnPageLength;
+            long lastBinLenOffset = (row - 1) << 3;
+            long lastBinOffset = binLenCol.getLong(lastBinLenOffset);
+            long lastBinLen = col.getBinLen(lastBinOffset);
+            if (lastBinLen == TableUtils.NULL_LEN) {
+                lastBinLen = 0;
+            }
+            columnPageLength = lastBinOffset + Long.BYTES + lastBinLen;
+            return columnPageLength;
+        }
+
+        private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row) {
+            long columnPageLength;
+            long lastStrLenOffset = (row - 1) << 3;
+            long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
+            int lastStrLen = col.getStrLen(lastStrOffset);
+            if (lastStrLen == TableUtils.NULL_LEN) {
+                lastStrLen = 0;
+            }
+            columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
+            return columnPageLength;
         }
 
         @Override
