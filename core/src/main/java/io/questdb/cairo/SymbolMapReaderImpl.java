@@ -36,8 +36,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final ReadOnlyMemory charMem = new ReadOnlyMemory();
-    private final ReadOnlyMemory offsetMem = new ReadOnlyMemory();
+    private final ExtendableOnePageMemory charMem = new ExtendableOnePageMemory();
+    private final ExtendableOnePageMemory offsetMem = new ExtendableOnePageMemory();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -60,6 +60,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         LOG.info().$("closed [fd=").$(fd).$(']').$();
     }
 
+    @Override
     public boolean containsNullValue() {
         return nullValue;
     }
@@ -203,5 +204,20 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue(int key) {
         return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    @Override
+    public long symbolCharsAddressOf(int symbolIndex) {
+        if (symbolIndex < symbolCount) {
+            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
+            return charMem.addressOf(offset);
+        } else if (symbolIndex == symbolCount) {
+            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
+            long symLen = charMem.getInt(offset);
+            offset += symLen * Character.BYTES + Integer.BYTES;
+            return charMem.addressOf(offset);
+        }
+
+        return -1;
     }
 }
