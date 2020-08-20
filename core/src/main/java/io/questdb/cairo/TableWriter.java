@@ -2359,26 +2359,32 @@ public class TableWriter implements Closeable {
                                 break;
                         }
 
-                        long dataOOMergeIndex;
                         if (mergeDataLo != -1) {
+                            long dataOOMergeIndex;
+                            long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
                             // copy timestamp column of the partition into a "index" memory
 
                             long ss = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
                             try {
                                 final long src = mergeStruct[timestampIndex * 16 + 1];
+                                // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
+                                // have to go back and find data rows we need to move accordingly
                                 long index = Unsafe.malloc((mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
-                                for (long l = mergeDataLo; l <= mergeDataHi; l++) {
-                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
-                                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
+                                try {
+                                    for (long l = mergeDataLo; l <= mergeDataHi; l++) {
+                                        Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
+                                        Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
+                                    }
+
+                                    Unsafe.getUnsafe().putLong(ss, index);
+                                    Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+                                    Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+                                    Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+//
+                                    dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
+                                } finally {
+                                    Unsafe.free(index, (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
                                 }
-
-                                Unsafe.getUnsafe().putLong(ss, index);
-                                Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-                                Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
-                                Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-
-                                dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
-                                long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
 
                                 for (int i = 0; i < columnCount; i++) {
 
