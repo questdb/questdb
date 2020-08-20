@@ -38,8 +38,23 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
     }
 
-    public TableReplicationRecordCursor getPageFrameCursor() {
-        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName));
+    public TableReplicationRecordCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, long nFirstRow) {
+        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+        int partitionIndex = 0;
+        int partitionCount = reader.getPartitionCount();
+        while (partitionIndex < partitionCount) {
+            long partitionRowCount = reader.openPartition(partitionIndex);
+            if (nFirstRow < partitionRowCount) {
+                break;
+            }
+            partitionIndex++;
+            nFirstRow -= partitionRowCount;
+        }
+        return cursor.of(reader, partitionIndex, nFirstRow);
+    }
+
+    public TableReplicationRecordCursor getPageFrameCursor(int partitionIndex, long paritionRowCount) {
+        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), partitionIndex, paritionRowCount);
     }
 
     @Override
@@ -69,6 +84,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         private int partitionCount;
         private int columnCount;
         private int timestampColumnIndex;
+        private long nFirstFrameRow;
         private long nFrameRows;
         private long firstTimestamp = Long.MIN_VALUE;
         private long lastTimestamp = Numbers.LONG_NaN;;
@@ -90,6 +106,13 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return reader.getSymbolMapReader(columnIndex);
         }
 
+        private TableReplicationRecordCursor of(TableReader reader, int partitionIndex, long partitionRowCount) {
+            of(reader);
+            this.partitionIndex = partitionIndex - 1;
+            nFirstFrameRow = partitionRowCount;
+            return this;
+        }
+
         private TableReplicationRecordCursor of(TableReader reader) {
             this.reader = reader;
             columnCount = reader.getMetadata().getColumnCount();
@@ -108,7 +131,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         public @Nullable ReplicationPageFrame next() {
             while (++partitionIndex < partitionCount) {
                 nFrameRows = reader.openPartition(partitionIndex);
-                if (nFrameRows > 0) {
+                if (nFrameRows > nFirstFrameRow) {
                     final int base = reader.getColumnBase(partitionIndex);
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                         final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
@@ -127,6 +150,11 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                                     lastStrLen = 0;
                                 }
                                 columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
+
+                                if (nFirstFrameRow > 0) {
+                                    // TODO
+                                    throw new RuntimeException("Not implemented");
+                                }
                                 break;
                             }
 
@@ -139,12 +167,22 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                                     lastBinLen = 0;
                                 }
                                 columnPageLength = lastBinOffset + Long.BYTES + lastBinLen;
+
+                                if (nFirstFrameRow > 0) {
+                                    // TODO
+                                    throw new RuntimeException("Not implemented");
+                                }
                                 break;
                             }
 
                             default: {
                                 int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(columnIndex)));
                                 columnPageLength = nFrameRows << columnSizeBinaryPower;
+                                if (nFirstFrameRow > 0) {
+                                    long columnPageBegin = nFirstFrameRow << columnSizeBinaryPower;
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
+                                }
                             }
                         }
 
@@ -181,8 +219,12 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                             }
                         }
                     }
+
+                    nFrameRows -= nFirstFrameRow;
+                    nFirstFrameRow = 0;
                     return frame;
                 }
+                nFirstFrameRow = 0;
             }
             return null;
         }
@@ -199,13 +241,6 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public long size() {
             return reader.size();
-        }
-
-        public void from(int partitionIndex, long partitionRow) {
-            // TODO: Replication
-            if (partitionIndex != 0 || partitionRow != 0) {
-                throw new RuntimeException("Not implemented");
-            }
         }
 
         public class ReplicationPageFrame implements PageFrame {

@@ -54,10 +54,6 @@ public class TableBlockWriter implements Closeable {
         try {
             mem.jumpTo(appendOffset + blockOffset);
             mem.putBlockOfBytes(sourceAddress, blockLength);
-            long currentOffset = mem.getAppendOffset();
-            if (currentOffset > appendOffset) {
-                appendOffset = currentOffset;
-            }
         } finally {
             mem.jumpTo(appendOffset);
         }
@@ -70,6 +66,7 @@ public class TableBlockWriter implements Closeable {
     public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
+        reset();
     }
 
     private void openPartition(long timestamp) {
@@ -82,10 +79,11 @@ public class TableBlockWriter implements Closeable {
             }
 
             assert columnCount > 0;
-            for (int i = 0; i < columnCount; i++) {
-                final CharSequence name = metadata.getColumnName(i);
-                AppendMemory mem = columns.getQuick(i);
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final CharSequence name = metadata.getColumnName(columnIndex);
+                AppendMemory mem = columns.getQuick(columnIndex);
                 mem.of(ff, TableUtils.dFile(path.trimTo(plen), name), ff.getMapPageSize());
+                mem.jumpTo(writer.getPrimaryAppendOffset(timestamp, columnIndex));
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
@@ -101,8 +99,6 @@ public class TableBlockWriter implements Closeable {
         rootLen = path.length();
         columnCount = metadata.getColumnCount();
         partitionBy = writer.getPartitionBy();
-        partitionLo = Long.MAX_VALUE;
-        partitionHi = Long.MIN_VALUE;
         int columnsSize = columns.size();
         while (columnsSize < columnCount) {
             columns.extendAndSet(columnsSize++, new AppendMemory());
@@ -115,14 +111,20 @@ public class TableBlockWriter implements Closeable {
             metadata = null;
             writer = null;
         }
+        reset();
+    }
+
+    private void reset() {
+        for (int i = 0, sz = columns.size(); i < sz; i++) {
+            columns.getQuick(i).close(false);
+        }
+        partitionLo = Long.MAX_VALUE;
+        partitionHi = Long.MIN_VALUE;
     }
 
     @Override
     public void close() {
         clear();
-        for (int i = 0, sz = columns.size(); i < sz; i++) {
-            columns.getQuick(i).close(false);
-        }
         columns.clear();
         path.close();
     }

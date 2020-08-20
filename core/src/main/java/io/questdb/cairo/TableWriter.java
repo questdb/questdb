@@ -1681,6 +1681,18 @@ public class TableWriter implements Closeable {
         }
     }
 
+    long getPrimaryAppendOffset(long timestamp, int columnIndex) {
+        if (txPartitionCount == 0) {
+            openFirstPartition(maxTimestamp);
+        }
+
+        if (timestamp > partitionHi) {
+            return 0;
+        }
+
+        return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
+    }
+
     private long getNextMinTimestamp(
             Timestamps.TimestampFloorMethod timestampFloorMethod,
             Timestamps.TimestampAddMethod timestampAddMethod
@@ -2815,11 +2827,11 @@ public class TableWriter implements Closeable {
             }
         }
 
-        commitBlock(firstTimestamp, lastTimestamp, transientRowCount + nRowsAdded);
+        commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
         setAppendPosition(transientRowCount);
     }
 
-    private void commitBlock(long firstTimestamp, long lastTimestamp, long nRows) {
+    private void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
         if (lastTimestamp < maxTimestamp) {
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
@@ -2834,7 +2846,7 @@ public class TableWriter implements Closeable {
             refs.setQuick(i, masterRef);
         }
 
-        transientRowCount += nRows;
+        transientRowCount += nRowsAdded;
         masterRef++;
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
