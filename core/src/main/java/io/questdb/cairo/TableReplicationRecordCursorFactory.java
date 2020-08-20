@@ -9,6 +9,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -58,7 +59,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
     public static class TableReplicationRecordCursor implements PageFrameCursor {
         private final LongList columnFrameAddresses = new LongList();
-        private final LongList columnFramesLengths = new LongList();
+        private final LongList columnFrameLengths = new LongList();
+        private final LongList symbolCharsFrameAddresses = new LongList();
+        private final LongList symbolCharsFrameLengths = new LongList();
+        private final IntList nSymbolsProcessed = new IntList();
         private final ReplicationPageFrame frame = new ReplicationPageFrame();
         private TableReader reader;
         private int partitionIndex;
@@ -91,7 +95,11 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             columnCount = reader.getMetadata().getColumnCount();
             timestampColumnIndex = reader.getMetadata().getTimestampIndex();
             columnFrameAddresses.ensureCapacity(columnCount);
-            columnFramesLengths.ensureCapacity(columnCount);
+            columnFrameLengths.ensureCapacity(columnCount);
+            symbolCharsFrameAddresses.ensureCapacity(columnCount);
+            symbolCharsFrameLengths.ensureCapacity(columnCount);
+            symbolCharsFrameAddresses.setAll(columnCount, -1);
+            symbolCharsFrameLengths.setAll(columnCount, 0);
             toTop();
             return this;
         }
@@ -102,16 +110,16 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                 nFrameRows = reader.openPartition(partitionIndex);
                 if (nFrameRows > 0) {
                     final int base = reader.getColumnBase(partitionIndex);
-                    for (int i = 0; i < columnCount; i++) {
-                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i));
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
                         assert col.getPageCount() == 1;
                         long columnPageAddress = col.getPageAddress(0);
                         long columnPageLength;
 
-                        int columnType = reader.getMetadata().getColumnType(i);
+                        int columnType = reader.getMetadata().getColumnType(columnIndex);
                         switch (columnType) {
                             case ColumnType.STRING: {
-                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
+                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
                                 long lastStrLenOffset = (nFrameRows - 1) << 3;
                                 long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
                                 int lastStrLen = col.getStrLen(lastStrOffset);
@@ -123,7 +131,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                             }
 
                             case ColumnType.BINARY: {
-                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, i) + 1);
+                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
                                 long lastBinLenOffset = (nFrameRows - 1) << 3;
                                 long lastBinOffset = strLenCol.getLong(lastBinLenOffset);
                                 long lastBinLen = col.getBinLen(lastBinOffset);
@@ -135,18 +143,42 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                             }
 
                             default: {
-                                int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(i)));
+                                int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(columnIndex)));
                                 columnPageLength = nFrameRows << columnSizeBinaryPower;
                             }
-
                         }
 
-                        columnFrameAddresses.setQuick(i, columnPageAddress);
-                        columnFramesLengths.setQuick(i, columnPageLength);
+                        columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
+                        columnFrameLengths.setQuick(columnIndex, columnPageLength);
 
-                        if (timestampColumnIndex == i) {
+                        if (timestampColumnIndex == columnIndex) {
                             firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
                             lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
+                        }
+
+                        if (columnType == ColumnType.SYMBOL) {
+                            long symbolIndexAddess = columnPageAddress;
+                            int maxSymbolIndex = 0;
+                            // TODO: Use vector instructions (rosti?) to find max
+                            for (int nRow = 0; nRow < nFrameRows; nRow++) {
+                                int symbolIndex = Unsafe.getUnsafe().getInt(symbolIndexAddess);
+                                symbolIndexAddess += Integer.BYTES;
+                                maxSymbolIndex = Math.max(maxSymbolIndex, symbolIndex);
+                            }
+
+                            int nSymbols = nSymbolsProcessed.getQuick(columnIndex);
+                            if (maxSymbolIndex >= nSymbols) {
+                                int newNSymbols = maxSymbolIndex + 1;
+                                SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
+                                long address = symReader.symbolCharsAddressOf(nSymbols);
+                                long addressHi = symReader.symbolCharsAddressOf(newNSymbols);
+                                symbolCharsFrameAddresses.setQuick(columnIndex, address);
+                                symbolCharsFrameLengths.setQuick(columnIndex, addressHi - address);
+                                nSymbolsProcessed.setQuick(columnIndex, newNSymbols);
+                            } else {
+                                symbolCharsFrameAddresses.setQuick(columnIndex, -1);
+                                symbolCharsFrameLengths.setQuick(columnIndex, 0);
+                            }
                         }
                     }
                     return frame;
@@ -161,6 +193,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             partitionCount = reader.getPartitionCount();
             firstTimestamp = Long.MIN_VALUE;
             lastTimestamp = 0;
+            nSymbolsProcessed.setAll(columnCount, 0);
         }
 
         @Override
@@ -203,7 +236,17 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getPageLength(int columnIndex) {
-                return columnFramesLengths.getQuick(columnIndex);
+                return columnFrameLengths.getQuick(columnIndex);
+            }
+
+            @Override
+            public long getSymbolCharsPageAddress(int columnIndex) {
+                return symbolCharsFrameAddresses.getQuick(columnIndex);
+            }
+
+            @Override
+            public long getSymbolCharsPageLength(int columnIndex) {
+                return symbolCharsFrameLengths.getQuick(columnIndex);
             }
         }
     }

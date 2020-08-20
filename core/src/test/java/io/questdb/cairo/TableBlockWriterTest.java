@@ -150,6 +150,25 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSymbol() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts);", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
     private void replicateTable(String sourceTableName, String destTableName) {
         try (RecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
@@ -163,6 +182,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = writer.getMetadata().getColumnType(columnIndex);
+                    if (columnType == ColumnType.SYMBOL) {
+                        long pageAddress = frame.getSymbolCharsPageAddress(columnIndex);
+                        long blockLength = frame.getSymbolCharsPageLength(columnIndex);
+                        blockWriter.putSymbolCharsBlock(columnIndex, 0, blockLength, pageAddress);
+                    }
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
                     blockWriter.putBlock(firstTimestamp, columnIndex, 0, blockLength, pageAddress);

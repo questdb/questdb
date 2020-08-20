@@ -32,6 +32,14 @@ public class TableBlockWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
     }
 
+    /**
+     * 
+     * @param timestamp
+     * @param columnIndex
+     * @param blockOffset  This is the offset from the end of all committed rows 
+     * @param blockLength
+     * @param sourceAddress
+     */
     public void putBlock(long timestamp, int columnIndex, long blockOffset, long blockLength, long sourceAddress) {
         if (timestamp < partitionLo && partitionLo != Long.MAX_VALUE) {
             throw CairoException.instance(0).put("can only append [timestamp=").put(timestamp).put(", partitionLo=").put(partitionLo).put(']');
@@ -44,17 +52,19 @@ public class TableBlockWriter implements Closeable {
         AppendMemory mem = columns.getQuick(columnIndex);
         long appendOffset = mem.getAppendOffset();
         try {
-            mem.jumpTo(blockOffset);
+            mem.jumpTo(appendOffset + blockOffset);
             mem.putBlockOfBytes(sourceAddress, blockLength);
             long currentOffset = mem.getAppendOffset();
             if (currentOffset > appendOffset) {
                 appendOffset = currentOffset;
             }
         } finally {
-            // Make sure append offset is always at the end even if the block was not, this ensures that out of order calls to putBlock dont
-            // lead to a truncate part way through the data
             mem.jumpTo(appendOffset);
         }
+    }
+
+    public void putSymbolCharsBlock(int columnIndex, long blockOffset, long blockLength, long sourceAddress) {
+        writer.getSymbolMapWriter(columnIndex).putSymbolCharsBlock(blockOffset, blockLength, sourceAddress);
     }
 
     public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {

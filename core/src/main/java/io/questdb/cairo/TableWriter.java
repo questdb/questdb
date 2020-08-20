@@ -2793,6 +2793,24 @@ public class TableWriter implements Closeable {
                     break;
                 }
 
+                case ColumnType.SYMBOL: {
+                    AppendMemory mem = getPrimaryColumn(columnIndex);
+                    int nSymbols = 0;
+                    long offset = mem.getAppendOffset();
+                    // TODO: Use vector instructions (vector) to find max
+                    for (int row = 0; row < nRowsAdded; row++) {
+                        int symIndex = mem.getInt(offset);
+                        offset += Integer.BYTES;
+                        nSymbols = Math.max(nSymbols, symIndex);
+                    }
+
+                    nSymbols++;
+                    SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
+                    if (nSymbols > symWriter.getSymbolCount()) {
+                        symWriter.commitAppendedBlock(nSymbols - symWriter.getSymbolCount());
+                    }
+                }
+
                 default:
             }
         }

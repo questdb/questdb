@@ -40,4 +40,12 @@ public interface PageFrame {
     default long getLastTimestamp() {
         throw new UnsupportedOperationException();
     }
+
+    default long getSymbolCharsPageAddress(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getSymbolCharsPageLength(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
 }
