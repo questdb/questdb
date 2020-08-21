@@ -43,7 +43,7 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
     @SuppressWarnings("unchecked")
     public LowerCaseAsciiCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        values = (T[]) new Object[capacity];
+        values = (T[]) new Object[keys.length];
         this.list = new ObjList<>(capacity);
         clear();
     }
@@ -54,14 +54,23 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
         Arrays.fill(values, null);
     }
 
+    public ObjList<CharSequence> keys() {
+        return list;
+    }
+
     @Override
     protected void erase(int index) {
         keys[index] = noEntryKey;
         values[index] = null;
     }
 
-    public T valueAt(int index) {
-        return index < 0 ? values[-index - 1] : null;
+    @Override
+    public void removeAt(int index) {
+        if (index < 0) {
+            CharSequence key = keys[-index - 1];
+            super.removeAt(index);
+            list.remove(key);
+        }
     }
 
     public boolean contains(CharSequence key) {
@@ -70,6 +79,13 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
 
     public T get(CharSequence key) {
         return valueAt(keyIndex(key));
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     public boolean put(CharSequence key, T value) {
@@ -94,25 +110,9 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
             putAt0(index, Chars.toLowerCaseAscii(key), value);
         }
     }
-    
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
 
-    public ObjList<CharSequence> keys() {
-        return list;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public T valueAt(int index) {
+        return index < 0 ? values[-index - 1] : null;
     }
 
     private void putAt0(int index, CharSequence key, T value) {
@@ -127,15 +127,14 @@ public class LowerCaseAsciiCharSequenceObjHashMap<T> extends AbstractLowerCaseAs
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
-
+        int arrayCapacity = Numbers.ceilPow2((int) (newCapacity / loadFactor));
         T[] oldValues = values;
         CharSequence[] oldKeys = keys;
         this.keys = new CharSequence[arrayCapacity];
         this.values = (T[]) new Object[arrayCapacity];
         Arrays.fill(keys, null);
+        mask = arrayCapacity - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {

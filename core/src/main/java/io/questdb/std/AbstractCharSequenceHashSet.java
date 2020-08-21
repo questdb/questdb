@@ -42,8 +42,9 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
 
         free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        keys = new CharSequence[(int) (this.capacity / loadFactor)];
-        mask = capacity - 1;
+        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        keys = new CharSequence[len];
+        mask = len - 1;
     }
 
     @Override

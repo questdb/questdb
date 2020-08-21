@@ -60,10 +60,6 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         return index < 0 ? valueAtQuick(index) : null;
     }
 
-    public V valueAtQuick(int index) {
-        return values[-index - 1];
-    }
-
     public V get(int key) {
         return valueAt(keyIndex(key));
     }
@@ -84,6 +80,10 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         }
     }
 
+    public V valueAtQuick(int index) {
+        return values[-index - 1];
+    }
+
     @Override
     protected void move(int from, int to) {
         keys[to] = keys[from];
@@ -95,15 +95,15 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         V[] oldValues = values;
         int[] oldKeys = keys;
-        this.keys = new int[arrayCapacity];
-        this.values = (V[]) new Object[arrayCapacity];
+        this.keys = new int[len];
+        this.values = (V[]) new Object[len];
         Arrays.fill(keys, noEntryKeyValue);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
