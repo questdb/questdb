@@ -45,11 +45,11 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount\n" +
-                        "c\t4\n" +
-                        "f\t5\n" +
+                        "c\t5\n" +
+                        "f\t4\n" +
                         "e\t1\n" +
                         "d\t3\n" +
-                        "b\t3\n" +
+                        "b\t4\n" +
                         "a\t1\n",
                 "select a, count(s) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(16) s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
@@ -145,18 +145,18 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testSampleKeyed() throws Exception {
         assertQuery(
                 "a\tcount\tts\n" +
-                        "f\t9\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\t3\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\t7\t1970-01-01T00:00:00.000000Z\n" +
-                        "a\t2\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\t2\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t3\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t7\t1970-01-01T00:00:05.000000Z\n" +
+                        "f\t8\t1970-01-01T00:00:00.000000Z\n" +
+                        "e\t4\t1970-01-01T00:00:00.000000Z\n" +
+                        "c\t8\t1970-01-01T00:00:00.000000Z\n" +
+                        "a\t4\t1970-01-01T00:00:00.000000Z\n" +
+                        "d\t5\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t6\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t8\t1970-01-01T00:00:05.000000Z\n" +
                         "c\t4\t1970-01-01T00:00:05.000000Z\n" +
-                        "d\t4\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\t3\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\t2\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\t2\t1970-01-01T00:00:05.000000Z\n",
+                        "d\t8\t1970-01-01T00:00:05.000000Z\n" +
+                        "e\t6\t1970-01-01T00:00:05.000000Z\n" +
+                        "a\t4\t1970-01-01T00:00:05.000000Z\n" +
+                        "f\t6\t1970-01-01T00:00:05.000000Z\n",
                 "select a, count(s), ts from x sample by 5s",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(12) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",

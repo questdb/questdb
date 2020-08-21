@@ -34,11 +34,13 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256HashSet;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
 public class CountLong256GroupByFunction extends LongFunction implements GroupByFunction {
     private final Function arg;
-    private final Long256HashSet map = new Long256HashSet();
+    private final ObjList<Long256HashSet> sets = new ObjList<>();
     private int valueIndex;
+    private int setIndex;
 
     public CountLong256GroupByFunction(int position, Function arg) {
         super(position);
@@ -47,21 +49,29 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        map.clear();
-        Long256 val = arg.getLong256A(record);
-        map.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-        mapValue.putLong(valueIndex, 1L);
+        final Long256HashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new Long256HashSet());
+        } else {
+            set = sets.getQuick(setIndex);
+        }
 
+        set.clear();
+        Long256 val = arg.getLong256A(record);
+        set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+        mapValue.putLong(valueIndex, 1L);
+        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
+        final Long256HashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final Long256 val = arg.getLong256A(record);
-        final int index = map.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+        final int index = set.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
         if (index < 0) {
             return;
         }
-        map.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+        set.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
         mapValue.addLong(valueIndex, 1);
     }
 
@@ -69,6 +79,7 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -89,5 +100,10 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void toTop() {
+        setIndex = 0;
     }
 }
