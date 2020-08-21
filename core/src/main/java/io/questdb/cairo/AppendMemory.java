@@ -157,7 +157,7 @@ public class AppendMemory extends VirtualMemory {
         if (page == mappedPage) {
             return pageAddress;
         }
-        return 0;
+        return -1;
     }
 
     private long mapPage(int page) {

@@ -134,8 +134,8 @@ public class TableWriter implements Closeable {
     private final ReadOnlyMemory metaMem;
     private final ContiguousVirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
-    private final RowFunction switchPartitionFunction = new SwitchPartitionFunction();
-    private final RowFunction openPartitionFunction = new OpenPartitionFunction();
+    private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
+    private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
@@ -2865,7 +2865,7 @@ public class TableWriter implements Closeable {
         void run(CharSequence columnName);
     }
 
-    private class OpenPartitionFunction implements RowFunction {
+    private class OpenPartitionRowFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
             if (maxTimestamp != Long.MIN_VALUE) {
@@ -2893,7 +2893,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private class SwitchPartitionFunction implements RowFunction {
+    private class SwitchPartitionRowFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
