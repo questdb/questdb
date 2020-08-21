@@ -37,13 +37,13 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class VirtualMemoryReadBenchmark {
+public class VirtualMemoryIntReadBenchmark {
     private static final ContiguousVirtualMemory mem1 = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(VirtualMemoryReadBenchmark.class.getSimpleName())
+                .include(VirtualMemoryIntReadBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
                 .forks(1)
@@ -65,7 +65,7 @@ public class VirtualMemoryReadBenchmark {
     }
 
     @Benchmark
-    public long testContiguous() {
+    public long testIntContiguous() {
         long sum = 0;
         long o = 0;
         for (int i = 0; i < 10000; i++) {
@@ -76,7 +76,7 @@ public class VirtualMemoryReadBenchmark {
     }
 
     @Benchmark
-    public long testLegacy() {
+    public long testIntLegacy() {
         long sum = 0;
         long o = 0;
         for (int i = 0; i < 10000; i++) {

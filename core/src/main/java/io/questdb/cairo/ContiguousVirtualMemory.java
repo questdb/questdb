@@ -35,11 +35,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * 
  * A version of {@link VirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will grow in page sizes.
- * 
- * @author Patrick Mackinlay
  *
+ * @author Patrick Mackinlay
  */
 public class ContiguousVirtualMemory implements Closeable {
     static final int STRING_LENGTH_BYTES = 4;
@@ -49,12 +47,12 @@ public class ContiguousVirtualMemory implements Closeable {
     private final CharSequenceView csview2 = new CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private long pageSize;
     private final int maxPages;
+    private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
+    private long pageSize;
     private long baseAddress = 0;
     private long baseAddressHi = 0;
     private long appendAddress = 0;
-    private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
 
     public ContiguousVirtualMemory(long pageSize, int maxPages) {
         this.maxPages = maxPages;
@@ -62,18 +60,11 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public static int getStorageLength(CharSequence s) {
-        if (s == null) {
-            return STRING_LENGTH_BYTES;
+        if (s != null) {
+            return STRING_LENGTH_BYTES + s.length() * 2;
         }
+        return STRING_LENGTH_BYTES;
 
-        return STRING_LENGTH_BYTES + s.length() * 2;
-    }
-
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
-        }
     }
 
     public long addressOf(long offset) {
@@ -95,10 +86,10 @@ public class ContiguousVirtualMemory implements Closeable {
 
     public final BinarySequence getBin(long offset) {
         final long len = getLong(offset);
-        if (len == -1) {
-            return null;
+        if (len > -1) {
+            return bsview.of(offset + 8, len);
         }
-        return bsview.of(offset + 8, len);
+        return null;
     }
 
     public final long getBinLen(long offset) {
@@ -159,10 +150,6 @@ public class ContiguousVirtualMemory implements Closeable {
         return long256B;
     }
 
-    protected long getMapPageSize() {
-        return pageSize;
-    }
-
     public final short getShort(long offset) {
         return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
@@ -173,15 +160,11 @@ public class ContiguousVirtualMemory implements Closeable {
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
-        if (len == TableUtils.NULL_LEN) {
-            return null;
+        if (len != TableUtils.NULL_LEN) {
+            return view.of(offset + STRING_LENGTH_BYTES, len);
         }
+        return null;
 
-        if (len == 0) {
-            return "";
-        }
-
-        return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
     public final CharSequence getStr2(long offset) {
@@ -219,14 +202,14 @@ public class ContiguousVirtualMemory implements Closeable {
 
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
-        if (value == null) {
-            putLong(TableUtils.NULL_LEN);
-        } else {
+        if (value != null) {
             final long len = value.length();
             checkLimits(len + Long.BYTES);
             putLong(len);
             value.copyTo(appendAddress, 0, len);
             appendAddress += len;
+        } else {
+            putLong(TableUtils.NULL_LEN);
         }
         return offset;
     }
@@ -394,9 +377,7 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public final long putStr(char value) {
-        if (value == 0)
-            return putNullStr();
-        else {
+        if (value != 0) {
             checkLimits(6);
             final long offset = getAppendOffset();
             putInt(1);
@@ -404,20 +385,21 @@ public class ContiguousVirtualMemory implements Closeable {
             appendAddress += Character.BYTES;
             return offset;
         }
+        return putNullStr();
     }
 
     public final long putStr(CharSequence value, int pos, int len) {
-        if (value == null) {
-            return putNullStr();
+        if (value != null) {
+            return putStr0(value, pos, len);
         }
-        return putStr0(value, pos, len);
+        return putNullStr();
     }
 
     public void putStr(long offset, CharSequence value) {
-        if (value == null) {
-            putNullStr(offset);
-        } else {
+        if (value != null) {
             putStr(offset, value, 0, value.length());
+        } else {
+            putNullStr(offset);
         }
     }
 
@@ -443,6 +425,68 @@ public class ContiguousVirtualMemory implements Closeable {
         Unsafe.getUnsafe().setMemory(baseAddress, baseLength, (byte) 0);
     }
 
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+        }
+    }
+
+    private void checkAndExtend(long addressHi) {
+        assert appendAddress <= baseAddressHi;
+        assert addressHi >= baseAddress;
+        if (addressHi <= baseAddressHi) {
+            return;
+        }
+        doExtend(addressHi);
+    }
+
+    protected final void checkLimits(long size) {
+        checkAndExtend(appendAddress + size);
+    }
+
+    protected final void checkLimits(long offset, long size) {
+        checkAndExtend(baseAddress + offset + size);
+    }
+
+    private void doExtend(long addressHi) {
+        long newSize = addressHi - baseAddress;
+        long nPages = (newSize / pageSize) + 1;
+        newSize = nPages * pageSize;
+        long oldSize = getMemorySize();
+        LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+        if (nPages > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+        }
+        long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
+        handleMemoryReallocation(newBaseAddress, newSize);
+    }
+
+    protected long getMapPageSize() {
+        return pageSize;
+    }
+
+    protected final long getMemorySize() {
+        return baseAddressHi - baseAddress;
+    }
+
+    protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
+        assert newBaseAddress != 0;
+        long appendOffset = appendAddress - baseAddress;
+        baseAddress = newBaseAddress;
+        baseAddressHi = baseAddress + newSize;
+        appendAddress = baseAddress + appendOffset;
+        if (appendAddress > baseAddressHi) {
+            appendAddress = baseAddressHi;
+        }
+    }
+
+    protected final void handleMemoryReleased() {
+        baseAddress = 0;
+        baseAddressHi = 0;
+        appendAddress = 0;
+    }
+
     private void putLong256Null() {
         checkLimits(32);
         Unsafe.getUnsafe().putLong(appendAddress, Long256Impl.NULL_LONG256.getLong0());
@@ -460,6 +504,13 @@ public class ContiguousVirtualMemory implements Closeable {
         return offset;
     }
 
+    protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
+        if (currentBaseAddress != 0) {
+            return Unsafe.realloc(currentBaseAddress, currentSize, newSize);
+        }
+        return Unsafe.malloc(newSize);
+    }
+
     protected void releaseMemory() {
         if (baseAddress != 0) {
             long baseLength = baseAddressHi - baseAddress;
@@ -468,61 +519,8 @@ public class ContiguousVirtualMemory implements Closeable {
         }
     }
 
-    protected final void handleMemoryReleased() {
-        baseAddress = 0;
-        baseAddressHi = 0;
-        appendAddress = 0;
-    }
-
     protected final void setPageSize(long pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
-    }
-
-    protected final long getMemorySize() {
-        return baseAddressHi - baseAddress;
-    }
-
-    private void checkAndExtend(long addressHi) {
-        assert appendAddress <= baseAddressHi;
-        assert addressHi >= baseAddress;
-        if (addressHi > baseAddressHi) {
-            long newSize = addressHi - baseAddress;
-            long nPages = (newSize / pageSize) + 1;
-            newSize = nPages * pageSize;
-            long oldSize = getMemorySize();
-            LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
-            if (nPages > maxPages) {
-                throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
-            }
-            long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
-            handleMemoryReallocation(newBaseAddress, newSize);
-        }
-    }
-
-    protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
-        if (currentBaseAddress == 0) {
-            return Unsafe.malloc(newSize);
-        }
-        return Unsafe.realloc(currentBaseAddress, currentSize, newSize);
-    }
-
-    protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
-        assert newBaseAddress != 0;
-        long appendOffset = appendAddress - baseAddress;
-        baseAddress = newBaseAddress;
-        baseAddressHi = baseAddress + newSize;
-        appendAddress = baseAddress + appendOffset;
-        if (appendAddress > baseAddressHi) {
-            appendAddress = baseAddressHi;
-        }
-    }
-
-    protected final void checkLimits(long size) {
-        checkAndExtend(appendAddress + size);
-    }
-
-    protected final void checkLimits(long offset, long size) {
-        checkAndExtend(baseAddress + offset + size);
     }
 
     public class CharSequenceView extends AbstractCharSequence {
@@ -575,14 +573,13 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
-        private void putLong256(CharSequence hexString) {
-            final int len;
-            if (hexString == null || (len = hexString.length()) == 0) {
-                putLong256Null();
-                appendAddress += Long256.BYTES;
-            } else {
-                putLong256(hexString, 2, len);
-            }
+        @Override
+        protected void onDecoded(long l0, long l1, long l2, long l3) {
+            checkLimits(Long256.BYTES);
+            Unsafe.getUnsafe().putLong(appendAddress, l0);
+            Unsafe.getUnsafe().putLong(appendAddress + 8, l1);
+            Unsafe.getUnsafe().putLong(appendAddress + 16, l2);
+            Unsafe.getUnsafe().putLong(appendAddress + 24, l3);
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
@@ -594,13 +591,14 @@ public class ContiguousVirtualMemory implements Closeable {
             appendAddress += Long256.BYTES;
         }
 
-        @Override
-        protected void onDecoded(long l0, long l1, long l2, long l3) {
-            checkLimits(Long256.BYTES);
-            Unsafe.getUnsafe().putLong(appendAddress, l0);
-            Unsafe.getUnsafe().putLong(appendAddress + 8, l1);
-            Unsafe.getUnsafe().putLong(appendAddress + 16, l2);
-            Unsafe.getUnsafe().putLong(appendAddress + 24, l3);
+        private void putLong256(CharSequence hexString) {
+            final int len;
+            if (hexString == null || (len = hexString.length()) == 0) {
+                putLong256Null();
+                appendAddress += Long256.BYTES;
+            } else {
+                putLong256(hexString, 2, len);
+            }
         }
     }
 }
