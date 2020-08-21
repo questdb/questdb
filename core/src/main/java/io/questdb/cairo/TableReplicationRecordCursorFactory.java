@@ -110,6 +110,32 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             of(reader);
             this.partitionIndex = partitionIndex - 1;
             nFirstFrameRow = partitionRowCount;
+
+            long nRows = -1;
+            for (int atPartitionIndex = 0; atPartitionIndex <= partitionIndex; atPartitionIndex++) {
+                final int base = reader.getColumnBase(partitionIndex);
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = reader.getMetadata().getColumnType(columnIndex);
+                    if (columnType == ColumnType.SYMBOL) {
+                        if (nRows == -1) {
+                            nRows = atPartitionIndex == partitionIndex ? nFirstFrameRow : reader.openPartition(partitionIndex);
+                        }
+                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
+                        assert col.getPageCount() == 1;
+                        long symbolIndexAddess = col.getPageAddress(0);
+                        int maxSymbolIndex = nSymbolsProcessed.getQuick(columnIndex) - 1;
+                        // TODO: Use vector instructions (rosti?) to find max
+                        for (int nRow = 0; nRow < nRows; nRow++) {
+                            int symbolIndex = Unsafe.getUnsafe().getInt(symbolIndexAddess);
+                            symbolIndexAddess += Integer.BYTES;
+                            maxSymbolIndex = Math.max(maxSymbolIndex, symbolIndex);
+                        }
+                        nSymbolsProcessed.setQuick(columnIndex, maxSymbolIndex + 1);
+                    }
+                }
+                nRows = -1;
+            }
+
             return this;
         }
 

@@ -244,16 +244,10 @@ public class SymbolMapWriter implements Closeable {
         return offsetToKey(offsetOffset);
     }
 
-    /**
-     * 
-     * @param blockOffset This is the offset from the end of the current (committed) symbol character file
-     * @param blockLength
-     * @param sourceAddress
-     */
-    public void putSymbolCharsBlock(long blockOffset, long blockLength, long sourceAddress) {
+    public void appendSymbolCharsBlock(long blockLength, long sourceAddress) {
         long appendOffset = charMem.getAppendOffset();
         try {
-            charMem.jumpTo(appendOffset + blockOffset);
+            charMem.jumpTo(appendOffset);
             charMem.putBlockOfBytes(sourceAddress, blockLength);
         } finally {
             charMem.jumpTo(appendOffset);
