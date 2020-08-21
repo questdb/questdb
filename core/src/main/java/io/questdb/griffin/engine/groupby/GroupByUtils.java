@@ -295,6 +295,12 @@ public class GroupByUtils {
         validateGroupByColumns(model, columns, groupByColumnCount);
     }
 
+    public static void toTop(ObjList<? extends Function> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).toTop();
+        }
+    }
+
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeNext(value, record);

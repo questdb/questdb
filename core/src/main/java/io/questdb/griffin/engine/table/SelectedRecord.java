@@ -151,11 +151,11 @@ class SelectedRecord implements Record {
 
     @Override
     public Long256 getLong256A(int col) {
-        return base.getLong256A(col);
+        return base.getLong256A(getColumnIndex(col));
     }
 
     @Override
     public Long256 getLong256B(int col) {
-        return base.getLong256B(col);
+        return base.getLong256B(getColumnIndex(col));
     }
 }

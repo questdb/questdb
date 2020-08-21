@@ -1532,7 +1532,7 @@ public class SqlCodeGenerator implements Mutable {
             if (columns.size() == 1) {
                 CharSequence columnName = columns.getQuick(0).getName();
                 columnExpr = columns.getQuick(0).getAst();
-                if (columnExpr.type == FUNCTION && isCountKeyword(columnExpr.token)) {
+                if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));

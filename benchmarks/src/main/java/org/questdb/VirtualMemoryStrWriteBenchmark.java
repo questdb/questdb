@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class VirtualMemoryBenchmark {
+public class VirtualMemoryStrWriteBenchmark {
     private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final ContiguousVirtualMemory mem3 = new ContiguousVirtualMemory(1024 * 1024L, Integer.MAX_VALUE);
@@ -46,7 +46,7 @@ public class VirtualMemoryBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(VirtualMemoryBenchmark.class.getSimpleName())
+                .include(VirtualMemoryStrWriteBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
                 .forks(1)
@@ -62,29 +62,9 @@ public class VirtualMemoryBenchmark {
         mem3.jumpTo(0);
     }
 
-    //    @Benchmark
-    public void testExternalSequenceStr() {
-        long o = 0;
-        for (int i = 0; i < 10000; i++) {
-            CharSequence cs = rnd.nextChars(rnd.nextInt() % 4);
-            mem2.putStr(o, cs);
-            o += cs.length() * 2 + 4;
-        }
-    }
-
     @Benchmark
     public CharSequence testBaseline() {
         return rnd.nextChars(rnd.nextInt() % 4);
-    }
-
-    //    @Benchmark
-    public void testHashAsLong256() {
-        mem2.putLong256("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
-    }
-
-    //    @Benchmark
-    public void testHashAsStr() {
-        mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
     }
 
     @Benchmark

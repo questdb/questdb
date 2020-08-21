@@ -132,6 +132,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
                 this.nextTimestamp = timestamp;
+                GroupByUtils.toTop(groupByFunctions);
                 return true;
             }
         }

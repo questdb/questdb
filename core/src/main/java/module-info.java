@@ -176,6 +176,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndStringListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndCharFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLong256FunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndLong256NFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndFloatFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory,
@@ -416,6 +417,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory,
 //                  'count' group by function
             io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
 //                  round()

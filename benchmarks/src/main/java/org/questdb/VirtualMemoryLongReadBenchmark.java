@@ -26,7 +26,6 @@ package org.questdb;
 
 import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.VirtualMemory;
-import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -38,15 +37,13 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class VirtualMemoryBenchmark {
-    private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+public class VirtualMemoryLongReadBenchmark {
+    private static final ContiguousVirtualMemory mem1 = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final VirtualMemory mem2 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
-    private static final ContiguousVirtualMemory mem3 = new ContiguousVirtualMemory(1024 * 1024L, Integer.MAX_VALUE);
-    private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(VirtualMemoryBenchmark.class.getSimpleName())
+                .include(VirtualMemoryLongReadBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
                 .forks(1)
@@ -59,41 +56,33 @@ public class VirtualMemoryBenchmark {
     public void reset() {
         mem1.jumpTo(0);
         mem2.jumpTo(0);
-        mem3.jumpTo(0);
-    }
-
-    //    @Benchmark
-    public void testExternalSequenceStr() {
         long o = 0;
         for (int i = 0; i < 10000; i++) {
-            CharSequence cs = rnd.nextChars(rnd.nextInt() % 4);
-            mem2.putStr(o, cs);
-            o += cs.length() * 2 + 4;
+            mem1.putLong(o, i);
+            mem2.putLong(o, i);
+            o += Long.BYTES;
         }
     }
 
     @Benchmark
-    public CharSequence testBaseline() {
-        return rnd.nextChars(rnd.nextInt() % 4);
-    }
-
-    //    @Benchmark
-    public void testHashAsLong256() {
-        mem2.putLong256("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
-    }
-
-    //    @Benchmark
-    public void testHashAsStr() {
-        mem2.putStr("0xea674fdde714fd979de3edf0f56aa9716b898ec8");
+    public long testLongContiguous() {
+        long sum = 0;
+        long o = 0;
+        for (int i = 0; i < 10000; i++) {
+            sum += mem1.getLong(o);
+            o += Long.BYTES;
+        }
+        return sum;
     }
 
     @Benchmark
-    public void testPutStrContiguous() {
-        mem3.putStr(rnd.nextChars(rnd.nextInt() % 4));
-    }
-
-    @Benchmark
-    public void testPutStrLegacy() {
-        mem1.putStr(rnd.nextChars(rnd.nextInt() % 4));
+    public long testLongLegacy() {
+        long sum = 0;
+        long o = 0;
+        for (int i = 0; i < 10000; i++) {
+            sum += mem2.getLong(o);
+            o += Long.BYTES;
+        }
+        return sum;
     }
 }

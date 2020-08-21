@@ -129,11 +129,11 @@ public class LongHashSet extends AbstractLongHashSet {
 
     private void rehash() {
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
-        this.keys = new long[arrayCapacity];
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+        this.keys = new long[len];
         Arrays.fill(keys, noEntryKeyValue);
+        mask = len - 1;
         int n = list.size();
         free -= n;
         for (int i = 0; i < n; i++) {

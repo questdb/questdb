@@ -238,6 +238,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
                     fillGaps(prevSample, sample);
                     prevSample = sample;
+                    GroupByUtils.toTop(groupByFunctions);
                 }
 
                 // same data group - evaluate group-by functions
