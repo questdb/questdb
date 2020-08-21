@@ -373,7 +373,7 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public final long putStr(CharSequence value) {
-        return value == null ? putNullStr() : putStr0(value, 0, value.length());
+        return value != null ? putStr0(value, 0, value.length()) : putNullStr();
     }
 
     public final long putStr(char value) {
@@ -498,9 +498,9 @@ public class ContiguousVirtualMemory implements Closeable {
     private long putStr0(CharSequence value, int pos, int len) {
         checkLimits(len * 2 + STRING_LENGTH_BYTES);
         final long offset = getAppendOffset();
-        putInt(len);
-        copyStrChars(value, pos, len, appendAddress);
-        appendAddress += len * 2;
+        Unsafe.getUnsafe().putInt(appendAddress, len);
+        copyStrChars(value, pos, len, appendAddress + Integer.BYTES);
+        appendAddress += len * 2 + Integer.BYTES;
         return offset;
     }
 

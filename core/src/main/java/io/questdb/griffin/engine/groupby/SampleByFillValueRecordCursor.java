@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -166,6 +165,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
+                GroupByUtils.toTop(groupByFunctions);
                 this.nextTimestamp = timestamp;
             }
 
@@ -176,7 +176,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
 
     @Override
     public void toTop() {
-        MultiArgFunction.toTop(recordFunctions);
+        GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();

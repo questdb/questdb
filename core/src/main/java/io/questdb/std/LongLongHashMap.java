@@ -83,15 +83,15 @@ public class LongLongHashMap extends AbstractLongHashSet {
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         long[] oldValues = values;
         long[] oldKeys = keys;
-        this.keys = new long[arrayCapacity];
-        this.values = new long[arrayCapacity];
+        this.keys = new long[len];
+        this.values = new long[len];
         Arrays.fill(keys, noEntryKeyValue);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {

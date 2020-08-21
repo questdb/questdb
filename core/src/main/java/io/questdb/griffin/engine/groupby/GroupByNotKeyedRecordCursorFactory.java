@@ -108,7 +108,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void toTop() {
             recordsRemaining = 1;
-            MultiArgFunction.toTop(groupByFunctions);
+            GroupByUtils.toTop(groupByFunctions);
         }
 
         @Override
