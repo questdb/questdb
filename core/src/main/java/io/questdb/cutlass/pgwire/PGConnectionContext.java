@@ -716,8 +716,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     ) throws BadProtocolException, SqlException {
 
         boolean inferTypes = parameterValueCount != bindVariableService.getIndexedVariableCount();
-        boolean allTextFormat = parameterFormats.size() == 0 || (parameterFormats.size() == 1 && parameterFormats.get(0) == 1);
-        boolean allBinaryFormat = parameterFormats.size() == 1 && parameterFormats.get(0) == 0;
+        boolean allTextFormat = parameterFormats.size() == 0 || (parameterFormats.size() == 1 && parameterFormats.get(0) == 0);
+        boolean allBinaryFormat = parameterFormats.size() == 1 && parameterFormats.get(0) == 1;
 
         for (int j = 0; j < parameterValueCount; j++) {
             if (lo + Integer.BYTES > msgLimit) {
@@ -747,7 +747,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 setupBindVariable(bindVariableSetters, j, pgType);
             }
             // apply parameter format
-            if (allTextFormat || (!allBinaryFormat) && parameterFormats.get(j) == 1) {
+            if (allTextFormat || (!allBinaryFormat) && parameterFormats.get(j) == 0) {
                 bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
             }
             // bind parameter value
@@ -1214,10 +1214,10 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         parameterFormats.clear();
         parameterFormatCount = getShort(lo);
+        lo += Short.BYTES;
         if (parameterFormatCount > 0) {
             bindParameterFormats(lo, msgLimit, parameterFormatCount);
         }
-        lo += Short.BYTES;
 
         lo += parameterFormatCount * Short.BYTES;
         checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter value count");
