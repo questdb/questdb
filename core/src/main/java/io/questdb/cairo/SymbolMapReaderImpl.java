@@ -141,7 +141,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
-            this.offsetMem.grow(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexReader.of(configuration, path.trimTo(plen), name, 0);
@@ -173,8 +172,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void updateSymbolCount(int symbolCount) {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.grow(maxOffset);
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+            this.offsetMem.grow(SymbolMapWriter.keyToOffset(symbolCount));
             growCharMemToSymbolCount(symbolCount);
         }
     }
@@ -195,7 +194,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private void growCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            this.charMem.grow(lastSymbolOffset + 4);
             this.charMem.grow(lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4);
         } else {
             this.charMem.grow(0);
